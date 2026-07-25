@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 - 2026-07-25
+
+### Fixed
+
+- Claude Opus 5 now defaults to its 1M context window.
+
 ## 0.2.1 - 2026-07-24
 
 ### Added

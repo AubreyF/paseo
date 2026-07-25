@@ -38,10 +38,18 @@ async function createClaudeConfigDirWithRawSettings(settings: string): Promise<s
   return configDir;
 }
 
+function createCatalogClient(claudeCodeVersion = "2.1.219"): ClaudeAgentClient {
+  return new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveVersion: async () => claudeCodeVersion,
+  });
+}
+
 describe("getClaudeModels", () => {
   it("returns all claude models", () => {
     const models = getClaudeModels();
     expect(models.map((m) => m.id)).toEqual([
+      "claude-opus-5[1m]",
       "claude-opus-5",
       "claude-fable-5",
       "claude-opus-4-8[1m]",
@@ -61,7 +69,7 @@ describe("getClaudeModels", () => {
     const models = getClaudeModels();
     const defaults = models.filter((m) => m.isDefault);
     expect(defaults).toHaveLength(1);
-    expect(defaults[0].id).toBe("claude-opus-5");
+    expect(defaults[0].id).toBe("claude-opus-5[1m]");
   });
 
   it("defines context window sizes in the catalog", () => {
@@ -71,7 +79,8 @@ describe("getClaudeModels", () => {
 
     expect(contextWindows).toEqual(
       new Map([
-        ["claude-opus-5", 1_000_000],
+        ["claude-opus-5[1m]", 1_000_000],
+        ["claude-opus-5", 200_000],
         ["claude-fable-5", 1_000_000],
         ["claude-opus-4-8[1m]", 1_000_000],
         ["claude-opus-4-8", 200_000],
@@ -85,6 +94,15 @@ describe("getClaudeModels", () => {
         ["claude-haiku-4-5", 200_000],
       ]),
     );
+  });
+
+  it("filters models by their minimum Claude Code version", () => {
+    const oldVersionModels = getClaudeModels("2.1.218");
+    expect(oldVersionModels.map((model) => model.id)).not.toContain("claude-opus-5[1m]");
+    expect(oldVersionModels.map((model) => model.id)).not.toContain("claude-opus-5");
+    expect(oldVersionModels.find((model) => model.isDefault)?.id).toBe("claude-opus-4-8");
+    expect(getClaudeModels("2.1.219").map((model) => model.id)).toContain("claude-opus-5[1m]");
+    expect(getClaudeModels("2.1.219").map((model) => model.id)).toContain("claude-opus-5");
   });
 
   it("derives thinking options from model effort capabilities", () => {
@@ -175,7 +193,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       },
     });
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
-    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    const client = createCatalogClient();
 
     const { models } = await client.fetchCatalog({
       scope: "workspace",
@@ -228,7 +246,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-"));
     createdClaudeConfigDirs.push(configDir);
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
-    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    const client = createCatalogClient();
 
     const { models } = await client.fetchCatalog({
       scope: "workspace",
@@ -242,7 +260,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
   it("falls back to hardcoded models when settings.json is malformed", async () => {
     const configDir = await createClaudeConfigDirWithRawSettings("{ nope");
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
-    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    const client = createCatalogClient();
 
     const { models } = await client.fetchCatalog({
       scope: "workspace",
@@ -262,7 +280,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       },
     });
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
-    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    const client = createCatalogClient();
 
     const { models } = await client.fetchCatalog({
       scope: "workspace",
@@ -282,7 +300,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       },
     });
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
-    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    const client = createCatalogClient();
 
     const { models } = await client.fetchCatalog({
       scope: "workspace",
@@ -295,10 +313,24 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       "glm-5.1",
     ]);
   });
+
+  it("omits models that require a newer Claude Code version", async () => {
+    const client = createCatalogClient("2.1.218");
+
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(models.map((model) => model.id)).not.toContain("claude-opus-5[1m]");
+    expect(models.map((model) => model.id)).not.toContain("claude-opus-5");
+  });
 });
 
 describe("normalizeClaudeRuntimeModelId", () => {
   it("returns exact match for known model IDs", () => {
+    expect(normalizeClaudeRuntimeModelId("claude-opus-5[1m]")).toBe("claude-opus-5[1m]");
     expect(normalizeClaudeRuntimeModelId("claude-opus-5")).toBe("claude-opus-5");
     expect(normalizeClaudeRuntimeModelId("claude-fable-5")).toBe("claude-fable-5");
     expect(normalizeClaudeRuntimeModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
@@ -318,6 +350,7 @@ describe("normalizeClaudeRuntimeModelId", () => {
   });
 
   it("preserves [1m] suffix from runtime model strings", () => {
+    expect(normalizeClaudeRuntimeModelId("claude-opus-5[1m]")).toBe("claude-opus-5[1m]");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6[1m]")).toBe("claude-opus-4-6[1m]");
   });
 

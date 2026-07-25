@@ -11,6 +11,7 @@ import {
   convertClaudeHistoryEntry,
   normalizeClaudeAskUserQuestionRequestInput,
   normalizeClaudeAskUserQuestionUpdatedInput,
+  resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
@@ -405,6 +406,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       const client = new ClaudeAgentClient({
         logger,
         resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => "2.1.219",
         configDir: emptyConfigDir,
       });
       const { models } = await client.fetchCatalog({
@@ -414,6 +416,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       });
 
       expect(models.map((m) => m.id)).toEqual([
+        "claude-opus-5[1m]",
         "claude-opus-5",
         "claude-fable-5",
         "claude-opus-4-8[1m]",
@@ -434,7 +437,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       }
 
       const defaultModel = models.find((m) => m.isDefault);
-      expect(defaultModel?.id).toBe("claude-opus-5");
+      expect(defaultModel?.id).toBe("claude-opus-5[1m]");
     } finally {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
     }
@@ -446,6 +449,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       const client = new ClaudeAgentClient({
         logger,
         resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => "2.1.219",
         configDir: emptyConfigDir,
       });
       const { models } = await client.fetchCatalog({
@@ -474,6 +478,10 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
 describe("ClaudeAgentClient binary resolution", () => {
   const logger = createTestLogger();
+
+  test("resolves the installed Claude Code version", async () => {
+    await expect(resolveClaudeCodeVersion()).resolves.toMatch(/^\d+\.\d+\.\d+$/);
+  });
 
   test("loads user, project, and local Claude settings", async () => {
     const queryReturn = vi.fn();

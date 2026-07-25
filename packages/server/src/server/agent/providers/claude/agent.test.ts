@@ -445,6 +445,29 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     }
   });
 
+  test("preserves the catalog when Claude Code version detection fails", async () => {
+    const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));
+    try {
+      const client = new ClaudeAgentClient({
+        logger,
+        resolveVersion: async () => {
+          throw new Error("unrecognized version output");
+        },
+        configDir: emptyConfigDir,
+      });
+      const { models } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/claude-models",
+        force: false,
+      });
+
+      expect(models.find((model) => model.isDefault)?.id).toBe("claude-opus-5[1m]");
+      expect(models.map((model) => model.id)).toContain("claude-fable-5[1m]");
+    } finally {
+      await fs.rm(emptyConfigDir, { recursive: true, force: true });
+    }
+  });
+
   test("exposes Ultra Code on xhigh-capable Claude models", async () => {
     const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));
     try {

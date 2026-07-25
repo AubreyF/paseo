@@ -364,7 +364,7 @@ interface ClaudeAgentClientOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
-  resolveVersion?: () => Promise<string | null>;
+  resolveVersion?: () => Promise<string>;
   configDir?: string;
 }
 
@@ -1441,7 +1441,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
-  private readonly resolveVersion: () => Promise<string | null>;
+  private readonly resolveVersion: () => Promise<string>;
   private readonly configDir?: string;
 
   constructor(options: ClaudeAgentClientOptions) {
@@ -1503,7 +1503,7 @@ export class ClaudeAgentClient implements AgentClient {
 
   async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
     // Claude exposes a global catalog here; cwd/force are intentionally irrelevant.
-    let claudeCodeVersion: string | null = null;
+    let claudeCodeVersion: string | undefined;
     try {
       claudeCodeVersion = await this.resolveVersion();
     } catch (error) {
@@ -1637,14 +1637,14 @@ async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): P
 
 export async function resolveClaudeCodeVersion(
   runtimeSettings?: ProviderRuntimeSettings,
-): Promise<string | null> {
+): Promise<string> {
   const launch = await resolveProviderLaunch({
     commandConfig: runtimeSettings?.command,
     defaultBinary: "claude",
   });
   const availability = await checkProviderLaunchAvailable(launch);
   if (!availability.available) {
-    return null;
+    throw new Error("Claude binary not found while resolving Claude Code version");
   }
   const executable = availability.resolvedPath ?? launch.command;
   const { stdout, stderr } = await execCommand(executable, [...launch.args, "--version"], {
@@ -1652,7 +1652,10 @@ export async function resolveClaudeCodeVersion(
     timeout: 5_000,
   });
   const version = parseClaudeCodeVersion(`${stdout}\n${stderr}`);
-  return version?.join(".") ?? null;
+  if (!version) {
+    throw new Error("Unable to parse Claude Code version from --version output");
+  }
+  return version.join(".");
 }
 
 async function resolveClaudeAuth(

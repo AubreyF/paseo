@@ -184,7 +184,7 @@ function buildThinkingOptions(
   return options;
 }
 
-export function getClaudeManifestModels(claudeCodeVersion?: string | null): AgentModelDefinition[] {
+export function getClaudeManifestModels(claudeCodeVersion?: string): AgentModelDefinition[] {
   const availableModels: readonly ClaudeModelManifestEntry[] = CLAUDE_MODEL_MANIFEST.filter(
     (model) => isModelAvailableInClaudeCode(model, claudeCodeVersion),
   );
@@ -221,13 +221,10 @@ export function getClaudeManifestModels(claudeCodeVersion?: string | null): Agen
 
 function isModelAvailableInClaudeCode(
   model: ClaudeModelManifestEntry,
-  claudeCodeVersion: string | null | undefined,
+  claudeCodeVersion: string | undefined,
 ): boolean {
   if (!model.minimumClaudeCodeVersion || claudeCodeVersion === undefined) {
     return true;
-  }
-  if (claudeCodeVersion === null) {
-    return false;
   }
   return compareVersions(claudeCodeVersion, model.minimumClaudeCodeVersion) >= 0;
 }

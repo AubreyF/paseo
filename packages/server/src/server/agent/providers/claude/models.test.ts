@@ -10,6 +10,7 @@ import {
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   claudeManifestModelSupportsFastMode,
   normalizeClaudeManifestModelId,
+  parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
 import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
@@ -365,6 +366,11 @@ describe("normalizeClaudeRuntimeModelId", () => {
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6-20260101")).toBe("claude-opus-4-6");
     expect(normalizeClaudeRuntimeModelId("claude-sonnet-4-6-20260101")).toBe("claude-sonnet-4-6");
     expect(normalizeClaudeRuntimeModelId("claude-haiku-4-5-20251001")).toBe("claude-haiku-4-5");
+    expect(normalizeClaudeRuntimeModelId("claude-opus-5-20260724[1m]")).toBe("claude-opus-5[1m]");
+    expect(normalizeClaudeRuntimeModelId("claude-fable-5-20260301[1m]")).toBe("claude-fable-5[1m]");
+    expect(normalizeClaudeRuntimeModelId("claude-sonnet-5-20260101[1m]")).toBe(
+      "claude-sonnet-5[1m]",
+    );
   });
 
   it("preserves [1m] suffix from runtime model strings", () => {
@@ -396,6 +402,12 @@ describe("normalizeClaudeRuntimeModelId", () => {
     expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-4-8-20260101")).toBe(
       "claude-opus-4-8",
     );
+  });
+});
+
+describe("parseClaudeCodeVersion", () => {
+  it("prefers the Claude Code version over a wrapper banner", () => {
+    expect(parseClaudeCodeVersion("wrapper 1.0.0\n2.1.219 (Claude Code)")).toEqual([2, 1, 219]);
   });
 });
 

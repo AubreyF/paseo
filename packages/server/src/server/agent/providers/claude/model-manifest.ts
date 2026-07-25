@@ -245,7 +245,9 @@ function compareVersions(left: string, right: string): number {
 }
 
 export function parseClaudeCodeVersion(value: string): [number, number, number] | null {
-  const match = value.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
+  const match =
+    value.match(/\b(\d+)\.(\d+)\.(\d+)\s+\(Claude Code\)/i) ??
+    value.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
@@ -305,7 +307,7 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
   }
 
   const singleSegmentMatch = trimmed.match(
-    /^(?:claude[-_ ])?(fable|opus|sonnet|haiku)[-_ ]+(\d+)(\[1m\])?(?:[-_ ]+\d{8})?$/i,
+    /^(?:claude[-_ ])?(fable|opus|sonnet|haiku)[-_ ]+(\d+)(?:\[1m\])?(?:[-_ ]+\d{8})?(?:\[1m\])?$/i,
   );
   if (singleSegmentMatch) {
     return normalizeSingleSegmentClaudeModelId(
@@ -316,7 +318,7 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
   }
 
   const runtimeMatch = trimmed.match(
-    /^(?:claude[-_ ])?(opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?(?:[-_ ]+\d{8})?$/i,
+    /^(?:claude[-_ ])?(opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(?:\[1m\])?(?:[-_ ]+\d{8})?(?:\[1m\])?$/i,
   );
   if (!runtimeMatch) {
     return null;
@@ -326,7 +328,7 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
     runtimeMatch[1],
     runtimeMatch[2],
     runtimeMatch[3],
-    Boolean(runtimeMatch[4]),
+    trimmed.toLowerCase().includes("[1m]"),
   );
 }
 
@@ -353,7 +355,7 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
     const normalizedModelId = normalizeSingleSegmentClaudeModelId(
       singleSegmentMatch[1],
       singleSegmentMatch[2],
-      Boolean(singleSegmentMatch[3]),
+      trimmed.toLowerCase().includes("[1m]"),
     );
     if (normalizedModelId) {
       return normalizedModelId;
@@ -371,7 +373,7 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
     runtimeMatch[1],
     runtimeMatch[2],
     runtimeMatch[3],
-    Boolean(runtimeMatch[4]),
+    trimmed.toLowerCase().includes("[1m]"),
   );
 }
 

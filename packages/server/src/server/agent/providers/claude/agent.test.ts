@@ -418,10 +418,12 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       expect(models.map((m) => m.id)).toEqual([
         "claude-opus-5[1m]",
         "claude-opus-5",
+        "claude-fable-5[1m]",
         "claude-fable-5",
         "claude-opus-4-8[1m]",
         "claude-opus-4-8",
         "claude-sonnet-5",
+        "claude-sonnet-5[1m]",
         "claude-opus-4-7[1m]",
         "claude-opus-4-7",
         "claude-opus-4-6[1m]",
@@ -2091,10 +2093,10 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
-  test("native 1M Claude models seed active context window usage from the catalog", async () => {
+  test("selected 1M Claude models seed active context window usage from the catalog", async () => {
     const session = await createSessionForTurns(
       [[createInitMessage(), createMessageStartEvent(), createSuccessResult()]],
-      { model: "claude-sonnet-5" },
+      { model: "claude-sonnet-5[1m]" },
     );
 
     try {

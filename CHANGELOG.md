@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Claude Opus 5 now defaults to its 1M context window.
+- Claude 5 models now use the correct context windows.
 
 ## 0.2.1 - 2026-07-24
 

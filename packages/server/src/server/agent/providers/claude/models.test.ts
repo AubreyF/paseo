@@ -51,10 +51,12 @@ describe("getClaudeModels", () => {
     expect(models.map((m) => m.id)).toEqual([
       "claude-opus-5[1m]",
       "claude-opus-5",
+      "claude-fable-5[1m]",
       "claude-fable-5",
       "claude-opus-4-8[1m]",
       "claude-opus-4-8",
       "claude-sonnet-5",
+      "claude-sonnet-5[1m]",
       "claude-opus-4-7[1m]",
       "claude-opus-4-7",
       "claude-opus-4-6[1m]",
@@ -81,10 +83,12 @@ describe("getClaudeModels", () => {
       new Map([
         ["claude-opus-5[1m]", 1_000_000],
         ["claude-opus-5", 200_000],
-        ["claude-fable-5", 1_000_000],
+        ["claude-fable-5[1m]", 1_000_000],
+        ["claude-fable-5", 200_000],
         ["claude-opus-4-8[1m]", 1_000_000],
         ["claude-opus-4-8", 200_000],
-        ["claude-sonnet-5", 1_000_000],
+        ["claude-sonnet-5", 200_000],
+        ["claude-sonnet-5[1m]", 1_000_000],
         ["claude-opus-4-7[1m]", 1_000_000],
         ["claude-opus-4-7", 200_000],
         ["claude-opus-4-6[1m]", 1_000_000],
@@ -103,6 +107,11 @@ describe("getClaudeModels", () => {
     expect(oldVersionModels.find((model) => model.isDefault)?.id).toBe("claude-opus-4-8");
     expect(getClaudeModels("2.1.219").map((model) => model.id)).toContain("claude-opus-5[1m]");
     expect(getClaudeModels("2.1.219").map((model) => model.id)).toContain("claude-opus-5");
+
+    expect(getClaudeModels("2.1.168").map((model) => model.id)).not.toContain("claude-fable-5[1m]");
+    expect(getClaudeModels("2.1.168").map((model) => model.id)).not.toContain("claude-fable-5");
+    expect(getClaudeModels("2.1.169").map((model) => model.id)).toContain("claude-fable-5[1m]");
+    expect(getClaudeModels("2.1.169").map((model) => model.id)).toContain("claude-fable-5");
   });
 
   it("derives thinking options from model effort capabilities", () => {
@@ -133,6 +142,9 @@ describe("getClaudeModels", () => {
         ?.label,
     ).toBe("Ultra Code");
     expect(models.get("claude-sonnet-5")?.defaultThinkingOptionId).toBe("low");
+    expect(models.get("claude-sonnet-5[1m]")?.thinkingOptions).toEqual(
+      models.get("claude-sonnet-5")?.thinkingOptions,
+    );
 
     expect(models.get("claude-opus-4-7")?.thinkingOptions?.map((option) => option.id)).toEqual([
       CLAUDE_DISABLED_THINKING_OPTION_ID,
@@ -153,6 +165,9 @@ describe("getClaudeModels", () => {
     expect(models.get("claude-fable-5")?.thinkingOptions?.map((option) => option.id)).not.toContain(
       CLAUDE_DISABLED_THINKING_OPTION_ID,
     );
+    expect(models.get("claude-fable-5[1m]")?.thinkingOptions).toEqual(
+      models.get("claude-fable-5")?.thinkingOptions,
+    );
     expect(models.get("claude-haiku-4-5")?.thinkingOptions).toBeUndefined();
   });
 
@@ -160,6 +175,7 @@ describe("getClaudeModels", () => {
     ["claude-opus-5", true, "low"],
     ["claude-opus-5-20260724", true, "low"],
     ["claude-sonnet-5", true, "low"],
+    ["claude-sonnet-5[1m]", true, "low"],
     ["claude-sonnet-5-20260101", true, "low"],
     ["claude-fable-5", false, "low"],
     ["claude-haiku-4-5", false, undefined],
@@ -333,7 +349,9 @@ describe("normalizeClaudeRuntimeModelId", () => {
     expect(normalizeClaudeRuntimeModelId("claude-opus-5[1m]")).toBe("claude-opus-5[1m]");
     expect(normalizeClaudeRuntimeModelId("claude-opus-5")).toBe("claude-opus-5");
     expect(normalizeClaudeRuntimeModelId("claude-fable-5")).toBe("claude-fable-5");
+    expect(normalizeClaudeRuntimeModelId("claude-fable-5[1m]")).toBe("claude-fable-5[1m]");
     expect(normalizeClaudeRuntimeModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
+    expect(normalizeClaudeRuntimeModelId("claude-sonnet-5[1m]")).toBe("claude-sonnet-5[1m]");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6")).toBe("claude-opus-4-6");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6[1m]")).toBe("claude-opus-4-6[1m]");
     expect(normalizeClaudeRuntimeModelId("claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
@@ -351,6 +369,8 @@ describe("normalizeClaudeRuntimeModelId", () => {
 
   it("preserves [1m] suffix from runtime model strings", () => {
     expect(normalizeClaudeRuntimeModelId("claude-opus-5[1m]")).toBe("claude-opus-5[1m]");
+    expect(normalizeClaudeRuntimeModelId("claude-fable-5[1m]")).toBe("claude-fable-5[1m]");
+    expect(normalizeClaudeRuntimeModelId("claude-sonnet-5[1m]")).toBe("claude-sonnet-5[1m]");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6[1m]")).toBe("claude-opus-4-6[1m]");
   });
 

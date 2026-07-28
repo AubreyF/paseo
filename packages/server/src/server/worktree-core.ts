@@ -1,12 +1,8 @@
 import { createNameId } from "mnemonic-id";
 
 import type { ForgeService } from "../services/forge-service.js";
-import {
-  createWorktree,
-  slugify,
-  validateBranchSlug,
-  type WorktreeConfig,
-} from "../utils/worktree.js";
+import { createWorktree, slugify, validateBranchSlug, type WorktreeConfig } from "../utils/worktree.js";
+import type { WorktreeIncludeSummary } from "../utils/worktree-include.js";
 import {
   resolveWorktreeCreationIntent,
   type ResolveWorktreeCreationIntentInput,
@@ -42,6 +38,8 @@ export interface CreateWorktreeCoreDeps {
 
 export interface CreateWorktreeCoreResult {
   worktree: WorktreeConfig;
+  worktreeIncludeSummary?: WorktreeIncludeSummary;
+  worktreeIncludeSummary?: WorktreeIncludeSummary;
   intent: WorktreeCreationIntent;
   repoRoot: string;
   created: boolean;
@@ -115,15 +113,17 @@ async function createWorktreeCoreWithPriority(
     }
   }
 
+  const { worktreeIncludeSummary, ...worktree } = await createWorktree({
+    cwd: repoRoot,
+    worktreeSlug: normalizedSlug,
+    source: intent,
+    runSetup: input.runSetup ?? true,
+    paseoHome: input.paseoHome,
+    worktreesRoot: input.worktreesRoot,
+  });
   return {
-    worktree: await createWorktree({
-      cwd: repoRoot,
-      worktreeSlug: normalizedSlug,
-      source: intent,
-      runSetup: input.runSetup ?? true,
-      paseoHome: input.paseoHome,
-      worktreesRoot: input.worktreesRoot,
-    }),
+    worktree,
+    worktreeIncludeSummary,
     intent,
     repoRoot,
     created: true,

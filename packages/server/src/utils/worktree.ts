@@ -44,6 +44,11 @@ import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
+import {
+  materializeWorktreeIncludePlan,
+  readWorktreeIncludePlan,
+  type WorktreeIncludeSummary,
+} from "./worktree-include.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -55,6 +60,10 @@ const READ_ONLY_GIT_ENV = {
 export interface WorktreeConfig {
   branchName: string;
   worktreePath: string;
+}
+
+export interface CreatedWorktreeConfig extends WorktreeConfig {
+  worktreeIncludeSummary: WorktreeIncludeSummary;
 }
 
 export interface WorktreeRuntimeEnv {
@@ -1215,8 +1224,13 @@ export const createWorktree = async ({
   runSetup,
   paseoHome,
   worktreesRoot,
-}: CreateWorktreeOptions): Promise<WorktreeConfig> => {
+}: CreateWorktreeOptions): Promise<CreatedWorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
+  const paseoWorktreesBaseRoot = resolvePaseoWorktreesBaseRoot({ paseoHome, worktreesRoot });
+  const worktreeIncludePlan = await readWorktreeIncludePlan({
+    sourceRoot: cwd,
+    excludedSourceRoots: [paseoWorktreesBaseRoot],
+  });
   let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
@@ -1235,30 +1249,49 @@ export const createWorktree = async ({
   });
   worktreePath = normalizePathForOwnership(finalWorktreePath);
 
-  if (sourcePlan.pushRemote) {
-    await configureWorktreePushRemote({
-      cwd,
-      branchName: sourcePlan.branchName,
-      remote: sourcePlan.pushRemote,
-    });
-  }
-  if (sourcePlan.trackingRemote) {
-    await configureWorktreeTrackingRemote({
-      cwd,
-      branchName: sourcePlan.branchName,
-      remote: sourcePlan.trackingRemote,
-    });
-  }
+  let worktreeIncludeSummary: WorktreeIncludeSummary = {
+    materialized: 0,
+    skipped: [...worktreeIncludePlan.skipped],
+  };
+  try {
+    if (sourcePlan.pushRemote) {
+      await configureWorktreePushRemote({
+        cwd,
+        branchName: sourcePlan.branchName,
+        remote: sourcePlan.pushRemote,
+      });
+    }
+    if (sourcePlan.trackingRemote) {
+      await configureWorktreeTrackingRemote({
+        cwd,
+        branchName: sourcePlan.branchName,
+        remote: sourcePlan.trackingRemote,
+      });
+    }
 
-  writePaseoWorktreeMetadata(worktreePath, {
-    baseRefName: sourcePlan.metadataBaseRefName,
-    ...(sourcePlan.metadataBaseRef ? { baseRef: sourcePlan.metadataBaseRef } : {}),
-    ...(sourcePlan.changeRequestLookupTarget
-      ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
-      : {}),
-  });
+    writePaseoWorktreeMetadata(worktreePath, {
+      baseRefName: sourcePlan.metadataBaseRefName,
+      ...(sourcePlan.metadataBaseRef ? { baseRef: sourcePlan.metadataBaseRef } : {}),
+      ...(sourcePlan.changeRequestLookupTarget
+        ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
+        : {}),
+    });
 
-  await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
+    await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
+    const materialization = await materializeWorktreeIncludePlan({
+      plan: worktreeIncludePlan,
+      worktreeRoot: worktreePath,
+    });
+    worktreeIncludeSummary = {
+      materialized: materialization.materialized,
+      skipped: [...worktreeIncludePlan.skipped, ...materialization.skipped],
+    };
+  } catch (error) {
+    return rollbackCreatedPaseoWorktree(
+      { cwd, worktreePath, teardownCwds: [], paseoHome, worktreesBaseRoot: worktreesRoot },
+      error,
+    );
+  }
 
   if (runSetup) {
     await runWorktreeSetupCommands({
@@ -1270,6 +1303,7 @@ export const createWorktree = async ({
 
   return {
     branchName: sourcePlan.branchName,
+    worktreeIncludeSummary,
     worktreePath,
   };
 };

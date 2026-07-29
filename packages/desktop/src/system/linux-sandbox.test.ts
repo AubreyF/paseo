@@ -12,6 +12,7 @@ function configureWithSandbox(
 ) {
   const disabledSwitches: string[] = [];
   const inspectionErrors: unknown[] = [];
+  const disableReports: unknown[] = [];
 
   configureLinuxSandbox({
     platform,
@@ -23,10 +24,11 @@ function configureWithSandbox(
       return sandbox;
     },
     disableSandbox: () => disabledSwitches.push("no-sandbox"),
+    reportSandboxDisabled: (report) => disableReports.push(report),
     reportInspectionError: (error) => inspectionErrors.push(error),
   });
 
-  return { disabledSwitches, inspectionErrors };
+  return { disabledSwitches, disableReports, inspectionErrors };
 }
 
 function createFileSystemError(code: string): NodeJS.ErrnoException {
@@ -39,6 +41,14 @@ describe("configureLinuxSandbox", () => {
   it("disables the sandbox when an AppImage mount strips SUID", () => {
     expect(configureWithSandbox({ uid: 1000, mode: 0o755 })).toEqual({
       disabledSwitches: ["no-sandbox"],
+      disableReports: [
+        {
+          reason: "wrong-owner-or-mode",
+          sandboxPath: "/opt/Paseo/chrome-sandbox",
+          observedUid: 1000,
+          observedMode: "0755",
+        },
+      ],
       inspectionErrors: [],
     });
   });
@@ -46,6 +56,7 @@ describe("configureLinuxSandbox", () => {
   it("keeps the sandbox for a root-owned 4755 helper", () => {
     expect(configureWithSandbox({ uid: 0, mode: 0o4755 })).toEqual({
       disabledSwitches: [],
+      disableReports: [],
       inspectionErrors: [],
     });
   });
@@ -53,6 +64,14 @@ describe("configureLinuxSandbox", () => {
   it("disables the sandbox when a SUID helper is not root-owned", () => {
     expect(configureWithSandbox({ uid: 1000, mode: 0o4755 })).toEqual({
       disabledSwitches: ["no-sandbox"],
+      disableReports: [
+        {
+          reason: "wrong-owner-or-mode",
+          sandboxPath: "/opt/Paseo/chrome-sandbox",
+          observedUid: 1000,
+          observedMode: "4755",
+        },
+      ],
       inspectionErrors: [],
     });
   });
@@ -60,6 +79,12 @@ describe("configureLinuxSandbox", () => {
   it("disables the sandbox when the helper is missing", () => {
     expect(configureWithSandbox(createFileSystemError("ENOENT"))).toEqual({
       disabledSwitches: ["no-sandbox"],
+      disableReports: [
+        {
+          reason: "helper-missing",
+          sandboxPath: "/opt/Paseo/chrome-sandbox",
+        },
+      ],
       inspectionErrors: [],
     });
   });
@@ -69,6 +94,7 @@ describe("configureLinuxSandbox", () => {
 
     expect(configureWithSandbox(permissionError)).toEqual({
       disabledSwitches: [],
+      disableReports: [],
       inspectionErrors: [permissionError],
     });
   });
@@ -76,6 +102,7 @@ describe("configureLinuxSandbox", () => {
   it("does not inspect or configure the sandbox outside Linux", () => {
     expect(configureWithSandbox(createFileSystemError("EACCES"), "darwin")).toEqual({
       disabledSwitches: [],
+      disableReports: [],
       inspectionErrors: [],
     });
   });

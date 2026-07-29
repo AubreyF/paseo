@@ -315,6 +315,7 @@ configureLinuxSandbox({
   resourcesPath: process.resourcesPath,
   statSandbox: (sandboxPath) => statSync(sandboxPath),
   disableSandbox: () => app.commandLine.appendSwitch("no-sandbox"),
+  reportSandboxDisabled: (report) => log.warn("[linux-sandbox] disabling Chromium sandbox", report),
   reportInspectionError: (error) => log.error("[linux-sandbox] failed to inspect helper", error),
 });
 

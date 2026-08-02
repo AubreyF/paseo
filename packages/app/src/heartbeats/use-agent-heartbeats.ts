@@ -15,11 +15,16 @@ export function useAgentHeartbeats(target: {
   agentId: string;
 }): AgentHeartbeatRow[] {
   const { serverId, agentId } = target;
-  const { loadState } = useSchedules();
+  const { loadState, dataUpdatedAt } = useSchedules();
   const schedules = loadState.status === "loaded" ? loadState.data : EMPTY_SCHEDULES;
 
   return useMemo(
-    () => selectAgentHeartbeats({ schedules, target: { serverId, agentId }, now: Date.now() }),
-    [schedules, serverId, agentId],
+    () =>
+      selectAgentHeartbeats({
+        schedules,
+        target: { serverId, agentId },
+        now: dataUpdatedAt || Date.now(),
+      }),
+    [schedules, serverId, agentId, dataUpdatedAt],
   );
 }

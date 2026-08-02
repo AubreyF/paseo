@@ -10,18 +10,25 @@ interface HeartbeatScheduleClient {
     cadence: { type: "every"; everyMs: number };
     target: { type: "agent"; agentId: string };
     runOnCreate: false;
+    expiresAt?: string;
   }): Promise<{ schedule: ScheduleSummary | null; error: string | null }>;
   scheduleDelete(input: { id: string }): Promise<{ error: string | null }>;
   scheduleList(): Promise<{ schedules: ScheduleSummary[]; error: string | null }>;
+}
+
+export interface SeededHeartbeat {
+  id: string;
+  name: string;
+  cadence: string;
 }
 
 export interface AgentHeartbeatScenario {
   workspace: SeededWorkspace;
   parent: { id: string; title: string };
   child: { id: string; title: string };
-  heartbeat: { id: string; name: string; cadence: string };
+  createHeartbeat(input?: { name?: string; expiresAt?: string }): Promise<SeededHeartbeat>;
   readWorkspaceStatus(): Promise<string | null>;
-  readHeartbeatExists(): Promise<boolean>;
+  readHeartbeatExists(id: string): Promise<boolean>;
   readAgentStatuses(): Promise<Record<string, string>>;
   cleanup(): Promise<void>;
 }
@@ -47,22 +54,27 @@ export async function seedAgentWithHeartbeat(): Promise<AgentHeartbeatScenario> 
       (snapshot) => snapshot.status === "idle",
       30_000,
     );
-    const created = await scheduleClient.scheduleCreate({
-      prompt: "Check the build and report any failures.",
-      name: "Watch the build",
-      cadence: { type: "every", everyMs: 15 * 60_000 },
-      target: { type: "agent", agentId: agents.parent.id },
-      runOnCreate: false,
-    });
-    if (!created.schedule) {
-      throw new Error(created.error ?? "Failed to create heartbeat");
-    }
-    const heartbeatId = created.schedule.id;
+    const heartbeatIds = new Set<string>();
     return {
       workspace,
       parent: agents.parent,
       child: agents.child,
-      heartbeat: { id: heartbeatId, name: "Watch the build", cadence: "Every 15 minutes" },
+      createHeartbeat: async (input = {}) => {
+        const name = input.name ?? "Watch the build";
+        const created = await scheduleClient.scheduleCreate({
+          prompt: "Check the build and report any failures.",
+          name,
+          cadence: { type: "every", everyMs: 15 * 60_000 },
+          target: { type: "agent", agentId: agents.parent.id },
+          runOnCreate: false,
+          ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+        });
+        if (!created.schedule) {
+          throw new Error(created.error ?? "Failed to create heartbeat");
+        }
+        heartbeatIds.add(created.schedule.id);
+        return { id: created.schedule.id, name, cadence: "Every 15 minutes" };
+      },
       readWorkspaceStatus: async () => {
         const result = await workspace.client.fetchWorkspaces();
         return (
@@ -73,16 +85,20 @@ export async function seedAgentWithHeartbeat(): Promise<AgentHeartbeatScenario> 
           )?.status ?? null
         );
       },
-      readHeartbeatExists: async () => {
+      readHeartbeatExists: async (id) => {
         const result = await scheduleClient.scheduleList();
-        return result.schedules.some((schedule) => schedule.id === heartbeatId);
+        return result.schedules.some((schedule) => schedule.id === id);
       },
       readAgentStatuses: async () => {
         const result = await workspace.client.fetchAgents({ scope: "active" });
         return Object.fromEntries(result.entries.map(({ agent }) => [agent.id, agent.status]));
       },
       cleanup: async () => {
-        await scheduleClient.scheduleDelete({ id: heartbeatId }).catch(() => undefined);
+        await Promise.all(
+          Array.from(heartbeatIds, (id) =>
+            scheduleClient.scheduleDelete({ id }).catch(() => undefined),
+          ),
+        );
         await workspace.cleanup();
       },
     };
@@ -115,23 +131,20 @@ export async function openHeartbeatAndSubagentTracks(page: Page): Promise<void> 
 
 export async function expectHeartbeatVisible(
   page: Page,
-  heartbeat: AgentHeartbeatScenario["heartbeat"],
+  heartbeat: SeededHeartbeat,
 ): Promise<void> {
   await expect(
     page.getByRole("link", { name: `${heartbeat.name}, ${heartbeat.cadence}` }),
   ).toBeVisible({ timeout: 30_000 });
 }
 
-export async function openHeartbeat(
-  page: Page,
-  heartbeat: AgentHeartbeatScenario["heartbeat"],
-): Promise<void> {
+export async function openHeartbeat(page: Page, heartbeat: SeededHeartbeat): Promise<void> {
   await page.getByRole("link", { name: `${heartbeat.name}, ${heartbeat.cadence}` }).click();
 }
 
 export async function expectHeartbeatDetails(
   page: Page,
-  heartbeat: AgentHeartbeatScenario["heartbeat"],
+  heartbeat: SeededHeartbeat,
 ): Promise<void> {
   const sheet = page.getByTestId("schedule-form-sheet");
   await expect(sheet).toBeVisible({ timeout: 30_000 });
@@ -151,10 +164,7 @@ export async function removeSeededSubagent(scenario: AgentHeartbeatScenario): Pr
   await scenario.workspace.client.archiveAgent(scenario.child.id);
 }
 
-export async function deleteHeartbeat(
-  page: Page,
-  heartbeat: AgentHeartbeatScenario["heartbeat"],
-): Promise<void> {
+export async function deleteHeartbeat(page: Page, heartbeat: SeededHeartbeat): Promise<void> {
   const row = page.getByRole("link", { name: `${heartbeat.name}, ${heartbeat.cadence}` });
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: `Delete heartbeat ${heartbeat.name}` }).click();

@@ -14,6 +14,10 @@ interface HeartbeatScheduleClient {
   }): Promise<{ schedule: ScheduleSummary | null; error: string | null }>;
   scheduleDelete(input: { id: string }): Promise<{ error: string | null }>;
   scheduleList(): Promise<{ schedules: ScheduleSummary[]; error: string | null }>;
+  scheduleUpdate(input: {
+    id: string;
+    expiresAt: string;
+  }): Promise<{ schedule: ScheduleSummary | null; error: string | null }>;
 }
 
 export interface SeededHeartbeat {
@@ -27,6 +31,7 @@ export interface AgentHeartbeatScenario {
   parent: { id: string; title: string };
   child: { id: string; title: string };
   createHeartbeat(input?: { name?: string; expiresAt?: string }): Promise<SeededHeartbeat>;
+  setHeartbeatExpiry(id: string, expiresAt: string): Promise<void>;
   readWorkspaceStatus(): Promise<string | null>;
   readHeartbeatExists(id: string): Promise<boolean>;
   readAgentStatuses(): Promise<Record<string, string>>;
@@ -74,6 +79,12 @@ export async function seedAgentWithHeartbeat(): Promise<AgentHeartbeatScenario> 
         }
         heartbeatIds.add(created.schedule.id);
         return { id: created.schedule.id, name, cadence: "Every 15 minutes" };
+      },
+      setHeartbeatExpiry: async (id, expiresAt) => {
+        const updated = await scheduleClient.scheduleUpdate({ id, expiresAt });
+        if (!updated.schedule) {
+          throw new Error(updated.error ?? "Failed to update heartbeat expiry");
+        }
       },
       readWorkspaceStatus: async () => {
         const result = await workspace.client.fetchWorkspaces();

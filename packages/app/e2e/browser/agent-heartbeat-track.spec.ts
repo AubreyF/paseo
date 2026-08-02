@@ -51,13 +51,14 @@ test("an agent heartbeat stays visible and keeps its workspace running", async (
     await expectWorkspaceDone(page);
     await captureHeartbeatEvidence(page, testInfo, "heartbeat-removed-workspace-done");
 
-    const expiringHeartbeat = await scenario.createHeartbeat({
-      name: "Temporary watch",
-      expiresAt: new Date(Date.now() + 20_000).toISOString(),
-    });
+    const expiringHeartbeat = await scenario.createHeartbeat({ name: "Temporary watch" });
     await expectWorkspaceRunning(page);
     await page.getByRole("button", { name: "1 heartbeat" }).click();
     await expectHeartbeatVisible(page, expiringHeartbeat);
+    await scenario.setHeartbeatExpiry(
+      expiringHeartbeat.id,
+      new Date(Date.now() + 20_000).toISOString(),
+    );
     await expect(page.getByRole("button", { name: "1 heartbeat" })).toHaveCount(0, {
       timeout: 30_000,
     });

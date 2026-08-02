@@ -1,4 +1,4 @@
-import { expect, type Page, type TestInfo } from "@playwright/test";
+import { expect, type Locator, type Page, type TestInfo } from "@playwright/test";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 import { seedParentWithSubagent } from "./subagents";
 import { seedWorkspace, type SeededWorkspace } from "./seed-client";
@@ -137,9 +137,25 @@ export async function expectWorkspaceDone(page: Page): Promise<void> {
   await expect(workspaceRow.getByTestId("workspace-status-indicator-running")).toHaveCount(0);
 }
 
-export async function openHeartbeatAndSubagentTracks(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "1 heartbeat" }).click();
-  await page.getByRole("button", { name: "1 subagent" }).click();
+export async function openHeartbeatAndSubagentTracks(
+  page: Page,
+  heartbeat: SeededHeartbeat,
+  subagentId: string,
+): Promise<void> {
+  await openHeartbeatTrack(page, heartbeat);
+  await ensureTrackExpanded(
+    page,
+    "1 subagent",
+    page.getByTestId(`subagents-track-row-${subagentId}`),
+  );
+}
+
+export async function openHeartbeatTrack(page: Page, heartbeat: SeededHeartbeat): Promise<void> {
+  await ensureTrackExpanded(
+    page,
+    "1 heartbeat",
+    page.getByRole("link", { name: `${heartbeat.name}, ${heartbeat.cadence}` }),
+  );
 }
 
 export async function expectHeartbeatVisible(
@@ -193,4 +209,13 @@ export async function captureHeartbeatEvidence(
   const path = testInfo.outputPath(`${name}.png`);
   await page.screenshot({ path, fullPage: true });
   await testInfo.attach(name, { path, contentType: "image/png" });
+}
+
+async function ensureTrackExpanded(page: Page, name: string, content: Locator): Promise<void> {
+  const disclosure = page.getByRole("button", { name });
+  await expect(disclosure).toBeVisible({ timeout: 30_000 });
+  if (!(await content.isVisible())) {
+    await disclosure.click();
+  }
+  await expect(content).toBeVisible({ timeout: 30_000 });
 }

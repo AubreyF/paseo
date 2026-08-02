@@ -9,6 +9,7 @@ import {
   expectWorkspaceRunning,
   openHeartbeat,
   openHeartbeatAndSubagentTracks,
+  openHeartbeatTrack,
   removeSeededSubagent,
   returnToAgentHeartbeat,
   seedAgentWithHeartbeat,
@@ -28,7 +29,7 @@ test("an agent heartbeat stays visible and keeps its workspace running", async (
     await expectWorkspaceDone(page);
     const heartbeat = await scenario.createHeartbeat();
     await expectWorkspaceRunning(page);
-    await openHeartbeatAndSubagentTracks(page);
+    await openHeartbeatAndSubagentTracks(page, heartbeat, scenario.child.id);
     await expectHeartbeatVisible(page, heartbeat);
     await captureHeartbeatEvidence(page, testInfo, "heartbeat-stacked-tracks");
 
@@ -39,7 +40,7 @@ test("an agent heartbeat stays visible and keeps its workspace running", async (
     await removeSeededSubagent(scenario);
     await returnToAgentHeartbeat(page);
     await expectWorkspaceRunning(page);
-    await page.getByRole("button", { name: "1 heartbeat" }).click();
+    await openHeartbeatTrack(page, heartbeat);
     await deleteHeartbeat(page, heartbeat);
     await expect
       .poll(() => scenario.readHeartbeatExists(heartbeat.id), { timeout: 30_000 })
@@ -53,7 +54,7 @@ test("an agent heartbeat stays visible and keeps its workspace running", async (
 
     const expiringHeartbeat = await scenario.createHeartbeat({ name: "Temporary watch" });
     await expectWorkspaceRunning(page);
-    await page.getByRole("button", { name: "1 heartbeat" }).click();
+    await openHeartbeatTrack(page, expiringHeartbeat);
     await expectHeartbeatVisible(page, expiringHeartbeat);
     await scenario.setHeartbeatExpiry(
       expiringHeartbeat.id,

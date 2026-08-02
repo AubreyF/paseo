@@ -111,13 +111,15 @@ export async function seedAgentWithHeartbeat(): Promise<AgentHeartbeatScenario> 
 export async function expectWorkspaceRunning(page: Page): Promise<void> {
   await expect(
     page
-      .getByRole("button", { name: "Heartbeat workspace", exact: true })
+      .getByRole("button", { name: /^Heartbeat workspace(?:, Working)?$/ })
       .getByTestId("workspace-status-indicator-running"),
   ).toBeVisible({ timeout: 60_000 });
 }
 
 export async function expectWorkspaceDone(page: Page): Promise<void> {
-  const workspaceRow = page.getByRole("button", { name: "Heartbeat workspace", exact: true });
+  const workspaceRow = page.getByRole("button", {
+    name: /^Heartbeat workspace(?:, Working)?$/,
+  });
   await expect(workspaceRow.getByTestId("workspace-status-indicator-done")).toBeVisible({
     timeout: 60_000,
   });

@@ -166,6 +166,7 @@ export async function removeSeededSubagent(scenario: AgentHeartbeatScenario): Pr
 
 export async function deleteHeartbeat(page: Page, heartbeat: SeededHeartbeat): Promise<void> {
   const row = page.getByRole("link", { name: `${heartbeat.name}, ${heartbeat.cadence}` });
+  await row.hover();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: `Delete heartbeat ${heartbeat.name}` }).click();
   await expect(row).toHaveCount(0, { timeout: 30_000 });

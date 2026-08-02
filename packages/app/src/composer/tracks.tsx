@@ -17,7 +17,8 @@ import {
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -166,39 +167,46 @@ export function ComposerTrackRow({
   secondary,
   actions,
 }: ComposerTrackRowProps): ReactElement {
+  const isCompact = useIsCompactFormFactor();
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
-  const handleHoverIn = useCallback(() => setHovered(true), []);
-  const handleHoverOut = useCallback(() => setHovered(false), []);
+  const handlePointerEnter = useCallback(() => setHovered(true), []);
+  const handlePointerLeave = useCallback(() => setHovered(false), []);
   const handlePressIn = useCallback(() => setPressed(true), []);
   const handlePressOut = useCallback(() => setPressed(false), []);
+  const showActions = hovered || isNative || isCompact;
   return (
-    <Pressable onHoverIn={handleHoverIn} onHoverOut={handleHoverOut}>
-      {() => (
-        <View style={hovered || pressed ? styles.rowActive : styles.row}>
-          <Pressable
-            accessibilityRole={accessibilityRole}
-            accessibilityLabel={accessibilityLabel}
-            testID={testID}
-            onPress={onPress}
-            onPressIn={handlePressIn}
-            onPressOut={handlePressOut}
-            style={styles.rowMain}
-          >
-            {renderLeading?.()}
-            <Text style={styles.rowLabel} numberOfLines={1}>
-              {label}
+    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
+      <View style={hovered || pressed ? styles.rowActive : styles.row}>
+        <Pressable
+          accessibilityRole={accessibilityRole}
+          accessibilityLabel={accessibilityLabel}
+          testID={testID}
+          onPress={onPress}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
+          style={styles.rowMain}
+        >
+          {renderLeading?.()}
+          <Text style={styles.rowLabel} numberOfLines={1}>
+            {label}
+          </Text>
+          {secondary ? (
+            <Text style={styles.rowSecondary} numberOfLines={1}>
+              {secondary}
             </Text>
-            {secondary ? (
-              <Text style={styles.rowSecondary} numberOfLines={1}>
-                {secondary}
-              </Text>
-            ) : null}
-          </Pressable>
-          {actions ? <View style={styles.actionCluster}>{actions()}</View> : null}
-        </View>
-      )}
-    </Pressable>
+          ) : null}
+        </Pressable>
+        {actions ? (
+          <View
+            style={showActions ? styles.actionClusterVisible : styles.actionClusterHidden}
+            pointerEvents={showActions ? "auto" : "none"}
+          >
+            {actions()}
+          </View>
+        ) : null}
+      </View>
+    </View>
   );
 }
 
@@ -350,10 +358,17 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
   },
-  actionCluster: {
+  actionClusterVisible: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+    opacity: 1,
+  },
+  actionClusterHidden: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    opacity: 0,
   },
   actionButton: {
     padding: theme.spacing[1],

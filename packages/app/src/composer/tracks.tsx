@@ -17,9 +17,11 @@ import {
 import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
+import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
+import { ComposerTrackRow, type ComposerTrackRowProps } from "./track-row";
+
+export { ComposerTrackRow, type ComposerTrackRowProps };
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
@@ -140,76 +142,6 @@ function expandedAccessibilityState(expanded: boolean) {
   return expanded ? EXPANDED_STATE : COLLAPSED_STATE;
 }
 
-export interface ComposerTrackRowProps {
-  /** `link` for a row that leaves the agent, `button` for one that acts in place. */
-  accessibilityRole: "button" | "link";
-  accessibilityLabel: string;
-  testID: string;
-  onPress: () => void;
-  renderLeading?: () => ReactNode;
-  label: string;
-  /** Muted trailing context — a provider note, a cadence. */
-  secondary?: string;
-  actions?: () => ReactNode;
-}
-
-/**
- * One row in a track. The row control and its actions are siblings so an
- * action never activates the row's navigation.
- */
-export function ComposerTrackRow({
-  accessibilityRole,
-  accessibilityLabel,
-  testID,
-  onPress,
-  renderLeading,
-  label,
-  secondary,
-  actions,
-}: ComposerTrackRowProps): ReactElement {
-  const isCompact = useIsCompactFormFactor();
-  const [hovered, setHovered] = useState(false);
-  const [pressed, setPressed] = useState(false);
-  const handlePointerEnter = useCallback(() => setHovered(true), []);
-  const handlePointerLeave = useCallback(() => setHovered(false), []);
-  const handlePressIn = useCallback(() => setPressed(true), []);
-  const handlePressOut = useCallback(() => setPressed(false), []);
-  const showActions = hovered || isNative || isCompact;
-  return (
-    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
-      <View style={hovered || pressed ? styles.rowActive : styles.row}>
-        <Pressable
-          accessibilityRole={accessibilityRole}
-          accessibilityLabel={accessibilityLabel}
-          testID={testID}
-          onPress={onPress}
-          onPressIn={handlePressIn}
-          onPressOut={handlePressOut}
-          style={styles.rowMain}
-        >
-          {renderLeading?.()}
-          <Text style={styles.rowLabel} numberOfLines={1}>
-            {label}
-          </Text>
-          {secondary ? (
-            <Text style={styles.rowSecondary} numberOfLines={1}>
-              {secondary}
-            </Text>
-          ) : null}
-        </Pressable>
-        {actions ? (
-          <View
-            style={showActions ? styles.actionClusterVisible : styles.actionClusterHidden}
-            pointerEvents={showActions ? "auto" : "none"}
-          >
-            {actions()}
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 export interface ComposerTrackActionButtonProps {
   accessibilityLabel: string;
   testID: string;
@@ -320,55 +252,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   scrollContent: {
     paddingVertical: theme.spacing[1],
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-  },
-  rowActive: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.surface2,
-  },
-  rowMain: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  rowLabel: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foreground,
-  },
-  // Keep secondary context bounded so the row's own name stays readable on
-  // compact screens.
-  rowSecondary: {
-    flexShrink: 1,
-    minWidth: 0,
-    maxWidth: "45%",
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-  },
-  actionClusterVisible: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    opacity: 1,
-  },
-  actionClusterHidden: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    opacity: 0,
   },
   actionButton: {
     padding: theme.spacing[1],

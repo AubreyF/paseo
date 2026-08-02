@@ -24,7 +24,27 @@ export interface SelectAgentHeartbeatsInput {
   now: number;
 }
 
+/**
+ * What the composer puts in the heartbeats lane: nothing, the heartbeats, or a
+ * prompt to update a host that does not report heartbeat activity.
+ */
+export type AgentHeartbeatsTrack =
+  | { kind: "none" }
+  | { kind: "heartbeats"; rows: AgentHeartbeatRow[] }
+  | { kind: "host-update-required" };
+
+export interface SelectAgentHeartbeatsTrackInput extends SelectAgentHeartbeatsInput {
+  /**
+   * Whether the host reports heartbeat runs as workspace activity. Every host
+   * runs the prompts; an older one just does not surface a run, so the track's
+   * rows would sit still through every firing and read as nothing happening.
+   */
+  showsHeartbeatActivity: boolean;
+}
+
 const EMPTY_HEARTBEAT_ROWS: AgentHeartbeatRow[] = [];
+const NO_TRACK: AgentHeartbeatsTrack = { kind: "none" };
+const HOST_UPDATE_REQUIRED_TRACK: AgentHeartbeatsTrack = { kind: "host-update-required" };
 
 export function agentHeartbeatKey(serverId: string, scheduleId: string): string {
   return `${serverId}:${scheduleId}`;
@@ -55,4 +75,19 @@ export function selectAgentHeartbeats(input: SelectAgentHeartbeatsInput): AgentH
     }));
 
   return rows.length > 0 ? rows : EMPTY_HEARTBEAT_ROWS;
+}
+
+/**
+ * The heartbeats track for one agent, capability included. This is the only
+ * place the heartbeat feature asks what the host reports, so nothing downstream
+ * has to branch on host version.
+ */
+export function selectAgentHeartbeatsTrack(
+  input: SelectAgentHeartbeatsTrackInput,
+): AgentHeartbeatsTrack {
+  const rows = selectAgentHeartbeats(input);
+  if (rows.length === 0) {
+    return NO_TRACK;
+  }
+  return input.showsHeartbeatActivity ? { kind: "heartbeats", rows } : HOST_UPDATE_REQUIRED_TRACK;
 }

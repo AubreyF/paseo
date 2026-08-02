@@ -1544,6 +1544,9 @@ export const es: TranslationResources = {
     openAction: "{{title}}, {{cadence}}",
     deleteAction: "Eliminar el latido {{title}}",
     deleteTooltip: "Eliminar latido",
+    hostUpdate: {
+      label: "Actualiza el host para mostrar la actividad de los latidos",
+    },
   },
   panels: {
     draft: {

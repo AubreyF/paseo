@@ -90,9 +90,9 @@ import {
 import { SubagentsTrack } from "@/subagents/track";
 import { ComposerTracks } from "@/composer/tracks";
 import { HeartbeatsTrack } from "@/heartbeats/track";
-import { navigateToHeartbeat } from "@/heartbeats/navigate";
+import { navigateToHeartbeat, navigateToHostUpdate } from "@/heartbeats/navigate";
 import type { AgentHeartbeatRow } from "@/heartbeats/select";
-import { useAgentHeartbeats } from "@/heartbeats/use-agent-heartbeats";
+import { useAgentHeartbeatsTrack } from "@/heartbeats/use-agent-heartbeats-track";
 import { useDeleteHeartbeat } from "@/heartbeats/use-delete-heartbeat";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
@@ -1473,11 +1473,14 @@ function ActiveAgentComposer({
   );
   const handleArchiveSubagent = useArchiveSubagent({ serverId });
   const handleDetachSubagent = useDetachSubagent({ serverId });
-  const heartbeatRows = useAgentHeartbeats({ serverId, agentId });
+  const heartbeatsTrack = useAgentHeartbeatsTrack({ serverId, agentId });
   const handleDeleteHeartbeat = useDeleteHeartbeat({ serverId });
   const handleOpenHeartbeat = useCallback((row: AgentHeartbeatRow) => {
     navigateToHeartbeat({ serverId: row.serverId, scheduleId: row.scheduleId });
   }, []);
+  const handleUpdateHost = useCallback(() => {
+    navigateToHostUpdate(serverId);
+  }, [serverId]);
   const handleHideFinishedProviderSubagents = useHideFinishedProviderSubagents({
     serverId,
     parentAgentId: agentId,
@@ -1569,14 +1572,15 @@ function ActiveAgentComposer({
   return (
     <ReanimatedAnimated.View style={inputAreaStyle} onLayout={onInputAreaLayout}>
       <ComposerTracks>
-        {heartbeatRows.length > 0 ? (
+        {heartbeatsTrack.kind === "none" ? null : (
           <HeartbeatsTrack
             key="heartbeats"
-            rows={heartbeatRows}
+            track={heartbeatsTrack}
             onOpenHeartbeat={handleOpenHeartbeat}
             onDeleteHeartbeat={handleDeleteHeartbeat}
+            onUpdateHost={handleUpdateHost}
           />
-        ) : null}
+        )}
         {subagentRows.length > 0 ? (
           <SubagentsTrack
             key="subagents"

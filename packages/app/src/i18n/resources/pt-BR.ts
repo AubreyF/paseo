@@ -1530,6 +1530,9 @@ export const ptBR: TranslationResources = {
     openAction: "{{title}}, {{cadence}}",
     deleteAction: "Excluir o batimento {{title}}",
     deleteTooltip: "Excluir batimento",
+    hostUpdate: {
+      label: "Atualize o host para mostrar a atividade dos batimentos",
+    },
   },
   panels: {
     draft: {

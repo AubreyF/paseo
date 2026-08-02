@@ -8,7 +8,7 @@ import {
   ComposerTrackSection,
 } from "@/composer/tracks";
 import type { Theme } from "@/styles/theme";
-import type { AgentHeartbeatRow } from "./select";
+import type { AgentHeartbeatRow, AgentHeartbeatsTrack } from "./select";
 
 const ThemedHeartPulse = withUnistyles(HeartPulse);
 const ThemedTrash2 = withUnistyles(Trash2);
@@ -35,21 +35,49 @@ function renderHeartbeatIcon(): ReactElement {
 }
 
 export interface HeartbeatsTrackProps {
-  /** Non-empty. The composer decides which tracks exist; a track always has rows. */
-  rows: AgentHeartbeatRow[];
+  /** Never `none`. The composer decides which tracks exist; a track always has content. */
+  track: Exclude<AgentHeartbeatsTrack, { kind: "none" }>;
   onOpenHeartbeat: (row: AgentHeartbeatRow) => void;
   onDeleteHeartbeat: (row: AgentHeartbeatRow) => void;
+  onUpdateHost: () => void;
 }
 
 /**
- * The heartbeats babysitting this agent. Each row names the heartbeat and how
- * often it fires; opening one goes to it on Schedules, deleting one stops it.
+ * The heartbeats babysitting this agent — or, on a host that does not report
+ * their activity, the one row that says so.
  */
 export function HeartbeatsTrack({
+  track,
+  onOpenHeartbeat,
+  onDeleteHeartbeat,
+  onUpdateHost,
+}: HeartbeatsTrackProps): ReactElement {
+  if (track.kind === "host-update-required") {
+    return <HeartbeatsHostUpdateRow onUpdateHost={onUpdateHost} />;
+  }
+
+  return (
+    <HeartbeatsTrackSection
+      rows={track.rows}
+      onOpenHeartbeat={onOpenHeartbeat}
+      onDeleteHeartbeat={onDeleteHeartbeat}
+    />
+  );
+}
+
+/**
+ * Each row names the heartbeat and how often it fires; opening one goes to it
+ * on Schedules, deleting one stops it.
+ */
+function HeartbeatsTrackSection({
   rows,
   onOpenHeartbeat,
   onDeleteHeartbeat,
-}: HeartbeatsTrackProps): ReactElement {
+}: {
+  rows: AgentHeartbeatRow[];
+  onOpenHeartbeat: (row: AgentHeartbeatRow) => void;
+  onDeleteHeartbeat: (row: AgentHeartbeatRow) => void;
+}): ReactElement {
   const { t } = useTranslation();
   const label =
     rows.length === 1
@@ -112,6 +140,27 @@ function HeartbeatsTrackRow({
       label={row.title}
       secondary={row.cadence}
       actions={renderActions}
+    />
+  );
+}
+
+/**
+ * Heartbeats are running on this agent, but the host does not report their runs
+ * as workspace activity. Listing them here would show rows that never move
+ * while the prompts fire, so the lane points at the update that makes the
+ * activity visible instead. The heartbeats themselves stay on Schedules.
+ */
+function HeartbeatsHostUpdateRow({ onUpdateHost }: { onUpdateHost: () => void }): ReactElement {
+  const { t } = useTranslation();
+
+  return (
+    <ComposerTrackRow
+      accessibilityRole="link"
+      accessibilityLabel={t("heartbeats.hostUpdate.label")}
+      testID="heartbeats-track-host-update"
+      onPress={onUpdateHost}
+      renderLeading={renderHeartbeatIcon}
+      label={t("heartbeats.hostUpdate.label")}
     />
   );
 }

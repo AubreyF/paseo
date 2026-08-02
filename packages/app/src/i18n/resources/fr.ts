@@ -1548,6 +1548,9 @@ export const fr: TranslationResources = {
     openAction: "{{title}}, {{cadence}}",
     deleteAction: "Supprimer la pulsation {{title}}",
     deleteTooltip: "Supprimer la pulsation",
+    hostUpdate: {
+      label: "Mettez à jour l'hôte pour afficher l'activité des pulsations",
+    },
   },
   panels: {
     draft: {

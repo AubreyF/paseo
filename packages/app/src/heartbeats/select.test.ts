@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AggregatedSchedule } from "@/schedules/aggregated-schedules";
-import { selectAgentHeartbeats } from "./select";
+import { selectAgentHeartbeats, selectAgentHeartbeatsTrack } from "./select";
 
 const NOW = Date.parse("2026-07-02T00:00:00.000Z");
 const AGENT_ID = "00000000-0000-4000-8000-000000000001";
@@ -117,5 +117,38 @@ describe("selectAgentHeartbeats", () => {
 
   it("returns the same empty list when nothing matches", () => {
     expect(select([])).toBe(select([makeHeartbeat({ status: "paused" })]));
+  });
+});
+
+function selectTrack(schedules: AggregatedSchedule[], showsHeartbeatActivity: boolean) {
+  return selectAgentHeartbeatsTrack({
+    schedules,
+    target: { serverId: "host-1", agentId: AGENT_ID },
+    now: NOW,
+    showsHeartbeatActivity,
+  });
+}
+
+describe("selectAgentHeartbeatsTrack", () => {
+  it("lists the heartbeats when the host reports their activity", () => {
+    const track = selectTrack([makeHeartbeat()], true);
+
+    expect(track.kind).toBe("heartbeats");
+    expect(track.kind === "heartbeats" ? track.rows.map((row) => row.scheduleId) : []).toEqual([
+      "schedule-1",
+    ]);
+  });
+
+  it("asks for a host update instead of listing heartbeats whose activity the host hides", () => {
+    expect(selectTrack([makeHeartbeat()], false)).toEqual({ kind: "host-update-required" });
+  });
+
+  it("shows no track on a host without activity reporting when no heartbeat targets this agent", () => {
+    expect(selectTrack([makeHeartbeat({ status: "paused" })], false)).toEqual({ kind: "none" });
+    expect(selectTrack([], false)).toEqual({ kind: "none" });
+  });
+
+  it("shows no track when the host reports activity but nothing targets this agent", () => {
+    expect(selectTrack([], true)).toEqual({ kind: "none" });
   });
 });

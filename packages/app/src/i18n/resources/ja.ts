@@ -1517,6 +1517,9 @@ export const ja: TranslationResources = {
     openAction: "{{title}}、{{cadence}}",
     deleteAction: "ハートビート{{title}}を削除",
     deleteTooltip: "ハートビートを削除",
+    hostUpdate: {
+      label: "ハートビートのアクティビティを表示するにはホストを更新してください",
+    },
   },
   panels: {
     draft: {

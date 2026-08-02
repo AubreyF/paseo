@@ -506,9 +506,11 @@ export class ScheduleService {
   }
 
   async delete(id: string): Promise<void> {
-    const schedule = await this.inspect(id);
+    const schedule = await this.store.get(id);
     await this.store.delete(id);
-    await this.notifyHeartbeatActivityChanged(schedule);
+    if (schedule) {
+      await this.notifyHeartbeatActivityChanged(schedule);
+    }
   }
 
   async completeForAgent(agentId: string): Promise<number> {

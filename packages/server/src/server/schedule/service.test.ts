@@ -2663,6 +2663,10 @@ describe("ScheduleService", () => {
     await service.delete(active.id);
     expect(changedTargets.at(-1)).toBe(activeAgentId);
     await expect(service.listActiveHeartbeatActivity()).resolves.toEqual([]);
+
+    const notificationsAfterDelete = changedTargets.length;
+    await expect(service.delete(active.id)).resolves.toBeUndefined();
+    expect(changedTargets).toHaveLength(notificationsAfterDelete);
   });
 
   test("startup sweep completes agent-target schedules whose agent is gone", async () => {

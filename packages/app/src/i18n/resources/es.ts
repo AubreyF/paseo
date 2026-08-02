@@ -1538,6 +1538,13 @@ export const es: TranslationResources = {
     archiveFinishedAction: "Archivar subagentes finalizados",
     archiveFinishedTooltip: "Archivar finalizados",
   },
+  heartbeats: {
+    trackLabel: "{{count}} latido",
+    trackLabelPlural: "{{count}} latidos",
+    openAction: "{{title}}, {{cadence}}",
+    deleteAction: "Eliminar el latido {{title}}",
+    deleteTooltip: "Eliminar latido",
+  },
   panels: {
     draft: {
       newAgent: "Nuevo agente",

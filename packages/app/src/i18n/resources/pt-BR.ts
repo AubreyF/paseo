@@ -1524,6 +1524,13 @@ export const ptBR: TranslationResources = {
     archiveFinishedAction: "Arquivar subagentes concluídos",
     archiveFinishedTooltip: "Arquivar concluídos",
   },
+  heartbeats: {
+    trackLabel: "{{count}} batimento",
+    trackLabelPlural: "{{count}} batimentos",
+    openAction: "{{title}}, {{cadence}}",
+    deleteAction: "Excluir o batimento {{title}}",
+    deleteTooltip: "Excluir batimento",
+  },
   panels: {
     draft: {
       newAgent: "Novo Agente",

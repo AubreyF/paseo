@@ -88,6 +88,12 @@ import {
   useSubagentsForParent,
 } from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
+import { ComposerTracks } from "@/composer/tracks";
+import { HeartbeatsTrack } from "@/heartbeats/track";
+import { navigateToHeartbeat } from "@/heartbeats/navigate";
+import type { AgentHeartbeatRow } from "@/heartbeats/select";
+import { useAgentHeartbeats } from "@/heartbeats/use-agent-heartbeats";
+import { useDeleteHeartbeat } from "@/heartbeats/use-delete-heartbeat";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
@@ -1467,6 +1473,11 @@ function ActiveAgentComposer({
   );
   const handleArchiveSubagent = useArchiveSubagent({ serverId });
   const handleDetachSubagent = useDetachSubagent({ serverId });
+  const heartbeatRows = useAgentHeartbeats({ serverId, agentId });
+  const handleDeleteHeartbeat = useDeleteHeartbeat({ serverId });
+  const handleOpenHeartbeat = useCallback((row: AgentHeartbeatRow) => {
+    navigateToHeartbeat({ serverId: row.serverId, scheduleId: row.scheduleId });
+  }, []);
   const handleHideFinishedProviderSubagents = useHideFinishedProviderSubagents({
     serverId,
     parentAgentId: agentId,
@@ -1557,14 +1568,27 @@ function ActiveAgentComposer({
 
   return (
     <ReanimatedAnimated.View style={inputAreaStyle} onLayout={onInputAreaLayout}>
-      <SubagentsTrack
-        rows={subagentRows}
-        onOpenSubagent={handleOpenSubagent}
-        onOpenProviderSubagent={handleOpenProviderSubagent}
-        onArchiveSubagent={handleArchiveSubagent}
-        onArchiveFinished={handleHideFinishedProviderSubagents}
-        onDetachSubagent={canDetachSubagents ? handleDetachSubagent : undefined}
-      />
+      <ComposerTracks>
+        {heartbeatRows.length > 0 ? (
+          <HeartbeatsTrack
+            key="heartbeats"
+            rows={heartbeatRows}
+            onOpenHeartbeat={handleOpenHeartbeat}
+            onDeleteHeartbeat={handleDeleteHeartbeat}
+          />
+        ) : null}
+        {subagentRows.length > 0 ? (
+          <SubagentsTrack
+            key="subagents"
+            rows={subagentRows}
+            onOpenSubagent={handleOpenSubagent}
+            onOpenProviderSubagent={handleOpenProviderSubagent}
+            onArchiveSubagent={handleArchiveSubagent}
+            onArchiveFinished={handleHideFinishedProviderSubagents}
+            onDetachSubagent={canDetachSubagents ? handleDetachSubagent : undefined}
+          />
+        ) : null}
+      </ComposerTracks>
       <Composer
         agentId={agentId}
         serverId={serverId}

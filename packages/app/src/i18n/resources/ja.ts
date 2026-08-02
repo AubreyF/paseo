@@ -1511,6 +1511,13 @@ export const ja: TranslationResources = {
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
     archiveFinishedTooltip: "完了した項目をアーカイブ",
   },
+  heartbeats: {
+    trackLabel: "ハートビート{{count}}件",
+    trackLabelPlural: "ハートビート{{count}}件",
+    openAction: "{{title}}、{{cadence}}",
+    deleteAction: "ハートビート{{title}}を削除",
+    deleteTooltip: "ハートビートを削除",
+  },
   panels: {
     draft: {
       newAgent: "新しいエージェント",

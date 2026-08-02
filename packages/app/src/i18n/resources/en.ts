@@ -1506,6 +1506,13 @@ export const en = {
     archiveFinishedAction: "Archive finished subagents",
     archiveFinishedTooltip: "Archive finished",
   },
+  heartbeats: {
+    trackLabel: "{{count}} heartbeat",
+    trackLabelPlural: "{{count}} heartbeats",
+    openAction: "{{title}}, {{cadence}}",
+    deleteAction: "Delete heartbeat {{title}}",
+    deleteTooltip: "Delete heartbeat",
+  },
   panels: {
     draft: {
       newAgent: "New Agent",

@@ -123,7 +123,7 @@ export async function waitForConnectedHost(
   await expect(host).not.toBeVisible();
 }
 
-export async function openSidebarDisplayPreferences(page: Page): Promise<void> {
+export async function openSidebarHostFilter(page: Page): Promise<void> {
   await page.getByTestId("sidebar-display-preferences-menu").click();
   await expect(page.getByTestId("sidebar-display-preferences-content")).toBeVisible({
     timeout: 10_000,

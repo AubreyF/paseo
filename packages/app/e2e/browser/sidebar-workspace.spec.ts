@@ -6,7 +6,6 @@ import {
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
   openMobileAgentSidebar,
-  pinWorkspaceFromSidebar,
 } from "../support/helpers/sidebar";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { expectWorkspaceHeader } from "../support/helpers/workspace-ui";
@@ -228,19 +227,18 @@ test.describe("Mobile sidebar panelState transition", () => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-retained-pin-" });
 
     try {
+      // Pinning behavior has its own E2E suite. Seed this test's precondition directly so it only
+      // exercises whether the retained compact sidebar keeps the pinned row mounted while closed.
+      await workspace.client.setWorkspacePinned(workspace.workspaceId, true);
       await gotoAppShell(page);
       await openMobileAgentSidebar(page);
       await expectMobileAgentSidebarVisible(page);
-
-      const row = page.getByTestId(getWorkspaceRowTestId(workspace.workspaceId));
-      await expect(row).toBeVisible({ timeout: 30_000 });
-      await pinWorkspaceFromSidebar(page, workspace.workspaceId);
       await expect(page.getByTestId("sidebar-pinned-section")).toBeVisible();
 
       await closeMobileAgentSidebar(page);
       await expectMobileAgentSidebarHidden(page);
 
-      await expect(row).toHaveCount(1);
+      await expect(page.getByTestId(getWorkspaceRowTestId(workspace.workspaceId))).toHaveCount(1);
     } finally {
       await workspace.cleanup();
     }

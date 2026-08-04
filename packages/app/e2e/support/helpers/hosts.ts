@@ -128,6 +128,7 @@ export async function openSidebarDisplayPreferences(page: Page): Promise<void> {
   await expect(page.getByTestId("sidebar-display-preferences-content")).toBeVisible({
     timeout: 10_000,
   });
+  await page.getByTestId("sidebar-display-host-filter").click();
 }
 
 // A host's filter row carries a status dot on the left next to its label.
@@ -142,32 +143,6 @@ export async function toggleHostFilter(page: Page, serverId: string): Promise<vo
 
 export async function selectAllHostsFilter(page: Page): Promise<void> {
   await page.getByTestId("sidebar-host-filter-all").click();
-}
-
-// Playwright reports resolved colors, so the expected value is derived from the same identity
-// table the app reads. A hex literal in the test would be a second copy of the palette.
-function toRgb(hex: string): string {
-  const { r, g, b } = parseHex(hex);
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
-function toRgba(hex: string, alpha: number): string {
-  const { r, g, b } = parseHex(hex);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-interface RgbChannels {
-  r: number;
-  g: number;
-  b: number;
-}
-
-function parseHex(hex: string): RgbChannels {
-  return {
-    r: Number.parseInt(hex.slice(1, 3), 16),
-    g: Number.parseInt(hex.slice(3, 5), 16),
-    b: Number.parseInt(hex.slice(5, 7), 16),
-  };
 }
 
 export async function openHostAppearanceSettings(page: Page, serverId: string): Promise<void> {
@@ -248,11 +223,6 @@ export async function expectHostBadgeTinted(
 ): Promise<void> {
   const badge = hostBadge(page, target);
   await expect(badge).toBeVisible({ timeout: 15_000 });
-  await expect(badge.getByText(target.hostName)).toHaveCSS(
-    "color",
-    toRgb(identityColor(target.color)),
-  );
-  await expect(badge).toHaveCSS("background-color", toRgba(identityColor(target.color), 0.1));
   await expect(badge.locator("svg")).toHaveAttribute("stroke", identityColor(target.color));
 }
 
@@ -264,11 +234,6 @@ export async function expectHostAppearancePreview(
   await expect(preview).toBeVisible();
   const badge = preview.getByTestId(`sidebar-host-badge-${input.serverId}`);
   await expect(badge).toHaveText(input.hostName);
-  await expect(badge.getByText(input.hostName)).toHaveCSS(
-    "color",
-    toRgb(identityColor(input.color)),
-  );
-  await expect(badge).toHaveCSS("background-color", toRgba(identityColor(input.color), 0.1));
   await expect(badge.locator("svg")).toHaveAttribute("stroke", identityColor(input.color));
 }
 

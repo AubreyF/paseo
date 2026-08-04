@@ -40,6 +40,7 @@ async function collapseProjectSection(page: Page, project: SeededWorkspace): Pro
 
 async function switchToStatusGrouping(page: Page): Promise<void> {
   await page.getByTestId("sidebar-display-preferences-menu").click();
+  await page.getByTestId("sidebar-display-grouping").click();
   await page.getByTestId("sidebar-grouping-status").click();
   await expect(page.getByTestId("sidebar-status-list-scroll")).toBeVisible({ timeout: 10_000 });
 }

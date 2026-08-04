@@ -39,6 +39,7 @@ export interface SeedDaemonClient {
   }>;
   removeProject(projectId: string): Promise<{ removedWorkspaceIds: string[] }>;
   renameProject(projectId: string, customName: string | null): Promise<void>;
+  setWorkspacePinned(workspaceId: string, pinned: boolean): Promise<{ pinnedAt: string | null }>;
   fetchWorkspaces(options?: { filter?: { projectId?: string } }): Promise<{
     entries: SeedWorkspaceDescriptor[];
   }>;

@@ -555,6 +555,20 @@ export async function createPaseoDaemon(
   configureGitProcessPolicy(config.git ?? resolveGitProcessPolicy({ env: process.env }));
   const logger = rootLogger.child({ module: "bootstrap" });
   const database = openDatabase(config.paseoHome);
+  try {
+    return await createPaseoDaemonWithDatabase(config, logger, dependencies, database);
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
+async function createPaseoDaemonWithDatabase(
+  config: PaseoDaemonConfig,
+  logger: Logger,
+  dependencies: PaseoDaemonDependencies,
+  database: ReturnType<typeof openDatabase>,
+): Promise<PaseoDaemon> {
   const bootstrapStart = performance.now();
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = config.daemonVersion ?? resolveDaemonVersion(import.meta.url);

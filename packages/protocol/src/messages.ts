@@ -985,6 +985,16 @@ export const ForgeIssueAttachmentSchema = z.object({
   projectPath: z.string().optional(),
 });
 
+export const ExternalResourceAttachmentMetadataSchema = z.object({
+  provider: z.string(),
+  providerLabel: z.string(),
+  resourceType: z.string(),
+  id: z.string(),
+  identifier: z.string(),
+  title: z.string(),
+  url: z.string(),
+});
+
 export const TextAttachmentSchema = z
   .object({
     type: z.literal("text"),
@@ -992,6 +1002,7 @@ export const TextAttachmentSchema = z
     contextKind: z.string().optional(),
     title: z.string().nullable().optional(),
     text: z.string(),
+    externalResource: ExternalResourceAttachmentMetadataSchema.optional(),
   })
   .transform(({ contextKind, ...attachment }) => ({
     ...attachment,

@@ -105,7 +105,7 @@ afterEach(async () => {
   while (terminalManagers.length > 0) {
     const manager = terminalManagers.pop();
     if (manager) {
-      manager.killAll();
+      await manager.killAll();
     }
   }
   await flushTerminalContributionWork();

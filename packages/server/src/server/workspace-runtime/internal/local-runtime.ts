@@ -8,7 +8,7 @@ import type {
   WorkspaceDriverState,
   WorkspaceRuntimeDriver,
 } from "../drivers/index.js";
-import { resolveRuntimeCwd, spawnHostProcess } from "./host-process.js";
+import { resolveRuntimeCwd, spawnHostProcess, spawnHostPty } from "./host-process.js";
 import { createRuntimeStateStore } from "./runtime-state.js";
 
 export function createLocalRuntime(paseoHome: string): WorkspaceRuntimeDriver {
@@ -59,7 +59,8 @@ export function createLocalRuntime(paseoHome: string): WorkspaceRuntimeDriver {
     },
     inspect,
     async spawn(input: WorkspaceDriverSpawnInput) {
-      return spawnHostProcess((await requireReady(input.workspaceId)).root, input);
+      const root = (await requireReady(input.workspaceId)).root;
+      return input.stdio.kind === "pty" ? spawnHostPty(root, input) : spawnHostProcess(root, input);
     },
     async pause(workspaceId) {
       const inspection = await inspect(workspaceId);

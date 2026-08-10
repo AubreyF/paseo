@@ -145,7 +145,10 @@ import {
   resolveSelectedWorkspaceRuntimeId,
   type WorkspaceArchiveContext,
 } from "./workspace-registry.js";
-import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
+import {
+  createWorkspaceRuntimeService,
+  type WorkspaceRuntimeService,
+} from "./workspace-runtime/index.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
@@ -605,8 +608,29 @@ export async function createPaseoDaemon(
   app.set("trust proxy", resolveExpressTrustProxySetting(config));
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
+  let workspaceRuntime: WorkspaceRuntimeService | null = null;
   const terminalManager = createConfiguredTerminalManager({
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+    launchPty: async (input) => {
+      const workspace = await workspaceRegistry?.get(input.workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${input.workspaceId}`);
+      if (!resolveSelectedWorkspaceRuntimeId(workspace)) return null;
+      if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+      const relativeCwd = path.relative(workspace.cwd, input.cwd);
+      if (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd)) {
+        throw new Error(`Terminal cwd escapes workspace: ${input.cwd}`);
+      }
+      return workspaceRuntime.openTerminal({
+        workspaceId: input.workspaceId,
+        cwd: relativeCwd || undefined,
+        argv: input.argv,
+        env: input.env,
+        purpose: { kind: "terminal", terminalId: input.terminalId },
+        rows: input.rows,
+        cols: input.cols,
+        term: input.term,
+      });
+    },
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 
@@ -810,7 +834,7 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
-  const workspaceRuntime = createWorkspaceRuntimeService({
+  workspaceRuntime = createWorkspaceRuntimeService({
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     externalRuntimes: config.workspaceRuntimes,
@@ -868,6 +892,15 @@ export async function createPaseoDaemon(
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
     mcpAuthToken: agentMcpAuthToken,
+    resolveWorkspaceExecution: async (workspaceId) => {
+      const workspace = await workspaceRegistry?.get(workspaceId);
+      if (!workspace || !resolveSelectedWorkspaceRuntimeId(workspace)) return undefined;
+      const runtime = workspaceRuntime;
+      if (!runtime) throw new Error("Workspace runtime is not available");
+      return {
+        run: (input) => runtime.run({ workspaceId, ...input }),
+      };
+    },
     logger,
   });
 
@@ -1665,7 +1698,7 @@ export async function createPaseoDaemon(
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await providerSnapshotManager.shutdown();
-    terminalManager.killAll();
+    await terminalManager.killAll();
     speechService.stop();
     await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);

@@ -96,6 +96,7 @@ import {
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import type { WorkspaceProcess } from "../../workspace-runtime/index.js";
 import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
@@ -103,6 +104,7 @@ import {
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
+  createProviderEnv,
   createProviderEnvSpec,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
@@ -461,6 +463,7 @@ interface ACPAgentSessionOptions {
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
+  workspaceExecution?: AgentLaunchContext["workspaceExecution"];
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -518,7 +521,7 @@ interface TerminalExit {
 
 interface TerminalEntry {
   id: string;
-  child: ChildProcess;
+  terminate(): Promise<void>;
   output: string;
   truncated: boolean;
   outputByteLimit: number | null;
@@ -526,6 +529,29 @@ interface TerminalEntry {
   waitForExit: Promise<TerminalExit>;
   resolveExit: (exit: TerminalExit) => void;
   rejectExit: (error: Error) => void;
+}
+
+async function terminateWorkspaceProcess(process: WorkspaceProcess): Promise<void> {
+  process.kill("SIGTERM");
+  if (await exitsWithin(process.exited, 2_000)) return;
+  process.kill("SIGKILL");
+  await process.exited;
+}
+
+async function exitsWithin(exit: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  const result = await Promise.race([exit.then(() => true as const), timeout]);
+  if (timer) clearTimeout(timer);
+  return result;
+}
+
+function toExactEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
 }
 
 export interface ConfigOptionSelector {
@@ -875,6 +901,7 @@ export class ACPAgentClient implements AgentClient {
         capabilities: this.capabilities,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
+        workspaceExecution: launchContext?.workspaceExecution,
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -926,6 +953,7 @@ export class ACPAgentClient implements AgentClient {
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      workspaceExecution: launchContext?.workspaceExecution,
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -1405,6 +1433,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   ) => Promise<void>;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
+  private readonly workspaceExecution?: AgentLaunchContext["workspaceExecution"];
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private pendingUserMessage: PendingUserMessage | null = null;
@@ -1464,6 +1493,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.availableModes = options.defaultModes;
     this.agentId = options.agentId;
     this.launchEnv = options.launchEnv;
+    this.workspaceExecution = options.workspaceExecution;
     this.initialHandle = options.handle;
     this.config = { ...config, provider: options.provider };
     this.currentMode = config.modeId ?? null;
@@ -2191,10 +2221,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const terminalTerminations = Array.from(this.terminalEntries.values(), (terminal) =>
-      this.terminateProcess(terminal.child, {
-        gracefulTimeoutMs: 2_000,
-        forceTimeoutMs: 2_000,
-      }),
+      terminal.terminate(),
     );
     await Promise.all(terminalTerminations);
     this.terminalEntries.clear();
@@ -2369,14 +2396,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const terminalCommand = resolveTerminalCommand(params.command, params.args);
     const commandEnvOverlays =
       terminalCommand.shell === false ? [env, createStringCommandShellEnvOverlay()] : [env];
-    const child = spawnProcess(terminalCommand.command, terminalCommand.args, {
-      cwd: params.cwd ?? this.config.cwd,
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: commandEnvOverlays,
-      }),
-      shell: terminalCommand.shell,
-      stdio: ["ignore", "pipe", "pipe"],
+    const cwd = params.cwd ?? this.config.cwd;
+    const envSpec = createProviderEnvSpec({
+      runtimeSettings: this.runtimeSettings,
+      overlays: commandEnvOverlays,
     });
 
     let resolveExit!: (exit: TerminalExit) => void;
@@ -2387,9 +2410,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
     waitForExit.catch(() => undefined);
 
-    const entry: TerminalEntry = {
+    const entryBase = {
       id: terminalId,
-      child,
       output: "",
       truncated: false,
       outputByteLimit: params.outputByteLimit ?? null,
@@ -2397,6 +2419,59 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       waitForExit,
       resolveExit,
       rejectExit,
+    };
+
+    if (this.workspaceExecution) {
+      const relativeCwd = path.relative(this.config.cwd, cwd);
+      if (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd)) {
+        throw new Error(`ACP terminal cwd escapes workspace: ${cwd}`);
+      }
+      const runtimeProcess = await this.workspaceExecution.run({
+        cwd: relativeCwd || undefined,
+        argv: [terminalCommand.command, ...terminalCommand.args],
+        env: toExactEnvironment(
+          createProviderEnv({
+            runtimeSettings: this.runtimeSettings,
+            overlays: commandEnvOverlays,
+          }),
+        ),
+        purpose: { kind: "terminal", terminalId },
+      });
+      const entry: TerminalEntry = {
+        ...entryBase,
+        terminate: () => terminateWorkspaceProcess(runtimeProcess),
+      };
+      runtimeProcess.stdout.on("data", (chunk: Buffer | string) =>
+        appendTerminalOutput(entry, chunk.toString()),
+      );
+      runtimeProcess.stderr.on("data", (chunk: Buffer | string) =>
+        appendTerminalOutput(entry, chunk.toString()),
+      );
+      void runtimeProcess.exited.then(({ code, signal }) => {
+        const exit = { exitCode: code, signal };
+        entry.exit = exit;
+        resolveExit(exit);
+        return undefined;
+      }, rejectExit);
+      runtimeProcess.stdin.end();
+      this.terminalEntries.set(terminalId, entry);
+      return { terminalId };
+    }
+
+    const child = spawnProcess(terminalCommand.command, terminalCommand.args, {
+      cwd,
+      ...envSpec,
+      shell: terminalCommand.shell,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const entry: TerminalEntry = {
+      ...entryBase,
+      terminate: async () => {
+        await this.terminateProcess(child, {
+          gracefulTimeoutMs: 2_000,
+          forceTimeoutMs: 2_000,
+        });
+      },
     };
 
     child.stdout!.on("data", (chunk: Buffer | string) =>
@@ -2437,7 +2512,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async releaseTerminal(params: { sessionId: string; terminalId: string }): Promise<void> {
     const entry = this.getTerminalEntry(params.terminalId);
     if (!entry.exit) {
-      await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
+      await entry.terminate();
     }
     this.terminalEntries.delete(params.terminalId);
   }
@@ -2445,7 +2520,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async killTerminal(params: KillTerminalRequest): Promise<Record<string, never>> {
     const entry = this.getTerminalEntry(params.terminalId);
     if (!entry.exit) {
-      await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
+      await entry.terminate();
     }
     return {};
   }

@@ -5,13 +5,24 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Socket } from "node:net";
+import { createInterface } from "node:readline";
+import * as pty from "node-pty";
 
-const [operation] = process.argv.slice(2);
+const operation = process.argv
+  .slice(2)
+  .find((value) =>
+    ["describe", "create", "inspect", "exec", "signal", "pause", "resume", "destroy"].includes(
+      value,
+    ),
+  );
 const workspaceId = argument("--workspace-id");
 
 try {
   if (operation === "describe") {
-    writeJson({ protocolVersion: 1, modes: ["pipes"] });
+    writeJson({
+      protocolVersion: 1,
+      modes: argument("--modes") === "pipes" ? ["pipes"] : ["pipes", "pty"],
+    });
   } else if (!workspaceId) {
     throw new Error("--workspace-id is required");
   } else if (operation === "exec") {
@@ -86,13 +97,23 @@ async function setLifecycle(id, options, lifecycle) {
 }
 
 async function execute(id) {
-  const envelope = JSON.parse(await readOneShotEnvelope());
+  const control = new Socket({ fd: 3, readable: true, writable: false });
+  const lines = createInterface({ input: control, crlfDelay: Infinity });
+  const iterator = lines[Symbol.asyncIterator]();
+  const first = await iterator.next();
+  if (first.done) throw new Error("spawn control is required");
+  const envelope = JSON.parse(first.value);
   const state = await readState(id, envelope.options);
   if (!state) throw new Error(`Fixture workspace is missing: ${id}`);
   await writeFile(
     path.join(state.root, ".runtime-launch.json"),
     JSON.stringify({ argv: process.argv, purpose: envelope.purpose }),
   );
+  if (envelope.stdio.kind === "pty") {
+    await executePty(id, envelope, iterator, control);
+    control.destroy();
+    return;
+  }
   const child = spawn(envelope.argv[0], envelope.argv.slice(1), {
     cwd: path.resolve(state.root, envelope.cwd ?? "."),
     env: envelope.env,
@@ -125,10 +146,88 @@ async function execute(id) {
   }
 }
 
+async function executePty(id, envelope, controls, controlStream) {
+  const events = new Socket({ fd: 4, readable: false, writable: true });
+  const child = pty.spawn(envelope.argv[0], envelope.argv.slice(1), {
+    cwd: path.resolve((await readState(id, envelope.options)).root, envelope.cwd ?? "."),
+    env: envelope.env,
+    name: envelope.stdio.term ?? "xterm-256color",
+    cols: envelope.stdio.cols,
+    rows: envelope.stdio.rows,
+  });
+  await writeFile(execFile(id, envelope.execId, envelope.options), String(child.pid));
+  if (envelope.options.closePtyControl) setTimeout(() => controlStream.destroy(), 100);
+  process.stdin.on("data", (data) => child.write(data.toString()));
+  child.onData((data) => process.stdout.write(data));
+  if (envelope.options.invalidPtyEvent) {
+    setTimeout(
+      () => events.end(`${JSON.stringify({ protocolVersion: 1, type: "invalid" })}\n`),
+      100,
+    );
+  }
+  let requestedSignal = null;
+  void (async () => {
+    while (true) {
+      const next = await controls.next();
+      if (next.done) return;
+      const control = JSON.parse(next.value);
+      if (control.type === "resize") {
+        child.resize(control.cols, control.rows);
+        events.write(
+          `${JSON.stringify({ protocolVersion: 1, type: "resized", id: control.id })}\n`,
+        );
+      } else if (control.type === "signal") {
+        requestedSignal = control.signal;
+        child.kill(control.signal);
+      } else throw new Error(`Unexpected PTY control: ${control.type}`);
+    }
+  })().catch((error) => {
+    events.write(
+      `${JSON.stringify({ protocolVersion: 1, type: "error", message: error.message })}\n`,
+    );
+    child.kill("SIGKILL");
+  });
+  const exit = await new Promise((resolve) =>
+    child.onExit(({ exitCode, signal: signalNumber }) =>
+      resolve({ exitCode, signal: signalNumber }),
+    ),
+  );
+  await rm(execFile(id, envelope.execId, envelope.options), { force: true });
+  process.stdin.destroy();
+  if (envelope.options.invalidPtyEvent) return;
+  events.write(`${JSON.stringify({ protocolVersion: 1, type: "eof" })}\n`);
+  if (envelope.options.omitPtyExitEvent) {
+    events.end();
+    return;
+  }
+  const exitEvent = `${JSON.stringify({
+    protocolVersion: 1,
+    type: "exit",
+    code: requestedSignal || exit.signal ? null : exit.exitCode,
+    signal: requestedSignal,
+  })}\n`;
+  if (envelope.options.delayedPtyExitEvent) {
+    const writer = spawn(
+      process.execPath,
+      [
+        "-e",
+        `setTimeout(()=>{require('node:fs').writeSync(4,${JSON.stringify(exitEvent)});},1000)`,
+      ],
+      { detached: true, stdio: ["ignore", "ignore", "ignore", "ignore", events] },
+    );
+    writer.unref();
+    events.destroy();
+    return;
+  }
+  events.end(exitEvent);
+}
+
 async function signal(id, execId, signalName) {
   const { options } = JSON.parse(await readStream(process.stdin));
   const pid = Number(await readFile(execFile(id, execId, options), "utf8"));
   killGroup(pid, signalName);
+  if (options.signalHelperFailure === "error") throw new Error("fixture signal helper failed");
+  if (options.signalHelperFailure === "hang") await new Promise(() => {});
 }
 
 async function applyInspectBarrier(options) {
@@ -150,15 +249,6 @@ async function applyInspectBarrier(options) {
       if (error.code !== "ENOENT") throw error;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-  }
-}
-
-async function readOneShotEnvelope() {
-  const stream = new Socket({ fd: 3, readable: true, writable: false });
-  try {
-    return await readStream(stream);
-  } finally {
-    stream.destroy();
   }
 }
 

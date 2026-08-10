@@ -31,5 +31,25 @@ export const CommandRuntimeLifecycleResponseSchema = z.discriminatedUnion("type"
 
 export const CommandRuntimeDescribeResponseSchema = z.object({
   protocolVersion: z.literal(1),
-  modes: z.array(z.enum(["pipes"])),
+  modes: z.array(z.enum(["pipes", "pty"])),
 });
+
+export const CommandRuntimePtyEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("eof"), protocolVersion: z.literal(1) }),
+  z.object({
+    type: z.literal("resized"),
+    protocolVersion: z.literal(1),
+    id: z.number().int().nonnegative(),
+  }),
+  z.object({
+    type: z.literal("exit"),
+    protocolVersion: z.literal(1),
+    code: z.number().int().nullable(),
+    signal: z.string().nullable(),
+  }),
+  z.object({
+    type: z.literal("error"),
+    protocolVersion: z.literal(1),
+    message: z.string(),
+  }),
+]);

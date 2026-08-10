@@ -277,6 +277,10 @@ export interface AgentManagerOptions {
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
+  resolveWorkspaceExecution?: (
+    workspaceId: string,
+    cwd: string,
+  ) => Promise<AgentLaunchContext["workspaceExecution"]>;
 }
 
 export interface WaitForAgentOptions {
@@ -642,6 +646,7 @@ export class AgentManager {
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
+  private readonly resolveWorkspaceExecution?: AgentManagerOptions["resolveWorkspaceExecution"];
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -655,6 +660,7 @@ export class AgentManager {
     this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
+    this.resolveWorkspaceExecution = options.resolveWorkspaceExecution;
     this.rescueTimeouts = {
       reloadSessionCloseMs:
         options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
@@ -1100,6 +1106,7 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       options?.env,
+      options.workspaceId,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
@@ -1179,7 +1186,13 @@ export class AgentManager {
         `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
       );
     }
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
+    const launchContext = await this.buildLaunchContext(
+      resolvedAgentId,
+      client,
+      storedConfig.cwd,
+      undefined,
+      options?.workspaceId,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(
       handle,
@@ -1227,7 +1240,13 @@ export class AgentManager {
       },
       resolvedAgentId,
     );
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
+    const launchContext = await this.buildLaunchContext(
+      resolvedAgentId,
+      client,
+      storedConfig.cwd,
+      undefined,
+      input.workspaceId,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
       {
@@ -1308,7 +1327,13 @@ export class AgentManager {
       provider,
     } as AgentSessionConfig;
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
-    const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
+    const launchContext = await this.buildLaunchContext(
+      agentId,
+      client,
+      storedConfig.cwd,
+      undefined,
+      existing.workspaceId,
+    );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
     const session = handle
@@ -4484,6 +4509,7 @@ export class AgentManager {
     client: AgentClient,
     cwd: string,
     env?: Record<string, string>,
+    workspaceId?: string,
   ): Promise<AgentLaunchContext> {
     const context: AgentLaunchContext = {
       agentId,
@@ -4493,6 +4519,9 @@ export class AgentManager {
         PASEO_AGENT_CWD: cwd,
       },
     };
+    if (workspaceId && this.resolveWorkspaceExecution) {
+      context.workspaceExecution = await this.resolveWorkspaceExecution(workspaceId, cwd);
+    }
     if (
       this.paseoToolsEnabled &&
       client.capabilities.supportsNativePaseoTools &&

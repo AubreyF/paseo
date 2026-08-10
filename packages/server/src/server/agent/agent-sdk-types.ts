@@ -5,6 +5,7 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
+import type { WorkspaceProcess, WorkspaceProcessInput } from "../workspace-runtime/index.js";
 
 export type { AgentProviderNotice };
 
@@ -597,6 +598,9 @@ export interface AgentLaunchContext {
    * AgentSessionConfig; providers may adapt it to their native tool surface.
    */
   paseoTools?: PaseoToolCatalog;
+  workspaceExecution?: {
+    run(input: Omit<WorkspaceProcessInput, "workspaceId">): Promise<WorkspaceProcess>;
+  };
 }
 
 export interface AgentCreateSessionOptions {

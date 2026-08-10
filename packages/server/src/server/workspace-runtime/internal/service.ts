@@ -4,10 +4,12 @@ import type {
   WorkspaceProcessInput,
   WorkspaceRuntimeRecordStore,
   WorkspaceRuntimeService,
+  WorkspaceTerminal,
+  WorkspaceTerminalInput,
 } from "../index.js";
 import type {
+  WorkspaceDriverProcess,
   WorkspaceDriverCreateInput,
-  WorkspacePipeProcess,
   WorkspaceRuntimeDriver,
 } from "../drivers/index.js";
 
@@ -19,7 +21,7 @@ export function createService(
   records: WorkspaceRuntimeRecordStore,
 ): WorkspaceRuntimeService {
   const driversById = new Map(drivers.map((driver) => [driver.id, driver]));
-  const processesByWorkspaceId = new Map<string, Set<WorkspacePipeProcess>>();
+  const processesByWorkspaceId = new Map<string, Set<WorkspaceDriverProcess>>();
   const workspaceTails = new Map<string, Promise<void>>();
 
   function requireRegistered(runtimeId: string): WorkspaceRuntimeDriver {
@@ -44,13 +46,30 @@ export function createService(
       throw new Error(`Workspace runtime is ${inspection.status}: ${input.workspaceId}`);
     }
     const runtimeProcess = await driver.spawn({ ...input, stdio: { kind: "pipes" } });
-    const processes = processesByWorkspaceId.get(input.workspaceId) ?? new Set();
-    processes.add(runtimeProcess);
-    processesByWorkspaceId.set(input.workspaceId, processes);
-    void runtimeProcess.exited.then(
-      () => forgetProcess(input.workspaceId, runtimeProcess),
-      () => forgetProcess(input.workspaceId, runtimeProcess),
-    );
+    if (runtimeProcess.kind !== "pipes") {
+      throw new Error(`Workspace runtime returned PTY mode for a pipe launch: ${driver.id}`);
+    }
+    trackProcess(input.workspaceId, runtimeProcess);
+    return runtimeProcess;
+  }
+
+  async function openTerminalWithDriver(
+    driver: WorkspaceRuntimeDriver,
+    input: WorkspaceTerminalInput,
+  ): Promise<WorkspaceTerminal> {
+    validateRelativeCwd(input.cwd);
+    const inspection = await driver.inspect(input.workspaceId);
+    if (inspection.status !== "ready") {
+      throw new Error(`Workspace runtime is ${inspection.status}: ${input.workspaceId}`);
+    }
+    const runtimeProcess = await driver.spawn({
+      ...input,
+      stdio: { kind: "pty", rows: input.rows, cols: input.cols, term: input.term },
+    });
+    if (runtimeProcess.kind !== "pty") {
+      throw new Error(`Workspace runtime does not support PTY mode: ${driver.id}`);
+    }
+    trackProcess(input.workspaceId, runtimeProcess);
     return runtimeProcess;
   }
 
@@ -109,6 +128,11 @@ export function createService(
         runWithDriver(await resolve(input.workspaceId), input),
       );
     },
+    async openTerminal(input) {
+      return sequence(input.workspaceId, async () =>
+        openTerminalWithDriver(await resolve(input.workspaceId), input),
+      );
+    },
     async pause(workspaceId) {
       await sequence(workspaceId, async () => {
         const driver = await resolve(workspaceId);
@@ -147,7 +171,17 @@ export function createService(
     }
   }
 
-  function forgetProcess(workspaceId: string, runtimeProcess: WorkspacePipeProcess): void {
+  function trackProcess(workspaceId: string, runtimeProcess: WorkspaceDriverProcess): void {
+    const processes = processesByWorkspaceId.get(workspaceId) ?? new Set();
+    processes.add(runtimeProcess);
+    processesByWorkspaceId.set(workspaceId, processes);
+    void runtimeProcess.exited.then(
+      () => forgetProcess(workspaceId, runtimeProcess),
+      () => forgetProcess(workspaceId, runtimeProcess),
+    );
+  }
+
+  function forgetProcess(workspaceId: string, runtimeProcess: WorkspaceDriverProcess): void {
     const processes = processesByWorkspaceId.get(workspaceId);
     processes?.delete(runtimeProcess);
     if (processes?.size === 0) processesByWorkspaceId.delete(workspaceId);
@@ -191,7 +225,7 @@ function toDriverCreateInput(input: CreateWorkspaceInput): WorkspaceDriverCreate
 }
 
 async function waitForAll(
-  processes: readonly WorkspacePipeProcess[],
+  processes: readonly WorkspaceDriverProcess[],
   timeoutMilliseconds: number,
 ): Promise<boolean> {
   if (processes.length === 0) return true;

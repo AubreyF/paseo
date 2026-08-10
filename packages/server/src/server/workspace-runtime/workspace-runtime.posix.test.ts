@@ -23,6 +23,55 @@ afterEach(async () => {
 });
 
 posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract", (runtimeId) => {
+  test("opens an interactive PTY with input, Unicode output, resize, EOF, and signals", async () => {
+    const fixture = await createFixture(runtimeId);
+    await fixture.service.create(fixture.createInput);
+
+    const terminal = await fixture.service.openTerminal({
+      workspaceId: fixture.workspaceId,
+      argv: [
+        process.execPath,
+        "-e",
+        "process.stdin.setEncoding('utf8');process.stdout.write(`${process.cwd()}|${process.stdout.isTTY}|${process.stdout.columns}x${process.stdout.rows}|λ`);process.stdin.once('data',data=>{process.stdout.write(`|${data.trim()}|${process.stdout.columns}x${process.stdout.rows}`);process.exit(7)})",
+      ],
+      env: { PATH: process.env.PATH ?? "" },
+      purpose: { kind: "terminal", terminalId: `${runtimeId}-terminal` },
+      rows: 24,
+      cols: 80,
+      term: "xterm-256color",
+    });
+    const output = collectTerminal(terminal);
+    await waitForTerminalOutput(output, "|true|80x24|λ");
+    terminal.resize(101, 37);
+    terminal.write("héllo\n");
+    await expect(terminal.exited).resolves.toEqual({ code: 7, signal: null });
+    expect(output.value()).toContain("|héllo|101x37");
+
+    const signaled = await fixture.service.openTerminal({
+      workspaceId: fixture.workspaceId,
+      argv: ["/bin/sleep", "30"],
+      env: { PATH: "/usr/bin:/bin" },
+      purpose: { kind: "terminal", terminalId: `${runtimeId}-signal-terminal` },
+      rows: 24,
+      cols: 80,
+    });
+    signaled.kill("SIGTERM");
+    await expect(signaled.exited).resolves.toEqual({ code: null, signal: "SIGTERM" });
+
+    const forced = await fixture.service.openTerminal({
+      workspaceId: fixture.workspaceId,
+      argv: ["/bin/sleep", "30"],
+      env: { PATH: "/usr/bin:/bin" },
+      purpose: { kind: "terminal", terminalId: `${runtimeId}-force-terminal` },
+      rows: 24,
+      cols: 80,
+    });
+    forced.kill("SIGKILL");
+    await expect(forced.exited).resolves.toEqual({ code: null, signal: "SIGKILL" });
+
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+
   test("creates, pipes an exact environment, preserves status, and owns only its resources", async () => {
     const fixture = await createFixture(runtimeId);
     const created = await fixture.service.create(fixture.createInput);
@@ -360,6 +409,20 @@ async function collect(stream: NodeJS.ReadableStream): Promise<string> {
   for await (const chunk of stream)
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   return Buffer.concat(chunks).toString("utf8");
+}
+
+function collectTerminal(terminal: { onData(listener: (data: string) => void): () => void }): {
+  value(): string;
+} {
+  let output = "";
+  terminal.onData((data) => {
+    output += data;
+  });
+  return { value: () => output };
+}
+
+async function waitForTerminalOutput(output: { value(): string }, marker: string): Promise<void> {
+  await vi.waitFor(() => expect(output.value()).toContain(marker));
 }
 
 function isProcessAlive(pid: number): boolean {

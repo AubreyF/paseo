@@ -62,6 +62,200 @@ test("a trusted registered command is selected and receives secret launch data o
   await fixture.service.destroy(fixture.workspaceId);
 });
 
+test("the command runtime transports PTY input, Unicode output, resize, and signals", async () => {
+  const fixture = await createFixture("pty");
+  await fixture.service.create(fixture.createInput);
+  const secret = "terminal-secret-value";
+  const terminal = await fixture.service.openTerminal({
+    workspaceId: fixture.workspaceId,
+    argv: [
+      processExecPath(),
+      "-e",
+      "process.stdin.setEncoding('utf8');process.stdout.write(`${process.stdout.isTTY}|${process.stdout.columns}x${process.stdout.rows}|λ|${process.env.SECRET}`);process.stdin.once('data',data=>{process.stdout.write(`|${data.trim()}|${process.stdout.columns}x${process.stdout.rows}`);process.exit(9)})",
+    ],
+    env: { SECRET: secret, PATH: process.env.PATH ?? "" },
+    purpose: { kind: "terminal", terminalId: "command-pty" },
+    rows: 24,
+    cols: 80,
+  });
+  let output = "";
+  terminal.onData((data) => {
+    output += data;
+  });
+  await vi.waitFor(() => expect(output).toContain(`true|80x24|λ|${secret}`));
+  terminal.resize(99, 41);
+  terminal.write("héllo\n");
+  await expect(terminal.exited).resolves.toEqual({ code: 9, signal: null });
+  expect(output).toContain("|héllo|99x41");
+  const launch = JSON.parse(
+    await readFile(path.join(fixture.source, ".runtime-launch.json"), "utf8"),
+  ) as { argv: string[] };
+  expect(JSON.stringify(launch.argv)).not.toContain(secret);
+
+  const signaled = await fixture.service.openTerminal({
+    workspaceId: fixture.workspaceId,
+    argv: ["/bin/sleep", "30"],
+    env: { PATH: "/usr/bin:/bin" },
+    purpose: { kind: "terminal", terminalId: "command-signal" },
+    rows: 24,
+    cols: 80,
+  });
+  signaled.kill("SIGTERM");
+  await expect(signaled.exited).resolves.toEqual({ code: null, signal: "SIGTERM" });
+  const forced = await fixture.service.openTerminal({
+    workspaceId: fixture.workspaceId,
+    argv: ["/bin/sleep", "30"],
+    env: { PATH: "/usr/bin:/bin" },
+    purpose: { kind: "terminal", terminalId: "command-force" },
+    rows: 24,
+    cols: 80,
+  });
+  forced.kill("SIGKILL");
+  await expect(forced.exited).resolves.toEqual({ code: null, signal: "SIGKILL" });
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
+test("a registered pipes-only command runtime fails closed when asked for a PTY", async () => {
+  const fixture = await createFixture("pipes-only", false, "pipes");
+  await fixture.service.create(fixture.createInput);
+
+  await expect(
+    fixture.service.openTerminal({
+      workspaceId: fixture.workspaceId,
+      argv: ["/bin/sh"],
+      env: {},
+      purpose: { kind: "terminal", terminalId: "unsupported-pty" },
+      rows: 24,
+      cols: 80,
+    }),
+  ).rejects.toThrow("Workspace runtime fixture does not support PTY mode");
+
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
+test("the fd4 workload exit remains authoritative after the wrapper exits", async () => {
+  const fixture = await createFixture("delayed-pty-exit", false, "pty", {
+    delayedPtyExitEvent: true,
+  });
+  await fixture.service.create(fixture.createInput);
+  const terminal = await fixture.service.openTerminal({
+    workspaceId: fixture.workspaceId,
+    argv: [processExecPath(), "-e", "process.exit(6)"],
+    env: {},
+    purpose: { kind: "terminal", terminalId: "delayed-exit" },
+    rows: 24,
+    cols: 80,
+  });
+
+  await expect(terminal.exited).resolves.toEqual({ code: 6, signal: null });
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
+test("a wrapper exit without an fd4 workload exit rejects", async () => {
+  const fixture = await createFixture("missing-pty-exit", false, "pty", {
+    omitPtyExitEvent: true,
+  });
+  await fixture.service.create(fixture.createInput);
+  const terminal = await fixture.service.openTerminal({
+    workspaceId: fixture.workspaceId,
+    argv: [processExecPath(), "-e", "process.exit(6)"],
+    env: {},
+    purpose: { kind: "terminal", terminalId: "missing-exit" },
+    rows: 24,
+    cols: 80,
+  });
+
+  await expect(terminal.exited).rejects.toThrow("ended without a valid fd4 exit event");
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
+test("an invalid fd4 event rejects and terminates the wrapper workload", async () => {
+  const fixture = await createFixture("invalid-pty-event", false, "pty", {
+    invalidPtyEvent: true,
+  });
+  const pidFile = path.join(fixture.source, "invalid-event.pid");
+  await fixture.service.create(fixture.createInput);
+  const terminal = await fixture.service.openTerminal({
+    workspaceId: fixture.workspaceId,
+    argv: [
+      processExecPath(),
+      "-e",
+      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`,
+    ],
+    env: {},
+    purpose: { kind: "terminal", terminalId: "invalid-event" },
+    rows: 24,
+    cols: 80,
+  });
+
+  await expect(terminal.exited).rejects.toThrow("Invalid discriminator value");
+  const workloadPid = Number(await readFile(pidFile, "utf8"));
+  expect(processExists(workloadPid)).toBe(false);
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
+test("a failed PTY control channel rejects and terminates the wrapper workload", async () => {
+  const fixture = await createFixture("failed-pty-control", false, "pty", {
+    closePtyControl: true,
+  });
+  const pidFile = path.join(fixture.source, "failed-control.pid");
+  await fixture.service.create(fixture.createInput);
+  const terminal = await fixture.service.openTerminal({
+    workspaceId: fixture.workspaceId,
+    argv: [
+      processExecPath(),
+      "-e",
+      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`,
+    ],
+    env: {},
+    purpose: { kind: "terminal", terminalId: "failed-control" },
+    rows: 24,
+    cols: 80,
+  });
+  const workloadPid = await vi.waitFor(async () => {
+    const pid = Number(await readFile(pidFile, "utf8"));
+    expect(processExists(pid)).toBe(true);
+    return pid;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  terminal.resize(100, 40);
+
+  await expect(terminal.exited).rejects.toThrow("PTY resize acknowledgement timed out");
+  expect(processExists(workloadPid)).toBe(false);
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
+test.each(["error", "hang"] as const)(
+  "PTY cleanup is bounded when the signal helper ends with %s",
+  async (signalHelperFailure) => {
+    const fixture = await createFixture(`pty-signal-helper-${signalHelperFailure}`, false, "pty", {
+      invalidPtyEvent: true,
+      signalHelperFailure,
+    });
+    const pidFile = path.join(fixture.source, `signal-helper-${signalHelperFailure}.pid`);
+    await fixture.service.create(fixture.createInput);
+    const terminal = await fixture.service.openTerminal({
+      workspaceId: fixture.workspaceId,
+      argv: [
+        processExecPath(),
+        "-e",
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`,
+      ],
+      env: {},
+      purpose: { kind: "terminal", terminalId: `signal-helper-${signalHelperFailure}` },
+      rows: 24,
+      cols: 80,
+    });
+
+    await expect(terminal.exited).rejects.toThrow("cleanup failed");
+    const workloadPid = Number(await readFile(pidFile, "utf8"));
+    expect(processExists(workloadPid)).toBe(false);
+    await fixture.service.destroy(fixture.workspaceId);
+  },
+  5_000,
+);
+
 test("run admission racing pause cannot leave an unregistered workload running", async () => {
   const fixture = await createFixture("race", true);
   await fixture.service.create(fixture.createInput);
@@ -107,7 +301,12 @@ test("an existing runtime selection cannot be switched before target driver disp
   await fixture.service.destroy(fixture.workspaceId);
 });
 
-async function createFixture(name: string, withBarrier = false) {
+async function createFixture(
+  name: string,
+  withBarrier = false,
+  modes: "pipes" | "pty" = "pty",
+  runtimeOptions: Readonly<Record<string, unknown>> = {},
+) {
   const root = await mkdtemp(path.join(tmpdir(), `paseo-command-runtime-${name}-`));
   cleanupRoots.push(root);
   const source = path.join(root, "source");
@@ -125,9 +324,14 @@ async function createFixture(name: string, withBarrier = false) {
     externalRuntimes: {
       fixture: {
         type: "command",
-        command: [processExecPath(), fixtureExecutable],
+        command: [
+          processExecPath(),
+          fixtureExecutable,
+          ...(modes === "pipes" ? ["--modes", "pipes"] : []),
+        ],
         options: {
           stateDirectory,
+          ...runtimeOptions,
           ...(withBarrier ? { inspectBarrierDirectory: barrierDirectory } : {}),
         },
       },
@@ -150,4 +354,13 @@ async function createFixture(name: string, withBarrier = false) {
 
 function processExecPath(): string {
   return process.execPath;
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
 }

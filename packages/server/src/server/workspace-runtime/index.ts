@@ -49,6 +49,12 @@ export interface WorkspaceProcessInput extends WorkspaceSetupCommand {
   purpose: WorkspaceProcessPurpose;
 }
 
+export interface WorkspaceTerminalInput extends WorkspaceProcessInput {
+  rows: number;
+  cols: number;
+  term?: string;
+}
+
 export interface WorkspaceProcessExit {
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -62,9 +68,18 @@ export interface WorkspaceProcess {
   kill(signal?: NodeJS.Signals): void;
 }
 
+export interface WorkspaceTerminal {
+  onData(listener: (data: string) => void): () => void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  readonly exited: Promise<WorkspaceProcessExit>;
+  kill(signal?: NodeJS.Signals): void;
+}
+
 export interface WorkspaceRuntimeService {
   create(input: CreateWorkspaceInput): Promise<{ workspaceId: string; runtimeId: string }>;
   run(input: WorkspaceProcessInput): Promise<WorkspaceProcess>;
+  openTerminal(input: WorkspaceTerminalInput): Promise<WorkspaceTerminal>;
   pause(workspaceId: string): Promise<void>;
   resume(workspaceId: string): Promise<void>;
   destroy(workspaceId: string): Promise<void>;

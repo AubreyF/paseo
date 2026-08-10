@@ -74,9 +74,9 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
       purpose: { kind: "workspace-script", script: "write-contract" },
     });
     write.stdin.end("docker-state");
-    const [stderr, exit] = await Promise.all([collect(write.stderr), write.exited]);
+    const [stderr, writeExit] = await Promise.all([collect(write.stderr), write.exited]);
     expect(stderr).toBe("runtime-stderr");
-    expect(exit).toEqual({ code: 19, signal: null });
+    expect(writeExit).toEqual({ code: 19, signal: null });
 
     const env = await service.run({
       workspaceId,
@@ -118,6 +118,72 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
     read.stdin.end();
     await expect(collect(read.stdout)).resolves.toBe("docker-state");
     await expect(read.exited).resolves.toEqual({ code: 0, signal: null });
+
+    const terminal = await recovered.openTerminal({
+      workspaceId,
+      argv: [
+        "/usr/local/bin/node",
+        "-e",
+        "process.stdin.setEncoding('utf8');process.stdout.write(`${process.cwd()}|${process.stdout.isTTY}|${process.stdout.columns}x${process.stdout.rows}|λ`);process.stdin.once('data',data=>{process.stdout.write(`|${data.trim()}|${process.stdout.columns}x${process.stdout.rows}`);process.exit(6)})",
+      ],
+      env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
+      purpose: { kind: "terminal", terminalId: "docker-contract-terminal" },
+      rows: 24,
+      cols: 80,
+    });
+    let terminalOutput = "";
+    terminal.onData((data) => {
+      terminalOutput += data;
+    });
+    await Promise.race([
+      vi.waitFor(() => expect(terminalOutput).toContain("/workspace|true|80x24|λ"), {
+        timeout: 10_000,
+      }),
+      terminal.exited.then((exit) => {
+        throw new Error(`Docker PTY exited before initial output: ${JSON.stringify(exit)}`);
+      }),
+    ]);
+    terminal.resize(103, 39);
+    terminal.write("héllo\n");
+    await expect(terminal.exited).resolves.toEqual({ code: 6, signal: null });
+    expect(terminalOutput).toContain("|héllo|103x39");
+
+    const terminalSignal = await recovered.openTerminal({
+      workspaceId,
+      argv: ["/bin/sleep", "30"],
+      env: { PATH: "/usr/bin:/bin" },
+      purpose: { kind: "terminal", terminalId: "docker-signal-terminal" },
+      rows: 24,
+      cols: 80,
+    });
+    terminalSignal.kill("SIGTERM");
+    await expect(terminalSignal.exited).resolves.toEqual({ code: null, signal: "SIGTERM" });
+    await vi.waitFor(() => expect(dockerProcesses(workspaceId)).not.toContain("sleep 30"));
+
+    const terminalForced = await recovered.openTerminal({
+      workspaceId,
+      argv: ["/bin/sleep", "30"],
+      env: { PATH: "/usr/bin:/bin" },
+      purpose: { kind: "terminal", terminalId: "docker-force-terminal" },
+      rows: 24,
+      cols: 80,
+    });
+    terminalForced.kill("SIGKILL");
+    await expect(terminalForced.exited).resolves.toEqual({ code: null, signal: "SIGKILL" });
+    await vi.waitFor(() => expect(dockerProcesses(workspaceId)).not.toContain("sleep 30"));
+
+    const terminalControlFailure = await recovered.openTerminal({
+      workspaceId,
+      argv: ["/bin/sleep", "30"],
+      env: { PATH: "/usr/bin:/bin" },
+      purpose: { kind: "terminal", terminalId: "docker-control-failure-terminal" },
+      rows: 24,
+      cols: 80,
+    });
+    terminalControlFailure.resize(0, 0);
+    await expect(terminalControlFailure.exited).rejects.toThrow("Invalid PTY size");
+    expect(dockerProcesses(workspaceId)).not.toContain("sleep 30");
+
     const committedOnly = await recovered.run({
       workspaceId,
       argv: ["/bin/sh", "-c", "test ! -e .env"],

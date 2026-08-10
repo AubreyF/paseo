@@ -52,7 +52,7 @@ export interface WorkspaceDriverSpawnInput {
     | { kind: "workspace-script"; script: string }
     | { kind: "setup" }
     | { kind: "archive" };
-  stdio: { kind: "pipes" };
+  stdio: { kind: "pipes" } | { kind: "pty"; rows: number; cols: number; term?: string };
 }
 
 export interface WorkspaceProcessExit {
@@ -69,11 +69,22 @@ export interface WorkspacePipeProcess {
   kill(signal?: NodeJS.Signals): void;
 }
 
+export interface WorkspacePtyProcess {
+  kind: "pty";
+  onData(listener: (data: string) => void): () => void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  exited: Promise<WorkspaceProcessExit>;
+  kill(signal?: NodeJS.Signals): void;
+}
+
+export type WorkspaceDriverProcess = WorkspacePipeProcess | WorkspacePtyProcess;
+
 export interface WorkspaceRuntimeDriver {
   readonly id: WorkspaceRuntimeId;
   create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverState>;
   inspect(workspaceId: WorkspaceId): Promise<WorkspaceDriverInspection>;
-  spawn(input: WorkspaceDriverSpawnInput): Promise<WorkspacePipeProcess>;
+  spawn(input: WorkspaceDriverSpawnInput): Promise<WorkspaceDriverProcess>;
   pause(workspaceId: WorkspaceId): Promise<void>;
   resume(workspaceId: WorkspaceId): Promise<WorkspaceDriverState>;
   destroy(workspaceId: WorkspaceId): Promise<void>;

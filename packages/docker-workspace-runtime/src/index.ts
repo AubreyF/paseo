@@ -3,8 +3,11 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { Socket } from "node:net";
 import path from "node:path";
+import { createInterface } from "node:readline";
+import type { Duplex } from "node:stream";
 
 interface RuntimeState {
   workspaceId: string;
@@ -29,6 +32,7 @@ interface LifecycleRequest {
 }
 
 interface ExecRequest {
+  type: "spawn";
   protocolVersion: 1;
   argv: [string, ...string[]];
   cwd?: string;
@@ -44,14 +48,22 @@ interface ExecRequest {
     | { kind: "archive" };
   options: { image?: unknown };
   execId: string;
+  stdio: { kind: "pipes" } | { kind: "pty"; rows: number; cols: number; term?: string };
 }
+
+type PtyControl =
+  | ExecRequest
+  | { type: "resize"; protocolVersion: 1; id: number; rows: number; cols: number }
+  | { type: "signal"; protocolVersion: 1; signal: NodeJS.Signals };
+
+const PTY_CLEANUP_TIMEOUT_MS = 1_000;
 
 const [operation] = process.argv.slice(2);
 const requestedWorkspaceId = argument("--workspace-id");
 
 try {
   if (operation === "describe") {
-    writeJson({ protocolVersion: 1, modes: ["pipes"] });
+    writeJson({ protocolVersion: 1, modes: ["pipes", "pty"] });
   } else if (!requestedWorkspaceId) {
     throw new Error("--workspace-id is required");
   } else if (operation === "exec") {
@@ -278,7 +290,12 @@ async function inspectVolume(name: string): Promise<{ owner: string | null } | n
 }
 
 async function execute(workspaceId: string): Promise<void> {
-  const request = JSON.parse(await readOneShotEnvelope()) as ExecRequest;
+  const control = new Socket({ fd: 3, readable: true, writable: false });
+  const lines = createInterface({ input: control, crlfDelay: Infinity });
+  const iterator = lines[Symbol.asyncIterator]();
+  const first = await iterator.next();
+  if (first.done) throw new Error("Runtime exec spawn control is required");
+  const request = JSON.parse(first.value) as ExecRequest;
   assertProtocol(request.protocolVersion);
   if (!/^[a-f0-9]{32}$/.test(request.execId)) throw new Error("Invalid exec id");
   const current = await inspect(workspaceId);
@@ -296,11 +313,13 @@ async function execute(workspaceId: string): Promise<void> {
     ])
   ).trim();
   assertContainedPath(current.state.root, cwd);
-  const encoded = Buffer.from(
-    JSON.stringify({ argv: request.argv, cwd, env: request.env }),
-  ).toString("base64url");
+  const encoded = Buffer.from(JSON.stringify({ ...request, cwd })).toString("base64url");
   const execId = request.execId;
   const container = resourceNames(workspaceId).container;
+  if (request.stdio.kind === "pty") {
+    await executeDockerPty({ workspaceId, request, controls: iterator, encoded, container });
+    return;
+  }
   const child = spawn(
     "docker",
     [
@@ -348,6 +367,217 @@ async function execute(workspaceId: string): Promise<void> {
     return;
   }
   process.exitCode = exit.code ?? 1;
+}
+
+async function executeDockerPty(input: {
+  workspaceId: string;
+  request: ExecRequest;
+  controls: AsyncIterator<string>;
+  encoded: string;
+  container: string;
+}): Promise<void> {
+  if (input.request.stdio.kind !== "pty") throw new Error("Docker PTY execution requires PTY mode");
+  const events = new Socket({ fd: 4, readable: false, writable: true });
+  const created = await dockerApiJson<{ Id: string }>(
+    "POST",
+    `/containers/${encodeURIComponent(input.container)}/exec`,
+    {
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: true,
+      Env: [`PASEO_RUNTIME_EXEC=${input.encoded}`, `PASEO_RUNTIME_EXEC_ID=${input.request.execId}`],
+      Cmd: ["node", "/opt/paseo-workspace-runtime/workload.mjs"],
+    },
+  );
+  const stream = await startDockerExec(created.Id);
+  await resizeDockerExec(created.Id, input.request.stdio.cols, input.request.stdio.rows);
+  process.stdin.pipe(stream);
+  stream.on("data", (data: Buffer) => process.stdout.write(data));
+  stream.resume();
+  let requestedSignal: NodeJS.Signals | null = null;
+  let executionFinished = false;
+  let announceControlFailure!: (error: Error) => void;
+  const controlFailureStarted = new Promise<Error>((resolve) => {
+    announceControlFailure = resolve;
+  });
+  const controlCleanup = handlePtyControls(
+    input.workspaceId,
+    input.request.execId,
+    created.Id,
+    input.controls,
+    (signal) => {
+      requestedSignal = signal;
+    },
+    (id) => {
+      writePtyEvent(events, { type: "resized", protocolVersion: 1, id });
+    },
+  ).then(
+    () => new Promise<never>(() => {}),
+    async (error) => {
+      if (executionFinished) return new Promise<never>(() => {});
+      const failure = error instanceof Error ? error : new Error(String(error));
+      announceControlFailure(failure);
+      let cleanupError: Error | null = null;
+      try {
+        await withTimeout(
+          signalExec(input.workspaceId, input.request.execId, "SIGKILL"),
+          PTY_CLEANUP_TIMEOUT_MS,
+          "Docker PTY signal helper timed out",
+        );
+      } catch (cleanupFailure) {
+        cleanupError =
+          cleanupFailure instanceof Error ? cleanupFailure : new Error(String(cleanupFailure));
+      }
+      stream.destroy();
+      return { failure, cleanupError };
+    },
+  );
+  const streamEnded = new Promise<void>((resolve, reject) => {
+    stream.once("end", resolve);
+    stream.once("error", reject);
+  });
+  const firstOutcome = await Promise.race([
+    streamEnded.then(() => "stream" as const),
+    controlFailureStarted.then(() => "control" as const),
+  ]);
+  const outcome =
+    firstOutcome === "control" ? await controlCleanup : { failure: null, cleanupError: null };
+  executionFinished = true;
+  process.stdin.unpipe(stream);
+  writePtyEvent(events, { type: "eof", protocolVersion: 1 });
+  if (outcome.failure) {
+    const cleanupDetail = outcome.cleanupError
+      ? `; cleanup failed: ${outcome.cleanupError.message}`
+      : "";
+    writePtyEvent(events, {
+      type: "error",
+      protocolVersion: 1,
+      message: `${outcome.failure.message}${cleanupDetail}`,
+    });
+    events.end();
+    return;
+  }
+  const inspection = await dockerApiJson<{ ExitCode: number }>(
+    "GET",
+    `/exec/${encodeURIComponent(created.Id)}/json`,
+  );
+  writePtyEvent(events, {
+    type: "exit",
+    protocolVersion: 1,
+    code: requestedSignal ? null : inspection.ExitCode,
+    signal: requestedSignal,
+  });
+  events.end();
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function handlePtyControls(
+  workspaceId: string,
+  execId: string,
+  dockerExecId: string,
+  controls: AsyncIterator<string>,
+  onSignal: (signal: NodeJS.Signals) => void,
+  onResize: (id: number) => void,
+): Promise<void> {
+  while (true) {
+    const next = await controls.next();
+    if (next.done) return;
+    const control = JSON.parse(next.value) as PtyControl;
+    assertProtocol(control.protocolVersion);
+    if (control.type === "resize") {
+      await resizeDockerExec(dockerExecId, control.cols, control.rows);
+      onResize(control.id);
+    } else if (control.type === "signal") {
+      const signal = requireSignal(control.signal);
+      onSignal(signal);
+      await signalExec(workspaceId, execId, signal);
+    } else {
+      throw new Error(`Unexpected PTY control: ${control.type}`);
+    }
+  }
+}
+
+async function resizeDockerExec(execId: string, cols: number, rows: number): Promise<void> {
+  if (!Number.isInteger(cols) || cols < 1 || !Number.isInteger(rows) || rows < 1) {
+    throw new Error("Invalid PTY size");
+  }
+  await dockerApiJson("POST", `/exec/${encodeURIComponent(execId)}/resize?h=${rows}&w=${cols}`);
+}
+
+function writePtyEvent(stream: Socket, event: unknown): void {
+  stream.write(`${JSON.stringify(event)}\n`);
+}
+
+async function dockerApiJson<T = Record<string, never>>(
+  method: "GET" | "POST",
+  apiPath: string,
+  body?: unknown,
+): Promise<T> {
+  const payload = body === undefined ? "" : JSON.stringify(body);
+  return new Promise<T>((resolve, reject) => {
+    const request = httpRequest(
+      {
+        socketPath: "/var/run/docker.sock",
+        method,
+        path: apiPath,
+        headers: payload
+          ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) }
+          : undefined,
+      },
+      (response) => {
+        void readStream(response).then((output) => {
+          if ((response.statusCode ?? 500) >= 300) {
+            return reject(new Error(`Docker API ${method} ${apiPath} failed: ${output.trim()}`));
+          }
+          return resolve((output ? JSON.parse(output) : {}) as T);
+        }, reject);
+      },
+    );
+    request.once("error", reject);
+    request.end(payload);
+  });
+}
+
+async function startDockerExec(execId: string): Promise<Duplex> {
+  const payload = JSON.stringify({ Detach: false, Tty: true });
+  return new Promise<Duplex>((resolve, reject) => {
+    const request = httpRequest({
+      socketPath: "/var/run/docker.sock",
+      method: "POST",
+      path: `/exec/${encodeURIComponent(execId)}/start`,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+        Connection: "Upgrade",
+        Upgrade: "tcp",
+      },
+    });
+    request.once("upgrade", (_response, socket, head) => {
+      if (head.length > 0) socket.unshift(head);
+      resolve(socket);
+    });
+    request.once("response", (response) => {
+      void readStream(response).then((output) => {
+        return reject(new Error(`Docker exec attach failed: ${output.trim()}`));
+      }, reject);
+    });
+    request.once("error", reject);
+    request.end(payload);
+  });
 }
 
 async function signalExec(
@@ -453,15 +683,6 @@ async function docker(args: string[], allowFailure = false): Promise<string> {
 
 async function readStdin(): Promise<string> {
   return readStream(process.stdin);
-}
-
-async function readOneShotEnvelope(): Promise<string> {
-  const stream = new Socket({ fd: 3, readable: true, writable: false });
-  try {
-    return await readStream(stream);
-  } finally {
-    stream.destroy();
-  }
 }
 
 async function readStream(stream: NodeJS.ReadableStream): Promise<string> {

@@ -564,6 +564,32 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("launches full-access turns with Codex's no-approval unrestricted policy", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project", modeId: "full-access" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      await session.startTurn("run an ordinary command");
+
+      await expect(appServer.waitForThreadStart()).resolves.toMatchObject({
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+      });
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" },
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preapproves only granted tools on the injected Codex MCP server", async () => {
     const session = createSession({
       modeId: undefined,
@@ -1022,6 +1048,80 @@ describe("Codex app-server provider", () => {
       resolution: { behavior: "deny", interrupt: true },
     });
     await session.close();
+  });
+
+  test("allows permission-only MCP elicitations in full-access mode", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project", modeId: "full-access" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+
+    await session.connect();
+    session.subscribe((event) => events.push(event));
+
+    try {
+      appServer.requestMcpElicitation({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "github",
+        message: "Allow Codex to use the GitHub connector?",
+        requestedSchema: {
+          type: "object",
+          properties: {},
+        },
+      });
+
+      await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+        action: "accept",
+        content: {},
+        _meta: null,
+      });
+      expect(events).not.toContainEqual(expect.objectContaining({ type: "permission_requested" }));
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not fabricate data for a data-bearing full-access MCP elicitation", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project", modeId: "full-access" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+
+    await session.connect();
+    session.subscribe((event) => events.push(event));
+
+    try {
+      appServer.requestMcpElicitation({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "github",
+        message: "Enter the repository name to use.",
+        requestedSchema: {
+          type: "object",
+          properties: {
+            repository: { type: "string" },
+          },
+        },
+      });
+
+      await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+        action: "decline",
+        content: null,
+        _meta: null,
+      });
+      expect(events).not.toContainEqual(expect.objectContaining({ type: "permission_requested" }));
+    } finally {
+      await session.close();
+    }
   });
 
   test("initializes Codex app-server without making Paseo the request originator", async () => {

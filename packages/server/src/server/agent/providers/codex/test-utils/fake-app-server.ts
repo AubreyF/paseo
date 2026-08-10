@@ -48,6 +48,7 @@ export interface FakeCodexAppServer {
   readonly child: CodexAppServerChildProcess;
   readonly recordedRollbacks: JsonObject[];
   assertNoErrors(): void;
+  waitForThreadStart(): Promise<JsonObject>;
   waitForTurnStart(): Promise<JsonObject>;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
@@ -296,6 +297,13 @@ export function createFakeCodexAppServer(
       if (errors.length > 0) {
         throw errors[0];
       }
+    },
+    async waitForThreadStart() {
+      const message = await waitForMessage(
+        (candidate) => candidate.method === "thread/start",
+        "thread start request",
+      );
+      return toJsonObject(message.params);
     },
     async waitForTurnStart() {
       const message = await waitForMessage(

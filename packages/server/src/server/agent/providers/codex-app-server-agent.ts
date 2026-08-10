@@ -830,6 +830,22 @@ function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
 
+function isPermissionOnlyMcpElicitationSchema(schema: unknown): boolean {
+  const schemaRecord = toObjectRecord(schema);
+  const properties = toObjectRecord(schemaRecord?.properties);
+  return properties !== undefined && Object.keys(properties).length === 0;
+}
+
+function isCodexFullAccessMode(modeId: string, providerOptions: CodexProviderOptions): boolean {
+  return (
+    modeId === "full-access" &&
+    (providerOptions.approval_policy === undefined ||
+      providerOptions.approval_policy === "never") &&
+    (providerOptions.sandbox_mode === undefined ||
+      providerOptions.sandbox_mode === "danger-full-access")
+  );
+}
+
 // Codex app-server API response types
 interface CodexReasoningEffortEntry {
   reasoningEffort?: string;
@@ -6413,6 +6429,16 @@ export class CodexAppServerAgentSession implements AgentSession {
       .parse(params);
     if (parsed.mode === "url") {
       return Promise.resolve({ action: "decline", content: null, _meta: null });
+    }
+    if (isCodexFullAccessMode(this.currentMode, this.providerOptions)) {
+      // Codex's never-ask policy accepts only empty MCP forms and declines
+      // forms that need data. Keep that provider contract when an app-server
+      // request still reaches Paseo; never fabricate form or auth values.
+      return Promise.resolve(
+        isPermissionOnlyMcpElicitationSchema(parsed.requestedSchema)
+          ? { action: "accept", content: {}, _meta: null }
+          : { action: "decline", content: null, _meta: null },
+      );
     }
     const requiredFields = toObjectRecord(parsed.requestedSchema)?.required;
     if (Array.isArray(requiredFields) && requiredFields.length > 0) {

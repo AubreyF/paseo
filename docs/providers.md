@@ -37,6 +37,11 @@ Each provider definition owns its option schema and exact MCP preapproval mappin
 must fail closed for Hub unattended execution until it can approve one exact injected MCP server
 and tool identity without approving native tools.
 
+Codex **Full Access** sends `approvalPolicy: "never"` and `danger-full-access` to the app server.
+If a permission-only MCP form still reaches the provider, Paseo accepts it when its schema has no
+properties. Forms with fields and URL/auth flows are declined because Paseo cannot supply user data
+or credentials. Restricted Codex modes keep their existing approval behavior.
+
 ## Two Integration Patterns
 
 ### ACP (Agent Client Protocol) -- recommended

@@ -1,0 +1,17 @@
+{
+  "name": "@getpaseo/docker-workspace-runtime",
+  "version": "0.3.1",
+  "private": true,
+  "bin": {
+    "paseo-docker-workspace-runtime": "./dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsgo -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "typescript": "^5.9.3"
+  }
+}

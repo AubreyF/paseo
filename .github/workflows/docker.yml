@@ -16,6 +16,7 @@ on:
       - "packages/app/**"
       - "packages/cli/**"
       - "packages/client/**"
+      - "packages/docker-workspace-runtime/**"
       - "packages/expo-two-way-audio/**"
       - "packages/highlight/**"
       - "packages/protocol/**"
@@ -154,6 +155,29 @@ jobs:
           provenance: false
           cache-from: type=gha,scope=paseo
           cache-to: type=gha,scope=paseo,mode=max
+
+  workspace-runtime-test:
+    needs: setup
+    if: needs.setup.outputs.publish != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Build server dependencies
+        run: npm run build:server-deps
+
+      - name: Test workspace runtime contract
+        run: npm run test:workspace-runtime:docker --workspace=@getpaseo/server
 
   publish:
     needs: setup

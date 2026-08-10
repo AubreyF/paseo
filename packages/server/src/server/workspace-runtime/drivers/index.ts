@@ -1,0 +1,80 @@
+import type { Readable, Writable } from "node:stream";
+
+export type WorkspaceRuntimeId = string;
+export type WorkspaceId = string;
+
+export type WorkspaceProjectSource =
+  | { kind: "host-directory"; path: string }
+  | { kind: "git"; url: string; revision: string; subdirectory?: string };
+
+export type WorkspacePlacementIntent =
+  | { kind: "existing"; relativeCwd?: string }
+  | {
+      kind: "branch";
+      branchName: string;
+      baseRef: string;
+      relativeCwd?: string;
+      worktreeSlug?: string;
+    }
+  | { kind: "checkout"; ref: string; relativeCwd?: string; worktreeSlug?: string };
+
+export interface WorkspaceDriverCreateInput {
+  workspaceId: WorkspaceId;
+  project: { projectId: string; source: WorkspaceProjectSource };
+  placement: WorkspacePlacementIntent;
+}
+
+export interface WorkspaceDriverState {
+  workspaceId: WorkspaceId;
+  root: string;
+  revision: string;
+  executionDomainId: string;
+  lifecycle: "ready" | "paused";
+}
+
+export type WorkspaceDriverInspection =
+  | { status: "missing" }
+  | { status: "paused"; state: WorkspaceDriverState }
+  | { status: "ready"; state: WorkspaceDriverState }
+  | { status: "error"; message: string };
+
+export interface WorkspaceDriverSpawnInput {
+  workspaceId: WorkspaceId;
+  cwd?: string;
+  argv: readonly [string, ...string[]];
+  env: Readonly<Record<string, string>>;
+  purpose:
+    | { kind: "agent"; agentId: string; provider: string }
+    | { kind: "terminal"; terminalId: string }
+    | { kind: "git" }
+    | { kind: "provider-probe"; provider: string }
+    | { kind: "workspace-helper" }
+    | { kind: "workspace-script"; script: string }
+    | { kind: "setup" }
+    | { kind: "archive" };
+  stdio: { kind: "pipes" };
+}
+
+export interface WorkspaceProcessExit {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+export interface WorkspacePipeProcess {
+  kind: "pipes";
+  stdin: Writable;
+  stdout: Readable;
+  stderr: Readable;
+  exited: Promise<WorkspaceProcessExit>;
+  kill(signal?: NodeJS.Signals): void;
+}
+
+export interface WorkspaceRuntimeDriver {
+  readonly id: WorkspaceRuntimeId;
+  create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverState>;
+  inspect(workspaceId: WorkspaceId): Promise<WorkspaceDriverInspection>;
+  spawn(input: WorkspaceDriverSpawnInput): Promise<WorkspacePipeProcess>;
+  pause(workspaceId: WorkspaceId): Promise<void>;
+  resume(workspaceId: WorkspaceId): Promise<WorkspaceDriverState>;
+  destroy(workspaceId: WorkspaceId): Promise<void>;
+}

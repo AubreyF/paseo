@@ -82,6 +82,20 @@ const WorktreesConfigSchema = z
   })
   .strict();
 
+const WorkspaceRuntimesConfigSchema = z.record(
+  z.string().min(1),
+  z
+    .object({
+      type: z.literal("command"),
+      command: z
+        .array(z.string().min(1))
+        .min(1)
+        .transform((command) => command as [string, ...string[]]),
+      options: z.record(z.string(), z.unknown()).optional(),
+    })
+    .strict(),
+);
+
 const BcryptHashSchema = z.string().regex(/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/, {
   message: "Expected a bcrypt hash",
 });
@@ -304,6 +318,7 @@ export const PersistedConfigSchema = z
 
     providers: ProvidersSchema.optional(),
     worktrees: WorktreesConfigSchema.optional(),
+    workspaceRuntimes: WorkspaceRuntimesConfigSchema.optional(),
     agents: z
       .object({
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),

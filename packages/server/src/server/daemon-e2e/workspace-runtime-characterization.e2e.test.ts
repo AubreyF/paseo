@@ -240,6 +240,12 @@ describe("current workspace runtime journeys", () => {
   test("local workspace uses the public daemon/client behavior", async () => {
     const workspace = await createCharacterizedWorkspace("local");
     try {
+      const records = JSON.parse(
+        readFileSync(path.join(daemon.paseoHome, "projects", "workspaces.json"), "utf8"),
+      ) as Array<{ workspaceId: string; runtime?: { runtimeId: string } }>;
+      expect(records.find((record) => record.workspaceId === workspace.id)?.runtime).toEqual({
+        runtimeId: "local",
+      });
       await expectFileEditAndWatch(workspace);
       await expectGitObservation(workspace);
       await expectTerminalCommand(workspace);
@@ -256,6 +262,12 @@ describe("current workspace runtime journeys", () => {
   test("owned worktree runs setup and uses the same public daemon/client behavior", async () => {
     const workspace = await createCharacterizedWorkspace("worktree");
     try {
+      const records = JSON.parse(
+        readFileSync(path.join(daemon.paseoHome, "projects", "workspaces.json"), "utf8"),
+      ) as Array<{ workspaceId: string; runtime?: { runtimeId: string } }>;
+      expect(
+        records.find((record) => record.workspaceId === workspace.id)?.runtime,
+      ).toBeUndefined();
       await expect
         .poll(() => client.fetchWorkspaceSetupStatus(workspace.id), { timeout: 30_000 })
         .toMatchObject({ snapshot: { status: "completed", error: null } });

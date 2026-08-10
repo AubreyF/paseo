@@ -142,8 +142,10 @@ import { WorkspaceReconciliationService } from "./workspace-reconciliation-servi
 import {
   FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
+  resolveSelectedWorkspaceRuntimeId,
   type WorkspaceArchiveContext,
 } from "./workspace-registry.js";
+import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
@@ -384,6 +386,16 @@ export interface PaseoDaemonConfig {
   daemonVersion?: string;
   desktopManaged?: boolean;
   worktreesRoot?: string;
+  workspaceRuntimes?: Readonly<
+    Record<
+      string,
+      {
+        type: "command";
+        command: readonly [string, ...string[]];
+        options?: Readonly<Record<string, unknown>>;
+      }
+    >
+  >;
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
@@ -798,6 +810,24 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
+  const workspaceRuntime = createWorkspaceRuntimeService({
+    paseoHome: config.paseoHome,
+    worktreesRoot: config.worktreesRoot,
+    externalRuntimes: config.workspaceRuntimes,
+    resolveRuntimeId: async (workspaceId) => {
+      const workspace = await workspaceRegistry?.get(workspaceId);
+      return workspace ? resolveSelectedWorkspaceRuntimeId(workspace) : null;
+    },
+    persistRuntimeId: async (workspaceId, runtimeId) => {
+      const existing = await workspaceRegistry?.get(workspaceId);
+      if (existing?.runtime?.runtimeId === runtimeId) return;
+      const updated = await workspaceRegistry?.update(workspaceId, (workspace) => ({
+        ...workspace,
+        runtime: { runtimeId },
+      }));
+      if (!updated) throw new Error(`Workspace not found: ${workspaceId}`);
+    },
+  });
   const chatService = new FileBackedChatService({
     paseoHome: config.paseoHome,
     logger,
@@ -1570,6 +1600,7 @@ export async function createPaseoDaemon(
               browserToolsBroker,
               hubRelationships,
               workspaceSetupRuntime,
+              workspaceRuntime,
             );
             relayRuntime = createRelayRuntime({
               config: {

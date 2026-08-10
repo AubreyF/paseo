@@ -142,6 +142,7 @@ import {
   type WorkspaceMutation,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
+import type { WorkspaceRuntimeService } from "./workspace-runtime/index.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
@@ -449,6 +450,7 @@ export interface SessionOptions {
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
+  workspaceRuntime?: WorkspaceRuntimeService;
   filesystem?: SessionFileSystem;
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
@@ -623,6 +625,7 @@ export class Session {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly workspaceRuntime: WorkspaceRuntimeService | undefined;
   private readonly filesystem: SessionFileSystem;
   private readonly github: ForgeService;
   private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
@@ -703,6 +706,7 @@ export class Session {
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      workspaceRuntime,
       filesystem,
       chatService,
       scheduleService,
@@ -770,6 +774,7 @@ export class Session {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
+    this.workspaceRuntime = workspaceRuntime;
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -5375,8 +5380,27 @@ export class Session {
       cwd,
       explicitTitle ?? promptTitle,
       request.source.projectId,
-      { expectsInitialAgent: Boolean(request.firstAgentContext) },
+      { expectsInitialAgent: Boolean(request.firstAgentContext), runtimeId: "local" },
     );
+    const workspaceRuntime = this.workspaceRuntime;
+    if (!workspaceRuntime) {
+      await this.workspaceRegistry.remove(workspace.workspaceId);
+      throw new Error("Workspace runtime service was not composed");
+    }
+    try {
+      await workspaceRuntime.create({
+        workspaceId: workspace.workspaceId,
+        runtimeId: "local",
+        project: {
+          id: workspace.projectId,
+          source: { kind: "host-directory", path: cwd },
+        },
+        placement: { kind: "existing" },
+      });
+    } catch (error) {
+      await this.workspaceRegistry.remove(workspace.workspaceId);
+      throw error;
+    }
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     const descriptor = await this.describeWorkspaceRecord(workspace);
     this.emit({

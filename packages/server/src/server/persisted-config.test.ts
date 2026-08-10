@@ -137,6 +137,33 @@ describe("PersistedConfigSchema worktrees config", () => {
   });
 });
 
+describe("PersistedConfigSchema workspace runtime config", () => {
+  test("accepts trusted command registrations and rejects an empty executable", () => {
+    expect(
+      PersistedConfigSchema.parse({
+        workspaceRuntimes: {
+          fixture: {
+            type: "command",
+            command: ["/trusted/runtime", "--fixture"],
+            options: { image: "fixture:test" },
+          },
+        },
+      }).workspaceRuntimes,
+    ).toEqual({
+      fixture: {
+        type: "command",
+        command: ["/trusted/runtime", "--fixture"],
+        options: { image: "fixture:test" },
+      },
+    });
+    expect(() =>
+      PersistedConfigSchema.parse({
+        workspaceRuntimes: { invalid: { type: "command", command: [] } },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("PersistedConfigSchema provider credentials", () => {
   test("accepts separate OpenAI STT and TTS credentials", () => {
     const parsed = PersistedConfigSchema.parse({

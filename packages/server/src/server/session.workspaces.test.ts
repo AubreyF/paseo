@@ -18,6 +18,7 @@ import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
+import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
 import type { AgentUpdatesService } from "./session/agent-updates/agent-updates-service.js";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -80,6 +81,13 @@ const REPO_CWD = path.resolve("/tmp/repo");
 const UNREGISTERED_CWD = path.resolve("/tmp/unregistered");
 
 const terminalManagers: TerminalManager[] = [];
+const runtimeDirectories: string[] = [];
+
+function createRuntimeDirectory(): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "paseo-session-runtime-"));
+  runtimeDirectories.push(directory);
+  return directory;
+}
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
@@ -101,6 +109,9 @@ afterEach(async () => {
     }
   }
   await flushTerminalContributionWork();
+  for (const directory of runtimeDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 interface SessionTestAccess {
@@ -691,6 +702,23 @@ function createSessionForWorkspaceTests(
         remove: async () => {},
       },
       workspaceRegistry,
+      workspaceRuntime: createWorkspaceRuntimeService({
+        paseoHome: options.paseoHome ?? "/tmp/paseo-test",
+        worktreesRoot: options.worktreesRoot,
+        resolveRuntimeId: async (workspaceId) => {
+          const workspace = await workspaceRegistry.get(workspaceId);
+          return workspace?.runtime?.runtimeId ?? null;
+        },
+        persistRuntimeId: async (workspaceId, runtimeId) => {
+          const workspace = await workspaceRegistry.get(workspaceId);
+          if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+          if (workspace.runtime?.runtimeId === runtimeId) return;
+          await workspaceRegistry.upsert({
+            ...workspace,
+            runtime: { runtimeId },
+          });
+        },
+      }),
       filesystem: { isDirectory: async () => true },
       chatService: asChatService(),
       scheduleService: asScheduleService(),
@@ -9229,6 +9257,7 @@ test("checkout.rename_branch.request renames the branch without a denormalized b
 });
 
 test("workspace.create.response persists the first prompt as the initial title", async () => {
+  const runtimeCwd = createRuntimeDirectory();
   const emitted: SessionOutboundMessage[] = [];
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
   const session = createSessionForWorkspaceTests({
@@ -9250,7 +9279,7 @@ test("workspace.create.response persists the first prompt as the initial title",
   await session.handleMessage({
     type: "workspace.create.request",
     requestId: "req-create-first-prompt",
-    source: { kind: "directory", path: REPO_CWD },
+    source: { kind: "directory", path: runtimeCwd },
     firstAgentContext: {
       prompt: "Add retries to the payments flow\nwith exponential backoff",
     },
@@ -9269,6 +9298,7 @@ test("workspace.create.response persists the first prompt as the initial title",
 });
 
 test("workspace create emits through a matching workspace subscription", async () => {
+  const runtimeCwd = createRuntimeDirectory();
   const emitted: SessionOutboundMessage[] = [];
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
   let mutationListener: ((mutation: WorkspaceMutation) => void | Promise<void>) | null = null;
@@ -9310,7 +9340,7 @@ test("workspace create emits through a matching workspace subscription", async (
   await session.handleMessage({
     type: "workspace.create.request",
     requestId: "req-create-match",
-    source: { kind: "directory", path: REPO_CWD },
+    source: { kind: "directory", path: runtimeCwd },
     firstAgentContext: { prompt: "Implement the requested change" },
   });
 
@@ -9322,6 +9352,7 @@ test("workspace create emits through a matching workspace subscription", async (
 });
 
 test("workspace create stays out of a non-matching workspace subscription", async () => {
+  const runtimeCwd = createRuntimeDirectory();
   const emitted: SessionOutboundMessage[] = [];
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
   const session = createSessionForWorkspaceTests({
@@ -9350,20 +9381,21 @@ test("workspace create stays out of a non-matching workspace subscription", asyn
   await session.handleMessage({
     type: "workspace.create.request",
     requestId: "req-create-filtered",
-    source: { kind: "directory", path: REPO_CWD },
+    source: { kind: "directory", path: runtimeCwd },
   });
 
   expect(filterByType(emitted, "workspace_update")).toEqual([]);
 });
 
 test("workspace.create.request attaches a directory workspace to its explicit active project", async () => {
+  const runtimeCwd = createRuntimeDirectory();
   const emitted: SessionOutboundMessage[] = [];
   const projects = new Map([
     [
       "prj_explicit",
       createPersistedProjectRecord({
         projectId: "prj_explicit",
-        rootPath: path.join(REPO_CWD, "unrelated"),
+        rootPath: path.join(runtimeCwd, "unrelated"),
         kind: "non_git",
         displayName: "unrelated",
         createdAt: "2026-03-01T00:00:00.000Z",
@@ -9384,7 +9416,7 @@ test("workspace.create.request attaches a directory workspace to its explicit ac
   await session.handleMessage({
     type: "workspace.create.request",
     requestId: "req-explicit-project",
-    source: { kind: "directory", path: REPO_CWD, projectId: "prj_explicit" },
+    source: { kind: "directory", path: runtimeCwd, projectId: "prj_explicit" },
   });
 
   const response = findByType(emitted, "workspace.create.response");
@@ -9396,7 +9428,7 @@ test("workspace.create.request attaches a directory workspace to its explicit ac
   const workspaceId = response?.payload.workspace?.id;
   expect(workspaceId).toEqual(expect.any(String));
   expect(workspaces.get(workspaceId as string)).toMatchObject({
-    cwd: REPO_CWD,
+    cwd: runtimeCwd,
     projectId: "prj_explicit",
   });
 });

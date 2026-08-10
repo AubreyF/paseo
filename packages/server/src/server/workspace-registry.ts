@@ -77,6 +77,7 @@ const PersistedWorkspaceRecordSchema = z.object({
     .transform((value) => value ?? null),
   isPaseoOwnedWorktree: z.boolean().default(false),
   mainRepoRoot: z.string().nullable().default(null),
+  runtime: z.object({ runtimeId: z.string().min(1) }).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -96,6 +97,12 @@ const PersistedWorkspaceRecordSchema = z.object({
 
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;
 export type PersistedWorkspaceRecord = z.infer<typeof PersistedWorkspaceRecordSchema>;
+
+export function resolveSelectedWorkspaceRuntimeId(
+  workspace: PersistedWorkspaceRecord,
+): string | null {
+  return workspace.runtime?.runtimeId ?? null;
+}
 
 export interface WorkspaceMutation {
   kind: "upsert" | "archive" | "remove";
@@ -551,6 +558,7 @@ export function createPersistedWorkspaceRecord(input: {
   baseBranch?: string | null;
   isPaseoOwnedWorktree?: boolean;
   mainRepoRoot?: string | null;
+  runtime?: { runtimeId: string };
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -565,6 +573,7 @@ export function createPersistedWorkspaceRecord(input: {
     baseBranch: input.baseBranch ?? null,
     isPaseoOwnedWorktree: input.isPaseoOwnedWorktree ?? false,
     mainRepoRoot: input.mainRepoRoot ?? null,
+    ...(input.runtime ? { runtime: input.runtime } : {}),
     archivedAt: input.archivedAt ?? null,
     autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
     pinnedAt: input.pinnedAt ?? null,

@@ -46,6 +46,7 @@ import type {
 import type { GitCommandRuntimeMetricsSnapshot } from "../utils/git-command-runtime-metrics.js";
 import { snapshotGitCommandRuntimeMetrics } from "../utils/run-git-command.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+import type { WorkspaceRuntimeService } from "./workspace-runtime/index.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { createPushNotificationSender, type PushNotificationSender } from "./push/notifications.js";
@@ -537,6 +538,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
+  private readonly workspaceRuntime: WorkspaceRuntimeService | undefined;
   private readonly chatService: FileBackedChatService;
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
@@ -634,6 +636,7 @@ export class VoiceAssistantWebSocketServer {
     browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
     workspaceSetupRuntime: WorkspaceSetupRuntime = new WorkspaceSetupRuntime(),
+    workspaceRuntime?: WorkspaceRuntimeService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -651,6 +654,7 @@ export class VoiceAssistantWebSocketServer {
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
+    this.workspaceRuntime = workspaceRuntime;
     const requiredServices = requireWebSocketServices({
       chatService,
       loopService,
@@ -1332,6 +1336,9 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private createSocketSession(options: SocketSessionOptions): Session {
+    if (!this.workspaceRuntime) {
+      throw new Error("Workspace runtime service was not composed");
+    }
     return new Session({
       clientId: options.clientId,
       appVersion: options.appVersion,
@@ -1359,6 +1366,7 @@ export class VoiceAssistantWebSocketServer {
       agentStorage: this.agentStorage,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
+      workspaceRuntime: this.workspaceRuntime,
       chatService: this.chatService,
       loopService: this.loopService,
       scheduleService: this.scheduleService,

@@ -12,6 +12,7 @@ import {
   FileBackedWorkspaceRegistry,
   resolveWorkspaceDisplayName,
   resolveWorkspaceName,
+  resolveSelectedWorkspaceRuntimeId,
 } from "./workspace-registry.js";
 
 describe("resolveWorkspaceName", () => {
@@ -41,6 +42,27 @@ describe("resolveWorkspaceName", () => {
     expect(resolveWorkspaceDisplayName(record)).toBe("Renamed");
     expect(resolveWorkspaceDisplayName({ ...record, title: null })).toBe("main");
   });
+});
+
+describe("workspace runtime selection compatibility", () => {
+  test.each(["local_checkout", "directory", "worktree"] as const)(
+    "keeps an existing %s record on its legacy path until explicit cutover",
+    (kind) => {
+      const existing = createPersistedWorkspaceRecord({
+        workspaceId: `legacy-${kind}`,
+        projectId: "legacy-project",
+        cwd: "/tmp/legacy",
+        kind,
+        displayName: "legacy",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      });
+      expect(resolveSelectedWorkspaceRuntimeId(existing)).toBeNull();
+      expect(
+        resolveSelectedWorkspaceRuntimeId({ ...existing, runtime: { runtimeId: "selected" } }),
+      ).toBe("selected");
+    },
+  );
 });
 
 describe("workspace registries", () => {

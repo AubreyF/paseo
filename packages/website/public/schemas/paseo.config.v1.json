@@ -179,6 +179,32 @@
           },
           "additionalProperties": false
         },
+        "workspaceRuntimes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "command"
+              },
+              "command": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "options": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": ["type", "command"],
+            "additionalProperties": false
+          }
+        },
         "providers": {
           "type": "object",
           "properties": {

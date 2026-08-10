@@ -769,6 +769,8 @@ export class Session {
       downloadTokenStore,
       paseoHome,
       logger: this.sessionLogger,
+      workspaceRuntime,
+      workspaceRegistry,
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
@@ -990,6 +992,7 @@ export class Session {
       serviceProxy: this.serviceProxy,
       scriptRuntimeStore: this.scriptRuntimeStore,
       terminalManager: this.terminalManager,
+      workspaceRuntime: this.workspaceRuntime,
       workspaceRegistry: this.workspaceRegistry,
       projectRegistry: this.projectRegistry,
       workspaceGitService: this.workspaceGitService,
@@ -2197,8 +2200,7 @@ export class Session {
       case "fs.file.subscribe.request":
         return this.workspaceFilesSession.handleFileSubscribeRequest(msg);
       case "fs.file.unsubscribe.request":
-        this.workspaceFilesSession.handleFileUnsubscribeRequest(msg);
-        return undefined;
+        return this.workspaceFilesSession.handleFileUnsubscribeRequest(msg);
       case "fs.file.write.request":
         return this.workspaceFilesSession.handleFileWriteRequest(msg);
       case "project_icon_request":
@@ -4476,7 +4478,7 @@ export class Session {
       statusEnteredAt: null,
       activityAt: null,
       diffStat,
-      scripts: this.buildWorkspaceScriptPayloadSnapshot(workspace, resolvedProjectRecord),
+      scripts: await this.buildWorkspaceScriptPayloadSnapshot(workspace, resolvedProjectRecord),
       ...(resolvedProjectRecord
         ? {
             project: await this.buildProjectPlacementForWorkspace(workspace, resolvedProjectRecord),
@@ -5854,11 +5856,11 @@ export class Session {
 
   // Named accessor: the workspace descriptor builder and the git-watch test both read a workspace's
   // scripts snapshot through here; the workspace-scripts module owns the payload assembly.
-  private buildWorkspaceScriptPayloadSnapshot(
+  private async buildWorkspaceScriptPayloadSnapshot(
     workspace: PersistedWorkspaceRecord,
     project: PersistedProjectRecord | null,
-  ): WorkspaceDescriptorPayload["scripts"] {
-    return this.workspaceScripts.buildSnapshot(workspace, project);
+  ): Promise<WorkspaceDescriptorPayload["scripts"]> {
+    return await this.workspaceScripts.buildSnapshot(workspace, project);
   }
 
   private handleStartWorkspaceScriptRequest(request: StartWorkspaceScriptRequest): Promise<void> {
@@ -7002,7 +7004,7 @@ export class Session {
     this.checkoutSession.cleanup();
 
     this.workspaceGitObserver.dispose();
-    this.workspaceFilesSession.dispose();
+    await this.workspaceFilesSession.dispose();
   }
 }
 

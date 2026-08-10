@@ -1744,7 +1744,7 @@ test("listDirectory sends a list file explorer request and returns directory ent
   mock.triggerOpen();
   await connectPromise;
 
-  const responsePromise = client.listDirectory("/tmp/project", "src", "req-list");
+  const responsePromise = client.listDirectory("/tmp/project", "src", "req-list", "workspace-1");
 
   expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
     type: "session",
@@ -1753,6 +1753,7 @@ test("listDirectory sends a list file explorer request and returns directory ent
       cwd: "/tmp/project",
       path: "src",
       mode: "list",
+      workspaceId: "workspace-1",
       requestId: "req-list",
     },
   });

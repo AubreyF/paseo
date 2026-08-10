@@ -82,6 +82,8 @@ export type WorkspaceDriverProcess = WorkspacePipeProcess | WorkspacePtyProcess;
 
 export interface WorkspaceRuntimeDriver {
   readonly id: WorkspaceRuntimeId;
+  /** Runtime-local command for Paseo's compatible workspace helper. */
+  readonly workspaceHelperCommand: readonly [string, ...string[]];
   create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverState>;
   inspect(workspaceId: WorkspaceId): Promise<WorkspaceDriverInspection>;
   spawn(input: WorkspaceDriverSpawnInput): Promise<WorkspaceDriverProcess>;

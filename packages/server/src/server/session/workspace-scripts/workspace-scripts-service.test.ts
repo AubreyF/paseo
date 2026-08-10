@@ -21,6 +21,10 @@ import type {
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import { createWorkspaceScriptsService } from "./workspace-scripts-service.js";
 import { deriveProjectServiceSlug } from "../../workspace-git-metadata.js";
+import {
+  createWorkspaceRuntimeService,
+  type WorkspaceRuntimeService,
+} from "../../workspace-runtime/index.js";
 
 // The production module reads only WorkspaceGitService.{peekSnapshot,getProjectSlug},
 // WorkspaceRegistry.get, and forwards the launcher + opaque managers to the injected
@@ -77,6 +81,7 @@ interface BuildOptions {
   project?: PersistedProjectRecord | null;
   spawnThrows?: string;
   gitService?: Pick<WorkspaceGitService, "peekSnapshot">;
+  workspaceRuntime?: WorkspaceRuntimeService;
 }
 
 function buildService(options: BuildOptions = {}) {
@@ -101,6 +106,7 @@ function buildService(options: BuildOptions = {}) {
     workspaceRegistry: fakeWorkspaceRegistry(workspace),
     projectRegistry: fakeProjectRegistry(options.project ?? null),
     workspaceGitService: options.gitService ?? fakeGitService(),
+    workspaceRuntime: options.workspaceRuntime,
     getDaemonTcpPort: () => 6767,
     getDaemonTcpHost: () => "127.0.0.1",
     serviceProxyPublicBaseUrl: null,
@@ -146,14 +152,20 @@ describe("buildSnapshot", () => {
   test("returns no scripts when the service proxy is unavailable", async () => {
     const { service } = buildService({ serviceProxy: null });
     expect(
-      service.buildSnapshot({ workspaceId: "ws-1", cwd: "/tmp/repo" } as PersistedWorkspaceRecord),
+      await service.buildSnapshot({
+        workspaceId: "ws-1",
+        cwd: "/tmp/repo",
+      } as PersistedWorkspaceRecord),
     ).toEqual([]);
   });
 
   test("returns no scripts when the runtime store is unavailable", async () => {
     const { service } = buildService({ scriptRuntimeStore: null });
     expect(
-      service.buildSnapshot({ workspaceId: "ws-1", cwd: "/tmp/repo" } as PersistedWorkspaceRecord),
+      await service.buildSnapshot({
+        workspaceId: "ws-1",
+        cwd: "/tmp/repo",
+      } as PersistedWorkspaceRecord),
     ).toEqual([]);
   });
 
@@ -162,8 +174,44 @@ describe("buildSnapshot", () => {
     tempDirs.push(dir);
     const { service } = buildService();
     expect(
-      service.buildSnapshot({ workspaceId: "ws-1", cwd: dir } as PersistedWorkspaceRecord),
+      await service.buildSnapshot({ workspaceId: "ws-1", cwd: dir } as PersistedWorkspaceRecord),
     ).toEqual([]);
+  });
+
+  test("discovers paseo.json inside a selected workspace runtime", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "workspace-scripts-runtime-"));
+    const paseoHome = mkdtempSync(join(tmpdir(), "workspace-scripts-runtime-home-"));
+    tempDirs.push(dir, paseoHome);
+    writeFileSync(
+      join(dir, "paseo.json"),
+      JSON.stringify({ scripts: { app: { command: "npm run app" } } }),
+    );
+    const runtimeIds = new Map<string, string>();
+    const workspaceRuntime = createWorkspaceRuntimeService({
+      paseoHome,
+      resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
+      persistRuntimeId: async (workspaceId, runtimeId) => {
+        runtimeIds.set(workspaceId, runtimeId);
+      },
+    });
+    await workspaceRuntime.create({
+      workspaceId: "ws-runtime-config",
+      runtimeId: "local",
+      project: { id: "project", source: { kind: "host-directory", path: dir } },
+      placement: { kind: "existing" },
+    });
+    const workspace = {
+      workspaceId: "ws-runtime-config",
+      projectId: "project",
+      cwd: dir,
+      runtime: { runtimeId: "local" },
+    } as PersistedWorkspaceRecord;
+    const { service } = buildService({ workspace, workspaceRuntime });
+
+    await expect(service.buildSnapshot(workspace)).resolves.toEqual([
+      expect.objectContaining({ scriptName: "app", type: "script" }),
+    ]);
+    await workspaceRuntime.destroy(workspace.workspaceId);
   });
 
   test("projects service hostnames without a Git snapshot", async () => {
@@ -197,7 +245,7 @@ describe("buildSnapshot", () => {
       gitService: { peekSnapshot: () => undefined },
     });
 
-    expect(service.buildSnapshot(workspace, project)[0]?.hostname).toBe(
+    expect((await service.buildSnapshot(workspace, project))[0]?.hostname).toBe(
       serviceProxy.projectWorkspaceService({
         projectSlug: deriveProjectServiceSlug(project),
         branchName: workspace.branch,
@@ -416,7 +464,7 @@ describe("start", () => {
     const serviceProxy = createServiceProxySubsystem({ logger });
     const { service, spawnCalls } = buildService({ workspace, project, serviceProxy });
 
-    const snapshot = service.buildSnapshot(workspace, project);
+    const snapshot = await service.buildSnapshot(workspace, project);
     await service.start({ ...request, workspaceId: workspace.workspaceId });
 
     const started = spawnCalls[0]!;

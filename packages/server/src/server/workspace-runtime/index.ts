@@ -1,5 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 
+import type { WorkspaceFiles } from "../workspace-helper/index.js";
+
 import { createCommandRuntimeAdapter } from "./command/index.js";
 import { createLocalRuntime } from "./internal/local-runtime.js";
 import { createService } from "./internal/service.js";
@@ -80,6 +82,7 @@ export interface WorkspaceRuntimeService {
   create(input: CreateWorkspaceInput): Promise<{ workspaceId: string; runtimeId: string }>;
   run(input: WorkspaceProcessInput): Promise<WorkspaceProcess>;
   openTerminal(input: WorkspaceTerminalInput): Promise<WorkspaceTerminal>;
+  files(workspaceId: string): WorkspaceFiles;
   pause(workspaceId: string): Promise<void>;
   resume(workspaceId: string): Promise<void>;
   destroy(workspaceId: string): Promise<void>;
@@ -94,6 +97,7 @@ export interface ExternalWorkspaceRuntime {
   type: "command";
   command: readonly [string, ...string[]];
   options?: Readonly<Record<string, unknown>>;
+  helperCommand?: readonly [string, ...string[]];
 }
 
 export interface WorkspaceRuntimeOptions extends WorkspaceRuntimeRecordStore {

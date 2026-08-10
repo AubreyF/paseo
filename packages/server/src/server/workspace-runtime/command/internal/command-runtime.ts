@@ -23,6 +23,7 @@ const COMMAND_RUNTIME_CLEANUP_TIMEOUT_MS = 1_000;
 export interface CommandRuntimeConfig {
   command: readonly [string, ...string[]];
   options?: Readonly<Record<string, unknown>>;
+  helperCommand?: readonly [string, ...string[]];
 }
 
 export function createCommandRuntime(
@@ -57,6 +58,7 @@ export function createCommandRuntime(
 
   return {
     id: runtimeId,
+    workspaceHelperCommand: config.helperCommand ?? ["paseo-workspace-helper"],
     async create(input) {
       const response = await lifecycle("create", input.workspaceId, input);
       if (response.type !== "state") throw new Error(`Invalid create response from ${runtimeId}`);

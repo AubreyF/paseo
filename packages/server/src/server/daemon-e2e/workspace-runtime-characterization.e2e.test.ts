@@ -67,6 +67,7 @@ function createRepository(): string {
   });
   execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repo, stdio: "pipe" });
   writeFileSync(path.join(repo, "characterized.txt"), "before\n");
+  writeFileSync(path.join(repo, "binary.bin"), Buffer.alloc(700_000, 0xa5));
   writeFileSync(
     path.join(repo, "paseo.json"),
     JSON.stringify({
@@ -131,10 +132,15 @@ async function waitForTerminalOutput(terminalId: string, marker: string): Promis
 }
 
 async function expectFileEditAndWatch(workspace: CharacterizedWorkspace): Promise<void> {
-  const listing = await client.listDirectory(workspace.cwd, ".");
+  const listing = await client.listDirectory(workspace.cwd, ".", undefined, workspace.id);
   expect(listing.entries.map((entry) => entry.name)).toContain("characterized.txt");
 
-  const initialRead = await client.readFile(workspace.cwd, "characterized.txt");
+  const initialRead = await client.readFile(
+    workspace.cwd,
+    "characterized.txt",
+    undefined,
+    workspace.id,
+  );
   expect(new TextDecoder().decode(initialRead.bytes)).toBe("before\n");
 
   let resolveUpdate!: (version: FileVersion) => void;
@@ -142,7 +148,7 @@ async function expectFileEditAndWatch(workspace: CharacterizedWorkspace): Promis
     resolveUpdate = resolve;
   });
   const fileSubscription = await client.subscribeFile(
-    { cwd: workspace.cwd, path: "characterized.txt" },
+    { cwd: workspace.cwd, path: "characterized.txt", workspaceId: workspace.id },
     resolveUpdate,
   );
   expect(fileSubscription.initial).toMatchObject({ status: "ready", size: 7 });
@@ -156,13 +162,34 @@ async function expectFileEditAndWatch(workspace: CharacterizedWorkspace): Promis
     content: "after\n",
     expectedModifiedAt: fileSubscription.initial.modifiedAt,
     expectedRevision: fileSubscription.initial.revision,
+    workspaceId: workspace.id,
   });
   expect(write).toMatchObject({ status: "written", size: 6 });
   await expect(updated).resolves.toMatchObject({ status: "ready", size: 6 });
   fileSubscription.unsubscribe();
 
-  const writtenRead = await client.readFile(workspace.cwd, "characterized.txt");
+  const writtenRead = await client.readFile(
+    workspace.cwd,
+    "characterized.txt",
+    undefined,
+    workspace.id,
+  );
   expect(new TextDecoder().decode(writtenRead.bytes)).toBe("after\n");
+  const binaryRead = await client.readFile(workspace.cwd, "binary.bin", undefined, workspace.id);
+  expect(binaryRead.bytes).toEqual(new Uint8Array(Buffer.alloc(700_000, 0xa5)));
+
+  const download = await client.requestDownloadToken(
+    workspace.cwd,
+    "binary.bin",
+    undefined,
+    workspace.id,
+  );
+  expect(download.error).toBeNull();
+  const response = await fetch(
+    `http://127.0.0.1:${daemon.port}/api/files/download?token=${download.token}`,
+  );
+  expect(response.status).toBe(200);
+  expect(new Uint8Array(await response.arrayBuffer())).toEqual(binaryRead.bytes);
 }
 
 async function expectGitObservation(workspace: CharacterizedWorkspace): Promise<void> {
@@ -180,6 +207,15 @@ async function expectGitObservation(workspace: CharacterizedWorkspace): Promise<
 }
 
 async function expectTerminalCommand(workspace: CharacterizedWorkspace): Promise<void> {
+  let resolveFileUpdate!: (version: FileVersion) => void;
+  const fileUpdated = new Promise<FileVersion>((resolve) => {
+    resolveFileUpdate = resolve;
+  });
+  const fileSubscription = await client.subscribeFile(
+    { cwd: workspace.cwd, path: "terminal-edit.txt", workspaceId: workspace.id },
+    resolveFileUpdate,
+  );
+  expect(fileSubscription.initial).toMatchObject({ status: "missing" });
   const terminal = await client.createTerminal(
     workspace.cwd,
     `${workspace.kind} terminal`,
@@ -191,14 +227,18 @@ async function expectTerminalCommand(workspace: CharacterizedWorkspace): Promise
   const terminalId = terminal.terminal?.id;
   if (!terminalId) throw new Error(terminal.error ?? "Failed to create terminal");
   const marker = "runtime-terminal-ok";
-  const command = "printf '%s%s\\n' runtime-terminal- ok";
+  const command = "printf terminal-edit > terminal-edit.txt; printf '%s%s\\n' runtime-terminal- ok";
   expect(command).not.toContain(marker);
   try {
     const terminalOutput = waitForTerminalOutput(terminalId, marker);
     await client.subscribeTerminal(terminalId);
     client.sendTerminalInput(terminalId, { type: "input", data: `${command}\r` });
     await expect(terminalOutput).resolves.toContain(marker);
+    await expect(fileUpdated).resolves.toMatchObject({ status: "ready", size: 13 });
+    const edit = await client.readFile(workspace.cwd, "terminal-edit.txt", undefined, workspace.id);
+    expect(new TextDecoder().decode(edit.bytes)).toBe("terminal-edit");
   } finally {
+    fileSubscription.unsubscribe();
     await client.killTerminal(terminalId);
   }
 }

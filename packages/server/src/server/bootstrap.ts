@@ -1,5 +1,7 @@
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { constants, existsSync, unlinkSync } from "fs";
 import { open } from "fs/promises";
 import { randomUUID } from "node:crypto";
@@ -396,6 +398,7 @@ export interface PaseoDaemonConfig {
         type: "command";
         command: readonly [string, ...string[]];
         options?: Readonly<Record<string, unknown>>;
+        helperCommand?: readonly [string, ...string[]];
       }
     >
   >;
@@ -776,6 +779,27 @@ export async function createPaseoDaemon(
 
     let fileHandle: Awaited<ReturnType<typeof open>> | null = null;
     try {
+      if (entry.open) {
+        const opened = await entry.open();
+        res.setHeader("Content-Type", entry.mimeType);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${entry.fileName.replace(/["\r\n]/g, "_")}"`,
+        );
+        res.setHeader("Content-Length", opened.size.toString());
+        const stream = Readable.from(opened.chunks);
+        try {
+          await pipeline(stream, res);
+        } catch (err) {
+          logger.error({ err }, "Failed to stream runtime download");
+          if (!res.headersSent) res.status(500).json({ error: "Failed to read file" });
+          else res.destroy(err instanceof Error ? err : new Error(String(err)));
+        } finally {
+          await opened.chunks.cancel();
+        }
+        return;
+      }
+      if (!entry.absolutePath) throw new Error("Download source is unavailable");
       fileHandle = await open(entry.absolutePath, DOWNLOAD_OPEN_FLAGS);
       const fileStats = await fileHandle.stat();
       if (!fileStats.isFile()) {

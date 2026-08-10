@@ -40,6 +40,7 @@ describe("server config", () => {
             type: "command",
             command: ["/trusted/runtime", "--mode", "fixture"],
             options: { image: "fixture:test" },
+            helperCommand: ["/runtime/bin/workspace-helper"],
           },
         },
       }),
@@ -51,6 +52,7 @@ describe("server config", () => {
         type: "command",
         command: ["/trusted/runtime", "--mode", "fixture"],
         options: { image: "fixture:test" },
+        helperCommand: ["/runtime/bin/workspace-helper"],
       },
     });
   });
@@ -74,6 +76,10 @@ describe("server config", () => {
             type: "command",
             command: [process.execPath, fixtureExecutable],
             options: { stateDirectory },
+            helperCommand: [
+              process.execPath,
+              fileURLToPath(new URL("./workspace-helper/executable.mjs", import.meta.url)),
+            ],
           },
         },
       }),

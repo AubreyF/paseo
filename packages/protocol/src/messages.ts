@@ -2243,6 +2243,7 @@ export const FileExplorerRequestSchema = z.object({
   mode: z.enum(["list", "file"]),
   requestId: z.string(),
   acceptBinary: z.boolean().optional(),
+  workspaceId: z.string().optional(),
 });
 
 export const FileVersionSchema = z.discriminatedUnion("status", [
@@ -2273,6 +2274,7 @@ export const FileSubscribeRequestSchema = z.object({
   path: z.string(),
   subscriptionId: z.string(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const FileUnsubscribeRequestSchema = z.object({
@@ -2289,12 +2291,14 @@ export const FileWriteRequestSchema = z.object({
   expectedModifiedAt: z.string(),
   expectedRevision: z.string().optional(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const ProjectIconRequestSchema = z.object({
   type: z.literal("project_icon_request"),
   cwd: z.string(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const ProjectIconGetRequestSchema = z.object({
@@ -2308,6 +2312,7 @@ export const FileDownloadTokenRequestSchema = z.object({
   cwd: z.string(),
   path: z.string(),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
 });
 
 export const FileUploadRequestSchema = z.object({

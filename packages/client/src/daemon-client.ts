@@ -1140,7 +1140,7 @@ export class DaemonClient {
   private terminalDirectorySubscriptions = new Map<string, { cwd: string; workspaceId?: string }>();
   private fileSubscriptions = new Map<
     string,
-    { cwd: string; path: string; onUpdate: (version: FileVersion) => void }
+    { cwd: string; path: string; workspaceId?: string; onUpdate: (version: FileVersion) => void }
   >();
   private readonly terminalStreams = new TerminalStreamRouter();
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
@@ -2429,6 +2429,7 @@ export class DaemonClient {
           cwd: subscription.cwd,
           path: subscription.path,
           subscriptionId,
+          ...(subscription.workspaceId ? { workspaceId: subscription.workspaceId } : {}),
         },
         responseType: "fs.file.subscribe.response",
       })
@@ -4231,6 +4232,7 @@ export class DaemonClient {
     mode: "list" | "file",
     requestId?: string,
     acceptBinary = false,
+    workspaceId?: string,
   ): Promise<FileExplorerPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -4240,6 +4242,7 @@ export class DaemonClient {
         path,
         mode,
         ...(acceptBinary ? { acceptBinary: true } : {}),
+        ...(workspaceId ? { workspaceId } : {}),
       },
       responseType: "file_explorer_response",
     });
@@ -4249,8 +4252,16 @@ export class DaemonClient {
     cwd: string,
     path: string,
     requestId?: string,
+    workspaceId?: string,
   ): Promise<FileExplorerDirectoryPayload> {
-    const payload = await this.requestFileExplorer(cwd, path, "list", requestId);
+    const payload = await this.requestFileExplorer(
+      cwd,
+      path,
+      "list",
+      requestId,
+      false,
+      workspaceId,
+    );
     if (payload.error) {
       throw new Error(payload.error);
     }
@@ -4260,11 +4271,23 @@ export class DaemonClient {
     return payload.directory;
   }
 
-  async readFile(cwd: string, path: string, requestId?: string): Promise<FileReadResult> {
+  async readFile(
+    cwd: string,
+    path: string,
+    requestId?: string,
+    workspaceId?: string,
+  ): Promise<FileReadResult> {
     const resolvedRequestId = this.createRequestId(requestId);
     this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path });
     try {
-      const payload = await this.requestFileExplorer(cwd, path, "file", resolvedRequestId, true);
+      const payload = await this.requestFileExplorer(
+        cwd,
+        path,
+        "file",
+        resolvedRequestId,
+        true,
+        workspaceId,
+      );
       if (payload.error) {
         throw new Error(payload.error);
       }
@@ -4284,7 +4307,7 @@ export class DaemonClient {
   }
 
   async subscribeFile(
-    input: { cwd: string; path: string },
+    input: { cwd: string; path: string; workspaceId?: string },
     onUpdate: (version: FileVersion) => void,
   ): Promise<{ initial: FileVersion; unsubscribe: () => void }> {
     const subscriptionId = this.createRequestId();
@@ -4296,6 +4319,7 @@ export class DaemonClient {
           cwd: input.cwd,
           path: input.path,
           subscriptionId,
+          ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         },
         responseType: "fs.file.subscribe.response",
       });
@@ -4321,6 +4345,7 @@ export class DaemonClient {
     content: string;
     expectedModifiedAt: string;
     expectedRevision?: string;
+    workspaceId?: string;
   }): Promise<FileWriteResult> {
     const payload = await this.sendCorrelatedSessionRequest({
       message: { type: "fs.file.write.request", ...input },
@@ -4389,6 +4414,7 @@ export class DaemonClient {
     cwd: string,
     path: string,
     requestId?: string,
+    workspaceId?: string,
   ): Promise<FileDownloadTokenPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -4396,6 +4422,7 @@ export class DaemonClient {
         type: "file_download_token_request",
         cwd,
         path,
+        ...(workspaceId ? { workspaceId } : {}),
       },
       responseType: "file_download_token_response",
     });
@@ -4404,12 +4431,14 @@ export class DaemonClient {
   async requestProjectIcon(
     cwd: string,
     requestId?: string,
+    workspaceId?: string,
   ): Promise<ProjectIconResponse["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "project_icon_request",
         cwd,
+        ...(workspaceId ? { workspaceId } : {}),
       },
       responseType: "project_icon_response",
     });

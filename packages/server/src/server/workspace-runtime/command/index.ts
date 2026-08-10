@@ -4,6 +4,7 @@ import { createCommandRuntime } from "./internal/command-runtime.js";
 export interface CommandRuntimeAdapterConfig {
   command: readonly [string, ...string[]];
   options?: Readonly<Record<string, unknown>>;
+  helperCommand?: readonly [string, ...string[]];
 }
 
 export function createCommandRuntimeAdapter(

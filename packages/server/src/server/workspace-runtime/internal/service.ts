@@ -12,6 +12,11 @@ import type {
   WorkspaceDriverCreateInput,
   WorkspaceRuntimeDriver,
 } from "../drivers/index.js";
+import type { WorkspaceFiles } from "../../workspace-helper/index.js";
+import {
+  bindWorkspaceHelper,
+  type WorkspaceFilesOwner,
+} from "../../workspace-helper/integration/index.js";
 
 const gracefulStopMilliseconds = 1_000;
 const forcedStopMilliseconds = 1_000;
@@ -23,6 +28,12 @@ export function createService(
   const driversById = new Map(drivers.map((driver) => [driver.id, driver]));
   const processesByWorkspaceId = new Map<string, Set<WorkspaceDriverProcess>>();
   const workspaceTails = new Map<string, Promise<void>>();
+  const fileClients = new Map<
+    string,
+    { runtimeId: string; revision: string; client: WorkspaceFilesOwner }
+  >();
+  const boundFiles = new Map<string, WorkspaceFiles>();
+  const unavailableFiles = new Map<string, "paused" | "destroyed">();
 
   function requireRegistered(runtimeId: string): WorkspaceRuntimeDriver {
     const driver = driversById.get(runtimeId);
@@ -86,8 +97,20 @@ export function createService(
         const before = await driver.inspect(input.workspaceId);
         let ownsNewResource = false;
         try {
-          await driver.create(toDriverCreateInput(input));
+          const state = await driver.create(toDriverCreateInput(input));
           ownsNewResource = before.status === "missing";
+          if (state.lifecycle === "ready") {
+            const helper = bindWorkspaceHelper({
+              root: state.root,
+              command: driver.workspaceHelperCommand,
+              launch: (argv) => launchHelper(driver, input.workspaceId, argv),
+            });
+            try {
+              await helper.verify();
+            } finally {
+              await helper.close();
+            }
+          }
           if (ownsNewResource) {
             for (const command of input.setup ?? []) {
               const process = await runWithDriver(driver, {
@@ -107,6 +130,7 @@ export function createService(
             }
           }
           await records.persistRuntimeId(input.workspaceId, input.runtimeId);
+          unavailableFiles.delete(input.workspaceId);
           return { workspaceId: input.workspaceId, runtimeId: input.runtimeId };
         } catch (error) {
           if (ownsNewResource) {
@@ -133,9 +157,19 @@ export function createService(
         openTerminalWithDriver(await resolve(input.workspaceId), input),
       );
     },
+    files(workspaceId) {
+      let files = boundFiles.get(workspaceId);
+      if (!files) {
+        files = bindFiles(workspaceId);
+        boundFiles.set(workspaceId, files);
+      }
+      return files;
+    },
     async pause(workspaceId) {
       await sequence(workspaceId, async () => {
         const driver = await resolve(workspaceId);
+        unavailableFiles.set(workspaceId, "paused");
+        await closeFiles(workspaceId);
         await stopProcesses(workspaceId);
         await driver.pause(workspaceId);
       });
@@ -143,16 +177,92 @@ export function createService(
     async resume(workspaceId) {
       await sequence(workspaceId, async () => {
         await (await resolve(workspaceId)).resume(workspaceId);
+        unavailableFiles.delete(workspaceId);
       });
     },
     async destroy(workspaceId) {
       await sequence(workspaceId, async () => {
         const driver = await resolve(workspaceId);
+        unavailableFiles.set(workspaceId, "destroyed");
+        await closeFiles(workspaceId);
         await stopProcesses(workspaceId);
         await driver.destroy(workspaceId);
       });
     },
   };
+
+  function bindFiles(workspaceId: string): WorkspaceFiles {
+    return {
+      async stat(path) {
+        return (await requireFiles(workspaceId)).stat(path);
+      },
+      async list(path) {
+        return (await requireFiles(workspaceId)).list(path);
+      },
+      async read(path) {
+        return (await requireFiles(workspaceId)).read(path);
+      },
+      async write(input) {
+        return (await requireFiles(workspaceId)).write(input);
+      },
+      async subscribe(input, listener) {
+        return (await requireFiles(workspaceId)).subscribe(input, listener);
+      },
+    };
+  }
+
+  async function requireFiles(workspaceId: string): Promise<WorkspaceFiles> {
+    const unavailable = unavailableFiles.get(workspaceId);
+    if (unavailable) throw new Error(`Workspace runtime is ${unavailable}: ${workspaceId}`);
+    const driver = await resolve(workspaceId);
+    const inspection = await driver.inspect(workspaceId);
+    if (inspection.status !== "ready") {
+      throw new Error(`Workspace runtime is ${inspection.status}: ${workspaceId}`);
+    }
+    const cached = fileClients.get(workspaceId);
+    if (cached && cached.runtimeId === driver.id && cached.revision === inspection.state.revision) {
+      return cached.client.files;
+    }
+    if (cached) await cached.client.close();
+    const client = bindWorkspaceHelper({
+      root: inspection.state.root,
+      command: driver.workspaceHelperCommand,
+      launch: async (argv) => {
+        return launchHelper(driver, workspaceId, argv);
+      },
+    });
+    fileClients.set(workspaceId, {
+      runtimeId: driver.id,
+      revision: inspection.state.revision,
+      client,
+    });
+    return client.files;
+  }
+
+  async function closeFiles(workspaceId: string): Promise<void> {
+    const cached = fileClients.get(workspaceId);
+    fileClients.delete(workspaceId);
+    if (cached) await cached.client.close();
+  }
+
+  async function launchHelper(
+    driver: WorkspaceRuntimeDriver,
+    workspaceId: string,
+    argv: readonly [string, ...string[]],
+  ) {
+    const runtimeProcess = await driver.spawn({
+      workspaceId,
+      argv,
+      env: {},
+      purpose: { kind: "workspace-helper" },
+      stdio: { kind: "pipes" },
+    });
+    if (runtimeProcess.kind !== "pipes") {
+      throw new Error(`Workspace runtime returned PTY mode for its helper: ${driver.id}`);
+    }
+    trackProcess(workspaceId, runtimeProcess);
+    return runtimeProcess;
+  }
 
   async function sequence<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
     const previous = workspaceTails.get(workspaceId) ?? Promise.resolve();

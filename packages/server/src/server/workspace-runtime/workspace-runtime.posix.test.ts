@@ -23,6 +23,58 @@ afterEach(async () => {
 });
 
 posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract", (runtimeId) => {
+  test("binds streaming files and live observation to the selected runtime", async () => {
+    const fixture = await createFixture(runtimeId);
+    await fixture.service.create(fixture.createInput);
+    const files = fixture.service.files(fixture.workspaceId);
+
+    const listing = await files.list(".");
+    expect(listing.entries.map((entry) => entry.name)).toContain("committed.txt");
+    const initial = await files.stat("committed.txt");
+    expect(initial).toMatchObject({ status: "ready", size: 10 });
+    if (initial.status !== "ready") throw new Error("Expected committed.txt to exist");
+
+    let resolveChanged!: () => void;
+    const watcherEvents: Array<{ type: string; error?: string }> = [];
+    const changed = new Promise<void>((resolve) => {
+      resolveChanged = resolve;
+    });
+    const subscription = await files.subscribe({ paths: ["committed.txt"] }, (event) => {
+      watcherEvents.push(event);
+      if (event.type === "changed" && event.paths.includes("committed.txt")) resolveChanged();
+    });
+    const terminalEdit = await fixture.service.run({
+      workspaceId: fixture.workspaceId,
+      argv: ["/bin/sh", "-c", "printf changed > committed.txt"],
+      env: {},
+      purpose: { kind: "terminal", terminalId: `${runtimeId}-file-edit` },
+    });
+    terminalEdit.stdin.end();
+    await expect(terminalEdit.exited).resolves.toEqual({ code: 0, signal: null });
+    await expect(changed).resolves.toBeUndefined();
+
+    const streamed = await files.read("committed.txt");
+    await expect(collect(streamed.chunks)).resolves.toBe("changed");
+    await fixture.service.pause(fixture.workspaceId);
+    expect(watcherEvents).toContainEqual({
+      type: "error",
+      error: "Workspace files client is closed",
+    });
+    await expect(files.list(".")).rejects.toThrow(`Workspace runtime is paused`);
+    await subscription.unsubscribe();
+    await fixture.service.resume(fixture.workspaceId);
+    await expect(files.list(".")).resolves.toMatchObject({ path: "." });
+    const reconstructedEvents: Array<{ type: string; error?: string }> = [];
+    await files.subscribe({ paths: ["committed.txt"] }, (event) => {
+      reconstructedEvents.push(event);
+    });
+    await fixture.service.destroy(fixture.workspaceId);
+    expect(reconstructedEvents).toContainEqual({
+      type: "error",
+      error: "Workspace files client is closed",
+    });
+  });
+
   test("opens an interactive PTY with input, Unicode output, resize, EOF, and signals", async () => {
     const fixture = await createFixture(runtimeId);
     await fixture.service.create(fixture.createInput);

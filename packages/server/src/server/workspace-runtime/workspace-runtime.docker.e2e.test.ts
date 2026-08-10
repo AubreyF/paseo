@@ -16,7 +16,11 @@ const image = "paseo-workspace-runtime-slice1:test";
 const cleanupRoots: string[] = [];
 
 beforeAll(() => {
-  execFileSync("docker", ["build", "-t", image, dockerRuntimeRoot], { stdio: "pipe" });
+  execFileSync(
+    "docker",
+    ["build", "-t", image, "-f", path.join(dockerRuntimeRoot, "Dockerfile"), repositoryRoot],
+    { stdio: "pipe" },
+  );
 }, 120_000);
 
 afterAll(async () => {
@@ -66,6 +70,42 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
     });
     expect(workspace).toEqual({ workspaceId, runtimeId: "docker" });
     expect("cwd" in workspace).toBe(false);
+
+    const files = service.files(workspaceId);
+    const listing = await files.list(".");
+    expect(listing.entries.map((entry) => entry.name)).toContain("committed.txt");
+    const initialFile = await files.stat("committed.txt");
+    expect(initialFile).toMatchObject({ status: "ready", size: 10 });
+    let resolveFileChange!: () => void;
+    const fileChanged = new Promise<void>((resolve) => {
+      resolveFileChange = resolve;
+    });
+    const fileSubscription = await files.subscribe({ paths: ["committed.txt"] }, (event) => {
+      if (event.type === "changed" && event.paths.includes("committed.txt")) resolveFileChange();
+    });
+    const terminalFileEdit = await service.run({
+      workspaceId,
+      argv: ["/bin/sh", "-c", "printf container-change > committed.txt"],
+      env: {},
+      purpose: { kind: "terminal", terminalId: "docker-file-edit" },
+    });
+    terminalFileEdit.stdin.end();
+    await expect(terminalFileEdit.exited).resolves.toEqual({ code: 0, signal: null });
+    await expect(fileChanged).resolves.toBeUndefined();
+    const containerFile = await files.read("committed.txt");
+    await expect(collect(containerFile.chunks)).resolves.toBe("container-change");
+    const conflict = await files.write({
+      path: "committed.txt",
+      contents: Buffer.from("stale"),
+      ...(initialFile.status === "ready" ? { expectedRevision: initialFile.revision } : {}),
+    });
+    expect(conflict).toMatchObject({ status: "conflict" });
+    const large = await files.read("large.bin");
+    expect(await collectBytes(large.chunks)).toEqual(Buffer.alloc(700_000, 0xa5));
+    await expect(files.read("outside-link")).rejects.toThrow(
+      "Access outside of workspace is not allowed",
+    );
+    await fileSubscription.unsubscribe();
 
     const write = await service.run({
       workspaceId,
@@ -410,11 +450,19 @@ async function createRepository(root: string): Promise<string> {
   execFileSync("git", ["config", "user.email", "test@getpaseo.local"], { cwd: repo });
   execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repo });
   await writeFile(path.join(repo, "committed.txt"), "committed\n");
+  await writeFile(path.join(repo, "large.bin"), Buffer.alloc(700_000, 0xa5));
+  await symlink("/etc/passwd", path.join(repo, "outside-link"));
   execFileSync("git", ["add", "."], { cwd: repo });
   execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "fixture"], {
     cwd: repo,
   });
   return repo;
+}
+
+async function collectBytes(chunks: AsyncIterable<Uint8Array>): Promise<Buffer> {
+  const buffers: Buffer[] = [];
+  for await (const chunk of chunks) buffers.push(Buffer.from(chunk));
+  return Buffer.concat(buffers);
 }
 
 async function waitForOutput(stream: NodeJS.ReadableStream, marker: string): Promise<string> {

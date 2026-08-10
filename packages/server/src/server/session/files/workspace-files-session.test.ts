@@ -15,6 +15,8 @@ import {
 } from "./workspace-files-session.js";
 import { DownloadTokenStore } from "../../file-download/token-store.js";
 import type { SessionOutboundMessage } from "../../messages.js";
+import { createWorkspaceRuntimeService } from "../../workspace-runtime/index.js";
+import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
 
 const tempDirs: string[] = [];
 
@@ -34,6 +36,10 @@ function makeSubsystem(
   options: {
     hasBinaryChannel?: boolean;
     emitBinary?: (frame: Uint8Array) => Promise<void> | void;
+    selectedWorkspace?: {
+      record: PersistedWorkspaceRecord;
+      runtime: ReturnType<typeof createWorkspaceRuntimeService>;
+    };
   } = {},
 ) {
   const emitted: SessionOutboundMessage[] = [];
@@ -48,17 +54,31 @@ function makeSubsystem(
     hasBinaryChannel: () => hasBinary,
   };
   const paseoHome = makeDir("workspace-files-home-");
+  const downloadTokenStore = new DownloadTokenStore({ ttlMs: 60_000 });
   const subsystem = new WorkspaceFilesSession({
     host,
-    downloadTokenStore: new DownloadTokenStore({ ttlMs: 60_000 }),
+    downloadTokenStore,
     paseoHome,
     logger: pino({ level: "silent" }),
+    ...(options.selectedWorkspace
+      ? {
+          workspaceRuntime: options.selectedWorkspace.runtime,
+          workspaceRegistry: {
+            get: async (workspaceId: string) =>
+              workspaceId === options.selectedWorkspace?.record.workspaceId
+                ? options.selectedWorkspace.record
+                : null,
+            list: async () => [options.selectedWorkspace!.record],
+          },
+        }
+      : {}),
   });
   return {
     subsystem,
     emitted,
     binary,
     paseoHome,
+    downloadTokenStore,
     setHasBinary: (value: boolean) => {
       hasBinary = value;
     },
@@ -73,7 +93,135 @@ function uploadFrame(args: Parameters<typeof encodeFileTransferFrame>[0]): FileT
   return frame;
 }
 
+async function collectUpload(chunks: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+  const buffers: Buffer[] = [];
+  for await (const chunk of chunks) buffers.push(Buffer.from(chunk));
+  return Buffer.concat(buffers);
+}
+
 describe("WorkspaceFilesSession", () => {
+  test("routes the complete selected-workspace file surface through workspace runtime", async () => {
+    const cwd = makeDir("workspace-files-selected-");
+    writeFileSync(join(cwd, "runtime.txt"), "before\n");
+    writeFileSync(join(cwd, "favicon.svg"), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const runtimeIds = new Map<string, string>();
+    const runtime = createWorkspaceRuntimeService({
+      paseoHome: makeDir("workspace-files-runtime-home-"),
+      resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
+      persistRuntimeId: async (workspaceId, runtimeId) => {
+        runtimeIds.set(workspaceId, runtimeId);
+      },
+    });
+    await runtime.create({
+      workspaceId: "selected-workspace",
+      runtimeId: "local",
+      project: { id: "project", source: { kind: "host-directory", path: cwd } },
+      placement: { kind: "existing" },
+    });
+    const now = new Date().toISOString();
+    const record: PersistedWorkspaceRecord = {
+      workspaceId: "selected-workspace",
+      projectId: "project",
+      cwd,
+      kind: "directory",
+      displayName: "selected",
+      title: null,
+      branch: null,
+      worktreeRoot: null,
+      baseBranch: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+      runtime: { runtimeId: "local" },
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      autoArchivedChangeRequestUrl: null,
+      pinnedAt: null,
+    };
+    const { subsystem, emitted, binary, downloadTokenStore } = makeSubsystem({
+      hasBinaryChannel: true,
+      selectedWorkspace: { record, runtime },
+    });
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      workspaceId: record.workspaceId,
+      cwd,
+      path: ".",
+      mode: "list",
+      requestId: "selected-list",
+    });
+    const listingMessage = emitted.at(-1);
+    if (listingMessage?.type !== "file_explorer_response") {
+      throw new Error("Expected selected file listing");
+    }
+    expect(listingMessage.payload.directory?.entries.map((entry) => entry.name)).toContain(
+      "runtime.txt",
+    );
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      workspaceId: record.workspaceId,
+      cwd,
+      path: "runtime.txt",
+      mode: "file",
+      acceptBinary: true,
+      requestId: "selected-read",
+    });
+    expect(binary.map((frame) => decodeFileTransferFrame(frame)?.opcode)).toEqual([
+      FileTransferOpcode.FileBegin,
+      FileTransferOpcode.FileChunk,
+      FileTransferOpcode.FileEnd,
+    ]);
+
+    const version = await runtime.files(record.workspaceId).stat("runtime.txt");
+    if (version.status !== "ready") throw new Error("Expected runtime.txt to exist");
+    await subsystem.handleFileWriteRequest({
+      type: "fs.file.write.request",
+      workspaceId: record.workspaceId,
+      cwd,
+      path: "runtime.txt",
+      content: "after\n",
+      expectedModifiedAt: version.modifiedAt,
+      expectedRevision: version.revision,
+      requestId: "selected-write",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "fs.file.write.response",
+      payload: { result: { status: "written", size: 6 } },
+    });
+
+    await subsystem.handleFileDownloadTokenRequest({
+      type: "file_download_token_request",
+      workspaceId: record.workspaceId,
+      cwd,
+      path: "runtime.txt",
+      requestId: "selected-download",
+    });
+    const tokenMessage = emitted.at(-1);
+    if (tokenMessage?.type !== "file_download_token_response" || !tokenMessage.payload.token) {
+      throw new Error("Expected selected download token");
+    }
+    const download = downloadTokenStore.consumeToken(tokenMessage.payload.token);
+    expect(download?.absolutePath).toBeUndefined();
+    const opened = await download?.open?.();
+    expect(opened && Buffer.from(await collectUpload(opened.chunks)).toString("utf8")).toBe(
+      "after\n",
+    );
+    await subsystem.handleProjectIconRequest({
+      type: "project_icon_request",
+      workspaceId: record.workspaceId,
+      cwd,
+      requestId: "selected-icon",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "project_icon_response",
+      payload: { icon: { mimeType: "image/svg+xml" }, error: null },
+    });
+    await subsystem.dispose();
+    await runtime.destroy(record.workspaceId);
+  });
+
   test("lists directory entries", async () => {
     const cwd = makeDir("workspace-files-list-");
     writeFileSync(join(cwd, "a.txt"), "alpha");

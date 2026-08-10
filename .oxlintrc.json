@@ -85,6 +85,31 @@
   },
   "overrides": [
     {
+      "files": ["packages/server/src/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/workspace-helper/integration/**", "**/workspace-helper/internal/**"],
+                "message": "Normal callers consume WorkspaceFiles from workspace-helper/index. Only the workspace-runtime parent integration and workspace-helper tests may assemble helper clients."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/server/src/server/workspace-helper/**/*.{ts,tsx}",
+        "packages/server/src/server/workspace-runtime/internal/service.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    },
+    {
       "files": ["packages/app/src/**/*.{ts,tsx}"],
       "rules": {
         // React Native style arrays must read Unistyles proxies during render. Hoisting them to

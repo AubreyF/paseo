@@ -15,6 +15,7 @@ import type {
   WorkspaceRuntimeDriver,
 } from "../drivers/index.js";
 import { resolveRuntimeCwd, spawnHostProcess, spawnHostPty } from "./host-process.js";
+import { hostWorkspaceHelperCommand } from "./host-helper.js";
 import { createRuntimeStateStore } from "./runtime-state.js";
 
 interface WorktreeRuntimeState extends WorkspaceDriverState {
@@ -50,6 +51,7 @@ export function createWorktreeRuntime(options: {
 
   return {
     id: "worktree",
+    workspaceHelperCommand: hostWorkspaceHelperCommand,
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);
       if (existing.status === "ready" || existing.status === "paused") return existing.state;

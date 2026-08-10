@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,6 +10,9 @@ import { createWorkspaceRuntimeService } from "./index.js";
 
 const fixtureExecutable = fileURLToPath(
   new URL("../test-utils/fixtures/workspace-runtime-command-fixture.mjs", import.meta.url),
+);
+const helperExecutable = fileURLToPath(
+  new URL("../workspace-helper/executable.mjs", import.meta.url),
 );
 const cleanupRoots: string[] = [];
 
@@ -59,6 +62,56 @@ test("a trusted registered command is selected and receives secret launch data o
       runtimeId: "nope",
     }),
   ).rejects.toThrow("Workspace runtime is not registered: nope");
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
+test("a command runtime tears down and reconstructs its bound files capability", async () => {
+  const fixture = await createFixture("files-reconstruction");
+  await writeFile(path.join(fixture.source, "watched.txt"), "before\n");
+  await fixture.service.create(fixture.createInput);
+  const files = fixture.service.files(fixture.workspaceId);
+  const firstEvents: Array<{ type: string; error?: string }> = [];
+  const first = await files.subscribe({ paths: ["watched.txt"] }, (event) => {
+    firstEvents.push(event);
+  });
+
+  await fixture.service.pause(fixture.workspaceId);
+  expect(firstEvents).toContainEqual({
+    type: "error",
+    error: "Workspace files client is closed",
+  });
+  await first.unsubscribe();
+  await fixture.service.resume(fixture.workspaceId);
+  await expect(files.list(".")).resolves.toMatchObject({ path: "." });
+
+  const reconstructedEvents: Array<{ type: string; error?: string }> = [];
+  await files.subscribe({ paths: ["watched.txt"] }, (event) => {
+    reconstructedEvents.push(event);
+  });
+  await fixture.service.destroy(fixture.workspaceId);
+  expect(reconstructedEvents).toContainEqual({
+    type: "error",
+    error: "Workspace files client is closed",
+  });
+});
+
+test("a file operation racing pause cannot reconstruct the closing helper client", async () => {
+  const fixture = await createFixture("files-pause-race", true);
+  await writeFile(path.join(fixture.source, "watched.txt"), "before\n");
+  await fixture.service.create(fixture.createInput);
+  const files = fixture.service.files(fixture.workspaceId);
+  await files.list(".");
+  await writeFile(path.join(fixture.barrierDirectory, "block-next-inspect"), "block");
+  const inspectEntered = nextFile(fixture.barrierDirectory, "inspect-entered");
+
+  const racingList = files.list(".");
+  await inspectEntered;
+  await fixture.service.pause(fixture.workspaceId);
+  await writeFile(path.join(fixture.barrierDirectory, "release-inspect"), "release");
+
+  await expect(racingList).rejects.toThrow(`Workspace runtime is paused: ${fixture.workspaceId}`);
+  await fixture.service.resume(fixture.workspaceId);
+  await expect(files.list(".")).resolves.toMatchObject({ path: "." });
   await fixture.service.destroy(fixture.workspaceId);
 });
 
@@ -329,6 +382,7 @@ async function createFixture(
           fixtureExecutable,
           ...(modes === "pipes" ? ["--modes", "pipes"] : []),
         ],
+        helperCommand: [processExecPath(), helperExecutable],
         options: {
           stateDirectory,
           ...runtimeOptions,
@@ -363,4 +417,15 @@ function processExists(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
+}
+
+function nextFile(directory: string, expectedName: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const watcher = watch(directory, (_event, filename) => {
+      if (filename?.toString() !== expectedName) return;
+      watcher.close();
+      resolve();
+    });
+    watcher.once("error", reject);
+  });
 }

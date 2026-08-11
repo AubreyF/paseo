@@ -29,9 +29,6 @@ export interface WorkspaceDriverCreateInput {
 
 export interface WorkspaceDriverState {
   workspaceId: WorkspaceId;
-  root: string;
-  revision: string;
-  executionDomainId: string;
   lifecycle: "ready" | "paused";
   lifecycleEnvironment?: Readonly<Record<string, string>>;
 }
@@ -102,6 +99,10 @@ export interface WorkspaceRuntimeDriver {
   create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverReady>;
   inspect(workspaceId: WorkspaceId): Promise<WorkspaceDriverInspection>;
   spawn(input: WorkspaceDriverSpawnInput): Promise<WorkspaceDriverProcess>;
+  observeGit?(
+    workspaceId: WorkspaceId,
+    listener: () => void,
+  ): Promise<{ unsubscribe(): Promise<void> }>;
   pause(workspaceId: WorkspaceId): Promise<void>;
   resume(workspaceId: WorkspaceId): Promise<WorkspaceDriverReady>;
   destroy(workspaceId: WorkspaceId): Promise<void>;

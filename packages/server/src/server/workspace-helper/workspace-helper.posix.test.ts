@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
 import type { WorkspaceWatchEvent } from "./index.js";
-import { bindWorkspaceHelper, type WorkspaceHelperProcess } from "./integration/index.js";
+import { bindWorkspaceHelper, type WorkspaceHelperProcess } from "./internal/integration/index.js";
 
 const posixDescribe = describe.runIf(process.platform !== "win32");
 const cleanupRoots: string[] = [];
@@ -28,9 +28,8 @@ async function fixture() {
   const root = path.join(parent, "workspace");
   await mkdir(root);
   const client = bindWorkspaceHelper({
-    root,
     command: [process.execPath, workspaceHelper],
-    launch: launchTestProcess,
+    launch: (argv) => launchTestProcess(argv, root),
   });
   return { client, parent, root };
 }
@@ -42,6 +41,18 @@ async function collect(chunks: AsyncIterable<Uint8Array>): Promise<Buffer> {
 }
 
 posixDescribe("workspace-helper public capability", () => {
+  test("client sends only workspace-relative helper paths", async () => {
+    const { client } = await fixture();
+    expect(() => client.files.stat("/tmp/outside")).toThrow(
+      "Workspace helper path must be relative",
+    );
+    expect(() => client.files.list("../outside")).toThrow("Workspace helper path must be relative");
+    await expect(
+      client.files.subscribe({ paths: ["C:/outside"] }, () => undefined),
+    ).rejects.toThrow("Workspace helper path must be relative");
+    await client.close();
+  });
+
   test("watch rejects a second root authority supplied by a subscriber", async () => {
     const parent = await mkdtemp(path.join(tmpdir(), "paseo-workspace-helper-root-"));
     cleanupRoots.push(parent);
@@ -50,7 +61,8 @@ posixDescribe("workspace-helper public capability", () => {
     await mkdir(trustedRoot);
     await mkdir(untrustedRoot);
     await writeFile(path.join(untrustedRoot, "outside.txt"), "outside\n");
-    const child = spawn(process.execPath, [workspaceHelper, "watch", "--root", trustedRoot], {
+    const child = spawn(process.execPath, [workspaceHelper, "watch"], {
+      cwd: trustedRoot,
       stdio: ["pipe", "pipe", "pipe"],
     });
     const stdout = collect(child.stdout);
@@ -133,10 +145,12 @@ posixDescribe("workspace-helper public capability", () => {
       resolveSecondSubscription = resolve;
     });
     const client = bindWorkspaceHelper({
-      root,
       command: [process.execPath, workspaceHelper],
       launch: async (argv) => {
-        const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+        const child = spawn(argv[0], argv.slice(1), {
+          cwd: root,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
         if (argv.includes("watch")) {
           watcherChildren.push(child);
           if (watcherChildren.length === 2) {
@@ -173,10 +187,12 @@ posixDescribe("workspace-helper public capability", () => {
     const children: ReturnType<typeof spawn>[] = [];
     const exits: WorkspaceHelperProcess["exited"][] = [];
     const client = bindWorkspaceHelper({
-      root: parent,
       command: [process.execPath, adversarialHelper, "endless-read"],
       launch: async (argv): Promise<WorkspaceHelperProcess> => {
-        const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+        const child = spawn(argv[0], argv.slice(1), {
+          cwd: parent,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
         children.push(child);
         const exited = new Promise<Awaited<WorkspaceHelperProcess["exited"]>>((resolve, reject) => {
           child.once("error", reject);
@@ -340,10 +356,12 @@ async function recordedClient(mode: string) {
   const exits: WorkspaceHelperProcess["exited"][] = [];
   const pids: number[] = [];
   const client = bindWorkspaceHelper({
-    root,
     command: [process.execPath, adversarialHelper, mode],
     launch: async (argv): Promise<WorkspaceHelperProcess> => {
-      const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(argv[0], argv.slice(1), {
+        cwd: root,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
       const exited = new Promise<Awaited<WorkspaceHelperProcess["exited"]>>((resolve, reject) => {
         child.once("error", reject);
         child.once("exit", (code, signal) => resolve({ code, signal }));
@@ -374,8 +392,9 @@ async function recordedClient(mode: string) {
 
 async function launchTestProcess(
   argv: readonly [string, ...string[]],
+  cwd: string,
 ): Promise<WorkspaceHelperProcess> {
-  const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(argv[0], argv.slice(1), { cwd, stdio: ["pipe", "pipe", "pipe"] });
   return childProcess(child);
 }
 

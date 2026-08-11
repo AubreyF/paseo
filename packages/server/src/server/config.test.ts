@@ -64,7 +64,7 @@ describe("server config", () => {
     const stateDirectory = path.join(paseoHome, "runtime-state");
     await Promise.all([mkdir(source), mkdir(stateDirectory)]);
     const fixtureExecutable = fileURLToPath(
-      new URL("./test-utils/fixtures/workspace-runtime-command-fixture.mjs", import.meta.url),
+      new URL("../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
     );
     const configPath = path.join(paseoHome, "config.json");
     await writeFile(
@@ -94,6 +94,10 @@ describe("server config", () => {
       persistRuntimeId: async (workspaceId, runtimeId) => {
         runtimeIds.set(workspaceId, runtimeId);
       },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (workspaceId) => {
+        runtimeIds.delete(workspaceId);
+      },
     });
     const createInput = {
       workspaceId: "configured-runtime",
@@ -105,11 +109,14 @@ describe("server config", () => {
     await expect(service.create(createInput)).resolves.toEqual({
       workspaceId: "configured-runtime",
       runtimeId: "fixture",
+      cwd: source,
+      hostVisiblePath: source,
     });
     await expect(
       service.create({ ...createInput, workspaceId: "unknown-runtime", runtimeId: "unknown" }),
     ).rejects.toThrow("Workspace runtime is not registered: unknown");
     await service.destroy("configured-runtime");
+    expect(runtimeIds.has("configured-runtime")).toBe(false);
   });
 
   test("resolves bundled web UI path from source-tree modules", () => {

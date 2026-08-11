@@ -4,6 +4,17 @@ import { constants } from "node:os";
 import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
+import {
+  COMMAND_RUNTIME_PROTOCOL_VERSION,
+  CommandRuntimeControlSchema,
+  CommandRuntimeDescribeResponseSchema,
+  CommandRuntimeLifecycleRequestSchema,
+  CommandRuntimeLifecycleResponseSchema,
+  createCommandRuntimeProcessEventDecoder,
+  encodeCommandRuntimeMessage,
+  type CommandRuntimeProcessEvent,
+} from "@getpaseo/workspace-runtime-contract";
+
 import type {
   WorkspaceDriverCreateInput,
   WorkspaceDriverInspection,
@@ -13,12 +24,6 @@ import type {
   WorkspacePtyProcess,
   WorkspaceRuntimeDriver,
 } from "../../drivers/index.js";
-import {
-  CommandRuntimeDescribeResponseSchema,
-  CommandRuntimeLifecycleResponseSchema,
-  CommandRuntimePtyEventSchema,
-} from "./protocol.js";
-
 const COMMAND_RUNTIME_CLEANUP_TIMEOUT_MS = 1_000;
 
 export interface CommandRuntimeConfig {
@@ -36,7 +41,9 @@ export function createCommandRuntime(
 
   function describe(): Promise<ReadonlySet<"pipes" | "pty">> {
     described ??= runCommand(["describe"], undefined).then((output) => {
-      const description = CommandRuntimeDescribeResponseSchema.parse(JSON.parse(output));
+      const value: unknown = JSON.parse(output);
+      assertProtocolVersion(runtimeId, value);
+      const description = CommandRuntimeDescribeResponseSchema.parse(value);
       if (!description.modes.includes("pipes")) {
         throw new Error(`Workspace runtime ${runtimeId} does not support pipes`);
       }
@@ -54,9 +61,15 @@ export function createCommandRuntime(
     await describe();
     const output = await runCommand(
       [operation, "--workspace-id", workspaceId],
-      JSON.stringify({ protocolVersion: 1, input, options: config.options ?? {} }),
+      encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
+        protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+        input,
+        options: config.options ?? {},
+      }),
     );
-    return CommandRuntimeLifecycleResponseSchema.parse(JSON.parse(output));
+    const value: unknown = JSON.parse(output);
+    assertProtocolVersion(runtimeId, value);
+    return CommandRuntimeLifecycleResponseSchema.parse(value);
   }
 
   return {
@@ -109,9 +122,15 @@ export function createCommandRuntime(
       if (!supportsReconciliation) return;
       const output = await runCommand(
         ["reconcile"],
-        JSON.stringify({ protocolVersion: 1, workspaceIds, options: config.options ?? {} }),
+        encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
+          protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+          workspaceIds,
+          options: config.options ?? {},
+        }),
       );
-      const response = CommandRuntimeLifecycleResponseSchema.parse(JSON.parse(output));
+      const value: unknown = JSON.parse(output);
+      assertProtocolVersion(runtimeId, value);
+      const response = CommandRuntimeLifecycleResponseSchema.parse(value);
       if (response.type !== "ok") throw new Error(`Invalid reconcile response from ${runtimeId}`);
     },
   };
@@ -123,7 +142,7 @@ export function createCommandRuntime(
       stdio: ["pipe", "pipe", "pipe"],
     });
     if (stdin === undefined) child.stdin.end();
-    else child.stdin.end(`${stdin}\n`);
+    else child.stdin.end(stdin);
     const [stdout, stderr, exit] = await Promise.all([
       collect(child.stdout),
       collect(child.stderr),
@@ -149,6 +168,17 @@ function commandReady(
     throw new Error("Workspace runtime did not return public placement");
   }
   return { state, placement };
+}
+
+function assertProtocolVersion(runtimeId: string, value: unknown): void {
+  const version =
+    typeof value === "object" && value !== null && "protocolVersion" in value
+      ? value.protocolVersion
+      : undefined;
+  if (version === COMMAND_RUNTIME_PROTOCOL_VERSION) return;
+  throw new Error(
+    `Workspace runtime ${runtimeId} uses unsupported command protocol version ${String(version)}; expected ${COMMAND_RUNTIME_PROTOCOL_VERSION}`,
+  );
 }
 
 function spawnCommandPty(
@@ -179,7 +209,6 @@ function spawnCommandPty(
   let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
   let pendingWrites = "";
   let settled = false;
-  let sawEof = false;
   let workloadExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
   let eventsEnded = false;
   let wrapperClosed = false;
@@ -204,10 +233,11 @@ function spawnCommandPty(
   child.stderr.on("data", (chunk: Buffer | string) => {
     stderr += chunk.toString();
   });
-  void readNdjson(events, (value) => {
-    const event = CommandRuntimePtyEventSchema.parse(value);
+  void readProcessEvents(events, "pty", (event) => {
+    if (event.type === "started") {
+      return;
+    }
     if (event.type === "eof") {
-      sawEof = true;
       return;
     }
     if (event.type === "resized") {
@@ -225,18 +255,7 @@ function spawnCommandPty(
       failPty(new Error(`Workspace runtime ${runtimeId} PTY failed: ${event.message}`));
       return;
     }
-    if (workloadExit) {
-      throw new Error(`Workspace runtime ${runtimeId} returned duplicate PTY exit events`);
-    }
-    const signal = event.signal;
-    let parsedSignal: NodeJS.Signals | null = null;
-    if (signal !== null) {
-      if (!isNodeSignal(signal)) {
-        throw new Error(`Workspace runtime ${runtimeId} returned an invalid signal: ${signal}`);
-      }
-      parsedSignal = signal;
-    }
-    workloadExit = { code: event.code, signal: parsedSignal };
+    workloadExit = { code: event.code, signal: parseSignal(runtimeId, event.signal) };
     child.stdin.end();
     control.end();
   }).then(
@@ -261,17 +280,19 @@ function spawnCommandPty(
     resolveWrapperClosed();
     finishFromAuthoritativeExit();
   });
-  writeControl({
-    type: "spawn",
-    protocolVersion: 1,
-    argv: input.argv,
-    cwd: input.cwd,
-    env: input.env,
-    purpose: input.purpose,
-    options,
-    execId,
-    stdio: input.stdio,
-  });
+  writeControl(
+    CommandRuntimeControlSchema.parse({
+      type: "spawn",
+      protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+      argv: input.argv,
+      cwd: input.cwd,
+      env: input.env,
+      purpose: input.purpose,
+      options,
+      execId,
+      stdio: input.stdio,
+    }),
+  );
 
   return {
     kind: "pty",
@@ -289,9 +310,16 @@ function spawnCommandPty(
       else pendingWrites += data;
     },
     resize(cols, rows) {
+      const controlValue = CommandRuntimeControlSchema.parse({
+        type: "resize",
+        protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+        id: resizeId + 1,
+        cols,
+        rows,
+      });
       resizeId += 1;
       pendingResizeId = resizeId;
-      writeControl({ type: "resize", protocolVersion: 1, id: resizeId, cols, rows });
+      writeControl(controlValue);
       if (resizeTimeout) clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(
         () => failPty(new Error("PTY resize acknowledgement timed out")),
@@ -301,7 +329,13 @@ function spawnCommandPty(
     exited,
     kill(signal = "SIGTERM") {
       if (settled || failureCleanup) return;
-      writeControl({ type: "signal", protocolVersion: 1, signal });
+      writeControl(
+        CommandRuntimeControlSchema.parse({
+          type: "signal",
+          protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+          signal,
+        }),
+      );
     },
   };
 
@@ -316,7 +350,7 @@ function spawnCommandPty(
 
   function writeControl(value: unknown): void {
     try {
-      control.write(`${JSON.stringify(value)}\n`);
+      control.write(encodeCommandRuntimeMessage(CommandRuntimeControlSchema, value));
     } catch (error) {
       failPty(error);
     }
@@ -324,7 +358,7 @@ function spawnCommandPty(
 
   function finishFromAuthoritativeExit(): void {
     if (settled || failureCleanup || !eventsEnded || !wrapperClosed) return;
-    if (!workloadExit || !sawEof) {
+    if (!workloadExit) {
       const detail = stderr.trim() || wrapperExit?.signal || wrapperExit?.code || "unknown";
       failPty(
         new Error(
@@ -347,25 +381,26 @@ function spawnCommandPty(
     const failure = error instanceof Error ? error : new Error(String(error));
     failureCleanup = (async () => {
       let cleanupError: unknown;
-      if (!wrapperClosed) {
-        try {
-          await forceKillCommandRuntime(
-            command,
-            input.workspaceId,
-            execId,
-            options,
-            child,
-            wrapperClosedPromise,
-          );
-        } catch (cleanupFailure) {
-          cleanupError = cleanupFailure;
-        }
+      try {
+        await forceKillCommandRuntime(
+          command,
+          input.workspaceId,
+          execId,
+          options,
+          child,
+          wrapperClosedPromise,
+        );
+      } catch (cleanupFailure) {
+        cleanupError = cleanupFailure;
       }
       settled = true;
       const cleanupDetail =
         cleanupError instanceof Error ? `; cleanup failed: ${cleanupError.message}` : "";
+      const wrapperDetail = stderr.trim() ? `; wrapper: ${stderr.trim()}` : "";
       rejectExit(
-        new Error(`Workspace runtime ${runtimeId} PTY failed: ${failure.message}${cleanupDetail}`),
+        new Error(
+          `Workspace runtime ${runtimeId} PTY failed: ${failure.message}${wrapperDetail}${cleanupDetail}`,
+        ),
       );
     })();
   }
@@ -408,7 +443,12 @@ async function forceKillCommandRuntime(
       ),
     );
   });
-  signalCommand.stdin.end(JSON.stringify({ protocolVersion: 1, options }));
+  signalCommand.stdin.end(
+    encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
+      protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+      options,
+    }),
+  );
   const helper = await waitBounded(signalResult, COMMAND_RUNTIME_CLEANUP_TIMEOUT_MS);
   let cleanupError: Error | null = null;
   if (helper.timedOut) {
@@ -446,19 +486,26 @@ function isNodeSignal(value: string): value is NodeJS.Signals {
   return value in constants.signals;
 }
 
-async function readNdjson(stream: Readable, receive: (value: unknown) => void): Promise<void> {
-  let pending = "";
+function parseSignal(runtimeId: string, signal: string | null): NodeJS.Signals | null {
+  if (signal === null) return null;
+  if (!isNodeSignal(signal)) {
+    throw new Error(`Workspace runtime ${runtimeId} returned an invalid signal: ${signal}`);
+  }
+  return signal;
+}
+
+async function readProcessEvents(
+  stream: Readable,
+  mode: "pipes" | "pty",
+  receive: (value: CommandRuntimeProcessEvent) => void,
+): Promise<void> {
+  const decoder = createCommandRuntimeProcessEventDecoder(mode);
   for await (const chunk of stream) {
-    pending += chunk.toString();
-    let newline = pending.indexOf("\n");
-    while (newline >= 0) {
-      const line = pending.slice(0, newline);
-      pending = pending.slice(newline + 1);
-      if (line) receive(JSON.parse(line));
-      newline = pending.indexOf("\n");
+    for (const value of decoder.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))) {
+      receive(value);
     }
   }
-  if (pending.trim()) receive(JSON.parse(pending));
+  decoder.finish();
 }
 
 function spawnCommandProcess(
@@ -474,17 +521,74 @@ function spawnCommandProcess(
     {
       env: commandEnvironment(),
       shell: false,
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
     },
   );
   const metadata = child.stdio[3] as Writable;
-  metadata.on("error", () => {
-    // The exec process owns the actionable spawn error through `exited`.
+  const events = child.stdio[4] as Readable;
+  let stderr = "";
+  let signalable = false;
+  let pendingSignal: NodeJS.Signals | null = null;
+  let workloadExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let eventsEnded = false;
+  let wrapperClosed = false;
+  let wrapperExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let settled = false;
+  let cleanup: Promise<void> | null = null;
+  let resolveWrapperClosed!: () => void;
+  const wrapperClosedPromise = new Promise<void>((resolve) => {
+    resolveWrapperClosed = resolve;
+  });
+  let resolveExit!: (exit: { code: number | null; signal: NodeJS.Signals | null }) => void;
+  let rejectExit!: (error: Error) => void;
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolve, reject) => {
+      resolveExit = resolve;
+      rejectExit = reject;
+    },
+  );
+  exited.catch(() => undefined);
+  child.stderr.on("data", (chunk: Buffer | string) => {
+    stderr += chunk.toString();
+  });
+  void readProcessEvents(events, "pipes", (event) => {
+    if (event.type === "started") {
+      signalable = true;
+      if (pendingSignal) deliverSignal(pendingSignal);
+      return;
+    }
+    if (event.type === "eof") {
+      return;
+    }
+    if (event.type === "error") {
+      fail(new Error(event.message));
+      return;
+    }
+    if (event.type === "resized") return;
+    workloadExit = { code: event.code, signal: parseSignal(runtimeId, event.signal) };
+  }).then(
+    () => {
+      eventsEnded = true;
+      finish();
+      return undefined;
+    },
+    (error) => {
+      fail(error);
+      return undefined;
+    },
+  );
+  metadata.once("error", fail);
+  child.once("error", (error) => fail(new Error(`exec failed: ${error.message}`)));
+  child.once("exit", (code, signal) => {
+    wrapperClosed = true;
+    wrapperExit = { code, signal };
+    resolveWrapperClosed();
+    finish();
   });
   metadata.end(
-    `${JSON.stringify({
+    encodeCommandRuntimeMessage(CommandRuntimeControlSchema, {
       type: "spawn",
-      protocolVersion: 1,
+      protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
       argv: input.argv,
       cwd: input.cwd,
       env: input.env,
@@ -492,15 +596,7 @@ function spawnCommandProcess(
       options,
       execId,
       stdio: input.stdio,
-    })}\n`,
-  );
-  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-    (resolve, reject) => {
-      child.once("error", (error) => {
-        reject(new Error(`Workspace runtime ${runtimeId} exec failed: ${error.message}`));
-      });
-      child.once("exit", (code, signal) => resolve({ code, signal }));
-    },
+    }),
   );
 
   return {
@@ -510,22 +606,71 @@ function spawnCommandProcess(
     stderr: child.stderr,
     exited,
     kill(signal = "SIGTERM") {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      if (signal === "SIGKILL") {
-        void forceKillCommandRuntime(
+      if (settled || cleanup) return;
+      pendingSignal = signal;
+      if (signalable) deliverSignal(signal);
+    },
+  };
+
+  function deliverSignal(signal: NodeJS.Signals): void {
+    pendingSignal = null;
+    if (signal === "SIGKILL") {
+      void forceKillCommandRuntime(
+        command,
+        input.workspaceId,
+        execId,
+        options,
+        child,
+        exited.then(
+          () => undefined,
+          () => undefined,
+        ),
+      ).catch(() => undefined);
+    } else child.kill(signal);
+  }
+
+  function finish(): void {
+    if (settled || cleanup || !eventsEnded || !wrapperClosed) return;
+    if (!workloadExit) {
+      const detail = stderr.trim() || wrapperExit?.signal || wrapperExit?.code || "unknown";
+      fail(new Error(`pipes wrapper ended without a valid fd4 exit event (${String(detail)})`));
+      return;
+    }
+    settled = true;
+    resolveExit(workloadExit);
+  }
+
+  function fail(error: unknown): void {
+    if (settled || cleanup) return;
+    metadata.destroy();
+    events.destroy();
+    child.stdin.destroy();
+    const failure = error instanceof Error ? error : new Error(String(error));
+    cleanup = (async () => {
+      let cleanupError: unknown;
+      try {
+        await forceKillCommandRuntime(
           command,
           input.workspaceId,
           execId,
           options,
           child,
-          exited.then(
-            () => undefined,
-            () => undefined,
-          ),
-        ).catch(() => undefined);
-      } else child.kill(signal);
-    },
-  };
+          wrapperClosedPromise,
+        );
+      } catch (caught) {
+        cleanupError = caught;
+      }
+      settled = true;
+      const detail =
+        cleanupError instanceof Error ? `; cleanup failed: ${cleanupError.message}` : "";
+      const wrapperDetail = stderr.trim() ? `; wrapper: ${stderr.trim()}` : "";
+      rejectExit(
+        new Error(
+          `Workspace runtime ${runtimeId} pipes failed: ${failure.message}${wrapperDetail}${detail}`,
+        ),
+      );
+    })();
+  }
 }
 
 async function collect(stream: Readable): Promise<string> {

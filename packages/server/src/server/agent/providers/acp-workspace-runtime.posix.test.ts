@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, test } from "vitest";
 
@@ -14,6 +15,12 @@ import { bindProviderWorkspace } from "./workspace/index.js";
 const fixtureAgent = new URL(
   "../../test-utils/fixtures/workspace-runtime-acp-agent.mjs",
   import.meta.url,
+);
+const fixtureRuntime = fileURLToPath(
+  new URL("../../../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
+);
+const helperExecutable = fileURLToPath(
+  new URL("../../workspace-helper/executable.mjs", import.meta.url),
 );
 
 const posixDescribe = describe.runIf(process.platform !== "win32");
@@ -88,7 +95,7 @@ posixDescribe("ACP workspace terminal execution", () => {
     }
   });
 
-  test.each(["local", "worktree"] as const)(
+  test.each(["local", "worktree", "fixture"] as const)(
     "discovers and launches an ACP provider through the selected %s workspace",
     async (selectedRuntimeId) => {
       const root = await mkdtemp(path.join(tmpdir(), "paseo-acp-provider-runtime-"));
@@ -103,11 +110,24 @@ posixDescribe("ACP workspace terminal execution", () => {
       execFileSync("git", ["add", "."], { cwd });
       execFileSync("git", ["commit", "-m", "fixture"], { cwd });
       const runtimeIds = new Map<string, string>();
+      const fixtureStateDirectory = path.join(root, "fixture-state");
+      await mkdir(fixtureStateDirectory);
       const service = createWorkspaceRuntimeService({
         paseoHome: path.join(root, "home"),
         resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
         persistRuntimeId: async (workspaceId, persistedRuntimeId) =>
           runtimeIds.set(workspaceId, persistedRuntimeId),
+        externalRuntimes:
+          selectedRuntimeId === "fixture"
+            ? {
+                fixture: {
+                  type: "command",
+                  command: [process.execPath, fixtureRuntime],
+                  helperCommand: [process.execPath, helperExecutable],
+                  options: { stateDirectory: fixtureStateDirectory },
+                },
+              }
+            : undefined,
         ...lifecycleRecords(runtimeIds),
       });
       await service.create({
@@ -115,7 +135,7 @@ posixDescribe("ACP workspace terminal execution", () => {
         runtimeId: selectedRuntimeId,
         project: { id: "project", source: { kind: "host-directory", path: cwd } },
         placement:
-          selectedRuntimeId === "local"
+          selectedRuntimeId !== "worktree"
             ? { kind: "existing" }
             : { kind: "branch", branchName: "provider-worktree", baseRef: "main" },
       });

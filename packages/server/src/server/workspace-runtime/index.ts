@@ -3,6 +3,7 @@ import type { Readable, Writable } from "node:stream";
 import type { WorkspaceFiles } from "../workspace-helper/index.js";
 
 import { createCommandRuntimeAdapter } from "./command/index.js";
+import { createHostGitObservationOwner } from "./internal/host-git-observation.js";
 import { createLocalRuntime } from "./internal/local-runtime.js";
 import { createService } from "./internal/service.js";
 import { createWorktreeRuntime } from "./internal/worktree-runtime.js";
@@ -113,7 +114,6 @@ export interface BoundWorkspaceRuntime {
   run(input: Omit<WorkspaceProcessInput, "workspaceId">): Promise<WorkspaceProcess>;
   resolveCommand(command: string): Promise<string | null>;
   readonly files: WorkspaceFiles;
-  readonly homeFiles: WorkspaceFiles;
 }
 
 export interface WorkspaceRuntimeService {
@@ -178,6 +178,7 @@ export interface WorkspaceRuntimeOptions extends WorkspaceRuntimeRecordStore {
 export function createWorkspaceRuntimeService(
   options: WorkspaceRuntimeOptions,
 ): WorkspaceRuntimeService {
+  const hostGitObservations = createHostGitObservationOwner();
   const externalDrivers = Object.entries(options.externalRuntimes ?? {}).map(
     ([runtimeId, config]) => {
       if (runtimeId === "local" || runtimeId === "worktree") {
@@ -188,10 +189,11 @@ export function createWorkspaceRuntimeService(
   );
   return createService(
     [
-      createLocalRuntime(options.paseoHome),
+      createLocalRuntime(options.paseoHome, hostGitObservations),
       createWorktreeRuntime({
         paseoHome: options.paseoHome,
         worktreesRoot: options.worktreesRoot,
+        hostGitObservations,
       }),
       ...externalDrivers,
     ],

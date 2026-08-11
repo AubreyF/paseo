@@ -17,6 +17,8 @@ on:
       - "packages/cli/**"
       - "packages/client/**"
       - "packages/docker-workspace-runtime/**"
+      - "packages/fixture-workspace-runtime/**"
+      - "packages/workspace-runtime-contract/**"
       - "packages/expo-two-way-audio/**"
       - "packages/highlight/**"
       - "packages/protocol/**"

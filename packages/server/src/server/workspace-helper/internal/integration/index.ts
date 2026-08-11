@@ -1,7 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 
-import type { WorkspaceFiles } from "../index.js";
-import { createClient } from "../internal/client.js";
+import type { WorkspaceFiles } from "../../index.js";
+import { createClient } from "../client.js";
 
 export interface WorkspaceHelperProcess {
   stdin: Writable;
@@ -20,8 +20,6 @@ export interface WorkspaceFilesOwner {
 
 /** @package Parent integration SPI. Normal callers consume WorkspaceFiles from the public module. */
 export function bindWorkspaceHelper(options: {
-  root: string;
-  allowAbsolutePaths?: boolean;
   command: readonly [string, ...string[]];
   launch(argv: readonly [string, ...string[]]): Promise<WorkspaceHelperProcess>;
 }): WorkspaceFilesOwner {

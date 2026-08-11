@@ -1,5 +1,6 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync, watch } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -13,8 +14,9 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
-import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { beforeAll, expect, onTestFinished, test, vi } from "vitest";
 
 import { createWorkspaceRuntimeService } from "./index.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
@@ -36,7 +38,7 @@ const image = "paseo-workspace-runtime-slice1:test";
 const fixtureAgent = fileURLToPath(
   new URL("../test-utils/fixtures/workspace-runtime-acp-agent.mjs", import.meta.url),
 );
-const cleanupRoots: string[] = [];
+const run = promisify(execFile);
 
 beforeAll(() => {
   execFileSync(
@@ -45,10 +47,6 @@ beforeAll(() => {
     { stdio: "pipe" },
   );
 }, 120_000);
-
-afterAll(async () => {
-  await Promise.all(cleanupRoots.map((root) => rm(root, { recursive: true, force: true })));
-});
 
 async function collect(stream: NodeJS.ReadableStream): Promise<string> {
   const chunks: Buffer[] = [];
@@ -59,8 +57,8 @@ async function collect(stream: NodeJS.ReadableStream): Promise<string> {
 }
 
 test("the command runtime owns Docker workspace materialization, pipes, and lifecycle", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-"));
-  cleanupRoots.push(root);
+  const fixture = await dockerTestFixture("paseo-runtime-docker-");
+  const root = fixture.root;
   const repo = await createRepository(root);
   await writeFile(path.join(repo, ".env"), "must-not-enter-runtime\n");
   const runtimeIds = new Map<string, string>();
@@ -84,6 +82,7 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
   };
   const service = createWorkspaceRuntimeService(options);
   const workspaceId = `docker-${Date.now()}`;
+  fixture.workspace(workspaceId);
 
   try {
     const workspace = await service.create({
@@ -213,15 +212,15 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
 
     const recovered = createWorkspaceRuntimeService(options);
     await recovered.resume(workspaceId);
-    await expect(
-      recovered.run({
-        workspaceId,
-        cwd: "../escape",
-        argv: ["/bin/true"],
-        env: {},
-        purpose: { kind: "workspace-script", script: "cwd-contract" },
-      }),
-    ).rejects.toThrow("Workspace cwd must stay within the runtime root");
+    const escapedCwd = await recovered.run({
+      workspaceId,
+      cwd: "../escape",
+      argv: ["/bin/true"],
+      env: {},
+      purpose: { kind: "workspace-script", script: "cwd-contract" },
+    });
+    escapedCwd.stdin.end();
+    await expect(escapedCwd.exited).rejects.toThrow("Workspace cwd escapes its root");
     const read = await recovered.run({
       workspaceId,
       argv: ["/bin/cat", "runtime-owned.txt"],
@@ -293,8 +292,8 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
       rows: 24,
       cols: 80,
     });
-    terminalControlFailure.resize(0, 0);
-    await expect(terminalControlFailure.exited).rejects.toThrow("Invalid PTY size");
+    terminalControlFailure.kill("SIGUSR1");
+    await expect(terminalControlFailure.exited).rejects.toThrow("Unsupported signal: SIGUSR1");
     expect(dockerProcesses(workspaceId)).not.toContain("sleep 30");
 
     const committedOnly = await recovered.run({
@@ -367,11 +366,108 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
   } finally {
     await service.destroy(workspaceId).catch(() => undefined);
   }
+}, 180_000);
+
+test("Docker buffers immediate pipe signals until the workload identity is authoritative", async () => {
+  const fixture = await dockerTestFixture("paseo-runtime-docker-started-");
+  const root = fixture.root;
+  const repo = await createRepository(root);
+  const workspaceId = `docker-started-${Date.now()}`;
+  fixture.workspace(workspaceId);
+  const runtimeIds = new Map<string, string>();
+  const service = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "paseo-home"),
+    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
+    persistRuntimeId: async (id, runtimeId) => {
+      runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
+    externalRuntimes: {
+      docker: {
+        type: "command",
+        command: [process.execPath, "--import", "tsx", runtimeExecutable],
+        options: { image },
+      },
+    },
+  });
+  const originalPath = process.env.PATH;
+  const originalBarrier = process.env.PASEO_DOCKER_TEST_BARRIER;
+
+  try {
+    await service.create({
+      workspaceId,
+      runtimeId: "docker",
+      project: { id: "started-project", source: { kind: "host-directory", path: repo } },
+      placement: { kind: "existing" },
+    });
+    const shimDirectory = path.join(root, "docker-shim");
+    await mkdir(shimDirectory);
+    const realDocker = execFileSync("which", ["docker"], { encoding: "utf8" }).trim();
+    const shim = path.join(shimDirectory, "docker");
+    await writeFile(shim, dockerBarrierShim(realDocker));
+    await chmod(shim, 0o755);
+    process.env.PATH = `${shimDirectory}:${originalPath ?? ""}`;
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const barrier = path.join(root, `barrier-${attempt}`);
+      await mkdir(barrier);
+      process.env.PASEO_DOCKER_TEST_BARRIER = barrier;
+      const entered = nextFile(barrier, "entered");
+      const workload = await service.run({
+        workspaceId,
+        argv: ["/bin/sleep", "3"],
+        env: { PATH: "/usr/bin:/bin" },
+        purpose: { kind: "workspace-script", script: `immediate-signal-${attempt}` },
+      });
+      workload.stdin.end();
+      await entered;
+      const killedAt = Date.now();
+      workload.kill("SIGTERM");
+      await writeFile(path.join(barrier, "release"), "release");
+
+      await expect(workload.exited).resolves.toEqual({ code: null, signal: "SIGTERM" });
+      expect(Date.now() - killedAt).toBeLessThan(1_500);
+      expect(dockerProcesses(workspaceId)).not.toContain("sleep 3");
+    }
+
+    const shortBarrier = path.join(root, "barrier-short-exit");
+    await mkdir(shortBarrier);
+    process.env.PASEO_DOCKER_TEST_BARRIER = shortBarrier;
+    const shortEntered = nextFile(shortBarrier, "entered");
+    const short = await service.run({
+      workspaceId,
+      argv: ["/bin/true"],
+      env: {},
+      purpose: { kind: "workspace-script", script: "exit-around-started" },
+    });
+    short.stdin.end();
+    await shortEntered;
+    await writeFile(path.join(shortBarrier, "release"), "release");
+    await expect(short.exited).resolves.toEqual({ code: 0, signal: null });
+
+    delete process.env.PASEO_DOCKER_TEST_BARRIER;
+    const later = await service.run({
+      workspaceId,
+      argv: ["/bin/true"],
+      env: {},
+      purpose: { kind: "workspace-script", script: "after-immediate-signals" },
+    });
+    later.stdin.end();
+    await expect(later.exited).resolves.toEqual({ code: 0, signal: null });
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalBarrier === undefined) delete process.env.PASEO_DOCKER_TEST_BARRIER;
+    else process.env.PASEO_DOCKER_TEST_BARRIER = originalBarrier;
+    await service.destroy(workspaceId).catch(() => undefined);
+  }
 }, 120_000);
 
 test("a selected Docker service port script executes in the container and leaves the host decoy untouched", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-port-script-"));
-  cleanupRoots.push(root);
+  const fixture = await dockerTestFixture("paseo-runtime-docker-port-script-");
+  const root = fixture.root;
   const repo = await createRepository(root);
   const script = path.join(repo, "port-script.sh");
   await writeFile(
@@ -384,6 +480,7 @@ test("a selected Docker service port script executes in the container and leaves
     cwd: repo,
   });
   const workspaceId = `docker-port-script-${Date.now()}`;
+  fixture.workspace(workspaceId);
   const runtimeIds = new Map<string, string>();
   const service = createWorkspaceRuntimeService({
     paseoHome: path.join(root, "paseo-home"),
@@ -436,8 +533,8 @@ test("a selected Docker service port script executes in the container and leaves
 }, 120_000);
 
 test("public daemon and client keep Docker provider discovery, launch, files, Git, and snapshots in one runtime", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-daemon-"));
-  cleanupRoots.push(root);
+  const fixture = await dockerTestFixture("paseo-runtime-docker-daemon-");
+  const root = fixture.root;
   const repo = await createRepository(root);
   await writeFile(path.join(repo, "provider-model.txt"), "fixture-model-v1\n");
   execFileSync("git", ["add", "provider-model.txt"], { cwd: repo });
@@ -458,6 +555,7 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
   };
   const runtimeConfigs = { docker: runtimeConfig, "docker-configured": configuredRuntimeConfig };
   const workspaceIds = [`docker-daemon-a-${Date.now()}`, `docker-daemon-b-${Date.now()}`];
+  for (const workspaceId of workspaceIds) fixture.workspace(workspaceId);
   const hostProbeMarker = path.join(root, "host-provider-probed.txt");
   const hostOnlyProvider = path.join(root, "host-only-provider.mjs");
   await writeFile(
@@ -694,10 +792,12 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
 }, 180_000);
 
 test("Docker creation validates roots and rolls back when runtime selection cannot persist", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-rollback-"));
-  cleanupRoots.push(root);
+  const fixture = await dockerTestFixture("paseo-runtime-docker-rollback-");
+  const root = fixture.root;
   const repo = await createRepository(root);
   const workspaceId = `docker-rollback-${Date.now()}`;
+  fixture.workspace(workspaceId);
+  fixture.workspace(`${workspaceId}-escape`);
   const service = createWorkspaceRuntimeService({
     paseoHome: path.join(root, "paseo-home"),
     resolveRuntimeId: async () => null,
@@ -736,8 +836,8 @@ test("Docker creation validates roots and rolls back when runtime selection cann
 }, 120_000);
 
 test("Docker rejects a committed symlink cwd that resolves outside the selected root", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-symlink-"));
-  cleanupRoots.push(root);
+  const fixture = await dockerTestFixture("paseo-runtime-docker-symlink-");
+  const root = fixture.root;
   const repo = await createRepository(root);
   await mkdir(path.join(repo, "selected"));
   await symlink("..", path.join(repo, "selected", "escape"));
@@ -746,6 +846,7 @@ test("Docker rejects a committed symlink cwd that resolves outside the selected 
     cwd: repo,
   });
   const workspaceId = `docker-symlink-${Date.now()}`;
+  fixture.workspace(workspaceId);
   const runtimeIds = new Map<string, string>();
   const service = createWorkspaceRuntimeService({
     paseoHome: path.join(root, "paseo-home"),
@@ -781,12 +882,9 @@ test("Docker rejects a committed symlink cwd that resolves outside the selected 
       purpose: { kind: "workspace-script", script: "realpath-confinement" },
     });
     escaped.stdin.end();
-    const [escapedError, escapedExit] = await Promise.all([
-      collect(escaped.stderr),
-      escaped.exited,
-    ]);
-    expect(escapedError).toContain("Workspace cwd escapes its root");
-    expect(escapedExit.code).not.toBe(0);
+    const escapedError = collect(escaped.stderr);
+    await expect(escaped.exited).rejects.toThrow("Workspace cwd escapes its root");
+    expect(await escapedError).toContain("Workspace cwd escapes its root");
     const verify = await service.run({
       workspaceId,
       argv: ["/bin/sh", "-c", "test ! -e ../escaped-marker"],
@@ -801,10 +899,11 @@ test("Docker rejects a committed symlink cwd that resolves outside the selected 
 }, 120_000);
 
 test("the Docker runtime never adopts or destroys an unowned deterministic resource", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-ownership-"));
-  cleanupRoots.push(root);
+  const fixture = await dockerTestFixture("paseo-runtime-docker-ownership-");
+  const root = fixture.root;
   const workspaceId = `docker-ownership-${Date.now()}`;
   const volume = dockerResourceName(workspaceId);
+  fixture.workspace(workspaceId);
   execFileSync("docker", ["volume", "create", volume]);
   const runtimeIds = new Map([[workspaceId, "docker"]]);
   const service = createWorkspaceRuntimeService({
@@ -849,12 +948,14 @@ test("the Docker runtime never adopts or destroys an unowned deterministic resou
 }, 30_000);
 
 test("Docker reconciliation removes only orphaned resources with deterministic names and ownership labels", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-reconcile-"));
-  cleanupRoots.push(root);
+  const fixture = await dockerTestFixture("paseo-runtime-docker-reconcile-");
+  const root = fixture.root;
   const orphanWorkspaceId = `docker-orphan-${Date.now()}`;
   const foreignWorkspaceId = `${orphanWorkspaceId}-foreign`;
   const orphanVolume = dockerResourceName(orphanWorkspaceId);
   const foreignVolume = `${dockerResourceName(foreignWorkspaceId)}-foreign`;
+  fixture.volume(orphanVolume);
+  fixture.volume(foreignVolume);
   execFileSync("docker", [
     "volume",
     "create",
@@ -903,6 +1004,87 @@ test("Docker reconciliation removes only orphaned resources with deterministic n
     });
   }
 }, 30_000);
+
+async function dockerTestFixture(prefix: string): Promise<{
+  root: string;
+  workspace(workspaceId: string): void;
+  volume(name: string): void;
+}> {
+  const root = await mkdtemp(path.join(tmpdir(), prefix));
+  const containers = new Set<string>();
+  const volumes = new Set<string>();
+  const workspaceIds = new Set<string>();
+  onTestFinished(async () => {
+    await Promise.all(
+      [...containers].map((name) =>
+        run("docker", ["rm", "-f", name], { timeout: 10_000 }).catch(() => undefined),
+      ),
+    );
+    await Promise.all(
+      [...volumes].map((name) =>
+        run("docker", ["volume", "rm", "-f", name], { timeout: 10_000 }).catch(() => undefined),
+      ),
+    );
+    const leakedContainers = [...containers].filter((name) =>
+      dockerResourceExists("container", name),
+    );
+    const leakedVolumes = [...volumes].filter((name) => dockerResourceExists("volume", name));
+    const runningProcesses = dockerTestProcessPids(workspaceIds);
+    if (runningProcesses.length > 0) {
+      await run("kill", ["-KILL", ...runningProcesses.map(String)], { timeout: 5_000 }).catch(
+        () => undefined,
+      );
+    }
+    const leakedProcesses = dockerTestProcessPids(workspaceIds);
+    await rm(root, { recursive: true, force: true });
+    if (leakedContainers.length || leakedVolumes.length || leakedProcesses.length) {
+      throw new Error(
+        `Docker test leaked containers=${leakedContainers.join(",")} volumes=${leakedVolumes.join(",")} processes=${leakedProcesses.join(",")}`,
+      );
+    }
+  }, 30_000);
+  return {
+    root,
+    workspace(workspaceId) {
+      workspaceIds.add(workspaceId);
+      const name = dockerResourceName(workspaceId);
+      containers.add(name);
+      volumes.add(name);
+    },
+    volume(name) {
+      volumes.add(name);
+    },
+  };
+}
+
+function dockerResourceExists(kind: "container" | "volume", name: string): boolean {
+  try {
+    execFileSync("docker", [kind, "inspect", name], { stdio: "ignore", timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function dockerTestProcessPids(workspaceIds: ReadonlySet<string>): number[] {
+  if (workspaceIds.size === 0) return [];
+  const output = execFileSync("ps", ["-axo", "pid=,command="], {
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  const needles = [...workspaceIds].flatMap((workspaceId) => [
+    dockerResourceName(workspaceId),
+    `--workspace-id ${workspaceId}`,
+  ]);
+  return output
+    .split("\n")
+    .map((line) => line.match(/^\s*(\d+)\s+(.*)$/))
+    .filter(
+      (match): match is RegExpMatchArray =>
+        !!match && needles.some((needle) => match[2]!.includes(needle)),
+    )
+    .map((match) => Number(match[1]));
+}
 
 async function createRepository(root: string): Promise<string> {
   const repo = path.join(root, "repo");
@@ -970,6 +1152,77 @@ function dockerResourceCount(kind: "ps" | "volume", workspaceId: string): number
       ? ["ps", "-aq", "--filter", `label=sh.paseo.workspace-id=${workspaceId}`]
       : ["volume", "ls", "-q", "--filter", `label=sh.paseo.workspace-id=${workspaceId}`];
   return execFileSync("docker", args, { encoding: "utf8" }).trim() ? 1 : 0;
+}
+
+function nextFile(directory: string, expectedName: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const expected = path.join(directory, expectedName);
+    const watcher = watch(directory, (_event, filename) => {
+      if (filename?.toString() !== expectedName) return;
+      finish();
+    });
+    watcher.once("error", reject);
+    if (existsSync(expected)) finish();
+
+    function finish(): void {
+      watcher.close();
+      resolve();
+    }
+  });
+}
+
+function dockerBarrierShim(realDocker: string): string {
+  return `#!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { existsSync, watch } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+
+const args = process.argv.slice(2);
+const barrier = process.env.PASEO_DOCKER_TEST_BARRIER;
+const readiness = barrier && args.includes("paseo-ready");
+const signal = barrier && args.includes("paseo-signal");
+if (readiness) await writeFile(path.join(barrier, "readiness-waiting"), "waiting");
+if (barrier && args[0] === "exec" && args.includes("/opt/paseo-workspace-runtime/workload.mjs")) {
+  await writeFile(path.join(barrier, "entered"), "entered");
+  await nextFile(barrier, "release");
+  await nextOneOf(barrier, ["readiness-waiting", "signal-finished"]);
+}
+const child = spawn(${JSON.stringify(realDocker)}, args, { stdio: "inherit" });
+child.once("error", error => { process.stderr.write(String(error)); process.exitCode = 127; });
+child.once("exit", async (code, exitSignal) => {
+  if (signal) await writeFile(path.join(barrier, "signal-finished"), "finished");
+  if (exitSignal) { process.removeAllListeners(exitSignal); process.kill(process.pid, exitSignal); }
+  else process.exitCode = code ?? 1;
+});
+
+function nextFile(directory, name) {
+  const expected = path.join(directory, name);
+  if (existsSync(expected)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const watcher = watch(directory, (_event, filename) => {
+      if (filename?.toString() !== name) return;
+      watcher.close();
+      resolve();
+    });
+    watcher.once("error", reject);
+    if (existsSync(expected)) { watcher.close(); resolve(); }
+  });
+}
+
+function nextOneOf(directory, names) {
+  if (names.some(name => existsSync(path.join(directory, name)))) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const watcher = watch(directory, (_event, filename) => {
+      if (!filename || !names.includes(filename.toString())) return;
+      watcher.close();
+      resolve();
+    });
+    watcher.once("error", reject);
+    if (names.some(name => existsSync(path.join(directory, name)))) { watcher.close(); resolve(); }
+  });
+}
+`;
 }
 
 async function readFileFromHost(root: string, name: string): Promise<string | null> {

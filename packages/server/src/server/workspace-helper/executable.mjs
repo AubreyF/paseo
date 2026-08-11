@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { constants, watch } from "node:fs";
 import { access, open, realpath, readdir, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
-import os from "node:os";
 import readline from "node:readline";
 
 const outsideMessage = "Access outside of workspace is not allowed";
@@ -15,18 +14,14 @@ const imageTypes = new Map([
   [".webp", "image/webp"],
   [".svg", "image/svg+xml"],
 ]);
-const argv = process.argv.slice(2);
-const operation = argv.shift();
-const argument = (name, fallback) => {
-  const index = argv.indexOf(name);
-  return index < 0 ? fallback : argv[index + 1];
-};
-const configuredRoot = argument("--root");
-const root = configuredRoot === "@home" ? os.homedir() : configuredRoot;
-const allowAbsolute = argv.includes("--allow-absolute");
+const operation = process.argv[2];
+let argumentsByName = new Map();
+const argument = (name, fallback) => argumentsByName.get(name) ?? fallback;
+const root = await realpath(".");
 
 try {
-  if (!operation || !root) throw new Error("Usage: workspace-helper <command> --root <path>");
+  if (!operation) throw new Error("Usage: workspace-helper <command>");
+  argumentsByName = parseArguments(operation, process.argv.slice(3));
   if (operation === "fs-stat") print(await fileStat(root, argument("--path", ".")));
   else if (operation === "fs-list") print(await list(root, argument("--path", ".")));
   else if (operation === "fs-read") await read(root, argument("--path"));
@@ -42,6 +37,31 @@ try {
   process.exitCode = 1;
 }
 
+function parseArguments(command, argv) {
+  const allowed = new Set(allowedArguments(command));
+  const parsed = new Map();
+  for (let index = 0; index < argv.length; index += 2) {
+    const name = argv[index];
+    if (!allowed.has(name)) throw new Error(`Unknown workspace-helper argument: ${name}`);
+    const value = argv[index + 1];
+    if (value === undefined) throw new Error(`${name} requires a value`);
+    if (parsed.has(name)) throw new Error(`Duplicate workspace-helper argument: ${name}`);
+    parsed.set(name, value);
+  }
+  return parsed;
+}
+
+function allowedArguments(command) {
+  if (command === "fs-write") {
+    return ["--path", "--expected-modified-at", "--expected-revision"];
+  }
+  if (command === "fs-stat" || command === "fs-list" || command === "fs-read") {
+    return ["--path"];
+  }
+  if (command === "resolve-command") return ["--name"];
+  return [];
+}
+
 async function resolveCommand(workspaceRoot, name) {
   if (!name) throw new Error("--name is required");
   if (name.includes("/") || (process.platform === "win32" && name.includes("\\"))) {
@@ -54,7 +74,10 @@ async function resolveCommand(workspaceRoot, name) {
     }
   }
   const searchPath = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin";
-  for (const directory of searchPath.split(path.delimiter)) {
+  for (const directory of new Set([
+    path.dirname(process.execPath),
+    ...searchPath.split(path.delimiter),
+  ])) {
     const candidate = path.join(directory, name);
     try {
       await access(candidate, constants.X_OK);
@@ -290,10 +313,8 @@ function isIgnored(relativePath, ignoredPaths) {
 
 async function resolveScoped(workspaceRoot, relativePath = ".") {
   const normalizedRoot = path.resolve(workspaceRoot);
-  if (path.isAbsolute(relativePath) && !allowAbsolute) throw new Error(outsideMessage);
-  const requested = path.isAbsolute(relativePath)
-    ? path.resolve(relativePath)
-    : path.resolve(normalizedRoot, relativePath);
+  if (path.isAbsolute(relativePath)) throw new Error(outsideMessage);
+  const requested = path.resolve(normalizedRoot, relativePath);
   if (!contains(normalizedRoot, requested)) throw new Error(outsideMessage);
   const canonicalRoot = await realpath(normalizedRoot);
   try {

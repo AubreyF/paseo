@@ -1,5 +1,5 @@
 import type { WorkspaceFileContent, WorkspaceFileRead, WorkspaceWatchEvent } from "../index.js";
-import type { WorkspaceFilesOwner, WorkspaceHelperProcess } from "../integration/index.js";
+import type { WorkspaceFilesOwner, WorkspaceHelperProcess } from "./integration/index.js";
 import {
   describeSchema,
   directorySchema,
@@ -25,13 +25,11 @@ interface LogicalWatchSubscription {
   listener: (event: WorkspaceWatchEvent) => void;
 }
 
-const WATCH_ACKNOWLEDGEMENT_TIMEOUT_MS = 750;
+const WATCH_ACKNOWLEDGEMENT_TIMEOUT_MS = 3_000;
 const WATCH_CLOSE_TIMEOUT_MS = 500;
 const PROCESS_STOP_TIMEOUT_MS = 1_000;
 
 export function createClient(options: {
-  root: string;
-  allowAbsolutePaths?: boolean;
   launch(argv: readonly [string, ...string[]]): Promise<WorkspaceHelperProcess>;
   command: readonly [string, ...string[]];
 }): WorkspaceFilesOwner {
@@ -47,14 +45,7 @@ export function createClient(options: {
 
   const command = async (name: string, args: readonly string[] = []) => {
     if (closing) throw new Error("Workspace files client is closed");
-    const child = await options.launch([
-      ...options.command,
-      name,
-      "--root",
-      options.root,
-      ...(options.allowAbsolutePaths ? ["--allow-absolute"] : []),
-      ...args,
-    ]);
+    const child = await options.launch([...options.command, name, ...args]);
     processes.add(child);
     void child.exited.then(
       () => processes.delete(child),
@@ -86,12 +77,13 @@ export function createClient(options: {
   return {
     files: {
       stat(path) {
-        return json("fs-stat", ["--path", path], fileStatSchema);
+        return json("fs-stat", ["--path", requireRelativePath(path)], fileStatSchema);
       },
       list(path) {
-        return json("fs-list", ["--path", path], directorySchema);
+        return json("fs-list", ["--path", requireRelativePath(path)], directorySchema);
       },
       async read(path) {
+        path = requireRelativePath(path);
         const metadata = await json("fs-stat", ["--path", path], fileStatSchema);
         if (metadata.status !== "ready") {
           throw new Error(metadata.status === "error" ? metadata.error : `File not found: ${path}`);
@@ -108,7 +100,7 @@ export function createClient(options: {
         return { ...metadata, chunks } satisfies WorkspaceFileRead;
       },
       async write(input) {
-        const args = ["--path", input.path];
+        const args = ["--path", requireRelativePath(input.path)];
         if (input.expectedModifiedAt) args.push("--expected-modified-at", input.expectedModifiedAt);
         if (input.expectedRevision) args.push("--expected-revision", input.expectedRevision);
         const child = await command("fs-write", args);
@@ -133,14 +125,21 @@ export function createClient(options: {
       },
       async subscribe(input, listener) {
         if (closing) throw new Error("Workspace files client is closed");
+        const confinedInput = {
+          ...input,
+          paths: input.paths.map(requireRelativePath),
+          ...(input.ignoredPaths
+            ? { ignoredPaths: input.ignoredPaths.map(requireRelativePath) }
+            : {}),
+        };
         const id = `subscription-${++nextSubscriptionId}`;
-        watchSubscriptions.set(id, { input, listener });
+        watchSubscriptions.set(id, { input: confinedInput, listener });
         let state: WatchState | null = null;
         try {
           state = await requireWatcher();
           if (state.subscriptions.has(id)) return subscriptionFor(id);
           state.subscriptions.set(id, listener);
-          await sendSubscription(state, id, input);
+          await sendSubscription(state, id, confinedInput);
         } catch (error) {
           watchSubscriptions.delete(id);
           state?.subscriptions.delete(id);
@@ -512,6 +511,20 @@ function helperError(
   exit: { code: number | null; signal: NodeJS.Signals | null },
 ): Error {
   return new Error(stderr.trim() || `Workspace helper failed: ${exit.code ?? exit.signal}`);
+}
+
+function requireRelativePath(value: string): string {
+  const segments = value.split(/[\\/]/u);
+  if (
+    !value ||
+    value.startsWith("/") ||
+    /^[A-Za-z]:\//u.test(value) ||
+    value.includes("\\") ||
+    segments.includes("..")
+  ) {
+    throw new Error(`Workspace helper path must be relative: ${value}`);
+  }
+  return value;
 }
 
 function onceDrain(stream: NodeJS.WritableStream): Promise<void> {

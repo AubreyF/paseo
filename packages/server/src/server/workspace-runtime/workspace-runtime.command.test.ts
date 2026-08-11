@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, watch } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createWorkspaceRuntimeService } from "./index.js";
 
 const fixtureExecutable = fileURLToPath(
-  new URL("../test-utils/fixtures/workspace-runtime-command-fixture.mjs", import.meta.url),
+  new URL("../../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
 );
 const helperExecutable = fileURLToPath(
   new URL("../workspace-helper/executable.mjs", import.meta.url),
@@ -68,6 +68,119 @@ test("a trusted registered command is selected and receives secret launch data o
   ).rejects.toThrow("Workspace runtime is not registered: nope");
   await fixture.service.destroy(fixture.workspaceId);
 });
+
+test("equal display cwd values never share external runtime execution, files, Git, or caches", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-command-runtime-equal-display-"));
+  cleanupRoots.push(root);
+  const sources = [path.join(root, "source-a"), path.join(root, "source-b")];
+  const stateDirectories = [path.join(root, "state-a"), path.join(root, "state-b")];
+  await Promise.all([...sources, ...stateDirectories].map((directory) => mkdir(directory)));
+  for (const [index, source] of sources.entries()) {
+    execFileSync("git", ["init", "-b", "main"], { cwd: source });
+    execFileSync("git", ["config", "user.email", "paseo@example.com"], { cwd: source });
+    execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: source });
+    await writeFile(path.join(source, "tracked.txt"), "base\n");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: source });
+    execFileSync("git", ["commit", "-m", "base"], { cwd: source });
+    await writeFile(path.join(source, `only-${index === 0 ? "a" : "b"}.txt`), "before");
+  }
+  const runtimeIds = new Map<string, string>();
+  const service = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "paseo-home"),
+    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
+    persistRuntimeId: async (id, runtimeId) => void runtimeIds.set(id, runtimeId),
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => void runtimeIds.delete(id),
+    externalRuntimes: Object.fromEntries(
+      ["a", "b"].map((suffix, index) => [
+        `fixture-${suffix}`,
+        {
+          type: "command" as const,
+          command: [processExecPath(), fixtureExecutable] as const,
+          helperCommand: [processExecPath(), helperExecutable] as const,
+          options: {
+            stateDirectory: stateDirectories[index],
+            displayCwd: "/workspace",
+            exposeHostVisiblePath: false,
+          },
+        },
+      ]),
+    ),
+  });
+
+  for (const [index, suffix] of ["a", "b"].entries()) {
+    await service.create({
+      workspaceId: `equal-${suffix}`,
+      runtimeId: `fixture-${suffix}`,
+      project: {
+        id: `project-${suffix}`,
+        source: { kind: "host-directory", path: sources[index] },
+      },
+      placement: { kind: "existing" },
+    });
+  }
+  await expect(service.inspect("equal-a")).resolves.toEqual({ status: "ready", cwd: "/workspace" });
+  await expect(service.inspect("equal-b")).resolves.toEqual({ status: "ready", cwd: "/workspace" });
+  await expect(service.requireHostVisiblePath("equal-a")).rejects.toThrow("no host-visible path");
+  expect(await service.bind("equal-a")).not.toBe(await service.bind("equal-b"));
+
+  await expect(
+    service.files("equal-a").write({ path: "only-a.txt", contents: Buffer.from("a") }),
+  ).resolves.toMatchObject({ status: "written" });
+  await expect(
+    service.files("equal-b").write({ path: "only-b.txt", contents: Buffer.from("b") }),
+  ).resolves.toMatchObject({ status: "written" });
+  await expect(service.files("equal-a").stat("only-b.txt")).resolves.toMatchObject({
+    status: "missing",
+  });
+  await expect(service.files("equal-b").stat("only-a.txt")).resolves.toMatchObject({
+    status: "missing",
+  });
+
+  const statuses = await Promise.all(
+    ["a", "b"].map(async (suffix) => {
+      const workload = await service.run({
+        workspaceId: `equal-${suffix}`,
+        argv: ["git", "status", "--porcelain"],
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+        purpose: { kind: "git" },
+      });
+      workload.stdin.end();
+      const output = await collectText(workload.stdout);
+      await workload.exited;
+      return output;
+    }),
+  );
+  expect(statuses[0]).toContain("only-a.txt");
+  expect(statuses[0]).not.toContain("only-b.txt");
+  expect(statuses[1]).toContain("only-b.txt");
+  expect(statuses[1]).not.toContain("only-a.txt");
+
+  await service.destroy("equal-a");
+  await service.destroy("equal-b");
+});
+
+test.each(["/tmp", "../outside", "outside-link"])(
+  "the external runtime itself rejects workspace cwd escape %s",
+  async (cwd) => {
+    const fixture = await createFixture(`cwd-${cwd.replaceAll(/[^a-z]/g, "-")}`);
+    const outside = path.join(fixture.root, "outside");
+    await mkdir(outside);
+    await symlink(outside, path.join(fixture.source, "outside-link"), "dir");
+    await fixture.service.create(fixture.createInput);
+
+    const escaped = await fixture.service.run({
+      workspaceId: fixture.workspaceId,
+      cwd,
+      argv: [processExecPath(), "-e", "process.exit(0)"],
+      env: {},
+      purpose: { kind: "workspace-script", script: "cwd-confinement" },
+    });
+    escaped.stdin.end();
+    await expect(escaped.exited).rejects.toThrow("Workspace cwd escapes its runtime root");
+    await fixture.service.destroy(fixture.workspaceId);
+  },
+);
 
 test("a command runtime tears down and reconstructs its bound files capability", async () => {
   const fixture = await createFixture("files-reconstruction");
@@ -251,6 +364,57 @@ test("a registered pipes-only command runtime fails closed when asked for a PTY"
   await fixture.service.destroy(fixture.workspaceId);
 });
 
+test.each(["success", "error", "hang"] as const)(
+  "a crashed pipes wrapper reaps its detached workload when the signal helper ends with %s",
+  async (signalHelperResult) => {
+    const fixture = await createFixture(`pipes-wrapper-crash-${signalHelperResult}`, false, "pty", {
+      crashPipeWrapper: true,
+      ...(signalHelperResult === "success" ? {} : { signalHelperFailure: signalHelperResult }),
+    });
+    const pidFile = path.join(fixture.source, `crashed-pipe-${signalHelperResult}.pid`);
+    await fixture.service.create(fixture.createInput);
+    const workload = await fixture.service.run({
+      workspaceId: fixture.workspaceId,
+      argv: [
+        processExecPath(),
+        "-e",
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`,
+      ],
+      env: {},
+      purpose: { kind: "workspace-script", script: "wrapper-crash" },
+    });
+    workload.stdin.end();
+
+    await expect(workload.exited).rejects.toThrow(
+      signalHelperResult === "success"
+        ? "pipes wrapper ended without a valid fd4 exit event"
+        : "cleanup failed",
+    );
+    const workloadPid = Number(await readFile(pidFile, "utf8"));
+    expect(processExists(workloadPid)).toBe(false);
+    const later = await fixture.service.run({
+      workspaceId: fixture.workspaceId,
+      argv: [processExecPath(), "-e", "process.exit(0)"],
+      env: {},
+      purpose: { kind: "workspace-script", script: "later-execution" },
+    });
+    later.stdin.end();
+    await expect(later.exited).resolves.toEqual({ code: 0, signal: null });
+    await fixture.service.destroy(fixture.workspaceId);
+  },
+  5_000,
+);
+
+test("a command runtime protocol version mismatch fails with the authored and expected versions", async () => {
+  const fixture = await createFixture("version-mismatch", false, "pty", {
+    describeProtocolVersion: 2,
+  });
+
+  await expect(fixture.service.create(fixture.createInput)).rejects.toThrow(
+    "unsupported command protocol version 2; expected 1",
+  );
+});
+
 test("the fd4 workload exit remains authoritative after the wrapper exits", async () => {
   const fixture = await createFixture("delayed-pty-exit", false, "pty", {
     delayedPtyExitEvent: true,
@@ -312,6 +476,71 @@ test("an invalid fd4 event rejects and terminates the wrapper workload", async (
   await fixture.service.destroy(fixture.workspaceId);
 });
 
+test.each([
+  ["exit-before-eof", "pipes", ["started", "exit", "eof"], "exit before eof"],
+  ["eof-before-started", "pipes", ["eof", "started", "exit"], "eof before started"],
+  ["duplicate-started", "pipes", ["started", "started"], "duplicate started"],
+  ["duplicate-eof", "pipes", ["started", "eof", "eof"], "duplicate eof"],
+  ["duplicate-exit", "pipes", ["started", "eof", "exit", "exit"], "duplicate exit"],
+  ["post-exit-event", "pipes", ["started", "eof", "exit", "eof"], "event after exit"],
+  ["pty-resize-before-started", "pty", ["resized"], "resized before started"],
+  ["pty-resize-after-eof", "pty", ["started", "eof", "resized"], "resized after eof"],
+] as const)(
+  "an external %s fd4 violation rejects only after its exact workload is absent",
+  async (name, mode, processEventSequence, expected) => {
+    const pidRoot = await mkdtemp(path.join(tmpdir(), `paseo-fd4-${name}-`));
+    cleanupRoots.push(pidRoot);
+    const pidFile = path.join(pidRoot, "workload.pid");
+    const barrierFile = path.join(pidRoot, "release-events");
+    const fixture = await createFixture(`fd4-${name}`, false, "pty", {
+      processEventSequence,
+      processEventPurposeKind: mode === "pty" ? "terminal" : "workspace-script",
+      recordWorkloadPidAt: pidFile,
+      processEventBarrierPath: barrierFile,
+    });
+    await fixture.service.create(fixture.createInput);
+    let workloadPid: number | undefined;
+    try {
+      const workload =
+        mode === "pty"
+          ? await fixture.service.openTerminal({
+              workspaceId: fixture.workspaceId,
+              argv: [processExecPath(), "-e", "setInterval(()=>{},1000)"],
+              env: {},
+              purpose: { kind: "terminal", terminalId: name },
+              rows: 24,
+              cols: 80,
+            })
+          : await fixture.service.run({
+              workspaceId: fixture.workspaceId,
+              argv: [processExecPath(), "-e", "setInterval(()=>{},1000)"],
+              env: {},
+              purpose: { kind: "workspace-script", script: name },
+            });
+      if (workload.kind === "pipes") workload.stdin.end();
+      await writeFile(barrierFile, "release");
+      const failure = await workload.exited.then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain(expected);
+      workloadPid = Number(await readFile(pidFile, "utf8"));
+      expect(processExists(workloadPid)).toBe(false);
+    } finally {
+      if (workloadPid && processExists(workloadPid)) {
+        try {
+          process.kill(-workloadPid, "SIGKILL");
+        } catch {
+          // The assertion above owns the cleanup verdict; this is failure-only containment.
+        }
+      }
+      await fixture.service.destroy(fixture.workspaceId);
+    }
+  },
+  8_000,
+);
+
 test("a failed PTY control channel rejects and terminates the wrapper workload", async () => {
   const fixture = await createFixture("failed-pty-control", false, "pty", {
     closePtyControl: true,
@@ -341,6 +570,35 @@ test("a failed PTY control channel rejects and terminates the wrapper workload",
 
   await expect(terminal.exited).rejects.toThrow("PTY resize acknowledgement timed out");
   expect(processExists(workloadPid)).toBe(false);
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
+test("an invalid resize is rejected before PTY state or workload changes", async () => {
+  const fixture = await createFixture("invalid-resize");
+  await fixture.service.create(fixture.createInput);
+  const terminal = await fixture.service.openTerminal({
+    workspaceId: fixture.workspaceId,
+    argv: [
+      processExecPath(),
+      "-e",
+      "process.stdin.setEncoding('utf8');process.stdin.once('data',data=>{process.stdout.write(`${data.trim()}|${process.stdout.columns}x${process.stdout.rows}`);process.exit(0)})",
+    ],
+    env: {},
+    purpose: { kind: "terminal", terminalId: "invalid-resize" },
+    rows: 24,
+    cols: 80,
+  });
+  let output = "";
+  terminal.onData((data) => {
+    output += data;
+  });
+
+  expect(() => terminal.resize(0, 40)).toThrow();
+  terminal.resize(101, 37);
+  terminal.write("alive\n");
+
+  await expect(terminal.exited).resolves.toEqual({ code: 0, signal: null });
+  expect(output).toContain("alive|101x37");
   await fixture.service.destroy(fixture.workspaceId);
 });
 
@@ -451,6 +709,9 @@ async function createFixture(
           processExecPath(),
           fixtureExecutable,
           ...(modes === "pipes" ? ["--modes", "pipes"] : []),
+          ...(runtimeOptions.describeProtocolVersion === undefined
+            ? []
+            : ["--protocol-version", String(runtimeOptions.describeProtocolVersion)]),
         ],
         helperCommand: helperCommand?.(root) ?? [processExecPath(), helperExecutable],
         options: {
@@ -479,6 +740,12 @@ async function createFixture(
 
 function processExecPath(): string {
   return process.execPath;
+}
+
+async function collectText(stream: NodeJS.ReadableStream): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function processExists(pid: number): boolean {

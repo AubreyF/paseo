@@ -4,7 +4,6 @@ import path from "node:path";
 import {
   createWorktree,
   deletePaseoWorktree,
-  getGitCommonDir,
   seedPaseoConfigFile,
   type WorktreeSource,
 } from "../../../utils/worktree.js";
@@ -17,38 +16,50 @@ import type {
 } from "../drivers/index.js";
 import { resolveRuntimeCwd, spawnHostProcess, spawnHostPty } from "./host-process.js";
 import { hostWorkspaceHelperCommand } from "./host-helper.js";
+import type { HostGitObservationOwner } from "./host-git-observation.js";
 import { createRuntimeStateStore } from "./runtime-state.js";
 import { writePaseoWorktreeFirstAgentBranchAutoNameMetadata } from "../../../utils/worktree-metadata.js";
 
-interface WorktreeRuntimeState extends WorkspaceDriverState {
+interface WorktreeRuntimeState {
+  workspaceId: string;
+  root: string;
   sourceRoot: string;
   worktreeRoot: string;
+  lifecycle: "ready" | "paused";
+  lifecycleEnvironment: Readonly<Record<string, string>>;
 }
 
 export function createWorktreeRuntime(options: {
   paseoHome: string;
   worktreesRoot?: string;
+  hostGitObservations: HostGitObservationOwner;
 }): WorkspaceRuntimeDriver {
-  const states = createRuntimeStateStore(options.paseoHome, "worktree");
+  const states = createRuntimeStateStore(options.paseoHome, "worktree", isWorktreeRuntimeState);
 
   async function inspect(workspaceId: string): Promise<WorkspaceDriverInspection> {
     const state = await states.read(workspaceId);
     if (!state) return { status: "missing" };
     try {
       if (!(await stat(state.root)).isDirectory()) return { status: "missing" };
-      return { status: state.lifecycle, state, placement: hostPlacement(state.root) };
+      return {
+        status: state.lifecycle,
+        state: publicState(state),
+        placement: hostPlacement(state.root),
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing" };
       return { status: "error", message: String(error) };
     }
   }
 
-  async function requireReady(workspaceId: string): Promise<WorkspaceDriverState> {
-    const inspection = await inspect(workspaceId);
-    if (inspection.status !== "ready") {
-      throw new Error(`Workspace runtime worktree is ${inspection.status}: ${workspaceId}`);
+  async function requireReady(workspaceId: string): Promise<WorktreeRuntimeState> {
+    const state = await states.read(workspaceId);
+    if (!state || state.lifecycle !== "ready") {
+      throw new Error(
+        `Workspace runtime worktree is ${state?.lifecycle ?? "missing"}: ${workspaceId}`,
+      );
     }
-    return inspection.state;
+    return state;
   }
 
   return {
@@ -108,18 +119,16 @@ export function createWorktreeRuntime(options: {
           root,
           worktreeRoot: worktree.worktreePath,
           sourceRoot,
-          revision: `worktree:${Date.now()}`,
-          executionDomainId: "host",
           lifecycle: "ready",
           lifecycleEnvironment: {
-            PASEO_SOURCE_CHECKOUT_PATH: sourceRoot,
-            PASEO_ROOT_PATH: sourceRoot,
-            PASEO_WORKTREE_PATH: worktree.worktreePath,
+            PASEO_SOURCE_CHECKOUT_PATH: ".",
+            PASEO_ROOT_PATH: ".",
+            PASEO_WORKTREE_PATH: ".",
             PASEO_BRANCH_NAME: worktree.branchName,
           },
         };
         await states.write(state);
-        return { state, placement: hostPlacement(root) };
+        return { state: publicState(state), placement: hostPlacement(root) };
       } catch (error) {
         await deletePaseoWorktree({
           cwd: sourceRoot,
@@ -136,34 +145,28 @@ export function createWorktreeRuntime(options: {
       const root = (await requireReady(input.workspaceId)).root;
       return input.stdio.kind === "pty" ? spawnHostPty(root, input) : spawnHostProcess(root, input);
     },
+    async observeGit(workspaceId, listener) {
+      return options.hostGitObservations.observe((await requireReady(workspaceId)).root, listener);
+    },
     async pause(workspaceId) {
-      const inspection = await inspect(workspaceId);
-      if (inspection.status === "paused") return;
-      if (inspection.status !== "ready") {
-        throw new Error(`Workspace runtime worktree is ${inspection.status}: ${workspaceId}`);
-      }
-      await states.write({ ...inspection.state, lifecycle: "paused" });
+      const state = await states.read(workspaceId);
+      if (state?.lifecycle === "paused") return;
+      if (!state) throw new Error(`Workspace runtime worktree is missing: ${workspaceId}`);
+      await states.write({ ...state, lifecycle: "paused" });
     },
     async resume(workspaceId) {
-      const inspection = await inspect(workspaceId);
-      if (inspection.status === "missing" || inspection.status === "error") {
-        throw new Error(`Workspace runtime worktree is ${inspection.status}: ${workspaceId}`);
-      }
-      const state = { ...inspection.state, lifecycle: "ready" as const };
+      const current = await states.read(workspaceId);
+      if (!current) throw new Error(`Workspace runtime worktree is missing: ${workspaceId}`);
+      const state = { ...current, lifecycle: "ready" as const };
       await states.write(state);
-      return { state, placement: hostPlacement(state.root) };
+      return { state: publicState(state), placement: hostPlacement(state.root) };
     },
     async destroy(workspaceId) {
-      const state = (await states.read(workspaceId)) as WorktreeRuntimeState | null;
+      const state = await states.read(workspaceId);
       if (!state) return;
-      const sourceRoot =
-        typeof state.sourceRoot === "string"
-          ? state.sourceRoot
-          : path.dirname(await getGitCommonDir(state.root));
-      const worktreeRoot = typeof state.worktreeRoot === "string" ? state.worktreeRoot : state.root;
       await deletePaseoWorktree({
-        cwd: sourceRoot,
-        worktreePath: worktreeRoot,
+        cwd: state.sourceRoot,
+        worktreePath: state.worktreeRoot,
         teardownCwds: [],
         paseoHome: options.paseoHome,
         worktreesBaseRoot: options.worktreesRoot,
@@ -171,6 +174,31 @@ export function createWorktreeRuntime(options: {
       await states.remove(workspaceId);
     },
   };
+}
+
+function publicState(state: WorktreeRuntimeState): WorkspaceDriverState {
+  return {
+    workspaceId: state.workspaceId,
+    lifecycle: state.lifecycle,
+    lifecycleEnvironment: state.lifecycleEnvironment,
+  };
+}
+
+function isWorktreeRuntimeState(
+  value: unknown,
+  workspaceId: string,
+): value is WorktreeRuntimeState {
+  if (!value || typeof value !== "object") return false;
+  const state = value as Partial<WorktreeRuntimeState>;
+  return (
+    state.workspaceId === workspaceId &&
+    typeof state.root === "string" &&
+    typeof state.sourceRoot === "string" &&
+    typeof state.worktreeRoot === "string" &&
+    (state.lifecycle === "ready" || state.lifecycle === "paused") &&
+    !!state.lifecycleEnvironment &&
+    typeof state.lifecycleEnvironment === "object"
+  );
 }
 
 function hostPlacement(root: string) {

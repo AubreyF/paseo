@@ -10,6 +10,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
+  "dependencies": {
+    "@getpaseo/workspace-runtime-contract": "*"
+  },
   "devDependencies": {
     "@types/node": "^20.9.0",
     "typescript": "^5.9.3"

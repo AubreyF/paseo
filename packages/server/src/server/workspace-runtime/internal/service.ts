@@ -21,12 +21,12 @@ import type {
 import {
   bindWorkspaceHelper,
   type WorkspaceFilesOwner,
-} from "../../workspace-helper/integration/index.js";
+} from "../../workspace-helper/internal/integration/index.js";
 import { PaseoConfigSchema } from "@getpaseo/protocol/paseo-config-schema";
 import {
   createGitCommonObservationCoordinator,
   type ObservationRebindTransaction,
-} from "../git-observation/integration.js";
+} from "../git-observation/internal/integration.js";
 
 const gracefulStopMilliseconds = 1_000;
 const forcedStopMilliseconds = 1_000;
@@ -38,14 +38,7 @@ export function createService(
   const driversById = new Map(drivers.map((driver) => [driver.id, driver]));
   const processesByWorkspaceId = new Map<string, Set<WorkspaceDriverProcess>>();
   const workspaceTails = new Map<string, Promise<void>>();
-  const fileClients = new Map<
-    string,
-    { runtimeId: string; revision: string; client: WorkspaceFilesOwner }
-  >();
-  const homeFileClients = new Map<
-    string,
-    { runtimeId: string; revision: string; client: WorkspaceFilesOwner }
-  >();
+  const fileClients = new Map<string, { runtimeId: string; client: WorkspaceFilesOwner }>();
   const boundFiles = new Map<string, WorkspaceFiles>();
   const fileSubscriptions = new Map<
     string,
@@ -56,25 +49,8 @@ export function createService(
     }>
   >();
   const unavailableFiles = new Map<string, "paused" | "recovering" | "destroyed">();
-  const boundRuntimes = new Map<
-    string,
-    { runtimeId: string; revision: string; runtime: BoundWorkspaceRuntime }
-  >();
-  const gitCommonObservations = createGitCommonObservationCoordinator({
-    launchHelper: (driver, workspaceId, argv) => launchHelper(driver, workspaceId, argv),
-    runGit: async (driver, workspaceId, argv) => {
-      const runtimeProcess = await driver.spawn({
-        workspaceId,
-        argv,
-        env: lifecycleEnvironment(),
-        purpose: { kind: "git" },
-        stdio: { kind: "pipes" },
-      });
-      trackProcess(workspaceId, runtimeProcess);
-      return runtimeProcess;
-    },
-    isUnavailable: (workspaceId) => unavailableFiles.has(workspaceId),
-  });
+  const boundRuntimes = new Map<string, { runtimeId: string; runtime: BoundWorkspaceRuntime }>();
+  const gitCommonObservations = createGitCommonObservationCoordinator();
 
   function requireRegistered(runtimeId: string): WorkspaceRuntimeDriver {
     const driver = driversById.get(runtimeId);
@@ -93,7 +69,6 @@ export function createService(
     input: WorkspaceProcessInput,
   ): Promise<WorkspaceProcess> {
     assertWorkspaceAvailable(input.workspaceId);
-    validateRelativeCwd(input.cwd);
     const inspection = await driver.inspect(input.workspaceId);
     if (inspection.status !== "ready") {
       throw new Error(`Workspace runtime is ${inspection.status}: ${input.workspaceId}`);
@@ -111,7 +86,6 @@ export function createService(
     input: WorkspaceTerminalInput,
   ): Promise<WorkspaceTerminal> {
     assertWorkspaceAvailable(input.workspaceId);
-    validateRelativeCwd(input.cwd);
     const inspection = await driver.inspect(input.workspaceId);
     if (inspection.status !== "ready") {
       throw new Error(`Workspace runtime is ${inspection.status}: ${input.workspaceId}`);
@@ -198,7 +172,6 @@ export function createService(
           ownsNewResource = before.status === "missing";
           if (ready.state.lifecycle === "ready") {
             const helper = bindWorkspaceHelper({
-              root: ready.state.root,
               command: driver.workspaceHelperCommand,
               launch: (argv) => launchHelper(driver, input.workspaceId, argv),
             });
@@ -269,7 +242,7 @@ export function createService(
         throw new Error(`Workspace runtime is ${inspection.status}: ${workspaceId}`);
       }
       const cached = boundRuntimes.get(workspaceId);
-      if (cached?.runtimeId === driver.id && cached.revision === inspection.state.revision) {
+      if (cached?.runtimeId === driver.id) {
         return cached.runtime;
       }
       const runtime: BoundWorkspaceRuntime = {
@@ -277,12 +250,10 @@ export function createService(
         resolveCommand: async (command) =>
           (await requireFilesOwner(workspaceId)).resolveCommand(command),
         files: bindFiles(workspaceId),
-        homeFiles: bindHomeFiles(workspaceId),
       };
       gitCommonObservations.bind(runtime, workspaceId, driver);
       boundRuntimes.set(workspaceId, {
         runtimeId: driver.id,
-        revision: inspection.state.revision,
         runtime,
       });
       return runtime;
@@ -539,26 +510,6 @@ export function createService(
     };
   }
 
-  function bindHomeFiles(workspaceId: string): WorkspaceFiles {
-    return {
-      async stat(path) {
-        return (await requireHomeFilesOwner(workspaceId)).files.stat(path);
-      },
-      async list(path) {
-        return (await requireHomeFilesOwner(workspaceId)).files.list(path);
-      },
-      async read(path) {
-        return (await requireHomeFilesOwner(workspaceId)).files.read(path);
-      },
-      async write(input) {
-        return (await requireHomeFilesOwner(workspaceId)).files.write(input);
-      },
-      async subscribe(input, listener) {
-        return (await requireHomeFilesOwner(workspaceId)).files.subscribe(input, listener);
-      },
-    };
-  }
-
   async function requireFiles(workspaceId: string): Promise<WorkspaceFiles> {
     return (await requireFilesOwner(workspaceId)).files;
   }
@@ -576,12 +527,11 @@ export function createService(
       throw new Error(`Workspace runtime is ${inspection.status}: ${workspaceId}`);
     }
     const cached = fileClients.get(workspaceId);
-    if (cached && cached.runtimeId === driver.id && cached.revision === inspection.state.revision) {
+    if (cached && cached.runtimeId === driver.id) {
       return cached.client;
     }
     if (cached) await cached.client.close();
     const client = bindWorkspaceHelper({
-      root: inspection.state.root,
       command: driver.workspaceHelperCommand,
       launch: async (argv) => {
         return launchHelper(driver, workspaceId, argv);
@@ -589,33 +539,6 @@ export function createService(
     });
     fileClients.set(workspaceId, {
       runtimeId: driver.id,
-      revision: inspection.state.revision,
-      client,
-    });
-    return client;
-  }
-
-  async function requireHomeFilesOwner(workspaceId: string): Promise<WorkspaceFilesOwner> {
-    const unavailable = unavailableFiles.get(workspaceId);
-    if (unavailable) throw new Error(`Workspace runtime is ${unavailable}: ${workspaceId}`);
-    const driver = await resolve(workspaceId);
-    const inspection = await driver.inspect(workspaceId);
-    if (inspection.status !== "ready") {
-      throw new Error(`Workspace runtime is ${inspection.status}: ${workspaceId}`);
-    }
-    const cached = homeFileClients.get(workspaceId);
-    if (cached && cached.runtimeId === driver.id && cached.revision === inspection.state.revision) {
-      return cached.client;
-    }
-    if (cached) await cached.client.close();
-    const client = bindWorkspaceHelper({
-      root: "@home",
-      command: driver.workspaceHelperCommand,
-      launch: async (argv) => launchHelper(driver, workspaceId, argv),
-    });
-    homeFileClients.set(workspaceId, {
-      runtimeId: driver.id,
-      revision: inspection.state.revision,
       client,
     });
     return client;
@@ -623,16 +546,13 @@ export function createService(
 
   async function closeFiles(workspaceId: string, forgetSubscriptions = false): Promise<void> {
     const cached = fileClients.get(workspaceId);
-    const cachedHome = homeFileClients.get(workspaceId);
     fileClients.delete(workspaceId);
-    homeFileClients.delete(workspaceId);
     const subscriptions = fileSubscriptions.get(workspaceId);
     if (subscriptions) {
       for (const subscription of subscriptions) subscription.bound = null;
       if (forgetSubscriptions) fileSubscriptions.delete(workspaceId);
     }
     if (cached) await cached.client.close();
-    if (cachedHome) await cachedHome.client.close();
   }
 
   async function stageSubscriptionRebind(
@@ -800,14 +720,6 @@ function lifecycleEnvironment(): Readonly<Record<string, string>> {
     return { PATH: process.env.PATH ?? "" };
   }
   return { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin" };
-}
-
-function validateRelativeCwd(cwd: string | undefined): void {
-  if (cwd === undefined) return;
-  const parts = cwd.split(/[\\/]/u);
-  if (cwd.startsWith("/") || cwd.includes("\\") || parts.includes("..")) {
-    throw new Error(`Workspace cwd must stay within the runtime root: ${cwd}`);
-  }
 }
 
 function toDriverCreateInput(input: CreateWorkspaceInput): WorkspaceDriverCreateInput {

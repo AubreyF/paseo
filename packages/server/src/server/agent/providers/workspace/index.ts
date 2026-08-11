@@ -11,6 +11,7 @@ import type {
   WorkspaceProcess,
   WorkspaceProcessPurpose,
 } from "../../../workspace-runtime/index.js";
+import type { WorkspaceDirectory } from "../../../workspace-helper/index.js";
 
 export interface ProviderPlacementPolicy {
   environment:
@@ -64,7 +65,7 @@ export function rejectSelectedProviderWorkspaceFailure(
 }
 
 export interface MaterializedProviderStateFile {
-  /** Opaque runtime-local path passed only to the provider process. */
+  /** Workspace-relative path passed only to the provider process. */
   readonly path: string;
   /** Root-relative state path retained by the provider workspace authority. */
   readonly statePath: string;
@@ -86,7 +87,7 @@ export interface ProviderWorkspace {
   }): Promise<{ stdout: string; stderr: string }>;
   readWorkspaceText(path: string): Promise<string>;
   writeWorkspaceText(path: string, content: string): Promise<void>;
-  listState(path: string): ReturnType<BoundWorkspaceRuntime["homeFiles"]["list"]>;
+  listState(path: string): Promise<WorkspaceDirectory>;
   readStateText(path: string): Promise<string>;
   findStateFile(root: string, fileName: string): Promise<string | null>;
   materializeStateFile(input: {
@@ -169,19 +170,36 @@ export function bindProviderWorkspace(input: {
     },
     async listState(statePath) {
       const relativePath = requireRelativeStatePath(statePath);
-      try {
-        return await input.runtime.homeFiles.list(relativePath);
-      } catch (error) {
-        if (isKnownMissingFileError(error)) throw new ProviderStateNotFoundError(relativePath);
-        throw error;
+      const node = await this.resolveExecutable("node");
+      const script = [
+        'const f=require("fs/promises"),o=require("os"),p=require("path");',
+        "(async()=>{const root=await f.realpath(o.homedir()),relative=process.argv[1],target=p.resolve(root,relative),lexical=p.relative(root,target);",
+        'if(lexical.startsWith("..")||p.isAbsolute(lexical))throw new Error("Provider state path escapes its root");',
+        'let canonical;try{canonical=await f.realpath(target);}catch(error){if(error?.code==="ENOENT"){process.exitCode=44;return;}throw error;}const confined=p.relative(root,canonical);if(confined.startsWith("..")||p.isAbsolute(confined))throw new Error("Provider state symlink escapes its root");',
+        'const entries=[];for(const name of await f.readdir(canonical)){const absolute=p.join(canonical,name),info=await f.stat(absolute);if(!info.isFile()&&!info.isDirectory())continue;entries.push({name,path:p.posix.join(relative.split(p.sep).join("/"),name),kind:info.isDirectory()?"directory":"file",size:info.size,modifiedAt:info.mtime.toISOString()});}process.stdout.write(JSON.stringify({path:relative,entries}));})().catch(error=>{process.stderr.write(String(error));process.exitCode=1});',
+      ].join("");
+      const result = await runProviderStateCommand(run, node, script, relativePath);
+      if (result.exit.code === 44) throw new ProviderStateNotFoundError(relativePath);
+      if (result.exit.code !== 0 || result.exit.signal !== null) {
+        throw new Error(`Provider state listing failed: ${result.stderr || result.exit.signal}`);
       }
+      return JSON.parse(result.stdout) as WorkspaceDirectory;
     },
     async readStateText(path) {
       const statePath = requireRelativeStatePath(path);
-      const state = await input.runtime.homeFiles.stat(statePath);
-      if (state.status === "missing") throw new ProviderStateNotFoundError(statePath);
-      if (state.status === "error") throw new Error(state.error);
-      return collect((await input.runtime.homeFiles.read(statePath)).chunks);
+      const node = await this.resolveExecutable("node");
+      const script = [
+        'const f=require("fs/promises"),o=require("os"),p=require("path");',
+        "(async()=>{const root=await f.realpath(o.homedir()),relative=process.argv[1],target=p.resolve(root,relative),lexical=p.relative(root,target);",
+        'if(lexical.startsWith("..")||p.isAbsolute(lexical))throw new Error("Provider state path escapes its root");',
+        'let canonical;try{canonical=await f.realpath(target);}catch(error){if(error?.code==="ENOENT"){process.exitCode=44;return;}throw error;}const confined=p.relative(root,canonical);if(confined.startsWith("..")||p.isAbsolute(confined))throw new Error("Provider state symlink escapes its root");process.stdout.write(await f.readFile(canonical));})().catch(error=>{process.stderr.write(String(error));process.exitCode=1});',
+      ].join("");
+      const result = await runProviderStateCommand(run, node, script, statePath);
+      if (result.exit.code === 44) throw new ProviderStateNotFoundError(statePath);
+      if (result.exit.code !== 0 || result.exit.signal !== null) {
+        throw new Error(`Provider state read failed: ${result.stderr || result.exit.signal}`);
+      }
+      return result.stdout;
     },
     async findStateFile(root, fileName) {
       const stateRoot = requireRelativeStatePath(root);
@@ -207,11 +225,11 @@ export function bindProviderWorkspace(input: {
       const safeName = stateFile.name.replace(/[^A-Za-z0-9._-]/g, "-");
       const relativePath = `.paseo/provider-state/${randomUUID()}-${safeName}`;
       const script = [
-        'const fs=require("fs"),fsp=require("fs/promises"),os=require("os"),path=require("path"),stream=require("stream/promises");',
-        "(async()=>{const root=await fsp.realpath(os.homedir()),relative=process.argv[1],target=path.resolve(root,relative),parent=path.dirname(target);",
+        'const fs=require("fs"),fsp=require("fs/promises"),path=require("path"),stream=require("stream/promises");',
+        "(async()=>{const root=await fsp.realpath('.'),relative=process.argv[1],target=path.resolve(root,relative),parent=path.dirname(target);",
         'if(path.isAbsolute(relative)||relative.split(/[\\\\/]+/u).includes(".."))throw new Error("Provider state path must be root-relative");',
         'await fsp.mkdir(parent,{recursive:true});const canonicalParent=await fsp.realpath(parent),rel=path.relative(root,canonicalParent);if(rel.startsWith("..")||path.isAbsolute(rel))throw new Error("Provider state path escapes its root");',
-        'const handle=await fsp.open(target,"wx",0o600);try{await stream.pipeline(process.stdin,fs.createWriteStream(target,{fd:handle.fd,autoClose:false}));await handle.sync();}catch(error){await fsp.unlink(target).catch(()=>{});throw error;}finally{await handle.close();}process.stdout.write(target);})().catch(error=>{process.stderr.write(String(error));process.exitCode=1});',
+        'const handle=await fsp.open(target,"wx",0o600);try{await stream.pipeline(process.stdin,fs.createWriteStream(target,{fd:handle.fd,autoClose:false}));await handle.sync();}catch(error){await fsp.unlink(target).catch(()=>{});throw error;}finally{await handle.close();}})().catch(error=>{process.stderr.write(String(error));process.exitCode=1});',
       ].join("");
       const process = await run({
         argv: [node, "-e", script, relativePath],
@@ -221,19 +239,14 @@ export function bindProviderWorkspace(input: {
       const stderr = collect(process.stderr);
       try {
         await writeProcessInput(process, toStateContent(stateFile));
-        const [runtimePath, diagnostics, exit] = await Promise.all([
-          stdout,
-          stderr,
-          process.exited,
-        ]);
+        const [, diagnostics, exit] = await Promise.all([stdout, stderr, process.exited]);
         if (exit.code !== 0 || exit.signal !== null) {
           throw new Error(
             `Provider state materialization failed: ${diagnostics || exit.code || exit.signal}`,
           );
         }
-        if (!runtimePath) throw new Error("Provider state materialization returned no path");
         return {
-          path: runtimePath,
+          path: relativePath,
           statePath: relativePath,
           remove: () => this.removeStateFile(relativePath),
         };
@@ -246,8 +259,8 @@ export function bindProviderWorkspace(input: {
       const statePath = requireRelativeStatePath(path);
       const node = await this.resolveExecutable("node");
       const script = [
-        'const f=require("fs/promises"),o=require("os"),p=require("path");',
-        "(async()=>{const root=await f.realpath(o.homedir()),relative=process.argv[1],target=p.resolve(root,relative),lexical=p.relative(root,target);",
+        'const f=require("fs/promises"),p=require("path");',
+        "(async()=>{const root=await f.realpath('.'),relative=process.argv[1],target=p.resolve(root,relative),lexical=p.relative(root,target);",
         'if(lexical.startsWith("..")||p.isAbsolute(lexical))throw new Error("Provider state path escapes its root");',
         'let canonical;try{canonical=await f.realpath(target);}catch(error){if(error?.code==="ENOENT")return;throw error;}const resolved=p.relative(root,canonical);if(resolved.startsWith("..")||p.isAbsolute(resolved))throw new Error("Provider state symlink escapes its root");const info=await f.lstat(target);if(!info.isFile()&&!info.isSymbolicLink())throw new Error("Provider state removal requires a file");await f.unlink(target);})().catch(error=>{process.stderr.write(String(error));process.exitCode=1});',
       ].join("");
@@ -475,6 +488,29 @@ async function exitsWithin(process: WorkspaceProcess, timeoutMs: number): Promis
   }
 }
 
+async function runProviderStateCommand(
+  launch: (input: ProviderWorkspaceLaunchInput) => Promise<WorkspaceProcess>,
+  node: string,
+  script: string,
+  relativePath: string,
+): Promise<{
+  stdout: string;
+  stderr: string;
+  exit: { code: number | null; signal: NodeJS.Signals | null };
+}> {
+  const process = await launch({
+    argv: [node, "-e", script, relativePath],
+    purpose: { kind: "provider-probe", provider: "provider-state" },
+  });
+  process.stdin.end();
+  const [stdout, stderr, exit] = await Promise.all([
+    collect(process.stdout),
+    collect(process.stderr),
+    process.exited,
+  ]);
+  return { stdout, stderr, exit };
+}
+
 function requireRelativeStatePath(statePath: string): string {
   if (
     !statePath ||
@@ -486,10 +522,6 @@ function requireRelativeStatePath(statePath: string): string {
     throw new Error(`Provider state path must be root-relative: ${statePath}`);
   }
   return nodePath.posix.normalize(statePath);
-}
-
-function isKnownMissingFileError(error: unknown): boolean {
-  return error instanceof Error && /\b(?:ENOENT|ENOTDIR)\b/u.test(error.message);
 }
 
 function toStateContent(input: {

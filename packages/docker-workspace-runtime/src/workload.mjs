@@ -9,6 +9,8 @@ const execId = process.env.PASEO_RUNTIME_EXEC_ID;
 delete process.env.PASEO_RUNTIME_EXEC_ID;
 if (!execId || !/^[a-f0-9]+$/.test(execId)) throw new Error("PASEO_RUNTIME_EXEC_ID is required");
 const pidFile = `/tmp/paseo-runtime-exec-${execId}.pid`;
+const readyFifo = `/tmp/paseo-runtime-exec-${execId}.ready`;
+const doneFile = `/tmp/paseo-runtime-exec-${execId}.done`;
 
 if (request.stdio?.kind === "pty") {
   const resized = spawnSync(
@@ -26,7 +28,6 @@ const child = spawn(request.argv[0], request.argv.slice(1), {
   stdio: ["inherit", "inherit", "inherit"],
 });
 if (!child.pid) throw new Error("Runtime workload did not start");
-writeFileSync(pidFile, `${process.pid} ${child.pid}`);
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(signal, () => {
@@ -38,14 +39,18 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     }
   });
 }
+writeFileSync(pidFile, `${process.pid} ${child.pid}\n`);
+writeFileSync(readyFifo, `${execId}\n`);
 
 child.once("error", (error) => {
   rmSync(pidFile, { force: true });
+  writeFileSync(doneFile, "done");
   process.stderr.write(`${error.message}\n`);
   process.exitCode = 127;
 });
 child.once("exit", (code, signal) => {
   rmSync(pidFile, { force: true });
+  writeFileSync(doneFile, "done");
   if (signal) {
     process.removeAllListeners(signal);
     process.kill(process.pid, signal);

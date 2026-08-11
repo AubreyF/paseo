@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import { access, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -58,11 +58,13 @@ posixDescribe("provider workspace placement capability", () => {
         name: "large-image.bin",
         content: contents,
       });
-      expect(await readFile(stateFile.path)).toEqual(contents);
+      expect(await readFile(path.join(cwd, stateFile.path))).toEqual(contents);
       expect(launches.flat().join(" ")).not.toContain(contents.toString("base64"));
 
       await stateFile.remove();
-      await expect(access(stateFile.path)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(path.join(cwd, stateFile.path))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       await service.destroy("provider-state");
       await rm(root, { recursive: true, force: true });
@@ -102,16 +104,11 @@ posixDescribe("provider workspace placement capability", () => {
     });
     const outside = path.join(root, "outside.txt");
     await writeFile(outside, "outside");
-    const stateDirectory = path.join(
-      homedir(),
-      ".paseo",
-      "provider-state",
-      `removal-${process.pid}-${Date.now()}`,
-    );
+    const stateDirectory = path.join(cwd, ".paseo", "provider-state");
     await import("node:fs/promises").then((fs) => fs.mkdir(stateDirectory, { recursive: true }));
     const escapeLink = path.join(stateDirectory, "escape-link");
     await symlink(outside, escapeLink);
-    const relativeLink = path.relative(homedir(), escapeLink);
+    const relativeLink = path.relative(cwd, escapeLink);
 
     try {
       await expect(workspace.removeStateFile(outside)).rejects.toThrow(/relative|outside/i);

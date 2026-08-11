@@ -8,69 +8,52 @@ import { Socket } from "node:net";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import type { Duplex } from "node:stream";
+import {
+  COMMAND_RUNTIME_PROTOCOL_VERSION,
+  CommandRuntimeControlSchema,
+  CommandRuntimeDescribeResponseSchema,
+  CommandRuntimeLifecycleRequestSchema,
+  CommandRuntimeLifecycleResponseSchema,
+  CommandRuntimeProcessEventSchema,
+  encodeCommandRuntimeMessage,
+  type CommandRuntimeControl,
+  type CommandRuntimeLifecycleRequest,
+  type CommandRuntimeMessageSchema,
+  type CommandRuntimeSpawnEnvelope,
+  type CommandRuntimeState,
+} from "@getpaseo/workspace-runtime-contract";
 
-interface RuntimeState {
-  workspaceId: string;
+type RuntimeState = CommandRuntimeState;
+type PrivateRuntimeState = RuntimeState & {
   root: string;
   revision: string;
-  executionDomainId: string;
-  lifecycle: "ready" | "paused";
+  container: string;
   lifecycleEnvironment: Readonly<Record<string, string>>;
-}
-
-interface LifecycleRequest {
-  protocolVersion: 1;
-  input?: {
-    workspaceId: string;
-    project: {
-      source:
-        | { kind: "host-directory"; path: string }
-        | { kind: "git"; url: string; revision: string; subdirectory?: string };
-    };
-    placement: { relativeCwd?: string };
-  };
-  options: { image?: unknown };
-  workspaceIds?: string[];
-}
-
-interface ExecRequest {
-  type: "spawn";
-  protocolVersion: 1;
-  argv: [string, ...string[]];
-  cwd?: string;
-  env: Record<string, string>;
-  purpose:
-    | { kind: "agent"; agentId: string; provider: string }
-    | { kind: "terminal"; terminalId: string }
-    | { kind: "git" }
-    | { kind: "provider-probe"; provider: string }
-    | { kind: "workspace-helper" }
-    | { kind: "workspace-script"; script: string }
-    | { kind: "setup" }
-    | { kind: "archive" };
-  options: { image?: unknown };
-  execId: string;
-  stdio: { kind: "pipes" } | { kind: "pty"; rows: number; cols: number; term?: string };
-}
-
-type PtyControl =
-  | ExecRequest
-  | { type: "resize"; protocolVersion: 1; id: number; rows: number; cols: number }
-  | { type: "signal"; protocolVersion: 1; signal: NodeJS.Signals };
+};
+type LifecycleRequest = CommandRuntimeLifecycleRequest;
+type ExecRequest = CommandRuntimeSpawnEnvelope;
+type PtyControl = CommandRuntimeControl;
 
 const PTY_CLEANUP_TIMEOUT_MS = 1_000;
+const EXEC_READY_TIMEOUT_MS = 5_000;
 
 const [operation] = process.argv.slice(2);
 const requestedWorkspaceId = argument("--workspace-id");
 
 try {
   if (operation === "describe") {
-    writeJson({ protocolVersion: 1, modes: ["pipes", "pty"], reconcile: true });
+    writeJson(CommandRuntimeDescribeResponseSchema, {
+      protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+      modes: ["pipes", "pty"],
+      reconcile: true,
+    });
   } else if (operation === "reconcile") {
-    const request = JSON.parse(await readStdin()) as LifecycleRequest;
-    assertProtocol(request.protocolVersion);
+    const request = CommandRuntimeLifecycleRequestSchema.parse(JSON.parse(await readStdin()));
     await reconcile(request.workspaceIds ?? []);
-    writeJson({ protocolVersion: 1, type: "ok" });
+    writeJson(CommandRuntimeLifecycleResponseSchema, {
+      protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+      type: "ok",
+    });
   } else if (!requestedWorkspaceId) {
     throw new Error("--workspace-id is required");
   } else if (operation === "exec") {
@@ -83,45 +66,50 @@ try {
       requireSignal(requireArgument("--signal")),
     );
   } else {
-    const request = JSON.parse(await readStdin()) as LifecycleRequest;
-    assertProtocol(request.protocolVersion);
+    const request = CommandRuntimeLifecycleRequestSchema.parse(JSON.parse(await readStdin()));
     switch (operation) {
       case "create":
         {
           const state = await create(requestedWorkspaceId, request);
-          writeJson({
-            protocolVersion: 1,
+          writeJson(CommandRuntimeLifecycleResponseSchema, {
+            protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
             type: "state",
-            state,
+            state: publicState(state),
             placement: runtimePlacement(state),
           });
         }
         break;
       case "inspect":
-        writeJson({
-          protocolVersion: 1,
+        writeJson(CommandRuntimeLifecycleResponseSchema, {
+          protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
           type: "inspection",
           inspection: await inspect(requestedWorkspaceId),
         });
         break;
       case "pause":
         await pause(requestedWorkspaceId);
-        writeJson({ protocolVersion: 1, type: "ok" });
+        writeJson(CommandRuntimeLifecycleResponseSchema, {
+          protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+          type: "ok",
+        });
         break;
       case "resume":
         {
           const state = await resume(requestedWorkspaceId);
-          writeJson({
-            protocolVersion: 1,
+          writeJson(CommandRuntimeLifecycleResponseSchema, {
+            protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
             type: "state",
-            state,
+            state: publicState(state),
             placement: runtimePlacement(state),
           });
         }
         break;
       case "destroy":
         await destroy(requestedWorkspaceId);
-        writeJson({ protocolVersion: 1, type: "ok" });
+        writeJson(CommandRuntimeLifecycleResponseSchema, {
+          protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+          type: "ok",
+        });
         break;
       default:
         throw new Error(`Unknown operation: ${operation}`);
@@ -132,8 +120,11 @@ try {
   process.exitCode = 1;
 }
 
-async function create(workspaceId: string, request: LifecycleRequest): Promise<RuntimeState> {
-  const existing = await inspect(workspaceId);
+async function create(
+  workspaceId: string,
+  request: LifecycleRequest,
+): Promise<PrivateRuntimeState> {
+  const existing = await inspectPrivate(workspaceId);
   if (existing.status === "ready" || existing.status === "paused") return existing.state;
   const input = request.input;
   if (!input) throw new Error("create input is required");
@@ -240,11 +231,11 @@ async function create(workspaceId: string, request: LifecycleRequest): Promise<R
   }
 }
 
-async function inspect(workspaceId: string): Promise<
+async function inspectPrivate(workspaceId: string): Promise<
   | { status: "missing" }
   | {
       status: "ready" | "paused";
-      state: RuntimeState;
+      state: PrivateRuntimeState;
       placement: { cwd: string };
     }
 > {
@@ -277,25 +268,33 @@ async function inspect(workspaceId: string): Promise<
   };
 }
 
+async function inspect(workspaceId: string) {
+  const inspection = await inspectPrivate(workspaceId);
+  if (inspection.status === "ready" || inspection.status === "paused") {
+    return { ...inspection, state: publicState(inspection.state) };
+  }
+  return inspection;
+}
+
 async function pause(workspaceId: string): Promise<void> {
-  const current = await inspect(workspaceId);
+  const current = await inspectPrivate(workspaceId);
   if (current.status === "missing" || current.status === "paused") return;
   await docker(["stop", "--time", "5", resourceNames(workspaceId).container]);
 }
 
-async function resume(workspaceId: string): Promise<RuntimeState> {
-  const current = await inspect(workspaceId);
+async function resume(workspaceId: string): Promise<PrivateRuntimeState> {
+  const current = await inspectPrivate(workspaceId);
   if (current.status === "missing") throw new Error(`Docker workspace is missing: ${workspaceId}`);
   if (current.status === "paused") await docker(["start", resourceNames(workspaceId).container]);
   await waitUntilReady(resourceNames(workspaceId).container);
-  const ready = await inspect(workspaceId);
+  const ready = await inspectPrivate(workspaceId);
   if (ready.status !== "ready") throw new Error(`Docker workspace did not resume: ${workspaceId}`);
   return ready.state;
 }
 
 async function destroy(workspaceId: string): Promise<void> {
   const names = resourceNames(workspaceId);
-  const current = await inspect(workspaceId);
+  const current = await inspectPrivate(workspaceId);
   const volume = await inspectVolume(names.volume);
   if (volume && (volume.runtime !== "workspace" || volume.owner !== workspaceId)) {
     throw new Error(`Docker volume ownership mismatch: ${names.volume}`);
@@ -375,10 +374,10 @@ async function execute(workspaceId: string): Promise<void> {
   const iterator = lines[Symbol.asyncIterator]();
   const first = await iterator.next();
   if (first.done) throw new Error("Runtime exec spawn control is required");
-  const request = JSON.parse(first.value) as ExecRequest;
-  assertProtocol(request.protocolVersion);
+  const request = CommandRuntimeControlSchema.parse(JSON.parse(first.value));
+  if (request.type !== "spawn") throw new Error("Runtime exec spawn control is required");
   if (!/^[a-f0-9]{32}$/.test(request.execId)) throw new Error("Invalid exec id");
-  const current = await inspect(workspaceId);
+  const current = await inspectPrivate(workspaceId);
   if (current.status !== "ready") throw new Error(`Docker workspace is ${current.status}`);
   const requestedCwd = resolveWorkspaceCwd(current.state.root, request.cwd);
   const cwd = (
@@ -396,10 +395,23 @@ async function execute(workspaceId: string): Promise<void> {
   const encoded = Buffer.from(JSON.stringify({ ...request, cwd })).toString("base64url");
   const execId = request.execId;
   const container = resourceNames(workspaceId).container;
+  const readiness = await beginExecutionReadiness(container, execId);
   if (request.stdio.kind === "pty") {
-    await executeDockerPty({ workspaceId, request, controls: iterator, encoded, container });
+    try {
+      await executeDockerPty({
+        workspaceId,
+        request,
+        controls: iterator,
+        encoded,
+        container,
+        readiness,
+      });
+    } finally {
+      await readiness.close();
+    }
     return;
   }
+  const events = new Socket({ fd: 4, readable: false, writable: true });
   const child = spawn(
     "docker",
     [
@@ -425,18 +437,76 @@ async function execute(workspaceId: string): Promise<void> {
     },
   );
   let forwardedSignal: NodeJS.Signals | null = null;
+  let forwardedSignalCompletion: Promise<void> | null = null;
+  let forwardedSignalFailure: unknown;
   const forwardSignal = async (signal: NodeJS.Signals): Promise<void> => {
     forwardedSignal = signal;
-    await signalExec(workspaceId, execId, signal);
+    try {
+      await withTimeout(
+        signalExec(workspaceId, execId, signal),
+        PTY_CLEANUP_TIMEOUT_MS,
+        "Docker signal helper timed out",
+      );
+    } catch (error) {
+      if (signal === "SIGKILL") throw error;
+      try {
+        await withTimeout(
+          signalExec(workspaceId, execId, "SIGKILL"),
+          PTY_CLEANUP_TIMEOUT_MS,
+          "Docker forced signal helper timed out",
+        );
+      } catch (fallbackError) {
+        throw new Error(`Docker signal cleanup failed after ${String(error)}`, {
+          cause: fallbackError,
+        });
+      }
+    }
   };
   const hostSignalHandlers = new Map<NodeJS.Signals, () => void>();
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-    const handler = () => void forwardSignal(signal).catch(() => child.kill(signal));
+    const handler = () => {
+      forwardedSignalCompletion = forwardSignal(signal).catch((error) => {
+        forwardedSignalFailure = error;
+      });
+    };
     hostSignalHandlers.set(signal, handler);
     process.on(signal, handler);
   }
-  const exit = await exitPromise;
+  let exit: { code: number | null; signal: NodeJS.Signals | null };
+  try {
+    await withTimeout(
+      readiness.ready,
+      EXEC_READY_TIMEOUT_MS,
+      "Docker workload readiness timed out",
+    );
+    writePtyEvent(events, {
+      type: "started",
+      protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+    });
+    exit = await exitPromise;
+    if (forwardedSignalCompletion) await forwardedSignalCompletion;
+    if (forwardedSignalFailure) throw forwardedSignalFailure;
+  } catch (error) {
+    child.kill("SIGKILL");
+    await readiness.close();
+    throw error;
+  }
   for (const [signal, handler] of hostSignalHandlers) process.off(signal, handler);
+  writePtyEvent(events, { type: "eof", protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION });
+  await new Promise<void>((resolve, reject) => {
+    events
+      .end(
+        encodeCommandRuntimeMessage(CommandRuntimeProcessEventSchema, {
+          type: "exit",
+          protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+          code: forwardedSignal || exit.signal ? null : (exit.code ?? 1),
+          signal: forwardedSignal ?? exit.signal,
+        }),
+        resolve,
+      )
+      .once("error", reject);
+  });
+  await readiness.close();
   if (forwardedSignal) {
     process.removeAllListeners(forwardedSignal);
     process.kill(process.pid, forwardedSignal);
@@ -455,6 +525,7 @@ async function executeDockerPty(input: {
   controls: AsyncIterator<string>;
   encoded: string;
   container: string;
+  readiness: ExecutionReadiness;
 }): Promise<void> {
   if (input.request.stdio.kind !== "pty") throw new Error("Docker PTY execution requires PTY mode");
   const events = new Socket({ fd: 4, readable: false, writable: true });
@@ -472,6 +543,15 @@ async function executeDockerPty(input: {
   );
   const stream = await startDockerExec(created.Id);
   await resizeDockerExec(created.Id, input.request.stdio.cols, input.request.stdio.rows);
+  await withTimeout(
+    input.readiness.ready,
+    EXEC_READY_TIMEOUT_MS,
+    "Docker workload readiness timed out",
+  );
+  writePtyEvent(events, {
+    type: "started",
+    protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+  });
   process.stdin.pipe(stream);
   stream.on("data", (data: Buffer) => process.stdout.write(data));
   stream.resume();
@@ -490,7 +570,11 @@ async function executeDockerPty(input: {
       requestedSignal = signal;
     },
     (id) => {
-      writePtyEvent(events, { type: "resized", protocolVersion: 1, id });
+      writePtyEvent(events, {
+        type: "resized",
+        protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+        id,
+      });
     },
   ).then(
     () => new Promise<never>(() => {}),
@@ -525,14 +609,14 @@ async function executeDockerPty(input: {
     firstOutcome === "control" ? await controlCleanup : { failure: null, cleanupError: null };
   executionFinished = true;
   process.stdin.unpipe(stream);
-  writePtyEvent(events, { type: "eof", protocolVersion: 1 });
+  writePtyEvent(events, { type: "eof", protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION });
   if (outcome.failure) {
     const cleanupDetail = outcome.cleanupError
       ? `; cleanup failed: ${outcome.cleanupError.message}`
       : "";
     writePtyEvent(events, {
       type: "error",
-      protocolVersion: 1,
+      protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
       message: `${outcome.failure.message}${cleanupDetail}`,
     });
     events.end();
@@ -544,11 +628,87 @@ async function executeDockerPty(input: {
   );
   writePtyEvent(events, {
     type: "exit",
-    protocolVersion: 1,
+    protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
     code: requestedSignal ? null : inspection.ExitCode,
     signal: requestedSignal,
   });
   events.end();
+}
+
+interface ExecutionReadiness {
+  ready: Promise<void>;
+  close(): Promise<void>;
+}
+
+async function beginExecutionReadiness(
+  container: string,
+  execId: string,
+): Promise<ExecutionReadiness> {
+  const files = executionFiles(execId);
+  await docker([
+    "exec",
+    container,
+    "/bin/sh",
+    "-c",
+    'umask 077; rm -f "$1" "$2" "$3"; mkfifo "$1"',
+    "paseo-ready",
+    files.ready,
+    files.pid,
+    files.done,
+  ]);
+  const waiter = spawn(
+    "docker",
+    [
+      "exec",
+      container,
+      "/bin/sh",
+      "-c",
+      'IFS= read -r token < "$1"; status=$?; rm -f "$1"; test "$status" -eq 0 && test "$token" = "$2"',
+      "paseo-ready",
+      files.ready,
+      execId,
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  const ready = Promise.all([
+    readStream(waiter.stderr),
+    new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      waiter.once("error", reject);
+      waiter.once("close", (code, signal) => resolve({ code, signal }));
+    }),
+  ]).then(([stderr, exit]) => {
+    if (exit.code === 0) return;
+    throw new Error(
+      `Docker workload readiness failed (${exit.code ?? exit.signal}): ${stderr.trim()}`,
+    );
+  });
+  let closed = false;
+  return {
+    ready,
+    async close() {
+      if (closed) return;
+      closed = true;
+      if (waiter.exitCode === null && waiter.signalCode === null) waiter.kill("SIGKILL");
+      await docker(
+        [
+          "exec",
+          container,
+          "/bin/sh",
+          "-c",
+          'rm -f "$1" "$2"',
+          "paseo-ready-cleanup",
+          files.ready,
+          files.done,
+        ],
+        true,
+      );
+    },
+  };
+}
+
+function executionFiles(execId: string): { pid: string; ready: string; done: string } {
+  const prefix = `/tmp/paseo-runtime-exec-${execId}`;
+  return { pid: `${prefix}.pid`, ready: `${prefix}.ready`, done: `${prefix}.done` };
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -576,8 +736,7 @@ async function handlePtyControls(
   while (true) {
     const next = await controls.next();
     if (next.done) return;
-    const control = JSON.parse(next.value) as PtyControl;
-    assertProtocol(control.protocolVersion);
+    const control: PtyControl = CommandRuntimeControlSchema.parse(JSON.parse(next.value));
     if (control.type === "resize") {
       await resizeDockerExec(dockerExecId, control.cols, control.rows);
       onResize(control.id);
@@ -599,7 +758,7 @@ async function resizeDockerExec(execId: string, cols: number, rows: number): Pro
 }
 
 function writePtyEvent(stream: Socket, event: unknown): void {
-  stream.write(`${JSON.stringify(event)}\n`);
+  stream.write(encodeCommandRuntimeMessage(CommandRuntimeProcessEventSchema, event));
 }
 
 async function dockerApiJson<T = Record<string, never>>(
@@ -666,16 +825,18 @@ async function signalExec(
   signal: NodeJS.Signals,
 ): Promise<void> {
   if (!/^[a-f0-9]{32}$/.test(execId)) throw new Error("Invalid exec id");
-  const current = await inspect(workspaceId);
+  const current = await inspectPrivate(workspaceId);
   if (current.status === "missing") throw new Error(`Docker workspace is missing: ${workspaceId}`);
+  const files = executionFiles(execId);
   await docker([
     "exec",
     resourceNames(workspaceId).container,
     "/bin/sh",
     "-c",
-    'test ! -f "$1" || { read -r supervisor workload < "$1"; signal=${2#SIG}; kill -"$signal" "-$workload" 2>/dev/null || kill -"$signal" "$workload" 2>/dev/null || true; kill -"$signal" "$supervisor" 2>/dev/null || true; }',
+    'if [ ! -f "$1" ]; then if [ -f "$2" ]; then exit 0; fi; echo "execution identity is not ready" >&2; exit 75; fi; read -r supervisor workload < "$1" || { echo "execution identity is malformed" >&2; exit 76; }; signal=${3#SIG}; kill -"$signal" "-$workload" 2>/dev/null || kill -"$signal" "$workload" 2>/dev/null || true; tail --pid="$supervisor" --sleep-interval=.05 -f /dev/null || { echo "execution wait failed" >&2; exit 77; }; test ! -f "$1" && test -f "$2" || { echo "execution did not publish completion" >&2; exit 78; }',
     "paseo-signal",
-    `/tmp/paseo-runtime-exec-${execId}.pid`,
+    files.pid,
+    files.done,
     signal,
   ]);
 }
@@ -726,23 +887,31 @@ function stateFor(
   revision: string,
   container: string,
   lifecycle: "ready" | "paused" = "ready",
-): RuntimeState {
+): PrivateRuntimeState {
   return {
     workspaceId,
     root,
     revision,
-    executionDomainId: `docker:${container}`,
+    container,
     lifecycle,
     lifecycleEnvironment: {
-      PASEO_SOURCE_CHECKOUT_PATH: "/workspace",
-      PASEO_ROOT_PATH: "/workspace",
-      PASEO_WORKTREE_PATH: "/workspace",
+      PASEO_SOURCE_CHECKOUT_PATH: ".",
+      PASEO_ROOT_PATH: ".",
+      PASEO_WORKTREE_PATH: ".",
       PASEO_BRANCH_NAME: "",
     },
   };
 }
 
-function runtimePlacement(state: RuntimeState): { cwd: string } {
+function publicState(state: PrivateRuntimeState): RuntimeState {
+  return {
+    workspaceId: state.workspaceId,
+    lifecycle: state.lifecycle,
+    lifecycleEnvironment: state.lifecycleEnvironment,
+  };
+}
+
+function runtimePlacement(state: PrivateRuntimeState): { cwd: string } {
   return { cwd: state.root };
 }
 
@@ -788,12 +957,8 @@ async function readStream(stream: NodeJS.ReadableStream): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function writeJson(value: unknown): void {
-  process.stdout.write(`${JSON.stringify(value)}\n`);
-}
-
-function assertProtocol(version: unknown): asserts version is 1 {
-  if (version !== 1) throw new Error(`Unsupported protocol version: ${String(version)}`);
+function writeJson<T>(schema: CommandRuntimeMessageSchema<T>, value: unknown): void {
+  process.stdout.write(encodeCommandRuntimeMessage(schema, value));
 }
 
 function argument(flag: string): string | undefined {

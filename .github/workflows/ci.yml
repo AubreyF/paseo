@@ -102,6 +102,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Enforce workspace runtime ownership boundaries
+        run: npm run check:workspace-runtime-boundaries && node --test scripts/workspace-runtime-boundaries.test.mjs
+
   typecheck:
     name: typecheck
     needs: changes
@@ -129,6 +132,7 @@ jobs:
       - name: Verify public package contents
         run: |
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/protocol
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/workspace-runtime-contract
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/client
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
 
@@ -162,6 +166,10 @@ jobs:
 
       - name: Build server dependencies
         run: npm run build:server-deps
+
+      - name: Test workspace runtime command contract package
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
+        run: npm test --workspace=@getpaseo/workspace-runtime-contract
 
       - name: Run server tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}

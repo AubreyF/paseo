@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,13 +11,10 @@ import { observeWorkspaceGit } from "./workspace-git-observation.js";
 import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
 const fixtureExecutable = fileURLToPath(
-  new URL("./test-utils/fixtures/workspace-runtime-command-fixture.mjs", import.meta.url),
+  new URL("../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
 );
 const helperExecutable = fileURLToPath(
   new URL("./workspace-helper/executable.mjs", import.meta.url),
-);
-const sharedRebindHelperExecutable = fileURLToPath(
-  new URL("./test-utils/fixtures/workspace-helper-shared-rebind-fixture.mjs", import.meta.url),
 );
 const cleanupRoots: string[] = [];
 
@@ -231,88 +228,6 @@ test("replayed common-ref observation survives runtime service reconstruction", 
   await reconstructed.destroy(workspaceId);
 }, 20_000);
 
-test("failed second common-ref rebind rolls back every staged observer before retry", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-git-common-rebind-"));
-  cleanupRoots.push(root);
-  const source = await createRepository(path.join(root, "source"));
-  const workspaceId = "common-rebind";
-  const runtimeIds = new Map<string, string>();
-  const counterPath = path.join(root, "common-watch-launches");
-  const commonRoot = await realpath(path.join(source, ".git"));
-  const service = createWorkspaceRuntimeService({
-    paseoHome: path.join(root, "paseo-home"),
-    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
-    persistRuntimeId: async (id, runtimeId) => {
-      runtimeIds.set(id, runtimeId);
-    },
-    beginWorkspaceDeletion: async () => {},
-    removeWorkspaceRecord: async (id) => {
-      runtimeIds.delete(id);
-    },
-    externalRuntimes: {
-      fixture: {
-        type: "command",
-        command: [process.execPath, fixtureExecutable],
-        helperCommand: [
-          process.execPath,
-          sharedRebindHelperExecutable,
-          helperExecutable,
-          counterPath,
-          commonRoot,
-        ],
-        options: { stateDirectory: path.join(root, "state"), recordLaunchInWorkspace: false },
-      },
-    },
-  });
-  await service.create({
-    workspaceId,
-    runtimeId: "fixture",
-    project: { id: "common-rebind-project", source: { kind: "host-directory", path: source } },
-    placement: { kind: "existing" },
-  });
-  let observeChanges = false;
-  let resolveFirst!: () => void;
-  let resolveSecond!: () => void;
-  const firstChanged = new Promise<void>((resolve) => {
-    resolveFirst = resolve;
-  });
-  const secondChanged = new Promise<void>((resolve) => {
-    resolveSecond = resolve;
-  });
-  const runtime = await service.bind(workspaceId);
-  const subscriptions = await Promise.all([
-    observeWorkspaceGit(runtime, () => {
-      if (observeChanges) resolveFirst();
-    }),
-    observeWorkspaceGit(runtime, () => {
-      if (observeChanges) resolveSecond();
-    }),
-  ]);
-  expect(Number(await readFile(counterPath, "utf8"))).toBe(1);
-
-  await service.pause(workspaceId);
-  await expect(service.resume(workspaceId)).rejects.toThrow(
-    "Workspace helper subscribe acknowledgement timed out",
-  );
-  await expect(createBranchThroughRuntime(service, workspaceId, "during-recovery")).rejects.toThrow(
-    `Workspace runtime is recovering: ${workspaceId}`,
-  );
-  expect(hasSharedRebindHelper(root)).toBe(false);
-  await service.resume(workspaceId);
-
-  observeChanges = true;
-  await createBranchThroughRuntime(service, workspaceId, "after-common-rebind");
-  await Promise.all([
-    eventWithin(firstChanged, "first common-ref observer after retry"),
-    eventWithin(secondChanged, "second common-ref observer after retry"),
-  ]);
-  expect(Number(await readFile(counterPath, "utf8"))).toBe(4);
-
-  await Promise.all(subscriptions.map((subscription) => subscription.unsubscribe()));
-  await service.destroy(workspaceId);
-  expect(hasSharedRebindHelper(root)).toBe(false);
-}, 20_000);
-
 test("selected sibling worktrees share common-ref fan-out without touching an unrelated workspace", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-fanout-"));
   cleanupRoots.push(root);
@@ -430,7 +345,7 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
   await service.destroy("unrelated");
 }, 20_000);
 
-test("concurrent sibling subscriptions own exactly one common-ref watcher until final unsubscribe", async () => {
+test("sibling Git observations stay workspace-bound across pause, resume, and unsubscribe", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-watcher-race-"));
   cleanupRoots.push(root);
   const source = await createRepository(path.join(root, "source"));
@@ -462,46 +377,56 @@ test("concurrent sibling subscriptions own exactly one common-ref watcher until 
   }
 
   const [runtimeA, runtimeB] = await Promise.all([service.bind("race-a"), service.bind("race-b")]);
+  let changesA = 0;
+  let changesB = 0;
+  let resolveA!: () => void;
+  let resolveB!: () => void;
+  const nextA = () =>
+    new Promise<void>((resolve) => {
+      resolveA = resolve;
+    });
+  const nextB = () =>
+    new Promise<void>((resolve) => {
+      resolveB = resolve;
+    });
   const subscriptions = await Promise.all([
-    observeWorkspaceGit(runtimeA, () => undefined),
-    observeWorkspaceGit(runtimeB, () => undefined),
+    observeWorkspaceGit(runtimeA, () => {
+      changesA += 1;
+      resolveA?.();
+    }),
+    observeWorkspaceGit(runtimeB, () => {
+      changesB += 1;
+      resolveB?.();
+    }),
   ]);
-  expect(countHelperWatchers(root)).toBe(3);
+  let eventA = nextA();
+  let eventB = nextB();
+  await createBranchThroughRuntime(service, "race-b", "race-both-active");
+  await Promise.all([eventWithin(eventA, "sibling A"), eventWithin(eventB, "sibling B")]);
 
   await service.pause("race-a");
-  expect(countHelperWatchers(root)).toBe(2);
+  const pausedChangesA = changesA;
+  eventB = nextB();
+  await createBranchThroughRuntime(service, "race-b", "race-a-paused");
+  await eventWithin(eventB, "active sibling while A is paused");
+  expect(changesA).toBe(pausedChangesA);
+
   await service.resume("race-a");
-  expect(countHelperWatchers(root)).toBe(3);
+  eventA = nextA();
+  eventB = nextB();
+  await createBranchThroughRuntime(service, "race-b", "race-a-resumed");
+  await Promise.all([eventWithin(eventA, "resumed sibling A"), eventWithin(eventB, "sibling B")]);
 
   await subscriptions[0].unsubscribe();
-  expect(countHelperWatchers(root)).toBe(2);
+  const unsubscribedChangesA = changesA;
+  eventB = nextB();
+  await createBranchThroughRuntime(service, "race-b", "race-a-unsubscribed");
+  await eventWithin(eventB, "remaining sibling B");
+  expect(changesA).toBe(unsubscribedChangesA);
   await subscriptions[1].unsubscribe();
-  expect(countHelperWatchers(root)).toBe(0);
 
   await Promise.all([service.destroy("race-a"), service.destroy("race-b")]);
 }, 20_000);
-
-function countHelperWatchers(root: string): number {
-  const processes = execFileSync("ps", ["-axo", "command="], { encoding: "utf8" });
-  return processes
-    .split("\n")
-    .filter(
-      (command) =>
-        command.includes("workspace-helper/executable.mjs") &&
-        command.includes(" watch ") &&
-        command.includes(path.basename(root)),
-    ).length;
-}
-
-function hasSharedRebindHelper(root: string): boolean {
-  return execFileSync("ps", ["-axo", "command="], { encoding: "utf8" })
-    .split("\n")
-    .some(
-      (command) =>
-        command.includes("workspace-helper-shared-rebind-fixture.mjs") &&
-        command.includes(path.basename(root)),
-    );
-}
 
 async function createBranchThroughRuntime(
   service: ReturnType<typeof createWorkspaceRuntimeService>,

@@ -10,14 +10,21 @@ import type {
 } from "../drivers/index.js";
 import { resolveRuntimeCwd, spawnHostProcess, spawnHostPty } from "./host-process.js";
 import { hostWorkspaceHelperCommand } from "./host-helper.js";
+import type { HostGitObservationOwner } from "./host-git-observation.js";
 import { createRuntimeStateStore } from "./runtime-state.js";
 
-interface LocalRuntimeState extends WorkspaceDriverState {
+interface LocalRuntimeState {
+  workspaceId: string;
+  root: string;
+  lifecycle: "ready" | "paused";
   compatibilityCwd?: string;
 }
 
-export function createLocalRuntime(paseoHome: string): WorkspaceRuntimeDriver {
-  const states = createRuntimeStateStore(paseoHome, "local");
+export function createLocalRuntime(
+  paseoHome: string,
+  hostGitObservations: HostGitObservationOwner,
+): WorkspaceRuntimeDriver {
+  const states = createRuntimeStateStore(paseoHome, "local", isLocalRuntimeState);
 
   async function inspect(workspaceId: string): Promise<WorkspaceDriverInspection> {
     const state = (await states.read(workspaceId)) as LocalRuntimeState | null;
@@ -26,7 +33,7 @@ export function createLocalRuntime(paseoHome: string): WorkspaceRuntimeDriver {
       if (!(await stat(state.root)).isDirectory()) return { status: "missing" };
       return {
         status: state.lifecycle,
-        state,
+        state: publicState(state),
         placement: hostPlacement(state.compatibilityCwd ?? state.root),
       };
     } catch (error) {
@@ -35,12 +42,14 @@ export function createLocalRuntime(paseoHome: string): WorkspaceRuntimeDriver {
     }
   }
 
-  async function requireReady(workspaceId: string): Promise<WorkspaceDriverState> {
-    const inspection = await inspect(workspaceId);
-    if (inspection.status !== "ready") {
-      throw new Error(`Workspace runtime local is ${inspection.status}: ${workspaceId}`);
+  async function requireReady(workspaceId: string): Promise<LocalRuntimeState> {
+    const state = await states.read(workspaceId);
+    if (!state || state.lifecycle !== "ready") {
+      throw new Error(
+        `Workspace runtime local is ${state?.lifecycle ?? "missing"}: ${workspaceId}`,
+      );
     }
-    return inspection.state;
+    return state;
   }
 
   return {
@@ -59,41 +68,55 @@ export function createLocalRuntime(paseoHome: string): WorkspaceRuntimeDriver {
       const state: LocalRuntimeState = {
         workspaceId: input.workspaceId,
         root,
-        revision: "local:1",
-        executionDomainId: "host",
         lifecycle: "ready",
         compatibilityCwd,
       };
       await states.write(state);
-      return { state, placement: hostPlacement(compatibilityCwd) };
+      return { state: publicState(state), placement: hostPlacement(compatibilityCwd) };
     },
     inspect,
     async spawn(input: WorkspaceDriverSpawnInput) {
       const root = (await requireReady(input.workspaceId)).root;
       return input.stdio.kind === "pty" ? spawnHostPty(root, input) : spawnHostProcess(root, input);
     },
+    async observeGit(workspaceId, listener) {
+      return hostGitObservations.observe((await requireReady(workspaceId)).root, listener);
+    },
     async pause(workspaceId) {
-      const inspection = await inspect(workspaceId);
-      if (inspection.status === "paused") return;
-      if (inspection.status !== "ready") {
-        throw new Error(`Workspace runtime local is ${inspection.status}: ${workspaceId}`);
-      }
-      await states.write({ ...inspection.state, lifecycle: "paused" });
+      const state = await states.read(workspaceId);
+      if (state?.lifecycle === "paused") return;
+      if (!state) throw new Error(`Workspace runtime local is missing: ${workspaceId}`);
+      await states.write({ ...state, lifecycle: "paused" });
     },
     async resume(workspaceId) {
-      const inspection = await inspect(workspaceId);
-      if (inspection.status === "missing" || inspection.status === "error") {
-        throw new Error(`Workspace runtime local is ${inspection.status}: ${workspaceId}`);
-      }
-      const state = { ...inspection.state, lifecycle: "ready" as const };
+      const current = await states.read(workspaceId);
+      if (!current) throw new Error(`Workspace runtime local is missing: ${workspaceId}`);
+      const state = { ...current, lifecycle: "ready" as const };
       await states.write(state);
-      const localState = state as LocalRuntimeState;
-      return { state, placement: hostPlacement(localState.compatibilityCwd ?? state.root) };
+      return {
+        state: publicState(state),
+        placement: hostPlacement(state.compatibilityCwd ?? state.root),
+      };
     },
     async destroy(workspaceId) {
       await states.remove(workspaceId);
     },
   };
+}
+
+function publicState(state: LocalRuntimeState): WorkspaceDriverState {
+  return { workspaceId: state.workspaceId, lifecycle: state.lifecycle };
+}
+
+function isLocalRuntimeState(value: unknown, workspaceId: string): value is LocalRuntimeState {
+  if (!value || typeof value !== "object") return false;
+  const state = value as Partial<LocalRuntimeState>;
+  return (
+    state.workspaceId === workspaceId &&
+    typeof state.root === "string" &&
+    (state.lifecycle === "ready" || state.lifecycle === "paused") &&
+    (state.compatibilityCwd === undefined || typeof state.compatibilityCwd === "string")
+  );
 }
 
 function hostPlacement(root: string) {

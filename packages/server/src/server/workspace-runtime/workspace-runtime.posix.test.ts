@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -15,6 +16,13 @@ import {
 
 const cleanupRoots: string[] = [];
 const posixDescribe = describe.runIf(process.platform !== "win32");
+const runtimeContractIds = ["local", "worktree", "fixture"] as const;
+const fixtureRuntimeExecutable = fileURLToPath(
+  new URL("../../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
+);
+const helperExecutable = fileURLToPath(
+  new URL("../workspace-helper/executable.mjs", import.meta.url),
+);
 
 afterEach(async () => {
   await Promise.all(
@@ -22,14 +30,14 @@ afterEach(async () => {
   );
 });
 
-posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract", (runtimeId) => {
+posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId) => {
   test("bound runtime exposes only process, file, and command-resolution primitives", async () => {
     const fixture = await createFixture(runtimeId);
     await fixture.service.create(fixture.createInput);
 
     const runtime = await fixture.service.bind(fixture.workspaceId);
 
-    expect(Object.keys(runtime).sort()).toEqual(["files", "homeFiles", "resolveCommand", "run"]);
+    expect(Object.keys(runtime).sort()).toEqual(["files", "resolveCommand", "run"]);
     await expect(runtime.resolveCommand("git")).resolves.toMatch(/^\//u);
     await expect(runtime.resolveCommand("paseo-command-that-does-not-exist")).resolves.toBeNull();
     await fixture.service.destroy(fixture.workspaceId);
@@ -140,7 +148,7 @@ posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract",
     const fixture = await createFixture(runtimeId);
     const created = await fixture.service.create(fixture.createInput);
     const compatibilityCwd =
-      runtimeId === "local" ? fixture.runtimeRoot() : await realpath(fixture.runtimeRoot());
+      runtimeId === "worktree" ? await realpath(fixture.runtimeRoot()) : fixture.runtimeRoot();
     expect(created).toEqual({
       workspaceId: fixture.workspaceId,
       runtimeId,
@@ -221,7 +229,7 @@ posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract",
 
     await recovered.destroy(fixture.workspaceId);
     expect(existsSync(fixture.repo)).toBe(true);
-    expect(existsSync(runtimeRoot)).toBe(runtimeId === "local");
+    expect(existsSync(runtimeRoot)).toBe(runtimeId !== "worktree");
     await expect(
       recovered.run({
         workspaceId: fixture.workspaceId,
@@ -315,7 +323,7 @@ posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract",
     ]);
     expect(fixture.runtimeIds.has(fixture.workspaceId)).toBe(false);
     expect(existsSync(fixture.repo)).toBe(true);
-    expect(existsSync(runtimeRoot)).toBe(runtimeId === "local");
+    expect(existsSync(runtimeRoot)).toBe(runtimeId !== "worktree");
   });
 
   test("registry failures leave lifecycle transitions retryable without opening an admission gap", async () => {
@@ -385,14 +393,14 @@ posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract",
     );
     expect(fixture.deletingWorkspaceIds.has(fixture.workspaceId)).toBe(true);
     expect(fixture.runtimeIds.has(fixture.workspaceId)).toBe(true);
-    expect(existsSync(runtimeRoot)).toBe(runtimeId === "local");
+    expect(existsSync(runtimeRoot)).toBe(runtimeId !== "worktree");
 
     const reconstructed = createWorkspaceRuntimeService(fixture.options);
     await reconstructed.reconcile();
     await reconstructed.destroy(fixture.workspaceId);
     expect(fixture.runtimeIds.has(fixture.workspaceId)).toBe(false);
     expect(existsSync(fixture.repo)).toBe(true);
-    if (runtimeId === "local") {
+    if (runtimeId !== "worktree") {
       await expect(readFile(path.join(runtimeRoot, "adopted-state.txt"), "utf8")).resolves.toBe(
         "keep local data\n",
       );
@@ -589,7 +597,7 @@ posixDescribe("fail-closed and producer cleanup", () => {
   });
 });
 
-posixDescribe.each(["local", "worktree"] as const)(
+posixDescribe.each(runtimeContractIds)(
   "%s runtime confinement and process teardown",
   (runtimeId) => {
     test("rejects a symlink cwd that resolves outside the runtime root", async () => {
@@ -598,15 +606,22 @@ posixDescribe.each(["local", "worktree"] as const)(
       const outside = path.join(fixture.root, "outside");
       await mkdir(outside);
       await symlink(outside, path.join(fixture.runtimeRoot(), "escape"));
-      await expect(
-        fixture.service.run({
-          workspaceId: fixture.workspaceId,
-          cwd: "escape",
-          argv: ["/bin/pwd"],
-          env: {},
-          purpose: { kind: "workspace-script", script: "cwd-contract" },
-        }),
-      ).rejects.toThrow("Workspace cwd escapes its runtime root");
+      const attempt = fixture.service.run({
+        workspaceId: fixture.workspaceId,
+        cwd: "escape",
+        argv: ["/bin/pwd"],
+        env: {},
+        purpose: { kind: "workspace-script", script: "cwd-contract" },
+      });
+      if (runtimeId === "fixture") {
+        const process = await attempt;
+        process.stdin.end();
+        const stderr = collect(process.stderr);
+        await expect(process.exited).rejects.toThrow("Workspace cwd escapes its runtime root");
+        await expect(stderr).resolves.toContain("Workspace cwd escapes its runtime root");
+      } else {
+        await expect(attempt).rejects.toThrow("Workspace cwd escapes its runtime root");
+      }
       await fixture.service.destroy(fixture.workspaceId);
     });
 
@@ -639,7 +654,7 @@ posixDescribe.each(["local", "worktree"] as const)(
 );
 
 async function createFixture(
-  runtimeId: "local" | "worktree",
+  runtimeId: "local" | "worktree" | "fixture",
   fixtureOptions: { lifecycleRecords?: boolean } = {},
 ) {
   const root = await temporaryRoot(runtimeId);
@@ -649,9 +664,22 @@ async function createFixture(
   const deletingWorkspaceIds = new Set<string>();
   const lifecycleFailures = { archive: 0, restore: 0, beginDelete: 0, remove: 0 };
   const worktreesRoot = path.join(root, "worktrees");
+  const fixtureStateDirectory = path.join(root, "fixture-state");
+  await mkdir(fixtureStateDirectory);
   const options: WorkspaceRuntimeOptions = {
     paseoHome: path.join(root, "home"),
     worktreesRoot,
+    externalRuntimes:
+      runtimeId === "fixture"
+        ? {
+            fixture: {
+              type: "command",
+              command: [process.execPath, fixtureRuntimeExecutable],
+              helperCommand: [process.execPath, helperExecutable],
+              options: { stateDirectory: fixtureStateDirectory },
+            },
+          }
+        : undefined,
     resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
     persistRuntimeId: async (workspaceId, selectedRuntimeId) => {
       runtimeIds.set(workspaceId, selectedRuntimeId);
@@ -704,7 +732,7 @@ async function createFixture(
     runtimeId,
     project: { id: `${runtimeId}-project`, source: { kind: "host-directory", path: repo } },
     placement:
-      runtimeId === "local"
+      runtimeId !== "worktree"
         ? { kind: "existing" }
         : {
             kind: "branch",
@@ -729,7 +757,7 @@ async function createFixture(
     createInput,
     service: createWorkspaceRuntimeService(options),
     runtimeRoot: () =>
-      runtimeId === "local"
+      runtimeId !== "worktree"
         ? repo
         : listLinkedWorktrees(repo).find((cwd) => path.basename(cwd) === "runtime-worktree")!,
   };

@@ -14,6 +14,7 @@ import {
   providersSnapshotQueryKey,
   providersSnapshotQueryRoot,
 } from "@/data/providers-snapshot";
+import type { ProviderSnapshotCacheScope } from "@/data/provider-snapshot-cache";
 import type { WorkspaceGitClient } from "@/git/workspace-git";
 
 type ProvidersSnapshotUpdateMessage = Extract<
@@ -189,7 +190,11 @@ export function applyProvidersSnapshotUpdate(input: {
   if (input.message.type !== "providers_snapshot_update") {
     return;
   }
-  const queryKey = providersSnapshotQueryKey(input.serverId, input.message.payload.cwd);
+  const queryKey = providersSnapshotQueryKey(
+    input.serverId,
+    input.message.payload.cwd,
+    input.message.payload.workspaceId,
+  );
   input.queryClient.setQueryData(queryKey, {
     entries: input.message.payload.entries,
     generatedAt: input.message.payload.generatedAt,
@@ -199,7 +204,12 @@ export function applyProvidersSnapshotUpdate(input: {
   if (compactSnapshot && snapshotHash) {
     void (input.cache ?? providerSnapshotCache).write({
       serverId: input.serverId,
-      cwd: normalizeProvidersSnapshotCwd(input.message.payload.cwd),
+      scope: input.message.payload.workspaceId
+        ? { type: "workspace", workspaceId: input.message.payload.workspaceId }
+        : ({
+            type: "legacy-cwd",
+            cwd: normalizeProvidersSnapshotCwd(input.message.payload.cwd),
+          } satisfies ProviderSnapshotCacheScope),
       hash: snapshotHash,
       generatedAt: input.message.payload.generatedAt,
       compactSnapshot,

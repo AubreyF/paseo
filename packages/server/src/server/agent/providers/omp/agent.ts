@@ -33,6 +33,7 @@ import {
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
   type ProviderCatalog,
+  type ProviderWorkspace,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
@@ -69,6 +70,7 @@ import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToToolCall } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
+import { providerWorkspaceFromCatalogOptions } from "../workspace/index.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
 import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
@@ -185,6 +187,7 @@ interface OmpAgentSessionOptions {
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
   paseoTools?: PaseoToolCatalog;
+  workspace?: ProviderWorkspace;
   /**
    * When false (resumed sessions), replayed session events are dropped until
    * the first prompt or agent_start so history is not re-emitted as live
@@ -309,7 +312,13 @@ function ompModelSupportsImageInput(model: OmpModel | null | undefined): boolean
   return model?.input?.includes("image") === true;
 }
 
-function renderTextOnlyImageHint(image: { data: string; mimeType: string }): string {
+function renderTextOnlyImageHint(
+  image: { data: string; mimeType: string },
+  selectedWorkspace: boolean,
+): string {
+  if (selectedWorkspace) {
+    return "[Image attachment omitted: selected runtime model has no image input]";
+  }
   try {
     const materialized = materializeProviderImage({
       data: image.data,
@@ -323,7 +332,7 @@ function renderTextOnlyImageHint(image: { data: string; mimeType: string }): str
 
 function convertPromptInput(
   prompt: AgentPromptInput,
-  options: { model: OmpModel | null | undefined },
+  options: { model: OmpModel | null | undefined; workspace?: ProviderWorkspace },
 ): OmpPromptPayload {
   if (typeof prompt === "string") {
     return { text: prompt };
@@ -347,7 +356,7 @@ function convertPromptInput(
           mimeType: block.mimeType,
         });
       } else {
-        textParts.push(renderTextOnlyImageHint(block));
+        textParts.push(renderTextOnlyImageHint(block, Boolean(options.workspace)));
       }
       continue;
     }
@@ -446,6 +455,8 @@ function buildResumeStartInput(input: {
       input.resumeConfig.config.systemPrompt,
       input.resumeConfig.config.daemonAppendSystemPrompt,
     ),
+    workspace: input.launchContext?.workspace,
+    agentId: input.launchContext?.agentId,
   };
 }
 
@@ -866,6 +877,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly subagentCardTracker: OmpSubagentCardTracker;
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
+  private readonly workspace?: ProviderWorkspace;
   private readonly currentModeId: string | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
@@ -881,6 +893,7 @@ export class OmpAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
+    this.workspace = options.workspace;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
@@ -951,7 +964,10 @@ export class OmpAgentSession implements AgentSession {
       throw new Error("An OMP turn is already active");
     }
 
-    const payload = convertPromptInput(prompt, { model: this.state.model });
+    const payload = convertPromptInput(prompt, {
+      model: this.state.model,
+      workspace: this.workspace,
+    });
     const turnId = randomUUID();
     this.live = true;
     this.activeTurnId = turnId;
@@ -1029,6 +1045,7 @@ export class OmpAgentSession implements AgentSession {
       sessionFile: this.state.sessionFile,
       runtimeSession: this.runtimeSession,
       provider: this.provider,
+      workspace: this.workspace,
     });
     for (const item of mapOmpTodoState(this.state)) {
       yield {
@@ -2231,7 +2248,9 @@ export class OmpAgentClient implements AgentClient {
   ): Promise<AgentSession> {
     const launchMode = this.resolveLaunchMode(config.modeId);
     const runtimeSession = await this.runtime.startSession({
-      cwd: config.cwd,
+      cwd: launchContext?.workspace?.cwd ?? config.cwd,
+      workspace: launchContext?.workspace,
+      agentId: launchContext?.agentId,
       protocolMode: "rpc-ui",
       model: config.model,
       thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
@@ -2254,6 +2273,7 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
+        workspace: launchContext?.workspace,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -2296,6 +2316,7 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
+        workspace: launchContext?.workspace,
         live: false,
       });
     } catch (error) {
@@ -2306,8 +2327,11 @@ export class OmpAgentClient implements AgentClient {
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
     const launchMode = this.resolveLaunchMode(undefined);
+    const workspace = providerWorkspaceFromCatalogOptions(options);
+    const cwd = workspace?.cwd ?? (options.scope === "global" ? homedir() : options.cwd);
     const runtimeSession = await this.runtime.startSession({
-      cwd: options.scope === "global" ? homedir() : options.cwd,
+      cwd,
+      workspace,
       protocolMode: "rpc-ui",
       modeId: launchMode.modeId,
       extraArgs: launchMode.extraArgs,
@@ -2331,6 +2355,7 @@ export class OmpAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
+    if (options?.workspace) return [];
     return await listOmpImportableSessions({
       ...options,
       sessionDir: this.providerParams.sessionDir,
@@ -2339,7 +2364,9 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-    const importConfig = await readOmpImportSessionConfig(input.providerHandleId);
+    const importConfig = context.launchContext?.workspace
+      ? {}
+      : await readOmpImportSessionConfig(input.providerHandleId);
     return importSessionFromPersistence({
       provider: this.provider,
       request: input,
@@ -2349,9 +2376,16 @@ export class OmpAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
     try {
       const launch = await this.resolveOmpLaunch();
+      if (options) {
+        const workspace = providerWorkspaceFromCatalogOptions(options);
+        if (workspace) {
+          await workspace.resolveExecutable(launch.command);
+          return true;
+        }
+      }
       const availability = await checkProviderLaunchAvailable(launch);
       return availability.available;
     } catch {

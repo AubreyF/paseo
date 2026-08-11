@@ -9,6 +9,7 @@ import type {
   AgentModelDefinition,
   AgentProvider,
   FetchCatalogOptions,
+  ProviderWorkspace,
   ResolveAgentCreateConfigInput,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
@@ -28,6 +29,16 @@ const TEST_CAPABILITIES = {
   supportsToolInvocations: false,
 } as const;
 const TEST_REFRESH_TIMEOUT_MS = 120_000;
+
+function deferred<T>() {
+  let complete!: (value: T) => void;
+  let fail!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    complete = resolvePromise;
+    fail = rejectPromise;
+  });
+  return { promise, resolve: complete, reject: fail };
+}
 
 // Builds an AgentClient that can be injected via the public extraClients option.
 // extraClients is the only injection surface the manager exposes for tests.
@@ -700,51 +711,9 @@ describe("ProviderSnapshotManager public surface", () => {
   });
 
   test("getProviderDiagnostic starts provider diagnostics before waiting for snapshot refresh", async () => {
-    vi.useFakeTimers();
-    let diagnosticStarted = false;
-    const manager = new ProviderSnapshotManager({
-      logger: createTestLogger(),
-      refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
-      extraClients: {
-        codex: createExtraClient("codex", {
-          isAvailable: async () => true,
-          fetchCatalog: async () => new Promise(() => {}),
-          getDiagnostic: async () => {
-            diagnosticStarted = true;
-            return { diagnostic: "codex diagnostics available" };
-          },
-        }),
-      },
-    });
-    try {
-      const diagnosticRequest = manager.getProviderDiagnostic("codex");
-      expect(diagnosticStarted).toBe(true);
-
-      const diagnosticOrBlocked = Promise.race([
-        diagnosticRequest.then(() => ({ type: "diagnostic" as const })),
-        new Promise<{ type: "blocked" }>((finish) => {
-          setTimeout(() => finish({ type: "blocked" }), 1);
-        }),
-      ]);
-      await vi.advanceTimersByTimeAsync(1);
-      await expect(diagnosticOrBlocked).resolves.toEqual({ type: "blocked" });
-
-      await vi.advanceTimersByTimeAsync(TEST_REFRESH_TIMEOUT_MS - 1);
-      const result = await diagnosticRequest;
-      expect(result.diagnostic).toContain("codex diagnostics available");
-      expect(result.diagnostic).toContain(
-        `Status: Error: Timed out refreshing Codex after ${TEST_REFRESH_TIMEOUT_MS}ms`,
-      );
-    } finally {
-      manager.destroy();
-      vi.useRealTimers();
-    }
-  });
-
-  test("getProviderDiagnostic starts snapshot refresh even when provider diagnostics hang", async () => {
-    vi.useFakeTimers();
-    let diagnosticStarted = false;
-    let snapshotStarted = false;
+    const diagnosticStarted = deferred<void>();
+    const catalogStarted = deferred<void>();
+    const catalog = deferred<{ models: AgentModelDefinition[]; modes: AgentMode[] }>();
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
@@ -752,42 +721,71 @@ describe("ProviderSnapshotManager public surface", () => {
         codex: createExtraClient("codex", {
           isAvailable: async () => true,
           fetchCatalog: async () => {
-            snapshotStarted = true;
-            return new Promise(() => {});
+            catalogStarted.resolve();
+            return catalog.promise;
           },
           getDiagnostic: async () => {
-            diagnosticStarted = true;
-            return new Promise(() => {});
+            diagnosticStarted.resolve();
+            return { diagnostic: "codex diagnostics available" };
           },
         }),
       },
     });
     try {
       const diagnosticRequest = manager.getProviderDiagnostic("codex");
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(diagnosticStarted).toBe(true);
-      expect(snapshotStarted).toBe(true);
-
-      await vi.advanceTimersByTimeAsync(TEST_REFRESH_TIMEOUT_MS);
+      await Promise.all([diagnosticStarted.promise, catalogStarted.promise]);
+      catalog.resolve({
+        models: [{ provider: "codex", id: "gpt-5.4-mini", label: "GPT 5.4 Mini" }],
+        modes: [],
+      });
       const result = await diagnosticRequest;
-      expect(result.diagnostic).toContain(
-        `Error: Timed out collecting Codex diagnostic after ${TEST_REFRESH_TIMEOUT_MS}ms`,
-      );
-      expect(result.diagnostic).toContain(
-        `Status: Error: Timed out refreshing Codex after ${TEST_REFRESH_TIMEOUT_MS}ms`,
-      );
+      expect(result.diagnostic).toContain("codex diagnostics available");
+      expect(result.diagnostic).toContain("Status: Ready");
     } finally {
       manager.destroy();
-      vi.useRealTimers();
+    }
+  });
+
+  test("getProviderDiagnostic starts snapshot refresh even when provider diagnostics hang", async () => {
+    const diagnosticStarted = deferred<void>();
+    const snapshotStarted = deferred<void>();
+    const diagnostic = deferred<{ diagnostic: string }>();
+    const catalog = deferred<{ models: AgentModelDefinition[]; modes: AgentMode[] }>();
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => {
+            snapshotStarted.resolve();
+            return catalog.promise;
+          },
+          getDiagnostic: async () => {
+            diagnosticStarted.resolve();
+            return diagnostic.promise;
+          },
+        }),
+      },
+    });
+    try {
+      const diagnosticRequest = manager.getProviderDiagnostic("codex");
+      await Promise.all([diagnosticStarted.promise, snapshotStarted.promise]);
+      catalog.resolve({ models: [], modes: [] });
+      diagnostic.resolve({ diagnostic: "barrier diagnostic" });
+      const result = await diagnosticRequest;
+      expect(result.diagnostic).toContain("barrier diagnostic");
+      expect(result.diagnostic).toContain("Status: Ready");
+    } finally {
+      manager.destroy();
     }
   });
 
   test("getProviderDiagnostic reports provider diagnostic timeout while preserving snapshot details", async () => {
-    vi.useFakeTimers();
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
-      refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
+      refreshTimeoutMs: 1_000,
+      diagnosticTimeoutMs: 1,
       extraClients: {
         codex: createExtraClient("codex", {
           isAvailable: async () => true,
@@ -800,43 +798,32 @@ describe("ProviderSnapshotManager public surface", () => {
       },
     });
     try {
-      const diagnosticRequest = manager.getProviderDiagnostic("codex");
-      await vi.advanceTimersByTimeAsync(TEST_REFRESH_TIMEOUT_MS);
-
-      const result = await diagnosticRequest;
-      expect(result.diagnostic).toContain(
-        `Error: Timed out collecting Codex diagnostic after ${TEST_REFRESH_TIMEOUT_MS}ms`,
-      );
+      const result = await manager.getProviderDiagnostic("codex");
+      expect(result.diagnostic).toContain("Error: Timed out collecting Codex diagnostic after 1ms");
       expect(result.diagnostic).toContain("Models: 1");
       expect(result.diagnostic).toContain("Status: Ready");
     } finally {
       manager.destroy();
-      vi.useRealTimers();
     }
   });
 
   test("getProviderDiagnostic reports a stuck catalog refresh inside the diagnostic", async () => {
     await withEnv("PASEO_ENABLE_MOCK_SLOW", "true", async () => {
-      vi.useFakeTimers();
       const manager = new ProviderSnapshotManager({
         logger: createTestLogger(),
         isDev: true,
-        refreshTimeoutMs: TEST_REFRESH_TIMEOUT_MS,
+        refreshTimeoutMs: 1,
       });
       try {
-        const diagnosticRequest = manager.getProviderDiagnostic("mock-slow");
-        await vi.advanceTimersByTimeAsync(TEST_REFRESH_TIMEOUT_MS);
-
-        const result = await diagnosticRequest;
+        const result = await manager.getProviderDiagnostic("mock-slow");
         expect(result.provider).toBe("mock-slow");
         expect(result.diagnostic).toContain("Mock slow provider");
         expect(result.diagnostic).toContain("Models: —");
         expect(result.diagnostic).toContain(
-          `Status: Error: Timed out refreshing Mock Slow Provider after ${TEST_REFRESH_TIMEOUT_MS}ms`,
+          "Status: Error: Timed out refreshing Mock Slow Provider after 1ms",
         );
       } finally {
         manager.destroy();
-        vi.useRealTimers();
       }
     });
   });
@@ -1235,6 +1222,75 @@ describe("ProviderSnapshotManager lifecycle", () => {
 });
 
 describe("ProviderSnapshotManager cwd routing", () => {
+  test("keys selected workspace probes by workspace id and runtime reconstruction", async () => {
+    const workspaces = new Map<string, ProviderWorkspace>([
+      ["workspace-a", createProviderWorkspace()],
+      ["workspace-b", createProviderWorkspace()],
+    ]);
+    const probes: string[] = [];
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      resolveProviderWorkspace: async (workspaceId) => workspaces.get(workspaceId) ?? null,
+      extraClients: {
+        codex: createExtraClient("codex", {
+          isAvailable: async () => true,
+          fetchCatalog: async (options) => {
+            if (options.scope !== "workspace" || !options.workspaceId || !options.workspace) {
+              throw new Error("Expected a bound provider workspace");
+            }
+            probes.push(options.workspaceId);
+            return {
+              models: [{ provider: "codex", id: options.workspaceId, label: options.workspaceId }],
+              modes: [],
+            };
+          },
+        }),
+      },
+    });
+
+    try {
+      await manager.warmUpSnapshotForCwd({
+        cwd: "/same/cwd",
+        workspaceId: "workspace-a",
+        providers: ["codex"],
+      });
+      await manager.warmUpSnapshotForCwd({
+        cwd: "/same/cwd",
+        workspaceId: "workspace-b",
+        providers: ["codex"],
+      });
+      await manager.warmUpSnapshotForCwd({
+        cwd: "/same/cwd",
+        workspaceId: "workspace-a",
+        providers: ["codex"],
+      });
+      expect(probes).toEqual(["workspace-a", "workspace-b"]);
+      expect(
+        manager.getSnapshot("/same/cwd", "workspace-a").find((entry) => entry.provider === "codex")
+          ?.models?.[0]?.id,
+      ).toBe("workspace-a");
+      expect(
+        manager.getSnapshot("/same/cwd", "workspace-b").find((entry) => entry.provider === "codex")
+          ?.models?.[0]?.id,
+      ).toBe("workspace-b");
+
+      workspaces.set("workspace-a", createProviderWorkspace());
+      await manager.warmUpSnapshotForCwd({
+        cwd: "/same/cwd",
+        workspaceId: "workspace-a",
+        providers: ["codex"],
+      });
+      await manager.warmUpSnapshotForCwd({
+        cwd: "/same/cwd",
+        workspaceId: "workspace-b",
+        providers: ["codex"],
+      });
+      expect(probes).toEqual(["workspace-a", "workspace-b", "workspace-a"]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("settings refresh passes the semantic global scope to providers", async () => {
     const fetchCatalog = vi.fn(async () => ({
       models: [] as AgentModelDefinition[],
@@ -1344,3 +1400,45 @@ describe("ProviderSnapshotManager cwd routing", () => {
     }
   });
 });
+
+function createProviderWorkspace(): ProviderWorkspace {
+  return {
+    cwd: ".",
+    async resolveExecutable() {
+      throw new Error("not used");
+    },
+    async launch() {
+      throw new Error("not used");
+    },
+    launchDeferred() {
+      throw new Error("not used");
+    },
+    async runProbe() {
+      throw new Error("not used");
+    },
+    async readWorkspaceText() {
+      throw new Error("not used");
+    },
+    async writeWorkspaceText() {
+      throw new Error("not used");
+    },
+    async listState() {
+      return { entries: [] };
+    },
+    async readStateText() {
+      throw new Error("not used");
+    },
+    async findStateFile() {
+      return null;
+    },
+    async materializeStateFile() {
+      throw new Error("not used");
+    },
+    async removeStateFile() {
+      throw new Error("not used");
+    },
+    allowsHostService() {
+      return false;
+    },
+  };
+}

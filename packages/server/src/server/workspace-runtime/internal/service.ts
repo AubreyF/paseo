@@ -33,6 +33,10 @@ export function createService(
     string,
     { runtimeId: string; revision: string; client: WorkspaceFilesOwner }
   >();
+  const homeFileClients = new Map<
+    string,
+    { runtimeId: string; revision: string; client: WorkspaceFilesOwner }
+  >();
   const boundFiles = new Map<string, WorkspaceFiles>();
   const unavailableFiles = new Map<string, "paused" | "destroyed">();
   const boundRuntimes = new Map<
@@ -174,7 +178,10 @@ export function createService(
       }
       const runtime: BoundWorkspaceRuntime = {
         run: (input) => runWithDriver(driver, { workspaceId, ...input }),
+        resolveCommand: async (command) =>
+          (await requireFilesOwner(workspaceId)).resolveCommand(command),
         files: bindFiles(workspaceId),
+        homeFiles: bindHomeFiles(workspaceId),
       };
       boundRuntimes.set(workspaceId, {
         runtimeId: driver.id,
@@ -239,7 +246,31 @@ export function createService(
     };
   }
 
+  function bindHomeFiles(workspaceId: string): WorkspaceFiles {
+    return {
+      async stat(path) {
+        return (await requireHomeFilesOwner(workspaceId)).files.stat(path);
+      },
+      async list(path) {
+        return (await requireHomeFilesOwner(workspaceId)).files.list(path);
+      },
+      async read(path) {
+        return (await requireHomeFilesOwner(workspaceId)).files.read(path);
+      },
+      async write(input) {
+        return (await requireHomeFilesOwner(workspaceId)).files.write(input);
+      },
+      async subscribe(input, listener) {
+        return (await requireHomeFilesOwner(workspaceId)).files.subscribe(input, listener);
+      },
+    };
+  }
+
   async function requireFiles(workspaceId: string): Promise<WorkspaceFiles> {
+    return (await requireFilesOwner(workspaceId)).files;
+  }
+
+  async function requireFilesOwner(workspaceId: string): Promise<WorkspaceFilesOwner> {
     const unavailable = unavailableFiles.get(workspaceId);
     if (unavailable) throw new Error(`Workspace runtime is ${unavailable}: ${workspaceId}`);
     const driver = await resolve(workspaceId);
@@ -249,7 +280,7 @@ export function createService(
     }
     const cached = fileClients.get(workspaceId);
     if (cached && cached.runtimeId === driver.id && cached.revision === inspection.state.revision) {
-      return cached.client.files;
+      return cached.client;
     }
     if (cached) await cached.client.close();
     const client = bindWorkspaceHelper({
@@ -264,13 +295,42 @@ export function createService(
       revision: inspection.state.revision,
       client,
     });
-    return client.files;
+    return client;
+  }
+
+  async function requireHomeFilesOwner(workspaceId: string): Promise<WorkspaceFilesOwner> {
+    const unavailable = unavailableFiles.get(workspaceId);
+    if (unavailable) throw new Error(`Workspace runtime is ${unavailable}: ${workspaceId}`);
+    const driver = await resolve(workspaceId);
+    const inspection = await driver.inspect(workspaceId);
+    if (inspection.status !== "ready") {
+      throw new Error(`Workspace runtime is ${inspection.status}: ${workspaceId}`);
+    }
+    const cached = homeFileClients.get(workspaceId);
+    if (cached && cached.runtimeId === driver.id && cached.revision === inspection.state.revision) {
+      return cached.client;
+    }
+    if (cached) await cached.client.close();
+    const client = bindWorkspaceHelper({
+      root: "@home",
+      command: driver.workspaceHelperCommand,
+      launch: async (argv) => launchHelper(driver, workspaceId, argv),
+    });
+    homeFileClients.set(workspaceId, {
+      runtimeId: driver.id,
+      revision: inspection.state.revision,
+      client,
+    });
+    return client;
   }
 
   async function closeFiles(workspaceId: string): Promise<void> {
     const cached = fileClients.get(workspaceId);
+    const cachedHome = homeFileClients.get(workspaceId);
     fileClients.delete(workspaceId);
+    homeFileClients.delete(workspaceId);
     if (cached) await cached.client.close();
+    if (cachedHome) await cachedHome.client.close();
   }
 
   async function launchHelper(

@@ -1,5 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +18,14 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
+import { createWorkspaceRuntimeService } from "../workspace-runtime/index.js";
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+  FileBackedProjectRegistry,
+  FileBackedWorkspaceRegistry,
+} from "../workspace-registry.js";
 
 const FIXTURE_PROVIDER = "workspace-runtime-fixture";
 const FIXTURE_MODEL = "fixture-model";
@@ -252,8 +270,15 @@ async function expectTerminalCommand(workspace: CharacterizedWorkspace): Promise
 async function expectProviderDiscoveryAndAgentExecution(
   workspace: CharacterizedWorkspace,
 ): Promise<void> {
-  await client.refreshProvidersSnapshot({ cwd: workspace.cwd, providers: [FIXTURE_PROVIDER] });
-  const providers = await client.getProvidersSnapshot({ cwd: workspace.cwd });
+  await client.refreshProvidersSnapshot({
+    cwd: workspace.cwd,
+    ...(workspace.kind === "local" ? { workspaceId: workspace.id } : {}),
+    providers: [FIXTURE_PROVIDER],
+  });
+  const providers = await client.getProvidersSnapshot({
+    cwd: workspace.cwd,
+    ...(workspace.kind === "local" ? { workspaceId: workspace.id } : {}),
+  });
   expect(providers.entries).toContainEqual(
     expect.objectContaining({
       provider: FIXTURE_PROVIDER,
@@ -341,3 +366,149 @@ describe("current workspace runtime journeys", () => {
     }
   }, 120_000);
 });
+
+test("selected worktree provider journey stays behind the public daemon and client boundary", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workspace-runtime-selected-worktree-"));
+  cleanupRoots.push(root);
+  const repo = path.join(root, "repo");
+  execFileSync("git", ["init", "-b", "main", repo], { stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], { cwd: repo });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repo });
+  writeFileSync(path.join(repo, "characterized.txt"), "before\n");
+  copyFileSync(fixtureAgentPath, path.join(repo, "fixture-agent.mjs"));
+  chmodSync(path.join(repo, "fixture-agent.mjs"), 0o755);
+  execFileSync("git", ["add", "."], { cwd: repo });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "fixture"], {
+    cwd: repo,
+  });
+  const paseoHomeRoot = path.join(root, "daemon-home");
+  const paseoHome = path.join(paseoHomeRoot, ".paseo");
+  mkdirSync(paseoHome, { recursive: true });
+  const workspaceId = `selected-worktree-${Date.now()}`;
+  const seedRuntime = createWorkspaceRuntimeService({
+    paseoHome,
+    worktreesRoot: path.join(root, "worktrees"),
+    resolveRuntimeId: async (id) => (id === workspaceId ? "worktree" : null),
+    persistRuntimeId: async () => undefined,
+  });
+  await seedRuntime.create({
+    workspaceId,
+    runtimeId: "worktree",
+    project: { id: "selected-worktree-project", source: { kind: "host-directory", path: repo } },
+    placement: {
+      kind: "branch",
+      branchName: "selected-worktree",
+      baseRef: "main",
+      worktreeSlug: workspaceId,
+    },
+  });
+  const runtimeState = JSON.parse(
+    readFileSync(
+      path.join(
+        paseoHome,
+        "workspace-runtimes",
+        "worktree",
+        readdirSync(path.join(paseoHome, "workspace-runtimes", "worktree"))[0]!,
+      ),
+      "utf8",
+    ),
+  ) as { root: string };
+  const seededProjectRegistry = new FileBackedProjectRegistry(
+    path.join(paseoHome, "projects", "projects.json"),
+    createTestLogger(),
+  );
+  const seededWorkspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(paseoHome, "projects", "workspaces.json"),
+    createTestLogger(),
+  );
+  await seededProjectRegistry.initialize();
+  await seededWorkspaceRegistry.initialize();
+  const now = new Date().toISOString();
+  await seededProjectRegistry.upsert(
+    createPersistedProjectRecord({
+      projectId: "selected-worktree-project",
+      rootPath: repo,
+      kind: "git",
+      displayName: "selected-worktree-project",
+      createdAt: now,
+      updatedAt: now,
+    }),
+  );
+  await seededWorkspaceRegistry.upsert(
+    createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: "selected-worktree-project",
+      cwd: runtimeState.root,
+      kind: "worktree",
+      displayName: "selected-worktree",
+      branch: "selected-worktree",
+      worktreeRoot: runtimeState.root,
+      mainRepoRoot: repo,
+      isPaseoOwnedWorktree: true,
+      runtime: { runtimeId: "worktree" },
+      createdAt: now,
+      updatedAt: now,
+    }),
+  );
+  const selectedDaemon = await createTestPaseoDaemon({
+    paseoHomeRoot,
+    cleanup: false,
+    mcpEnabled: false,
+    providerOverrides: {
+      [FIXTURE_PROVIDER]: {
+        extends: "acp",
+        label: "Workspace Runtime Fixture",
+        command: [path.join(runtimeState.root, "fixture-agent.mjs")],
+        params: { supportsMcpServers: false },
+        enabled: true,
+      },
+    },
+  });
+  const selectedClient = new DaemonClient({
+    url: `ws://127.0.0.1:${selectedDaemon.port}/ws`,
+    appVersion: "0.3.0-beta.2",
+    reconnect: { enabled: false },
+  });
+  try {
+    await selectedClient.connect();
+    await selectedClient.fetchAgents({
+      subscribe: { subscriptionId: "selected-worktree-agents" },
+    });
+    const snapshot = await selectedClient.getProvidersSnapshot({
+      cwd: runtimeState.root,
+      workspaceId,
+    });
+    expect(snapshot.entries).toContainEqual(
+      expect.objectContaining({
+        provider: FIXTURE_PROVIDER,
+        status: "ready",
+        models: [expect.objectContaining({ id: FIXTURE_MODEL })],
+      }),
+    );
+    const agent = await selectedClient.createAgent({
+      provider: FIXTURE_PROVIDER,
+      model: FIXTURE_MODEL,
+      cwd: runtimeState.root,
+      workspaceId,
+      title: "selected worktree fixture",
+    });
+    await selectedClient.sendMessage(agent.id, "selected worktree edit");
+    await expect(selectedClient.waitForFinish(agent.id, 30_000)).resolves.toMatchObject({
+      status: "idle",
+    });
+    const edited = await selectedClient.readFile(
+      runtimeState.root,
+      "stdio-agent-output.txt",
+      undefined,
+      workspaceId,
+    );
+    expect(new TextDecoder().decode(edited.bytes)).toBe("selected worktree edit\n");
+    await expect(
+      selectedClient.bindWorkspaceGit({ workspaceId, cwd: runtimeState.root }).getStatus(),
+    ).resolves.toMatchObject({ isGit: true, isDirty: true });
+  } finally {
+    await selectedClient.close().catch(() => undefined);
+    await selectedDaemon.close();
+    await seedRuntime.destroy(workspaceId);
+  }
+}, 120_000);

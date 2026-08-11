@@ -33,6 +33,7 @@ import {
   type ImportProviderSessionInput,
   type ListImportableSessionsOptions,
   type ProviderCatalog,
+  type ProviderWorkspace,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import type { Logger } from "pino";
@@ -103,6 +104,14 @@ import {
   CodexProviderOptionsSchema,
   type CodexProviderOptions,
 } from "./codex/options.js";
+import {
+  providerWorkspaceEnvironment,
+  providerWorkspaceFromCatalogOptions,
+  rejectSelectedProviderWorkspaceFailure,
+  resolveWorkspaceCommand,
+  runWorkspaceProviderCommand,
+  spawnWorkspaceProviderProcess,
+} from "./workspace/index.js";
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -495,11 +504,20 @@ export async function findDefaultCodexBinary(): Promise<string | null> {
   return (await findExecutable("codex")) ?? (await findCodexMicrosoftStoreBinary());
 }
 
-async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
+async function resolveCodexLaunchPrefix(
+  runtimeSettings?: ProviderRuntimeSettings,
+  workspace?: ProviderWorkspace,
+): Promise<{
   command: string;
   args: string[];
 }> {
   const launch = await resolveCodexLaunch(runtimeSettings);
+  if (workspace) {
+    return {
+      command: await resolveWorkspaceCommand(workspace, launch.command),
+      args: launch.args,
+    };
+  }
   const availability = await checkCodexLaunchAvailable(launch);
   if (!availability.available) {
     throw new Error(
@@ -643,13 +661,19 @@ function parseFrontMatter(markdown: string): {
   return { frontMatter, body };
 }
 
-async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
+async function listCodexCustomPrompts(workspace?: ProviderWorkspace): Promise<AgentSlashCommand[]> {
   const codexHome = resolveCodexHomeDir();
   const promptsDir = path.join(codexHome, "prompts");
-  let entries: Dirent[];
+  let entries: Array<{ name: string; isFile(): boolean }>;
   try {
-    entries = await fs.readdir(promptsDir, { withFileTypes: true });
-  } catch {
+    entries = workspace
+      ? (await workspace.listState(".codex/prompts")).entries.map((entry) => ({
+          name: entry.name,
+          isFile: () => entry.kind === "file",
+        }))
+      : await fs.readdir(promptsDir, { withFileTypes: true });
+  } catch (error) {
+    rejectSelectedProviderWorkspaceFailure(workspace, error, { allowMissingState: true });
     return [];
   }
 
@@ -659,11 +683,16 @@ async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
   const parsedCommands = await Promise.all(
     mdEntries.map(async (entry): Promise<AgentSlashCommand | null> => {
       const name = entry.name.slice(0, -".md".length);
-      const fullPath = path.join(promptsDir, entry.name);
+      const fullPath = workspace
+        ? `.codex/prompts/${entry.name}`
+        : path.join(promptsDir, entry.name);
       let content: string;
       try {
-        content = await fs.readFile(fullPath, "utf8");
-      } catch {
+        content = workspace
+          ? await workspace.readStateText(fullPath)
+          : await fs.readFile(fullPath, "utf8");
+      } catch (error) {
+        rejectSelectedProviderWorkspaceFailure(workspace, error, { allowMissingState: true });
         return null;
       }
       const parsed = parseFrontMatter(content);
@@ -3010,6 +3039,8 @@ type CodexAppServerUserInput =
 export async function codexAppServerTurnInputFromPrompt(
   prompt: CodexPromptInput,
   logger: Logger,
+  workspace?: ProviderWorkspace,
+  onMaterializedStateFile?: (path: string) => void,
 ): Promise<CodexAppServerUserInput[]> {
   if (typeof prompt === "string") {
     return [toCodexTextInput(prompt)];
@@ -3030,12 +3061,24 @@ export async function codexAppServerTurnInputFromPrompt(
     }
     if (block.type === "image") {
       try {
-        const filePath = materializeProviderImage({
-          data: block.data,
-          mimeType: block.mimeType,
-        }).path;
+        const selectedImageData = block.data.match(/^data:[^;]+;base64,(.*)$/)?.[1] ?? block.data;
+        const stateFile = workspace
+          ? await workspace.materializeStateFile({
+              name: "attachment.bin",
+              content: selectedImageData,
+              encoding: "base64",
+            })
+          : null;
+        const filePath = stateFile
+          ? stateFile.path
+          : materializeProviderImage({
+              data: block.data,
+              mimeType: block.mimeType,
+            }).path;
+        if (stateFile) onMaterializedStateFile?.(stateFile.statePath);
         output.push({ type: "localImage", path: filePath });
       } catch (error) {
+        rejectSelectedProviderWorkspaceFailure(workspace, error);
         const message = error instanceof Error ? error.message : String(error);
         logger.warn({ message }, "Failed to write Codex image attachment");
         output.push({
@@ -3231,6 +3274,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     name: string;
   } | null = null;
   private cachedSkills: Array<{ name: string; description: string; path: string }> | null = null;
+  private readonly materializedStateFiles = new Set<string>();
 
   constructor(
     config: AgentSessionConfig,
@@ -3243,6 +3287,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    private readonly workspace?: ProviderWorkspace,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3784,6 +3829,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       const commands = await this.listCommands();
       return commands.some((command) => command.name === parsed.commandName) ? parsed : null;
     } catch (error) {
+      rejectSelectedProviderWorkspaceFailure(this.workspace, error);
       this.logger.warn(
         { err: error, commandName: parsed.commandName },
         "Failed to resolve slash command; falling back to plain prompt input",
@@ -3798,9 +3844,12 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): Promise<CodexPromptInput> {
     if (commandName.startsWith("prompts:")) {
       const promptName = commandName.slice("prompts:".length);
-      const codexHome = resolveCodexHomeDir();
-      const promptPath = path.join(codexHome, "prompts", `${promptName}.md`);
-      const raw = await fs.readFile(promptPath, "utf8");
+      const promptPath = this.workspace
+        ? `.codex/prompts/${promptName}.md`
+        : path.join(resolveCodexHomeDir(), "prompts", `${promptName}.md`);
+      const raw = this.workspace
+        ? await this.workspace.readStateText(promptPath)
+        : await fs.readFile(promptPath, "utf8");
       const parsed = parseFrontMatter(raw);
       return expandCodexCustomPrompt(parsed.body, args);
     }
@@ -4482,6 +4531,14 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
     await this.disposeClient();
+    if (this.workspace) {
+      await Promise.all(
+        [...this.materializedStateFiles].map((statePath) =>
+          this.workspace!.removeStateFile(statePath),
+        ),
+      );
+      this.materializedStateFiles.clear();
+    }
     this.currentThreadId = null;
   }
 
@@ -4509,7 +4566,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
-    const prompts = await listCodexCustomPrompts();
+    const prompts = await listCodexCustomPrompts(this.workspace);
     if (!this.connected) {
       await this.connect();
     } else {
@@ -4522,7 +4579,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       kind: "skill" as const,
     }));
     const fallbackSkills =
-      this.cachedSkills === null
+      this.cachedSkills === null && !this.workspace
         ? await listCodexSkills(this.config.cwd, this.deps.workspaceGitService)
         : [];
     const builtin: AgentSlashCommand[] = [
@@ -4799,7 +4856,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (typeof prompt === "string") {
       return [toCodexTextInput(prompt)];
     }
-    return await codexAppServerTurnInputFromPrompt(prompt, this.logger);
+    return await codexAppServerTurnInputFromPrompt(
+      prompt,
+      this.logger,
+      this.workspace,
+      (statePath) => this.materializedStateFiles.add(statePath),
+    );
   }
 
   private emitEvent(event: AgentStreamEvent): void {
@@ -6452,6 +6514,8 @@ export class CodexAppServerAgentClient implements AgentClient {
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
+  private readonly goalsEnabledByRuntime = new WeakMap<object, Promise<boolean>>();
+  private readonly autoReviewEnabledByRuntime = new WeakMap<object, Promise<boolean>>();
 
   constructor(
     private readonly logger: Logger,
@@ -6469,7 +6533,14 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
   }
 
-  private resolveGoalsEnabled(): Promise<boolean> {
+  private resolveGoalsEnabled(workspace?: ProviderWorkspace): Promise<boolean> {
+    if (workspace) {
+      const cached = this.goalsEnabledByRuntime.get(workspace);
+      if (cached) return cached;
+      const pending = this.resolveVersionCapability(workspace, CODEX_GOALS_MIN_VERSION, "goals");
+      this.goalsEnabledByRuntime.set(workspace, pending);
+      return pending;
+    }
     if (!this.goalsEnabledPromise) {
       this.goalsEnabledPromise = (async () => {
         try {
@@ -6494,7 +6565,18 @@ export class CodexAppServerAgentClient implements AgentClient {
     return this.goalsEnabledPromise;
   }
 
-  private resolveAutoReviewEnabled(): Promise<boolean> {
+  private resolveAutoReviewEnabled(workspace?: ProviderWorkspace): Promise<boolean> {
+    if (workspace) {
+      const cached = this.autoReviewEnabledByRuntime.get(workspace);
+      if (cached) return cached;
+      const pending = this.resolveVersionCapability(
+        workspace,
+        CODEX_AUTO_REVIEW_MIN_VERSION,
+        "auto-review",
+      );
+      this.autoReviewEnabledByRuntime.set(workspace, pending);
+      return pending;
+    }
     if (!this.autoReviewEnabledPromise) {
       this.autoReviewEnabledPromise = (async () => {
         try {
@@ -6521,9 +6603,9 @@ export class CodexAppServerAgentClient implements AgentClient {
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean; agentId?: string },
+    options?: { goalsEnabled?: boolean; agentId?: string; workspace?: ProviderWorkspace },
   ): Promise<ChildProcessWithoutNullStreams> {
-    const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+    const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings, options?.workspace);
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {
       args.push("--enable", "goals");
@@ -6537,6 +6619,16 @@ export class CodexAppServerAgentClient implements AgentClient {
       },
       "provider.codex.spawn",
     );
+    if (options?.workspace) {
+      return await spawnWorkspaceProviderProcess({
+        workspace: options.workspace,
+        argv: [launchPrefix.command, ...args],
+        env: providerWorkspaceEnvironment([this.runtimeSettings?.env, launchEnv]),
+        purpose: options.agentId
+          ? { kind: "agent", agentId: options.agentId, provider: CODEX_PROVIDER }
+          : { kind: "provider-probe", provider: CODEX_PROVIDER },
+      });
+    }
     const child = spawnProcess(launchPrefix.command, args, {
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
@@ -6547,6 +6639,26 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
     assertChildWithPipes(child);
     return child;
+  }
+
+  private async resolveVersionCapability(
+    workspace: ProviderWorkspace,
+    minimum: readonly [number, number, number],
+    feature: string,
+  ): Promise<boolean> {
+    try {
+      const launch = await resolveCodexLaunchPrefix(this.runtimeSettings, workspace);
+      const { stdout, stderr } = await runWorkspaceProviderCommand({
+        workspace,
+        argv: [launch.command, ...launch.args, "--version"],
+        env: this.runtimeSettings?.env,
+        provider: CODEX_PROVIDER,
+      });
+      return codexVersionAtLeast(`${stdout}\n${stderr}`, minimum);
+    } catch (error) {
+      this.logger.warn({ err: error, feature }, "Failed to probe workspace Codex version gate");
+      return false;
+    }
   }
 
   async createSession(
@@ -6561,20 +6673,30 @@ export class CodexAppServerAgentClient implements AgentClient {
       // TODO: Honor persistSession=false if app-server adds support, or route
       // utility generations through `codex exec --ephemeral` in a larger change.
     }
-    const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
-    const goalsEnabled = await this.resolveGoalsEnabled();
-    const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const sessionConfig: AgentSessionConfig = {
+      ...config,
+      provider: CODEX_PROVIDER,
+      cwd: launchContext?.workspace?.cwd ?? config.cwd,
+    };
+    const goalsEnabled = await this.resolveGoalsEnabled(launchContext?.workspace);
+    const autoReviewEnabled = await this.resolveAutoReviewEnabled(launchContext?.workspace);
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
       this.logger,
       () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
+        this.spawnAppServer(launchContext?.env, {
+          goalsEnabled,
+          agentId: launchContext?.agentId,
+          workspace: launchContext?.workspace,
+        }),
       this.sessionDeps(),
       options?.persistSession === false,
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
+      "interactive",
+      launchContext?.workspace,
     );
     await session.connect();
     return session;
@@ -6593,20 +6715,26 @@ export class CodexAppServerAgentClient implements AgentClient {
       provider: CODEX_PROVIDER,
       cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
     };
-    const goalsEnabled = await this.resolveGoalsEnabled();
-    const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    merged.cwd = launchContext?.workspace?.cwd ?? merged.cwd;
+    const goalsEnabled = await this.resolveGoalsEnabled(launchContext?.workspace);
+    const autoReviewEnabled = await this.resolveAutoReviewEnabled(launchContext?.workspace);
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
       this.logger,
       () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
+        this.spawnAppServer(launchContext?.env, {
+          goalsEnabled,
+          agentId: launchContext?.agentId,
+          workspace: launchContext?.workspace,
+        }),
       this.sessionDeps(),
       false,
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
       options?.purpose ?? "interactive",
+      launchContext?.workspace,
     );
     await session.connect();
     return session;
@@ -6615,7 +6743,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(undefined, { workspace: options?.workspace });
     const client =
       this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
       new CodexAppServerClient(child, this.logger);
@@ -6628,15 +6756,18 @@ export class CodexAppServerAgentClient implements AgentClient {
       // thread/list returns the cheap `cwd` field. Fetch a wider window when
       // filtering since most threads will be from other cwds, then keep the
       // local realpath-aware filter for symlink-equivalent workspace paths.
-      const listLimit = options?.cwd ? Math.max(limit, 50) : limit;
+      const requestedCwd = options?.workspace?.cwd ?? options?.cwd;
+      const listLimit = requestedCwd ? Math.max(limit, 50) : limit;
       const response = toObjectRecord(
         await client.request("thread/list", {
           limit: listLimit,
-          ...(options?.cwd ? { cwd: options.cwd } : {}),
+          ...(requestedCwd ? { cwd: requestedCwd } : {}),
         }),
       );
       const allThreads = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
-      const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
+      const threads = options?.workspace
+        ? allThreads
+        : filterCodexThreadsByCwd(allThreads, options?.cwd);
       return threads.slice(0, limit).map((thread) => {
         const threadId = typeof thread.id === "string" ? thread.id : "";
         const cwd = typeof thread.cwd === "string" ? thread.cwd : process.cwd();
@@ -6670,10 +6801,11 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
   }
 
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    const workspace = providerWorkspaceFromCatalogOptions(options);
     const [models, autoReviewEnabled] = await Promise.all([
-      this.fetchModelsFromAppServer(),
-      this.resolveAutoReviewEnabled(),
+      this.fetchModelsFromAppServer(workspace),
+      this.resolveAutoReviewEnabled(workspace),
     ]);
     return {
       models,
@@ -6688,9 +6820,11 @@ export class CodexAppServerAgentClient implements AgentClient {
     return (await this.resolveAutoReviewEnabled()) ? "auto-review" : DEFAULT_CODEX_MODE_ID;
   }
 
-  private async fetchModelsFromAppServer(): Promise<AgentModelDefinition[]> {
+  private async fetchModelsFromAppServer(
+    workspace?: ProviderWorkspace,
+  ): Promise<AgentModelDefinition[]> {
     // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(undefined, { workspace });
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
@@ -6719,11 +6853,16 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+  async archiveNativeSession(
+    handle: AgentPersistenceHandle,
+    launchContext?: AgentLaunchContext,
+  ): Promise<void> {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(launchContext?.env, {
+      workspace: launchContext?.workspace,
+    });
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
@@ -6735,11 +6874,16 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+  async unarchiveNativeSession(
+    handle: AgentPersistenceHandle,
+    launchContext?: AgentLaunchContext,
+  ): Promise<void> {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(launchContext?.env, {
+      workspace: launchContext?.workspace,
+    });
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
@@ -6762,8 +6906,19 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
     const launch = await resolveCodexLaunch(this.runtimeSettings);
+    if (options) {
+      try {
+        const workspace = providerWorkspaceFromCatalogOptions(options);
+        if (workspace) {
+          await workspace.resolveExecutable(launch.command);
+          return true;
+        }
+      } catch {
+        return false;
+      }
+    }
     const availability = await checkCodexLaunchAvailable(launch);
     return availability.available;
   }

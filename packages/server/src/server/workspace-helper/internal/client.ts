@@ -4,6 +4,7 @@ import {
   describeSchema,
   directorySchema,
   fileStatSchema,
+  resolvedCommandSchema,
   watchEventSchema,
   writeResultSchema,
 } from "./protocol.js";
@@ -24,6 +25,7 @@ const PROCESS_STOP_TIMEOUT_MS = 1_000;
 
 export function createClient(options: {
   root: string;
+  allowAbsolutePaths?: boolean;
   launch(argv: readonly [string, ...string[]]): Promise<WorkspaceHelperProcess>;
   command: readonly [string, ...string[]];
 }): WorkspaceFilesOwner {
@@ -35,7 +37,14 @@ export function createClient(options: {
 
   const command = async (name: string, args: readonly string[] = []) => {
     if (closing) throw new Error("Workspace files client is closed");
-    const child = await options.launch([...options.command, name, "--root", options.root, ...args]);
+    const child = await options.launch([
+      ...options.command,
+      name,
+      "--root",
+      options.root,
+      ...(options.allowAbsolutePaths ? ["--allow-absolute"] : []),
+      ...args,
+    ]);
     processes.add(child);
     void child.exited.then(
       () => processes.delete(child),
@@ -151,13 +160,20 @@ export function createClient(options: {
         };
       },
     },
+    async resolveCommand(commandName) {
+      const result = await json("resolve-command", ["--name", commandName], resolvedCommandSchema);
+      return result.path;
+    },
     async verify() {
       const description = await json("describe", [], describeSchema);
       if (
         !description.capabilities.includes("files") ||
-        !description.capabilities.includes("watch")
+        !description.capabilities.includes("watch") ||
+        !description.capabilities.includes("resolve-command")
       ) {
-        throw new Error("Workspace helper does not support files and watching");
+        throw new Error(
+          "Workspace helper does not support files, watching, and command resolution",
+        );
       }
     },
     async close() {

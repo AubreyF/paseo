@@ -2129,6 +2129,7 @@ export class DaemonClient {
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_recent_provider_sessions_request",
       requestId: resolvedRequestId,
+      ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options?.cwd ? { cwd: options.cwd } : {}),
       ...(options?.providers ? { providers: options.providers } : {}),
       ...(options?.since ? { since: options.since } : {}),
@@ -4791,6 +4792,7 @@ export class DaemonClient {
 
   async getProvidersSnapshot(options?: {
     cwd?: string;
+    workspaceId?: string;
     ifNoneMatch?: string;
     requestId?: string;
   }): Promise<GetProvidersSnapshotPayload> {
@@ -4799,6 +4801,7 @@ export class DaemonClient {
       message: {
         type: "get_providers_snapshot_request",
         cwd: options?.cwd,
+        workspaceId: options?.workspaceId,
         ifNoneMatch: options?.ifNoneMatch,
       },
       responseType: "get_providers_snapshot_response",
@@ -4922,6 +4925,7 @@ export class DaemonClient {
 
   async refreshProvidersSnapshot(options?: {
     cwd?: string;
+    workspaceId?: string;
     providers?: AgentProvider[];
     requestId?: string;
   }): Promise<RefreshProvidersSnapshotPayload> {
@@ -4930,6 +4934,7 @@ export class DaemonClient {
       message: {
         type: "refresh_providers_snapshot_request",
         cwd: options?.cwd,
+        workspaceId: options?.workspaceId,
         providers: options?.providers,
       },
       responseType: "refresh_providers_snapshot_response",

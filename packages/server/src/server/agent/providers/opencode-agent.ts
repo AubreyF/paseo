@@ -79,6 +79,7 @@ import {
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
+import { providerWorkspaceFromCatalogOptions } from "./workspace/index.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
@@ -1408,6 +1409,10 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    const workspace = providerWorkspaceFromCatalogOptions(options);
+    if (workspace && !workspace.allowsHostService("opencode")) {
+      throw new Error("OpenCode is unavailable in the selected workspace runtime");
+    }
     const acquisition = options.force
       ? await this.serverManager.acquireNew()
       : await this.serverManager.acquireCurrent();
@@ -1461,6 +1466,7 @@ export class OpenCodeAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
+    if (options?.workspace && !options.workspace.allowsHostService("opencode")) return [];
     const acquisition = await this.serverManager.acquireCurrent();
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
@@ -1561,7 +1567,15 @@ export class OpenCodeAgentClient implements AgentClient {
     }
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
+    if (options) {
+      try {
+        const workspace = providerWorkspaceFromCatalogOptions(options);
+        if (workspace && !workspace.allowsHostService("opencode")) return false;
+      } catch {
+        return false;
+      }
+    }
     const launch = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: "opencode",

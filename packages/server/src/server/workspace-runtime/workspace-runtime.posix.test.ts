@@ -23,13 +23,15 @@ afterEach(async () => {
 });
 
 posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract", (runtimeId) => {
-  test("bound runtime exposes only process and file primitives", async () => {
+  test("bound runtime exposes only process, file, and command-resolution primitives", async () => {
     const fixture = await createFixture(runtimeId);
     await fixture.service.create(fixture.createInput);
 
     const runtime = await fixture.service.bind(fixture.workspaceId);
 
-    expect(Object.keys(runtime).sort()).toEqual(["files", "run"]);
+    expect(Object.keys(runtime).sort()).toEqual(["files", "homeFiles", "resolveCommand", "run"]);
+    await expect(runtime.resolveCommand("git")).resolves.toMatch(/^\//u);
+    await expect(runtime.resolveCommand("paseo-command-that-does-not-exist")).resolves.toBeNull();
     await fixture.service.destroy(fixture.workspaceId);
   });
 

@@ -330,6 +330,7 @@ function pickDesktopModel({
 type AgentControlsSlice = {
   provider: string;
   cwd: string | null;
+  workspaceId: string | undefined;
   runtimeModelId: string | null;
   model: string | null | undefined;
   features: AgentFeature[] | undefined;
@@ -349,6 +350,7 @@ function selectAgentControlsSlice(
   return {
     provider: currentAgent.provider,
     cwd: currentAgent.cwd,
+    workspaceId: currentAgent.workspaceId,
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
     model: currentAgent.model,
     features: currentAgent.features,
@@ -1444,7 +1446,10 @@ export const AgentControls = memo(function AgentControls({
     isRefreshing: snapshotIsRefreshing,
     refresh: refreshSnapshot,
     refetchIfStale: refetchSnapshotIfStale,
-  } = useProvidersSnapshot(serverId, { cwd: agent?.cwd });
+  } = useProvidersSnapshot(serverId, {
+    cwd: agent?.cwd,
+    workspaceId: agent?.workspaceId,
+  });
 
   const snapshotSelectedEntry = useMemo(
     () => resolveSnapshotSelectedEntry(snapshotEntries, agent?.provider),

@@ -26,11 +26,15 @@ export interface CachedProviderSnapshot extends StoredProviderSnapshot {
   entries: ProviderSnapshotEntry[];
 }
 
+export type ProviderSnapshotCacheScope =
+  | { type: "workspace"; workspaceId: string }
+  | { type: "legacy-cwd"; cwd: string | null };
+
 export interface ProviderSnapshotCache {
-  read(serverId: string, cwd: string | null): Promise<CachedProviderSnapshot | null>;
+  read(serverId: string, scope: ProviderSnapshotCacheScope): Promise<CachedProviderSnapshot | null>;
   write(input: {
     serverId: string;
-    cwd: string | null;
+    scope: ProviderSnapshotCacheScope;
     hash: string;
     generatedAt: string;
     compactSnapshot: CompactProviderSnapshot;
@@ -44,8 +48,8 @@ export class ProviderSnapshotCacheMissError extends Error {
   }
 }
 
-function cacheKey(serverId: string, cwd: string | null): string {
-  return `${CACHE_KEY_PREFIX}:${JSON.stringify([serverId, cwd])}`;
+function cacheKey(serverId: string, scope: ProviderSnapshotCacheScope): string {
+  return `${CACHE_KEY_PREFIX}:${JSON.stringify([serverId, scope])}`;
 }
 
 function parseStoredProviderSnapshot(value: string): StoredProviderSnapshot | null {
@@ -85,8 +89,8 @@ export function createProviderSnapshotCache(
   storage: ProviderSnapshotStorage,
 ): ProviderSnapshotCache {
   return {
-    async read(serverId, cwd) {
-      const key = cacheKey(serverId, cwd);
+    async read(serverId, scope) {
+      const key = cacheKey(serverId, scope);
       let value: string | null;
       try {
         value = await storage.getItem(key);
@@ -118,7 +122,7 @@ export function createProviderSnapshotCache(
         compactSnapshot: input.compactSnapshot,
       };
       try {
-        await storage.setItem(cacheKey(input.serverId, input.cwd), JSON.stringify(stored));
+        await storage.setItem(cacheKey(input.serverId, input.scope), JSON.stringify(stored));
       } catch (error) {
         if (!(error instanceof Error)) throw error;
       }

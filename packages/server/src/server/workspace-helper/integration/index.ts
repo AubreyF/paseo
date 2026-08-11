@@ -13,6 +13,7 @@ export interface WorkspaceHelperProcess {
 
 export interface WorkspaceFilesOwner {
   files: WorkspaceFiles;
+  resolveCommand(command: string): Promise<string | null>;
   verify(): Promise<void>;
   close(): Promise<void>;
 }
@@ -20,6 +21,7 @@ export interface WorkspaceFilesOwner {
 /** @package Parent integration SPI. Normal callers consume WorkspaceFiles from the public module. */
 export function bindWorkspaceHelper(options: {
   root: string;
+  allowAbsolutePaths?: boolean;
   command: readonly [string, ...string[]];
   launch(argv: readonly [string, ...string[]]): Promise<WorkspaceHelperProcess>;
 }): WorkspaceFilesOwner {

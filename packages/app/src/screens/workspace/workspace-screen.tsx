@@ -1768,12 +1768,16 @@ function WorkspaceScreenContent({
     ) {
       return;
     }
-    prefetchProvidersSnapshot(normalizedServerId, client, { cwd: workspaceDirectory });
+    prefetchProvidersSnapshot(normalizedServerId, client, {
+      cwd: workspaceDirectory,
+      workspaceId: normalizedWorkspaceId,
+    });
   }, [
     client,
     isConnected,
     isRouteFocused,
     normalizedServerId,
+    normalizedWorkspaceId,
     supportsProvidersSnapshot,
     workspaceDirectory,
   ]);

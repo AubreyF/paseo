@@ -41,6 +41,7 @@ import {
 export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
 
 export interface UseAgentFormStateOptions {
+  workspaceId?: string | null;
   initialServerId?: string | null;
   initialValues?: FormInitialValues;
   isVisible?: boolean;
@@ -272,7 +273,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     error: snapshotError,
     refresh: refreshSnapshot,
     refetchIfStale: refetchSnapshotIfStale,
-  } = useProvidersSnapshot(formState.serverId, { cwd: formState.workingDir });
+  } = useProvidersSnapshot(formState.serverId, {
+    cwd: formState.workingDir,
+    workspaceId: options.workspaceId,
+  });
 
   const allProviderEntries = useMemo(() => snapshotEntries ?? [], [snapshotEntries]);
   const snapshotProviderDefinitions = useMemo(

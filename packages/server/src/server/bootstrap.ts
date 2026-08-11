@@ -139,6 +139,10 @@ import {
 } from "./agent/tools/paseo-tools.js";
 import type { PaseoToolRuntimeContext } from "./agent/tools/types.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import {
+  bindProviderWorkspace,
+  resolveProviderPlacementPolicy,
+} from "./agent/providers/workspace/index.js";
 import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
 import { WorkspaceReconciliationService } from "./workspace-reconciliation-service.js";
 import {
@@ -400,6 +404,7 @@ export interface PaseoDaemonConfig {
         command: readonly [string, ...string[]];
         options?: Readonly<Record<string, unknown>>;
         helperCommand?: readonly [string, ...string[]];
+        providerEnvironment?: Readonly<Record<string, string>>;
       }
     >
   >;
@@ -903,6 +908,22 @@ export async function createPaseoDaemon(
     logger,
   });
   const providerSnapshotLogger = logger.child({ module: "provider-snapshot-manager" });
+  const resolveProviderWorkspace = async (workspaceId: string) => {
+    const workspace = await workspaceRegistry?.get(workspaceId);
+    if (!workspace) return undefined;
+    const runtimeId = resolveSelectedWorkspaceRuntimeId(workspace);
+    if (!runtimeId) return null;
+    if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+    return bindProviderWorkspace({
+      runtime: await workspaceRuntime.bind(workspaceId),
+      cwd: ".",
+      policy: resolveProviderPlacementPolicy({
+        runtimeId,
+        hostEnvironment: process.env,
+        isolatedEnvironment: config.workspaceRuntimes?.[runtimeId]?.providerEnvironment,
+      }),
+    });
+  };
   const providerSnapshotManager = new ProviderSnapshotManager({
     logger: providerSnapshotLogger,
     runtimeSettings: config.agentProviderSettings,
@@ -911,6 +932,7 @@ export async function createPaseoDaemon(
     managedProcesses,
     isDev: config.isDev === true,
     extraClients: config.agentClients,
+    resolveProviderWorkspace,
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
@@ -922,15 +944,7 @@ export async function createPaseoDaemon(
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
     mcpAuthToken: agentMcpAuthToken,
-    resolveWorkspaceExecution: async (workspaceId) => {
-      const workspace = await workspaceRegistry?.get(workspaceId);
-      if (!workspace || !resolveSelectedWorkspaceRuntimeId(workspace)) return undefined;
-      const runtime = workspaceRuntime;
-      if (!runtime) throw new Error("Workspace runtime is not available");
-      return {
-        run: (input) => runtime.run({ workspaceId, ...input }),
-      };
-    },
+    resolveProviderWorkspace,
     logger,
   });
 

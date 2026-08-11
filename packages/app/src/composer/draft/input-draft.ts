@@ -28,6 +28,7 @@ type AttachmentUpdater =
   | ((prev: UserComposerAttachment[]) => UserComposerAttachment[]);
 
 interface AgentInputDraftComposerOptions {
+  workspaceId?: string | null;
   initialServerId: string | null;
   initialValues?: CreateAgentInitialValues;
   initialFeatureValues?: Record<string, unknown>;
@@ -69,6 +70,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     isVisible: composerOptions?.isVisible ?? false,
     isCreateFlow: true,
     onlineServerIds: composerOptions?.onlineServerIds ?? [],
+    workspaceId: composerOptions?.workspaceId,
   });
   const draftKey = useMemo(
     () =>

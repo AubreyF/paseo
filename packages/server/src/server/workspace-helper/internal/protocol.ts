@@ -6,7 +6,11 @@ const fileKind = z.enum(["text", "image", "binary"]);
 export const describeSchema = z.object({
   ...version,
   version: z.literal(1),
-  capabilities: z.array(z.enum(["files", "watch"])),
+  capabilities: z.array(z.enum(["files", "watch", "resolve-command"])),
+});
+
+export const resolvedCommandSchema = z.object({
+  path: z.string().nullable(),
 });
 
 const readyFile = z.object({

@@ -1170,6 +1170,7 @@ export const FetchAgentHistoryRequestMessageSchema = z.object({
 export const FetchRecentProviderSessionsRequestMessageSchema = z.object({
   type: z.literal("fetch_recent_provider_sessions_request"),
   requestId: z.string(),
+  workspaceId: z.string().optional(),
   cwd: z.string().optional(),
   providers: z.array(z.string()).optional(),
   since: z.string().optional(),
@@ -1364,6 +1365,7 @@ export const ListAvailableProvidersRequestMessageSchema = z.object({
 export const GetProvidersSnapshotRequestMessageSchema = z.object({
   type: z.literal("get_providers_snapshot_request"),
   cwd: z.string().optional(),
+  workspaceId: z.string().optional(),
   // COMPAT(compactProviderSnapshots): old daemons ignore this field and return a full snapshot.
   ifNoneMatch: z.string().optional(),
   requestId: z.string(),
@@ -1372,6 +1374,7 @@ export const GetProvidersSnapshotRequestMessageSchema = z.object({
 export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
   type: z.literal("refresh_providers_snapshot_request"),
   cwd: z.string().optional(),
+  workspaceId: z.string().optional(),
   providers: z.array(AgentProviderSchema).optional(),
   requestId: z.string(),
 });
@@ -5119,6 +5122,7 @@ export const ProvidersSnapshotUpdateMessageSchema = z.object({
   type: z.literal("providers_snapshot_update"),
   payload: z.object({
     cwd: z.string().optional(),
+    workspaceId: z.string().optional(),
     entries: z.array(ProviderSnapshotEntrySchema),
     compactSnapshot: CompactProviderSnapshotSchema.optional(),
     snapshotHash: z.string().optional(),

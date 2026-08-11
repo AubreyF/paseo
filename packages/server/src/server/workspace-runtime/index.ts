@@ -80,7 +80,9 @@ export interface WorkspaceTerminal {
 
 export interface BoundWorkspaceRuntime {
   run(input: Omit<WorkspaceProcessInput, "workspaceId">): Promise<WorkspaceProcess>;
+  resolveCommand(command: string): Promise<string | null>;
   readonly files: WorkspaceFiles;
+  readonly homeFiles: WorkspaceFiles;
 }
 
 export interface WorkspaceRuntimeService {
@@ -104,6 +106,8 @@ export interface ExternalWorkspaceRuntime {
   command: readonly [string, ...string[]];
   options?: Readonly<Record<string, unknown>>;
   helperCommand?: readonly [string, ...string[]];
+  /** Explicit provider base environment for an isolated runtime. Host env is never inherited. */
+  providerEnvironment?: Readonly<Record<string, string>>;
 }
 
 export interface WorkspaceRuntimeOptions extends WorkspaceRuntimeRecordStore {

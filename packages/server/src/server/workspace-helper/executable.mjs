@@ -1,8 +1,9 @@
 #!/usr/local/bin/node
 import { randomUUID } from "node:crypto";
 import { constants, watch } from "node:fs";
-import { open, realpath, readdir, rename, stat, unlink } from "node:fs/promises";
+import { access, open, realpath, readdir, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import readline from "node:readline";
 
 const outsideMessage = "Access outside of workspace is not allowed";
@@ -20,7 +21,9 @@ const argument = (name, fallback) => {
   const index = argv.indexOf(name);
   return index < 0 ? fallback : argv[index + 1];
 };
-const root = argument("--root");
+const configuredRoot = argument("--root");
+const root = configuredRoot === "@home" ? os.homedir() : configuredRoot;
+const allowAbsolute = argv.includes("--allow-absolute");
 
 try {
   if (!operation || !root) throw new Error("Usage: workspace-helper <command> --root <path>");
@@ -29,11 +32,38 @@ try {
   else if (operation === "fs-read") await read(root, argument("--path"));
   else if (operation === "fs-write") await write(root, argument("--path"));
   else if (operation === "watch") await runWatcher(root);
-  else if (operation === "describe") print({ version: 1, capabilities: ["files", "watch"] });
+  else if (operation === "resolve-command")
+    print({ path: await resolveCommand(root, argument("--name")) });
+  else if (operation === "describe")
+    print({ version: 1, capabilities: ["files", "watch", "resolve-command"] });
   else throw new Error(`Unknown workspace-helper command: ${operation}`);
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
+}
+
+async function resolveCommand(workspaceRoot, name) {
+  if (!name) throw new Error("--name is required");
+  if (name.includes("/") || (process.platform === "win32" && name.includes("\\"))) {
+    const candidate = path.isAbsolute(name) ? name : path.resolve(workspaceRoot, name);
+    try {
+      await access(candidate, constants.X_OK);
+      return await realpath(candidate);
+    } catch {
+      return null;
+    }
+  }
+  const searchPath = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin";
+  for (const directory of searchPath.split(path.delimiter)) {
+    const candidate = path.join(directory, name);
+    try {
+      await access(candidate, constants.X_OK);
+      return await realpath(candidate);
+    } catch {
+      // Continue through the runtime's own search path.
+    }
+  }
+  return null;
 }
 
 async function fileStat(workspaceRoot, relativePath) {
@@ -259,9 +289,11 @@ function isIgnored(relativePath, ignoredPaths) {
 }
 
 async function resolveScoped(workspaceRoot, relativePath = ".") {
-  if (path.isAbsolute(relativePath)) throw new Error(outsideMessage);
   const normalizedRoot = path.resolve(workspaceRoot);
-  const requested = path.resolve(normalizedRoot, relativePath);
+  if (path.isAbsolute(relativePath) && !allowAbsolute) throw new Error(outsideMessage);
+  const requested = path.isAbsolute(relativePath)
+    ? path.resolve(relativePath)
+    : path.resolve(normalizedRoot, relativePath);
   if (!contains(normalizedRoot, requested)) throw new Error(outsideMessage);
   const canonicalRoot = await realpath(normalizedRoot);
   try {

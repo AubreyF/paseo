@@ -92,6 +92,7 @@ const WorkspaceRuntimesConfigSchema = z.record(
         .min(1)
         .transform((command) => command as [string, ...string[]]),
       options: z.record(z.string(), z.unknown()).optional(),
+      providerEnvironment: z.record(z.string(), z.string()).optional(),
       helperCommand: z
         .array(z.string().min(1))
         .min(1)

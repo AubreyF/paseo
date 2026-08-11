@@ -1,6 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,11 +18,23 @@ import { afterAll, beforeAll, expect, test, vi } from "vitest";
 
 import { createWorkspaceRuntimeService } from "./index.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
+import { DaemonClient } from "../test-utils/daemon-client.js";
+import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+  FileBackedProjectRegistry,
+  FileBackedWorkspaceRegistry,
+} from "../workspace-registry.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../../../..", import.meta.url));
 const dockerRuntimeRoot = path.join(repositoryRoot, "packages/docker-workspace-runtime");
 const runtimeExecutable = path.join(dockerRuntimeRoot, "src/index.ts");
 const image = "paseo-workspace-runtime-slice1:test";
+const fixtureAgent = fileURLToPath(
+  new URL("../test-utils/fixtures/workspace-runtime-acp-agent.mjs", import.meta.url),
+);
 const cleanupRoots: string[] = [];
 
 beforeAll(() => {
@@ -336,6 +357,241 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
   }
 }, 120_000);
 
+test("public daemon and client keep Docker provider discovery, launch, files, Git, and snapshots in one runtime", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-daemon-"));
+  cleanupRoots.push(root);
+  const repo = await createRepository(root);
+  await writeFile(path.join(repo, "provider-model.txt"), "fixture-model-v1\n");
+  execFileSync("git", ["add", "provider-model.txt"], { cwd: repo });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "provider model"], {
+    cwd: repo,
+  });
+  const paseoHomeRoot = path.join(root, "daemon-home");
+  const paseoHome = path.join(paseoHomeRoot, ".paseo");
+  await mkdir(paseoHome, { recursive: true });
+  const runtimeConfig = {
+    type: "command" as const,
+    command: [process.execPath, "--import", "tsx", runtimeExecutable] as const,
+    options: { image },
+  };
+  const configuredRuntimeConfig = {
+    ...runtimeConfig,
+    providerEnvironment: { PASEO_DAEMON_ONLY_PROVIDER_ENV: "runtime-configured" },
+  };
+  const runtimeConfigs = { docker: runtimeConfig, "docker-configured": configuredRuntimeConfig };
+  const workspaceIds = [`docker-daemon-a-${Date.now()}`, `docker-daemon-b-${Date.now()}`];
+  const hostProbeMarker = path.join(root, "host-provider-probed.txt");
+  const hostOnlyProvider = path.join(root, "host-only-provider.mjs");
+  await writeFile(
+    hostOnlyProvider,
+    `#!/usr/bin/env node\nawait import("node:fs/promises").then((fs) => fs.appendFile(${JSON.stringify(hostProbeMarker)}, \`${"${process.cwd()}"}\\n\`));\n${(await readFile(fixtureAgent, "utf8")).replace(/^#![^\n]*\n/u, "")}`,
+  );
+  await chmod(hostOnlyProvider, 0o755);
+  const selectedRuntimeIds = new Map([
+    [workspaceIds[0]!, "docker"],
+    [workspaceIds[1]!, "docker-configured"],
+  ]);
+  const seedRuntime = createWorkspaceRuntimeService({
+    paseoHome,
+    externalRuntimes: runtimeConfigs,
+    resolveRuntimeId: async (workspaceId) => selectedRuntimeIds.get(workspaceId) ?? null,
+    persistRuntimeId: async (workspaceId, runtimeId) => {
+      selectedRuntimeIds.set(workspaceId, runtimeId);
+    },
+  });
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(paseoHome, "projects", "projects.json"),
+    createTestLogger(),
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(paseoHome, "projects", "workspaces.json"),
+    createTestLogger(),
+  );
+  await projectRegistry.initialize();
+  await workspaceRegistry.initialize();
+  const now = new Date().toISOString();
+  await projectRegistry.upsert(
+    createPersistedProjectRecord({
+      projectId: "docker-daemon-project",
+      rootPath: repo,
+      kind: "git",
+      displayName: "docker-daemon-project",
+      createdAt: now,
+      updatedAt: now,
+    }),
+  );
+  for (const workspaceId of workspaceIds) {
+    const runtimeId = selectedRuntimeIds.get(workspaceId)!;
+    await seedRuntime.create({
+      workspaceId,
+      runtimeId,
+      project: { id: "docker-daemon-project", source: { kind: "host-directory", path: repo } },
+      placement: { kind: "existing" },
+    });
+    await workspaceRegistry.upsert(
+      createPersistedWorkspaceRecord({
+        workspaceId,
+        projectId: "docker-daemon-project",
+        cwd: repo,
+        kind: "local_checkout",
+        displayName: workspaceId,
+        runtime: { runtimeId },
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot,
+    cleanup: false,
+    mcpEnabled: false,
+    agentClients: {},
+    workspaceRuntimes: runtimeConfigs,
+    providerOverrides: {
+      "docker-fixture": {
+        extends: "acp",
+        label: "Docker Fixture",
+        command: ["node", "./fixture-agent.mjs"],
+        params: { supportsMcpServers: false },
+        enabled: true,
+      },
+      "host-only-fixture": {
+        extends: "acp",
+        label: "Host Only",
+        command: [hostOnlyProvider],
+        params: { supportsMcpServers: false },
+        enabled: true,
+      },
+    },
+  });
+  const publicClient = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.3.0-beta.2",
+    reconnect: { enabled: false },
+  });
+
+  try {
+    await publicClient.connect();
+    await publicClient.fetchAgents({ subscribe: { subscriptionId: "docker-runtime-agents" } });
+    for (const workspaceId of workspaceIds) {
+      const snapshot = await publicClient.getProvidersSnapshot({ cwd: repo, workspaceId });
+      expect(snapshot.entries).toContainEqual(
+        expect.objectContaining({
+          provider: "docker-fixture",
+          status: "ready",
+          models: [expect.objectContaining({ id: "fixture-model-v1" })],
+        }),
+      );
+      expect(snapshot.entries).toContainEqual(
+        expect.objectContaining({ provider: "host-only-fixture", status: "unavailable" }),
+      );
+      expect(snapshot.entries).toContainEqual(
+        expect.objectContaining({ provider: "opencode", status: "unavailable" }),
+      );
+      const hostProbeCwds = (await readFileFromHost(root, "host-provider-probed.txt"))
+        ?.trim()
+        .split("\n");
+      expect(hostProbeCwds).not.toContain(repo);
+    }
+
+    const workspaceId = workspaceIds[0]!;
+    const workspaceGit = publicClient.bindWorkspaceGit({ workspaceId, cwd: repo });
+    await expect(workspaceGit.getStatus()).resolves.toMatchObject({
+      isGit: true,
+      isDirty: false,
+    });
+    const agent = await publicClient.createAgent({
+      provider: "docker-fixture",
+      model: "fixture-model-v1",
+      cwd: repo,
+      workspaceId,
+      title: "Docker public fake provider",
+    });
+    await publicClient.sendMessage(agent.id, "public docker edit");
+    await expect(publicClient.waitForFinish(agent.id, 30_000)).resolves.toMatchObject({
+      status: "idle",
+    });
+    const edited = await publicClient.readFile(
+      repo,
+      "stdio-agent-output.txt",
+      undefined,
+      workspaceId,
+    );
+    expect(new TextDecoder().decode(edited.bytes)).toBe("public docker edit\n");
+    const editedTrackedFile = await publicClient.readFile(
+      repo,
+      "committed.txt",
+      undefined,
+      workspaceId,
+    );
+    expect(new TextDecoder().decode(editedTrackedFile.bytes)).toBe("public docker edit\n");
+    const dirtyDiff = await workspaceGit.getDiff({ mode: "uncommitted" });
+    expect(dirtyDiff.files.map((file) => file.path)).toContain("committed.txt");
+    const isolatedEnvironment = await publicClient.readFile(
+      repo,
+      "stdio-agent-env.txt",
+      undefined,
+      workspaceId,
+    );
+    expect(new TextDecoder().decode(isolatedEnvironment.bytes)).toBe("<absent>\n");
+
+    const configuredAgent = await publicClient.createAgent({
+      provider: "docker-fixture",
+      model: "fixture-model-v1",
+      cwd: repo,
+      workspaceId: workspaceIds[1],
+      title: "Configured Docker public fake provider",
+    });
+    await publicClient.sendMessage(configuredAgent.id, "configured public docker edit");
+    await expect(publicClient.waitForFinish(configuredAgent.id, 30_000)).resolves.toMatchObject({
+      status: "idle",
+    });
+    const configuredEnvironment = await publicClient.readFile(
+      repo,
+      "stdio-agent-env.txt",
+      undefined,
+      workspaceIds[1],
+    );
+    expect(new TextDecoder().decode(configuredEnvironment.bytes)).toBe("runtime-configured\n");
+
+    await seedRuntime.destroy(workspaceId);
+    await writeFile(path.join(repo, "provider-model.txt"), "fixture-model-v2\n");
+    execFileSync("git", ["add", "provider-model.txt"], { cwd: repo });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "provider model v2"], {
+      cwd: repo,
+    });
+    await seedRuntime.create({
+      workspaceId,
+      runtimeId: "docker",
+      project: { id: "docker-daemon-project", source: { kind: "host-directory", path: repo } },
+      placement: { kind: "existing" },
+    });
+
+    const rebuiltA = await publicClient.getProvidersSnapshot({ cwd: repo, workspaceId });
+    expect(rebuiltA.entries).toContainEqual(
+      expect.objectContaining({
+        provider: "docker-fixture",
+        models: [expect.objectContaining({ id: "fixture-model-v2" })],
+      }),
+    );
+    const unchangedB = await publicClient.getProvidersSnapshot({
+      cwd: repo,
+      workspaceId: workspaceIds[1],
+    });
+    expect(unchangedB.entries).toContainEqual(
+      expect.objectContaining({
+        provider: "docker-fixture",
+        models: [expect.objectContaining({ id: "fixture-model-v1" })],
+      }),
+    );
+  } finally {
+    await publicClient.close().catch(() => undefined);
+    await daemon.close();
+    await Promise.all(workspaceIds.map((workspaceId) => seedRuntime.destroy(workspaceId)));
+  }
+}, 180_000);
+
 test("Docker creation validates roots and rolls back when runtime selection cannot persist", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-rollback-"));
   cleanupRoots.push(root);
@@ -491,6 +747,8 @@ async function createRepository(root: string): Promise<string> {
   execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repo });
   await writeFile(path.join(repo, "committed.txt"), "committed\n");
   await writeFile(path.join(repo, "large.bin"), Buffer.alloc(700_000, 0xa5));
+  await copyFile(fixtureAgent, path.join(repo, "fixture-agent.mjs"));
+  await chmod(path.join(repo, "fixture-agent.mjs"), 0o755);
   await symlink("/etc/passwd", path.join(repo, "outside-link"));
   execFileSync("git", ["add", "."], { cwd: repo });
   execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "fixture"], {

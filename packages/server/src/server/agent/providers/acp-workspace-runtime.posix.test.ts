@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { chmod, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -7,6 +8,13 @@ import { describe, expect, test } from "vitest";
 import { createWorkspaceRuntimeService } from "../../workspace-runtime/index.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { ACPAgentSession } from "./acp-agent.js";
+import { GenericACPAgentClient } from "./generic-acp-agent.js";
+import { bindProviderWorkspace } from "./workspace/index.js";
+
+const fixtureAgent = new URL(
+  "../../test-utils/fixtures/workspace-runtime-acp-agent.mjs",
+  import.meta.url,
+);
 
 const posixDescribe = describe.runIf(process.platform !== "win32");
 
@@ -48,9 +56,14 @@ posixDescribe("ACP workspace terminal execution", () => {
           supportsMcp: false,
           supportsSlashCommands: false,
         },
-        workspaceExecution: {
-          run: (input) => runtime.run({ workspaceId: "acp-workspace", ...input }),
-        },
+        workspace: bindProviderWorkspace({
+          runtime: await runtime.bind("acp-workspace"),
+          cwd: ".",
+          policy: {
+            environment: { type: "inherit-sanitized-host", hostEnvironment: process.env },
+            sharedHostProviders: new Set(["opencode"]),
+          },
+        }),
       },
     );
 
@@ -73,4 +86,95 @@ posixDescribe("ACP workspace terminal execution", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test.each(["local", "worktree"] as const)(
+    "discovers and launches an ACP provider through the selected %s workspace",
+    async (selectedRuntimeId) => {
+      const root = await mkdtemp(path.join(tmpdir(), "paseo-acp-provider-runtime-"));
+      const cwd = path.join(root, "workspace");
+      await mkdir(cwd);
+      await copyFile(fixtureAgent, path.join(cwd, "fixture-agent.mjs"));
+      await chmod(path.join(cwd, "fixture-agent.mjs"), 0o755);
+      await writeFile(path.join(cwd, "committed.txt"), "before\n");
+      execFileSync("git", ["init", "-b", "main"], { cwd });
+      execFileSync("git", ["config", "user.email", "test@getpaseo.local"], { cwd });
+      execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd });
+      execFileSync("git", ["add", "."], { cwd });
+      execFileSync("git", ["commit", "-m", "fixture"], { cwd });
+      const runtimeIds = new Map<string, string>();
+      const service = createWorkspaceRuntimeService({
+        paseoHome: path.join(root, "home"),
+        resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
+        persistRuntimeId: async (workspaceId, persistedRuntimeId) =>
+          runtimeIds.set(workspaceId, persistedRuntimeId),
+      });
+      await service.create({
+        workspaceId: "provider-workspace",
+        runtimeId: selectedRuntimeId,
+        project: { id: "project", source: { kind: "host-directory", path: cwd } },
+        placement:
+          selectedRuntimeId === "local"
+            ? { kind: "existing" }
+            : { kind: "branch", branchName: "provider-worktree", baseRef: "main" },
+      });
+      const workspace = bindProviderWorkspace({
+        runtime: await service.bind("provider-workspace"),
+        cwd: ".",
+        policy: {
+          environment: {
+            type: "inherit-sanitized-host",
+            hostEnvironment: {
+              ...process.env,
+              PASEO_DAEMON_ONLY_PROVIDER_ENV: "daemon-visible",
+            },
+          },
+          sharedHostProviders: new Set(["opencode"]),
+        },
+      });
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: ["./fixture-agent.mjs"],
+      });
+
+      try {
+        await expect(
+          client.isAvailable({
+            scope: "workspace",
+            cwd,
+            workspaceId: "provider-workspace",
+            workspace,
+            force: false,
+          }),
+        ).resolves.toBe(true);
+        await expect(
+          client.fetchCatalog({
+            scope: "workspace",
+            cwd,
+            workspaceId: "provider-workspace",
+            workspace,
+            force: false,
+            timeoutMs: 2_000,
+          }),
+        ).resolves.toMatchObject({ models: [{ id: "fixture-model" }] });
+        const session = await client.createSession(
+          { provider: "acp", cwd },
+          { agentId: "fixture-agent", workspace },
+        );
+        await expect(session.run("runtime edit")).resolves.toMatchObject({
+          finalText: "fixture completed: runtime edit",
+        });
+        await expect(workspace.readWorkspaceText("stdio-agent-output.txt")).resolves.toBe(
+          "runtime edit\n",
+        );
+        await expect(workspace.readWorkspaceText("stdio-agent-env.txt")).resolves.toBe(
+          "daemon-visible\n",
+        );
+        await session.close();
+      } finally {
+        await service.destroy("provider-workspace");
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
 });

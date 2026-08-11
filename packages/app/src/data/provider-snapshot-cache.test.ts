@@ -41,12 +41,12 @@ describe("provider snapshot cache", () => {
 
     await cache.write({
       serverId: "server-1",
-      cwd: "/repo",
+      scope: { type: "legacy-cwd", cwd: "/repo" },
       hash: "snapshot-hash",
       generatedAt: "2026-08-04T00:00:00.000Z",
       compactSnapshot: compactProviderSnapshot(entries),
     });
-    const cached = await cache.read("server-1", "/repo");
+    const cached = await cache.read("server-1", { type: "legacy-cwd", cwd: "/repo" });
 
     expect(cached?.entries).toEqual(entries);
     expect(cached?.entries[0]?.models?.[0]?.thinkingOptions).toBe(
@@ -57,9 +57,41 @@ describe("provider snapshot cache", () => {
   it("discards an invalid cache record", async () => {
     const storage = createStorage();
     const cache = createProviderSnapshotCache(storage);
-    storage.values.set('@paseo/provider-snapshot/v1:["server-1","/repo"]', "not json");
+    storage.values.set(
+      '@paseo/provider-snapshot/v1:["server-1",{"type":"legacy-cwd","cwd":"/repo"}]',
+      "not json",
+    );
 
-    await expect(cache.read("server-1", "/repo")).resolves.toBeNull();
+    await expect(cache.read("server-1", { type: "legacy-cwd", cwd: "/repo" })).resolves.toBeNull();
     expect(storage.values.size).toBe(0);
+  });
+
+  it("keeps selected workspaces with the same cwd structurally isolated", async () => {
+    const storage = createStorage();
+    const cache = createProviderSnapshotCache(storage);
+    const snapshot = (provider: "claude" | "codex") =>
+      compactProviderSnapshot([{ provider, status: "ready", enabled: true, models: [] }]);
+
+    await cache.write({
+      serverId: "server-1",
+      scope: { type: "workspace", workspaceId: "workspace-a" },
+      hash: "hash-a",
+      generatedAt: "2026-08-11T00:00:00.000Z",
+      compactSnapshot: snapshot("claude"),
+    });
+    await cache.write({
+      serverId: "server-1",
+      scope: { type: "workspace", workspaceId: "workspace-b" },
+      hash: "hash-b",
+      generatedAt: "2026-08-11T00:00:01.000Z",
+      compactSnapshot: snapshot("codex"),
+    });
+
+    await expect(
+      cache.read("server-1", { type: "workspace", workspaceId: "workspace-a" }),
+    ).resolves.toMatchObject({ hash: "hash-a" });
+    await expect(
+      cache.read("server-1", { type: "workspace", workspaceId: "workspace-b" }),
+    ).resolves.toMatchObject({ hash: "hash-b" });
   });
 });

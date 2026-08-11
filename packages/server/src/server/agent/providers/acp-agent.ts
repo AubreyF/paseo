@@ -91,12 +91,12 @@ import {
   type ListImportableSessionsOptions,
   type McpServerConfig,
   type ProviderCatalog,
+  type ProviderWorkspace,
   type ResolveAgentCreateConfigInput,
   type ResolveAgentCreateConfigResult,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
-import type { WorkspaceProcess } from "../../workspace-runtime/index.js";
 import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
@@ -104,7 +104,6 @@ import {
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
-  createProviderEnv,
   createProviderEnvSpec,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
@@ -122,6 +121,12 @@ import {
   truncateForDiagnostic,
 } from "./diagnostic-utils.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
+import {
+  providerWorkspaceEnvironment,
+  providerWorkspaceFromCatalogOptions,
+  resolveWorkspaceCommand,
+  spawnWorkspaceProviderProcess,
+} from "./workspace/index.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 
@@ -463,7 +468,7 @@ interface ACPAgentSessionOptions {
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
-  workspaceExecution?: AgentLaunchContext["workspaceExecution"];
+  workspace?: ProviderWorkspace;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -529,29 +534,6 @@ interface TerminalEntry {
   waitForExit: Promise<TerminalExit>;
   resolveExit: (exit: TerminalExit) => void;
   rejectExit: (error: Error) => void;
-}
-
-async function terminateWorkspaceProcess(process: WorkspaceProcess): Promise<void> {
-  process.kill("SIGTERM");
-  if (await exitsWithin(process.exited, 2_000)) return;
-  process.kill("SIGKILL");
-  await process.exited;
-}
-
-async function exitsWithin(exit: Promise<unknown>, timeoutMs: number): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<false>((resolve) => {
-    timer = setTimeout(() => resolve(false), timeoutMs);
-  });
-  const result = await Promise.race([exit.then(() => true as const), timeout]);
-  if (timer) clearTimeout(timer);
-  return result;
-}
-
-function toExactEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
-  );
 }
 
 export interface ConfigOptionSelector {
@@ -880,7 +862,11 @@ export class ACPAgentClient implements AgentClient {
   ): Promise<AgentSession> {
     this.assertProvider(config);
     const session = new ACPAgentSession(
-      { ...config, provider: this.provider },
+      {
+        ...config,
+        provider: this.provider,
+        cwd: launchContext?.workspace?.cwd ?? config.cwd,
+      },
       {
         provider: this.provider,
         logger: this.logger,
@@ -901,7 +887,7 @@ export class ACPAgentClient implements AgentClient {
         capabilities: this.capabilities,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
-        workspaceExecution: launchContext?.workspaceExecution,
+        workspace: launchContext?.workspace,
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -932,6 +918,7 @@ export class ACPAgentClient implements AgentClient {
       provider: this.provider,
       cwd,
     };
+    if (launchContext?.workspace) mergedConfig.cwd = launchContext.workspace.cwd;
     const session = new ACPAgentSession(mergedConfig, {
       provider: this.provider,
       logger: this.logger,
@@ -953,7 +940,7 @@ export class ACPAgentClient implements AgentClient {
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
-      workspaceExecution: launchContext?.workspaceExecution,
+      workspace: launchContext?.workspace,
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -963,12 +950,14 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
-    const cwd = options.scope === "global" ? homedir() : options.cwd;
+    const workspace = providerWorkspaceFromCatalogOptions(options);
+    const cwd = workspace?.cwd ?? (options.scope === "global" ? homedir() : options.cwd);
     const timeoutMs = options.timeoutMs ?? ACP_CATALOG_TIMEOUT_MS;
     let probe: UninitializedACPProcess | null = null;
     try {
       const catalogProbe = (async () => {
         const initializedProbe = await this.spawnProcess(PROBE_ENV, {
+          workspace,
           initializeTimeoutMs: timeoutMs,
           onSpawned: (spawned) => {
             probe = spawned;
@@ -1053,7 +1042,7 @@ export class ACPAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const probe = await this.spawnProcess(PROBE_ENV);
+    const probe = await this.spawnProcess(PROBE_ENV, { workspace: options?.workspace });
     try {
       if (!probe.initialize.agentCapabilities?.sessionCapabilities?.list) {
         return [];
@@ -1068,7 +1057,7 @@ export class ACPAgentClient implements AgentClient {
             // Filter by working directory at the source. Without this the agent
             // returns globally-recent sessions, which the `limit` below can
             // truncate before the current directory's sessions are reached.
-            ...(options?.cwd ? { cwd: options.cwd } : {}),
+            ...(options?.cwd ? { cwd: options.workspace?.cwd ?? options.cwd } : {}),
           }),
         );
         for (const session of page.sessions) {
@@ -1101,9 +1090,10 @@ export class ACPAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
     try {
-      await this.resolveLaunchCommand();
+      const workspace = options ? providerWorkspaceFromCatalogOptions(options) : undefined;
+      await this.resolveLaunchCommand(workspace);
       return true;
     } catch {
       return false;
@@ -1115,9 +1105,10 @@ export class ACPAgentClient implements AgentClient {
     options?: {
       initializeTimeoutMs?: number;
       onSpawned?: (probe: UninitializedACPProcess) => void;
+      workspace?: ProviderWorkspace;
     },
   ): Promise<SpawnedACPProcess> {
-    const transport = await this.spawnTransport(launchEnv);
+    const transport = await this.spawnTransport(launchEnv, options?.workspace);
     const probe: UninitializedACPProcess = {
       child: transport.child,
       connection: transport.connection,
@@ -1138,8 +1129,20 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async spawnTransport(launchEnv?: Record<string, string>): Promise<ACPProcessTransport> {
-    const { command, args } = await this.resolveLaunchCommand();
+  protected async spawnTransport(
+    launchEnv?: Record<string, string>,
+    workspace?: ProviderWorkspace,
+  ): Promise<ACPProcessTransport> {
+    const { command, args } = await this.resolveLaunchCommand(workspace);
+    if (workspace) {
+      const child = await spawnWorkspaceProviderProcess({
+        workspace,
+        argv: [command, ...args],
+        env: providerWorkspaceEnvironment([this.runtimeSettings?.env, launchEnv]),
+        purpose: { kind: "provider-probe", provider: this.provider },
+      });
+      return this.createTransport(child, workspace);
+    }
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
       ...createProviderEnvSpec({
@@ -1149,7 +1152,13 @@ export class ACPAgentClient implements AgentClient {
       stdio: ["pipe", "pipe", "pipe"],
     });
     assertChildWithPipes(child);
+    return this.createTransport(child);
+  }
 
+  private createTransport(
+    child: ChildProcessWithoutNullStreams,
+    workspace?: ProviderWorkspace,
+  ): ACPProcessTransport {
     const stderrChunks: string[] = [];
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
@@ -1172,7 +1181,7 @@ export class ACPAgentClient implements AgentClient {
       Readable.toWeb(child.stdout),
       { logger: this.logger, provider: this.provider },
     );
-    const connection = new ClientSideConnection(() => this.buildProbeClient(), stream);
+    const connection = new ClientSideConnection(() => this.buildProbeClient(workspace), stream);
 
     return {
       child,
@@ -1218,17 +1227,22 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected buildProbeClient(): ACPClient {
+  protected buildProbeClient(workspace?: ProviderWorkspace): ACPClient {
     return {
       async requestPermission(): Promise<RequestPermissionResponse> {
         return { outcome: { outcome: "cancelled" } };
       },
       async sessionUpdate(): Promise<void> {},
       async readTextFile(params: ReadTextFileRequest) {
+        if (workspace) return { content: await readWorkspaceTextFile(workspace, params.path) };
         const content = await fs.readFile(params.path, "utf8");
         return { content };
       },
       async writeTextFile(params: WriteTextFileRequest) {
+        if (workspace) {
+          await writeWorkspaceTextFile(workspace, params.path, params.content);
+          return {};
+        }
         await fs.mkdir(path.dirname(params.path), { recursive: true });
         await fs.writeFile(params.path, params.content, "utf8");
         return {};
@@ -1365,17 +1379,19 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
+  protected async resolveLaunchCommand(
+    workspace?: ProviderWorkspace,
+  ): Promise<{ command: string; args: string[] }> {
     const prefix = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    const availability = await checkProviderLaunchAvailable(prefix);
-    if (!availability.available) {
-      throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
-    }
+    const resolvedCommand = workspace
+      ? await resolveWorkspaceCommand(workspace, prefix.command)
+      : (await checkProviderLaunchAvailable(prefix)).resolvedPath;
+    if (!resolvedCommand) throw new Error(`${this.provider} command '${prefix.command}' not found`);
     return {
-      command: prefix.command,
+      command: resolvedCommand,
       args: [...prefix.args, ...this.defaultCommand.slice(1)],
     };
   }
@@ -1433,7 +1449,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   ) => Promise<void>;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
-  private readonly workspaceExecution?: AgentLaunchContext["workspaceExecution"];
+  private readonly workspace?: ProviderWorkspace;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private pendingUserMessage: PendingUserMessage | null = null;
@@ -1493,7 +1509,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.availableModes = options.defaultModes;
     this.agentId = options.agentId;
     this.launchEnv = options.launchEnv;
-    this.workspaceExecution = options.workspaceExecution;
+    this.workspace = options.workspace;
     this.initialHandle = options.handle;
     this.config = { ...config, provider: options.provider };
     this.currentMode = config.modeId ?? null;
@@ -2372,7 +2388,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async readTextFile(params: ReadTextFileRequest): Promise<{ content: string }> {
-    const raw = await fs.readFile(params.path, "utf8");
+    const raw = this.workspace
+      ? await readWorkspaceTextFile(this.workspace, params.path)
+      : await fs.readFile(params.path, "utf8");
     if (!params.line && !params.limit) {
       return { content: raw };
     }
@@ -2383,6 +2401,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async writeTextFile(params: WriteTextFileRequest): Promise<Record<string, never>> {
+    if (this.workspace) {
+      await writeWorkspaceTextFile(this.workspace, params.path, params.content);
+      return {};
+    }
     await fs.mkdir(path.dirname(params.path), { recursive: true });
     await fs.writeFile(params.path, params.content, "utf8");
     return {};
@@ -2421,39 +2443,34 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       rejectExit,
     };
 
-    if (this.workspaceExecution) {
+    if (this.workspace) {
       const relativeCwd = path.relative(this.config.cwd, cwd);
       if (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd)) {
         throw new Error(`ACP terminal cwd escapes workspace: ${cwd}`);
       }
-      const runtimeProcess = await this.workspaceExecution.run({
+      const child = await this.workspace.launch({
         cwd: relativeCwd || undefined,
         argv: [terminalCommand.command, ...terminalCommand.args],
-        env: toExactEnvironment(
-          createProviderEnv({
-            runtimeSettings: this.runtimeSettings,
-            overlays: commandEnvOverlays,
-          }),
-        ),
+        environment: [this.runtimeSettings?.env, ...commandEnvOverlays],
         purpose: { kind: "terminal", terminalId },
       });
       const entry: TerminalEntry = {
         ...entryBase,
-        terminate: () => terminateWorkspaceProcess(runtimeProcess),
+        terminate: () => terminateChildProcess(child, 2_000, this.terminateProcess),
       };
-      runtimeProcess.stdout.on("data", (chunk: Buffer | string) =>
+      child.stdout.on("data", (chunk: Buffer | string) =>
         appendTerminalOutput(entry, chunk.toString()),
       );
-      runtimeProcess.stderr.on("data", (chunk: Buffer | string) =>
+      child.stderr.on("data", (chunk: Buffer | string) =>
         appendTerminalOutput(entry, chunk.toString()),
       );
-      void runtimeProcess.exited.then(({ code, signal }) => {
+      child.once("error", rejectExit);
+      child.once("exit", (code, signal) => {
         const exit = { exitCode: code, signal };
         entry.exit = exit;
         resolveExit(exit);
-        return undefined;
-      }, rejectExit);
-      runtimeProcess.stdin.end();
+      });
+      child.stdin.end();
       this.terminalEntries.set(terminalId, entry);
       return { terminalId };
     }
@@ -2530,13 +2547,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    const availability = await checkProviderLaunchAvailable(prefix);
-    if (!availability.available) {
-      throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
-    }
-
-    const command = prefix.command;
+    const command = this.workspace
+      ? await resolveWorkspaceCommand(this.workspace, prefix.command)
+      : (await checkProviderLaunchAvailable(prefix)).resolvedPath;
+    if (!command) throw new Error(`${this.provider} command '${prefix.command}' not found`);
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
+    if (this.workspace) {
+      const child = await spawnWorkspaceProviderProcess({
+        workspace: this.workspace,
+        argv: [command, ...args],
+        env: providerWorkspaceEnvironment([this.runtimeSettings?.env, this.launchEnv]),
+        purpose: {
+          kind: "agent",
+          agentId: this.agentId ?? "unidentified-agent",
+          provider: this.provider,
+        },
+      });
+      return await this.initializeSpawnedChild(child);
+    }
     const child = spawnProcess(command, args, {
       cwd: this.config.cwd,
       ...createProviderEnvSpec({
@@ -2546,7 +2574,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       stdio: ["pipe", "pipe", "pipe"],
     });
     assertChildWithPipes(child);
+    return await this.initializeSpawnedChild(child);
+  }
 
+  private async initializeSpawnedChild(
+    child: ChildProcessWithoutNullStreams,
+  ): Promise<SpawnedACPProcess> {
     const stderrChunks: string[] = [];
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
@@ -3736,4 +3769,31 @@ async function terminateChildProcess(
     child.stdout.destroy();
     child.stderr.destroy();
   }
+}
+
+async function readWorkspaceTextFile(
+  workspace: ProviderWorkspace,
+  requestedPath: string,
+): Promise<string> {
+  return workspace.readWorkspaceText(toWorkspaceRelativePath(requestedPath));
+}
+
+async function writeWorkspaceTextFile(
+  workspace: ProviderWorkspace,
+  requestedPath: string,
+  content: string,
+): Promise<void> {
+  await workspace.writeWorkspaceText(toWorkspaceRelativePath(requestedPath), content);
+}
+
+function toWorkspaceRelativePath(requestedPath: string): string {
+  const normalized = path.normalize(requestedPath);
+  if (
+    path.isAbsolute(normalized) ||
+    normalized === ".." ||
+    normalized.startsWith(`..${path.sep}`)
+  ) {
+    throw new Error(`ACP file path escapes the selected workspace: ${requestedPath}`);
+  }
+  return normalized;
 }

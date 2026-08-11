@@ -73,7 +73,7 @@ async function create(id, request) {
   const state = {
     workspaceId: id,
     root,
-    revision: "fixture:1",
+    revision: `fixture:${key(`${id}:${Date.now()}:${process.pid}`)}`,
     executionDomainId: "fixture",
     lifecycle: "ready",
   };
@@ -105,10 +105,12 @@ async function execute(id) {
   const envelope = JSON.parse(first.value);
   const state = await readState(id, envelope.options);
   if (!state) throw new Error(`Fixture workspace is missing: ${id}`);
-  await writeFile(
-    path.join(state.root, ".runtime-launch.json"),
-    JSON.stringify({ argv: process.argv, purpose: envelope.purpose }),
-  );
+  if (envelope.options.recordLaunchInWorkspace !== false) {
+    await writeFile(
+      path.join(state.root, ".runtime-launch.json"),
+      JSON.stringify({ argv: process.argv, purpose: envelope.purpose }),
+    );
+  }
   if (envelope.stdio.kind === "pty") {
     await executePty(id, envelope, iterator, control);
     control.destroy();

@@ -120,7 +120,7 @@ export function createClient(options: {
         state.subscriptions.set(id, listener);
         const acknowledged = acknowledgement(state, `subscribed:${id}`);
         state.process.stdin.write(
-          `${JSON.stringify({ protocolVersion: 1, type: "subscribe", id, paths: input.paths })}\n`,
+          `${JSON.stringify({ protocolVersion: 1, type: "subscribe", id, paths: input.paths, recursive: input.recursive === true, ignoredPaths: input.ignoredPaths ?? [] })}\n`,
         );
         await waitForAcknowledgement(
           state,

@@ -1,6 +1,6 @@
 import { resolve, dirname, basename } from "path";
-import { existsSync, realpathSync } from "fs";
-import { open as openFile, readFile, stat as statFile } from "fs/promises";
+import { realpathSync } from "fs";
+import { readFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { CheckoutCommit, CheckoutCommitFile } from "@getpaseo/protocol/messages";
 import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
@@ -148,8 +148,8 @@ function rememberPullRequestStatus(cacheKey: string, status: PullRequestStatusRe
   }
 }
 
-function getShortstatCacheKey(cwd: string): string {
-  return resolve(cwd);
+function getShortstatCacheKey(cwd: string, context?: CheckoutContext): string {
+  return context?.cacheIdentity ?? resolve(cwd);
 }
 
 export function __resetPullRequestStatusCacheForTests(): void {
@@ -845,6 +845,8 @@ export interface CheckoutContext {
   worktreesRoot?: string;
   logger?: Pick<Logger, "trace" | "warn">;
   facts?: CheckoutSnapshotFacts | null;
+  allowHostMetadata?: boolean;
+  cacheIdentity?: string;
 }
 
 export type CheckoutSnapshotFacts =
@@ -897,7 +899,10 @@ async function requireGitWorktreeRoot(cwd: string): Promise<string> {
   }
 }
 
-export async function getCurrentBranch(cwd: string): Promise<string | null> {
+export async function getCurrentBranch(
+  cwd: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
   try {
     const { stdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], {
       cwd,
@@ -905,7 +910,7 @@ export async function getCurrentBranch(cwd: string): Promise<string | null> {
     });
     const branch = stdout.trim();
     if (branch === "HEAD") {
-      return await getRebaseHeadBranch(cwd);
+      return context?.allowHostMetadata === false ? null : await getRebaseHeadBranch(cwd);
     }
     return branch.length > 0 ? branch : null;
   } catch {
@@ -1002,7 +1007,8 @@ async function getMainRepoRootFromCommonDir(
   if (!commonDir) {
     throw new Error("Not in a git repository");
   }
-  const normalized = realpathSync(commonDir);
+  const normalized =
+    context?.allowHostMetadata === false ? resolve(commonDir) : realpathSync(commonDir);
 
   if (basename(normalized) === ".git") {
     return dirname(normalized);
@@ -1140,6 +1146,9 @@ async function getPaseoWorktreeForCwd(
   cwd: string,
   options: PaseoWorktreeLookupOptions = {},
 ): Promise<PaseoWorktreeForCwd> {
+  if (options.context?.allowHostMetadata === false) {
+    return { isPaseoOwnedWorktree: false };
+  }
   // Fast-path reject: non-worktree paths do not need expensive ownership checks.
   if (!/[\\/]worktrees[\\/]/.test(cwd)) {
     return { isPaseoOwnedWorktree: false };
@@ -1406,29 +1415,15 @@ async function resolveGitCommonDir(cwd: string): Promise<string | null> {
 }
 
 async function abortGitPullConflictState(cwd: string): Promise<void> {
-  const gitDir = await resolveAbsoluteGitDir(cwd);
-  if (!gitDir) {
-    return;
+  try {
+    await runGitCommand(["merge", "--abort"], { cwd, timeout: 120_000 });
+  } catch {
+    // No merge was in progress.
   }
-
-  const mergeHeadPath = resolve(gitDir, "MERGE_HEAD");
-  const rebaseMergePath = resolve(gitDir, "rebase-merge");
-  const rebaseApplyPath = resolve(gitDir, "rebase-apply");
-
-  if (existsSync(mergeHeadPath)) {
-    try {
-      await runGitCommand(["merge", "--abort"], { cwd, timeout: 120_000 });
-    } catch {
-      // ignore
-    }
-  }
-
-  if (existsSync(rebaseMergePath) || existsSync(rebaseApplyPath)) {
-    try {
-      await runGitCommand(["rebase", "--abort"], { cwd, timeout: 120_000 });
-    } catch {
-      // ignore
-    }
+  try {
+    await runGitCommand(["rebase", "--abort"], { cwd, timeout: 120_000 });
+  } catch {
+    // No rebase was in progress.
   }
 }
 
@@ -1687,7 +1682,7 @@ async function inspectCheckoutContext(
   }
 
   const [currentBranch, remoteUrl, absoluteGitDir, gitCommonDir] = await Promise.all([
-    getCurrentBranch(cwd),
+    getCurrentBranch(cwd, context),
     getOriginRemoteUrl(cwd),
     resolveAbsoluteGitDir(cwd),
     resolveGitCommonDir(cwd),
@@ -2018,66 +2013,6 @@ function appendStructuredFile(
   structured.serializedBytes = nextBytes;
   return true;
 }
-const UNTRACKED_BINARY_SNIFF_BYTES = 16 * 1024;
-
-async function isLikelyBinaryFile(absolutePath: string): Promise<boolean> {
-  const handle = await openFile(absolutePath, "r");
-  try {
-    const buffer = Buffer.allocUnsafe(UNTRACKED_BINARY_SNIFF_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead === 0) {
-      return false;
-    }
-
-    let suspicious = 0;
-    for (let i = 0; i < bytesRead; i += 1) {
-      const byte = buffer[i];
-      if (byte === 0) {
-        return true;
-      }
-      // Treat control bytes as suspicious while allowing common whitespace.
-      if (byte < 7 || (byte > 14 && byte < 32) || byte === 127) {
-        suspicious += 1;
-      }
-    }
-
-    return suspicious / bytesRead > 0.3;
-  } finally {
-    await handle.close();
-  }
-}
-
-async function inspectUntrackedFile(
-  cwd: string,
-  relativePath: string,
-): Promise<{ stat: FileStat; truncated: boolean }> {
-  const absolutePath = resolve(cwd, relativePath);
-  const metadata = await statFile(absolutePath);
-
-  if (!metadata.isFile()) {
-    return { stat: null, truncated: false };
-  }
-
-  if (await isLikelyBinaryFile(absolutePath)) {
-    return {
-      stat: { additions: 0, deletions: 0, isBinary: true },
-      truncated: false,
-    };
-  }
-
-  if (metadata.size > PER_FILE_DIFF_MAX_BYTES) {
-    return {
-      stat: { additions: 0, deletions: 0, isBinary: false },
-      truncated: true,
-    };
-  }
-
-  return {
-    stat: { additions: 0, deletions: 0, isBinary: false },
-    truncated: false,
-  };
-}
-
 function buildPlaceholderParsedDiffFile(
   change: CheckoutFileChange,
   options: { status: "too_large" | "binary"; stat?: FileStat },
@@ -2098,15 +2033,6 @@ async function getUntrackedDiffText(
   change: CheckoutFileChange,
   ignoreWhitespace = false,
 ): Promise<{ text: string; truncated: boolean; stat: FileStat }> {
-  try {
-    const inspected = await inspectUntrackedFile(cwd, change.path);
-    if (inspected.stat?.isBinary || inspected.truncated) {
-      return { text: "", truncated: inspected.truncated, stat: inspected.stat };
-    }
-  } catch {
-    // Fall through to git diff path if metadata probing fails.
-  }
-
   const result = await runGitCommand(
     buildGitDiffArgs({
       ignoreWhitespace,
@@ -2122,7 +2048,11 @@ async function getUntrackedDiffText(
   return {
     text: result.stdout,
     truncated: result.truncated,
-    stat: { additions: 0, deletions: 0, isBinary: false },
+    stat: {
+      additions: 0,
+      deletions: 0,
+      isBinary: /^Binary files .* differ$/m.test(result.stdout),
+    },
   };
 }
 
@@ -2494,10 +2424,12 @@ export async function getCommitFileDiff({
   cwd,
   sha,
   path,
+  allowFileRead = true,
 }: {
   cwd: string;
   sha: string;
   path: string;
+  allowFileRead?: boolean;
 }): Promise<ParsedDiffFile | null> {
   const { stdout } = await runGitCommand(
     ["show", sha, "--format=", "--diff-merges=first-parent", "--", path],
@@ -2514,6 +2446,7 @@ export async function getCommitFileDiff({
   const parsedFiles = await parseAndHighlightDiff(stdout, cwd, {
     getOldFileContent: (file) => readGitFileContentAtRef(cwd, `${sha}^`, file.path),
     getNewFileContent: (file) => readGitFileContentAtRef(cwd, sha, file.path),
+    allowFileRead,
   });
 
   // `--` scopes the diff to a single pathspec, so there is at most one real
@@ -2576,18 +2509,20 @@ async function countUntrackedAdditions(cwd: string, throwOnGitError = false): Pr
 
     let additions = 0;
     for (const file of files.slice(0, UNTRACKED_SHORTSTAT_MAX_FILES)) {
-      const absolutePath = resolve(cwd, file);
       try {
-        const metadata = await statFile(absolutePath);
-        if (metadata.size > PER_FILE_DIFF_MAX_BYTES) continue;
-        if (await isLikelyBinaryFile(absolutePath)) continue;
-        const content = await readFile(absolutePath, "utf-8");
-        if (content.length === 0) continue;
-        const normalized = content.replace(/\r\n/g, "\n");
-        const lineCount = normalized.split("\n").length;
-        additions += normalized.endsWith("\n") ? lineCount - 1 : lineCount;
+        const { stdout: numstat } = await runGitCommand(
+          ["diff", "--no-index", "--numstat", "/dev/null", "--", file],
+          {
+            cwd,
+            envOverlay: READ_ONLY_GIT_ENV,
+            maxOutputBytes: 8_192,
+            acceptExitCodes: [0, 1],
+          },
+        );
+        const added = numstat.split("\t", 1)[0];
+        if (added && added !== "-") additions += Number.parseInt(added, 10) || 0;
       } catch {
-        // Skip unreadable files.
+        // Skip files Git cannot inspect.
       }
     }
     return additions;
@@ -2699,7 +2634,7 @@ function getOrLoadCheckoutShortstat(
   context?: CheckoutContext,
   options?: CheckoutReadCacheOptions,
 ): Promise<CheckoutShortstat | null> {
-  const cacheKey = getShortstatCacheKey(cwd);
+  const cacheKey = getShortstatCacheKey(cwd, context);
   if (!options?.force) {
     const cached = shortstatCache.get(cacheKey);
     if (cached !== undefined) {
@@ -2869,7 +2804,7 @@ export function warmCheckoutShortstatInBackground(
   context?: CheckoutContext,
   onComplete?: () => void,
 ): void {
-  const cacheKey = getShortstatCacheKey(cwd);
+  const cacheKey = getShortstatCacheKey(cwd, context);
   if (shortstatCache.get(cacheKey) !== undefined || shortstatInFlight.has(cacheKey)) {
     return;
   }
@@ -2893,6 +2828,7 @@ interface AppendStructuredTrackedDiffsInput {
   refsForDiff: CheckoutDiffRefs;
   ignoreWhitespace: boolean;
   structured: StructuredDiffAccumulator;
+  allowHostMetadata: boolean;
   appendTrackedPlaceholderComment: (
     change: CheckoutFileChange,
     status: "binary" | "too_large",
@@ -2904,8 +2840,9 @@ async function buildHighlightedTrackedDiffFile(input: {
   change: CheckoutFileChange;
   parsedFile: ParsedDiffFile;
   refsForDiff: CheckoutDiffRefs;
+  allowHostMetadata: boolean;
 }): Promise<ParsedDiffFile> {
-  const { cwd, change, parsedFile, refsForDiff } = input;
+  const { cwd, change, parsedFile, refsForDiff, allowHostMetadata } = input;
   const refPath = change.oldPath ?? change.path;
   const [oldFileContent, newFileContent] = await Promise.all([
     change.isNew ? null : readGitFileContentAtRef(cwd, refsForDiff.baseRef, refPath),
@@ -2914,6 +2851,7 @@ async function buildHighlightedTrackedDiffFile(input: {
   const highlightedFile = await highlightDiffWithFileContent(parsedFile, cwd, {
     oldFileContent,
     newFileContent,
+    allowFileRead: allowHostMetadata,
   });
   return {
     ...highlightedFile,
@@ -2949,6 +2887,7 @@ async function appendStructuredTrackedDiffs(
     refsForDiff,
     ignoreWhitespace,
     structured,
+    allowHostMetadata,
     appendTrackedPlaceholderComment,
   } = input;
 
@@ -2977,6 +2916,7 @@ async function appendStructuredTrackedDiffs(
         change,
         parsedFile,
         refsForDiff,
+        allowHostMetadata,
       });
       if (!appendStructuredFile(structured, file)) {
         return false;
@@ -3015,10 +2955,19 @@ interface ProcessUntrackedChangeInput {
   includeStructured: boolean;
   structured: StructuredDiffAccumulator;
   appendDiff: (text: string) => void;
+  allowHostMetadata: boolean;
 }
 
 async function processUntrackedChange(input: ProcessUntrackedChangeInput): Promise<boolean> {
-  const { cwd, change, ignoreWhitespace, includeStructured, structured, appendDiff } = input;
+  const {
+    cwd,
+    change,
+    ignoreWhitespace,
+    includeStructured,
+    structured,
+    appendDiff,
+    allowHostMetadata,
+  } = input;
   const { text, truncated, stat } = await getUntrackedDiffText(cwd, change, ignoreWhitespace);
 
   if (!includeStructured) {
@@ -3059,7 +3008,7 @@ async function processUntrackedChange(input: ProcessUntrackedChangeInput): Promi
   }
 
   appendDiff(text);
-  const parsed = await parseAndHighlightDiff(text, cwd);
+  const parsed = await parseAndHighlightDiff(text, cwd, { allowFileRead: allowHostMetadata });
   const parsedFile =
     parsed[0] ??
     ({
@@ -3266,6 +3215,7 @@ export async function getCheckoutDiff(
       refsForDiff: effectiveRefsForDiff,
       ignoreWhitespace,
       structured,
+      allowHostMetadata: context?.allowHostMetadata !== false,
       appendTrackedPlaceholderComment,
     });
     if (!didAppendTrackedDiffs) {
@@ -3291,6 +3241,7 @@ export async function getCheckoutDiff(
       includeStructured: compare.includeStructured === true,
       structured,
       appendDiff,
+      allowHostMetadata: context?.allowHostMetadata !== false,
     });
     if (!didAppendUntrackedDiff) {
       return { diff: "", structured: [], diffTooLarge: true };

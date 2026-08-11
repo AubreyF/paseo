@@ -1,4 +1,6 @@
 import { z } from "zod";
+
+const OptionalNonEmptyWorkspaceIdSchema = z.string().min(1).optional();
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
@@ -1715,16 +1717,21 @@ const CheckoutDiffCompareSchema = z.object({
   ignoreWhitespace: z.boolean().optional(),
 });
 
+const OptionalWorkspaceGitIdSchema = z.string().trim().min(1).optional();
+const WorkspaceGitCwdSchema = z.string().trim().min(1);
+
 export const CheckoutStatusRequestSchema = z.object({
   type: z.literal("checkout_status_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const SubscribeCheckoutDiffRequestSchema = z.object({
   type: z.literal("subscribe_checkout_diff_request"),
   subscriptionId: z.string(),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   compare: CheckoutDiffCompareSchema,
   requestId: z.string(),
 });
@@ -1736,7 +1743,8 @@ export const UnsubscribeCheckoutDiffRequestSchema = z.object({
 
 export const CheckoutCommitRequestSchema = z.object({
   type: z.literal("checkout_commit_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   message: z.string().optional(),
   addAll: z.boolean().optional(),
   requestId: z.string(),
@@ -1744,7 +1752,8 @@ export const CheckoutCommitRequestSchema = z.object({
 
 export const CheckoutMergeRequestSchema = z.object({
   type: z.literal("checkout_merge_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   baseRef: z.string().optional(),
   strategy: z.enum(["merge", "squash"]).optional(),
   requireCleanTarget: z.boolean().optional(),
@@ -1753,7 +1762,8 @@ export const CheckoutMergeRequestSchema = z.object({
 
 export const CheckoutMergeFromBaseRequestSchema = z.object({
   type: z.literal("checkout_merge_from_base_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   baseRef: z.string().optional(),
   requireCleanTarget: z.boolean().optional(),
   requestId: z.string(),
@@ -1761,25 +1771,29 @@ export const CheckoutMergeFromBaseRequestSchema = z.object({
 
 export const CheckoutPullRequestSchema = z.object({
   type: z.literal("checkout_pull_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const CheckoutPushRequestSchema = z.object({
   type: z.literal("checkout_push_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const CheckoutRefreshRequestSchema = z.object({
   type: z.literal("checkout.refresh.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const CheckoutPrCreateRequestSchema = z.object({
   type: z.literal("checkout_pr_create_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   title: z.string().optional(),
   body: z.string().optional(),
   baseRef: z.string().optional(),
@@ -1788,14 +1802,16 @@ export const CheckoutPrCreateRequestSchema = z.object({
 
 export const CheckoutPrMergeRequestSchema = z.object({
   type: z.literal("checkout_pr_merge_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   mergeMethod: z.enum(["merge", "squash", "rebase"]),
   requestId: z.string(),
 });
 
 export const CheckoutForgeSetAutoMergeRequestSchema = z.object({
   type: z.literal("checkout.forge.set_auto_merge.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   enabled: z.boolean(),
   mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
   requestId: z.string(),
@@ -1805,7 +1821,8 @@ export const CheckoutForgeSetAutoMergeRequestSchema = z.object({
 // all supported clients use checkout.forge.set_auto_merge.*.
 export const CheckoutGithubSetAutoMergeRequestSchema = z.object({
   type: z.literal("checkout.github.set_auto_merge.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   enabled: z.boolean(),
   mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
   requestId: z.string(),
@@ -1832,13 +1849,15 @@ const CheckoutCommitSchema = z.object({
 
 export const CheckoutCommitsListRequestSchema = z.object({
   type: z.literal("checkout.commits.list.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const CheckoutCommitFileDiffRequestSchema = z.object({
   type: z.literal("checkout.commits.file_diff.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   sha: z.string(),
   path: z.string(),
   requestId: z.string(),
@@ -1847,7 +1866,8 @@ export const CheckoutCommitFileDiffRequestSchema = z.object({
 const GitHubRepoSegmentSchema = z.string().regex(/^[A-Za-z0-9._-]+$/);
 
 const CheckoutCheckDetailsRequestPayloadSchema = z.object({
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   // GitHub addresses check runs by owner/name. GitLab resolves the project from
   // cwd and omits these GitHub-only single-segment fields.
   repoOwner: GitHubRepoSegmentSchema.optional(),
@@ -1880,13 +1900,15 @@ export const CheckoutGithubGetCheckDetailsRequestSchema =
 
 export const CheckoutPrStatusRequestSchema = z.object({
   type: z.literal("checkout_pr_status_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   requestId: z.string(),
 });
 
 export const PullRequestTimelineRequestSchema = z.object({
   type: z.literal("pull_request_timeline_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   prNumber: z.number(),
   repoOwner: z.string(),
   repoName: z.string(),
@@ -1895,28 +1917,32 @@ export const PullRequestTimelineRequestSchema = z.object({
 
 export const ValidateBranchRequestSchema = z.object({
   type: z.literal("validate_branch_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   branchName: z.string(),
   requestId: z.string(),
 });
 
 export const CheckoutSwitchBranchRequestSchema = z.object({
   type: z.literal("checkout_switch_branch_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   branch: z.string(),
   requestId: z.string(),
 });
 
 export const CheckoutRenameBranchRequestSchema = z.object({
   type: z.literal("checkout.rename_branch.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   branch: z.string(),
   requestId: z.string(),
 });
 
 export const StashSaveRequestSchema = z.object({
   type: z.literal("stash_save_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   /** Branch name to tag the stash with for later identification. */
   branch: z.string().optional(),
   requestId: z.string(),
@@ -1924,7 +1950,8 @@ export const StashSaveRequestSchema = z.object({
 
 export const StashPopRequestSchema = z.object({
   type: z.literal("stash_pop_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   /** Zero-based index from stash_list_response. */
   stashIndex: z.number().int().min(0),
   requestId: z.string(),
@@ -1932,7 +1959,8 @@ export const StashPopRequestSchema = z.object({
 
 export const StashListRequestSchema = z.object({
   type: z.literal("stash_list_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   /** If true, only return paseo-created stashes. Default true. */
   paseoOnly: z.boolean().optional(),
   requestId: z.string(),
@@ -1940,7 +1968,8 @@ export const StashListRequestSchema = z.object({
 
 export const BranchSuggestionsRequestSchema = z.object({
   type: z.literal("branch_suggestions_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   query: z.string().optional(),
   limit: z.number().int().min(1).max(200).optional(),
   requestId: z.string(),
@@ -1979,7 +2008,8 @@ export const GitHubSearchKindSchema = ForgeSearchKindSchema;
 
 export const ForgeSearchRequestSchema = z.object({
   type: z.literal("forge.search.request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   query: z.string(),
   limit: z.number().int().min(1).max(50).optional(),
   kinds: z.array(ForgeSearchKindSchema).optional(),
@@ -1990,7 +2020,8 @@ export const ForgeSearchRequestSchema = z.object({
 // clients use forge.search.*.
 export const GitHubSearchRequestSchema = z.object({
   type: z.literal("github_search_request"),
-  cwd: z.string(),
+  cwd: WorkspaceGitCwdSchema,
+  workspaceId: OptionalWorkspaceGitIdSchema,
   query: z.string(),
   limit: z.number().int().min(1).max(50).optional(),
   kinds: z.array(GitHubSearchKindSchema).optional(),
@@ -4173,6 +4204,7 @@ const AheadBehindSchema = z.object({
 });
 
 const CheckoutStatusCommonSchema = z.object({
+  workspaceId: OptionalNonEmptyWorkspaceIdSchema,
   cwd: z.string(),
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
@@ -4374,6 +4406,7 @@ export const CheckoutStatusUpdateSchema = z.object({
 
 const CheckoutDiffSubscriptionPayloadSchema = z.object({
   subscriptionId: z.string(),
+  workspaceId: OptionalNonEmptyWorkspaceIdSchema,
   cwd: z.string(),
   files: z.array(ParsedDiffFileSchema),
   error: CheckoutErrorSchema.nullable(),

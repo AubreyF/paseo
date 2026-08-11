@@ -3728,6 +3728,178 @@ test("requests checkout pull via RPC", async () => {
   });
 });
 
+test("bound workspace Git carries identity for the normal mutation surface", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  const workspaceGit = client.bindWorkspaceGit({ workspaceId: "workspace-a", cwd: "/shared" });
+
+  const pull = workspaceGit.pull("bound-pull");
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "checkout_pull_request",
+    workspaceId: "workspace-a",
+    cwd: "/shared",
+    requestId: "bound-pull",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "checkout_pull_response",
+      payload: { cwd: "/shared", requestId: "bound-pull", success: true, error: null },
+    }),
+  );
+  await expect(pull).resolves.toMatchObject({ success: true });
+
+  const checkDetails = workspaceGit.getForgeCheckDetails(
+    { repoOwner: "getpaseo", repoName: "paseo", checkRunId: 42 },
+    "bound-check-details",
+  );
+  expect(parseSentFrame(mock.sent[1])).toMatchObject({
+    type: "checkout.forge.get_check_details.request",
+    workspaceId: "workspace-a",
+    cwd: "/shared",
+    repoOwner: "getpaseo",
+    repoName: "paseo",
+    checkRunId: 42,
+    requestId: "bound-check-details",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "checkout.forge.get_check_details.response",
+      payload: {
+        cwd: "/shared",
+        requestId: "bound-check-details",
+        success: true,
+        details: {
+          checkRunId: 42,
+          name: "Runtime check",
+          output: { title: "Runtime check", summary: "runtime logs", text: "runtime output" },
+          annotations: [],
+          failedJobs: [],
+          truncated: false,
+        },
+        error: null,
+      },
+    }),
+  );
+  await expect(checkDetails).resolves.toMatchObject({
+    success: true,
+    details: { output: { text: "runtime output" } },
+  });
+
+  expect(Object.keys(workspaceGit)).toEqual(
+    expect.arrayContaining([
+      "getStatus",
+      "getDiff",
+      "subscribeDiff",
+      "commit",
+      "listCommits",
+      "getCommitFileDiff",
+      "getBranchSuggestions",
+      "switchBranch",
+      "stashSave",
+      "stashPop",
+      "stashList",
+      "pull",
+      "refresh",
+    ]),
+  );
+});
+
+test.each(["", "   "])(
+  "selected workspace Git rejects identity %j before it can become a legacy request",
+  (workspaceId) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    expect(() => client.bindWorkspaceGit({ workspaceId, cwd: "/shared" })).toThrow(
+      "workspaceId is required for selected workspace Git",
+    );
+    expect(mock.sent).toEqual([]);
+  },
+);
+
+test.each(["", "   "])(
+  "selected workspace Git rejects cwd %j before sending a daemon request",
+  (cwd) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    expect(() => client.bindWorkspaceGit({ workspaceId: "workspace-a", cwd })).toThrow(
+      "cwd is required for selected workspace Git",
+    );
+    expect(mock.sent).toEqual([]);
+  },
+);
+
+test("selected workspace Git normalizes its complete address before sending", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const workspaceGit = client.bindWorkspaceGit({
+    workspaceId: " workspace-a ",
+    cwd: " /shared ",
+  });
+  const status = workspaceGit.getStatus({ requestId: "normalized-status" });
+
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({
+    type: "checkout_status_request",
+    workspaceId: "workspace-a",
+    cwd: "/shared",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "checkout_status_response",
+      payload: {
+        cwd: "/shared",
+        requestId: "normalized-status",
+        isGit: false,
+        isPaseoOwnedWorktree: false,
+        repoRoot: null,
+        currentBranch: null,
+        isDirty: null,
+        baseRef: null,
+        aheadBehind: null,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        hasRemote: false,
+        remoteUrl: null,
+        error: null,
+      },
+    }),
+  );
+  await status;
+});
+
 test("renames a branch via RPC", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

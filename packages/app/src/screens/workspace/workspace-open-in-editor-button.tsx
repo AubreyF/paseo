@@ -16,7 +16,6 @@ import { useToast } from "@/contexts/toast-context";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isAbsolutePath } from "@/utils/path";
@@ -30,6 +29,7 @@ import { getForgePresentation } from "@/git/forge";
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
+  workspaceId: string;
   cwd: string;
   activeFile?: WorkspaceFileLocation | null;
   hideLabels?: boolean;
@@ -86,7 +86,6 @@ export function WorkspaceOpenInEditorButton({
 }: WorkspaceOpenInEditorButtonProps) {
   const { t } = useTranslation();
   const toast = useToast();
-  const isConnected = useHostRuntimeIsConnected(serverId);
   const isLocalDaemon = useIsLocalDaemon(serverId);
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
   const { targets: desktopOpenTargets, isAvailable: isDesktopOpenAvailable } =
@@ -105,15 +104,11 @@ export function WorkspaceOpenInEditorButton({
   );
 
   const canResolveWorkspace = isWeb && cwd.trim().length > 0 && isAbsolutePath(cwd);
-  const shouldQueryCheckout = canResolveWorkspace && isConnected;
-
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId,
-    cwd: shouldQueryCheckout ? cwd : "",
   });
   const { resolvedForge } = useCheckoutPrStatusQuery({
     serverId,
-    cwd: shouldQueryCheckout ? cwd : "",
   });
 
   const targets = useMemo<OpenTarget[]>(

@@ -159,6 +159,7 @@ import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-sto
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
+import { createWorkspaceGitDirectory } from "./workspace-git-directory.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
 import {
   archiveByScope,
@@ -885,9 +886,14 @@ export async function createPaseoDaemon(
     logger,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    workspaceRuntime,
     deps: {
       forgeOverrides: { github },
     },
+  });
+  const workspaceGitDirectory = createWorkspaceGitDirectory({
+    workspaceRegistry,
+    workspaceGitService,
   });
   const workspaceProvisioning = createWorkspaceProvisioningService({
     serverId,
@@ -1361,7 +1367,7 @@ export async function createPaseoDaemon(
       terminalManager,
       workspaceRegistry,
       projectRegistry,
-      workspaceGitService,
+      workspaceGitDirectory,
       getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
       getDaemonTcpHost: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
       serviceProxyPublicBaseUrl,

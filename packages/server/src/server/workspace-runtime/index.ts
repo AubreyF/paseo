@@ -78,10 +78,16 @@ export interface WorkspaceTerminal {
   kill(signal?: NodeJS.Signals): void;
 }
 
+export interface BoundWorkspaceRuntime {
+  run(input: Omit<WorkspaceProcessInput, "workspaceId">): Promise<WorkspaceProcess>;
+  readonly files: WorkspaceFiles;
+}
+
 export interface WorkspaceRuntimeService {
   create(input: CreateWorkspaceInput): Promise<{ workspaceId: string; runtimeId: string }>;
   run(input: WorkspaceProcessInput): Promise<WorkspaceProcess>;
   openTerminal(input: WorkspaceTerminalInput): Promise<WorkspaceTerminal>;
+  bind(workspaceId: string): Promise<BoundWorkspaceRuntime>;
   files(workspaceId: string): WorkspaceFiles;
   pause(workspaceId: string): Promise<void>;
   resume(workspaceId: string): Promise<void>;

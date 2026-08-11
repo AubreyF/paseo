@@ -175,10 +175,19 @@ async function runWatcher(workspaceRoot) {
       }
       if (command.type !== "subscribe") continue;
       closeSubscription(subscriptions.get(command.id));
-      const observation = { watchers: [], timers: new Map() };
+      const observation = { watchers: new Map(), timers: new Map() };
       subscriptions.set(command.id, observation);
+      const ignoredPaths = new Set(command.ignoredPaths ?? []);
       for (const requested of command.paths) {
         const scoped = await resolveScoped(workspaceRoot, requested);
+        const info = await stat(scoped.absolute).catch((error) => {
+          if (isMissing(error)) return null;
+          throw error;
+        });
+        if (command.recursive === true && info?.isDirectory()) {
+          await watchDirectoryTree(observation, scoped, command.id, ignoredPaths);
+          continue;
+        }
         const expectedName = path.basename(scoped.absolute);
         const watcher = watch(path.dirname(scoped.absolute), (_event, filename) => {
           if (filename != null && filename.toString() !== expectedName) return;
@@ -194,7 +203,7 @@ async function runWatcher(workspaceRoot) {
         watcher.on("error", (error) =>
           print({ type: "error", subscriptionId: command.id, message: error.message }),
         );
-        observation.watchers.push(watcher);
+        observation.watchers.set(scoped.absolute, watcher);
       }
       print({ type: "subscribed", subscriptionId: command.id });
     }
@@ -205,8 +214,48 @@ async function runWatcher(workspaceRoot) {
 
 function closeSubscription(observation) {
   if (!observation) return;
-  for (const watcher of observation.watchers) watcher.close();
+  for (const watcher of observation.watchers.values()) watcher.close();
   for (const timer of observation.timers.values()) clearTimeout(timer);
+}
+
+async function watchDirectoryTree(observation, scoped, subscriptionId, ignoredPaths) {
+  if (observation.watchers.has(scoped.absolute)) return;
+  const watcher = watch(scoped.absolute, (_event, filename) => {
+    const name = filename?.toString();
+    const changed = name ? path.join(scoped.absolute, name) : scoped.absolute;
+    const relative = normalize(path.relative(root, changed));
+    if (isIgnored(relative, ignoredPaths)) return;
+    clearTimeout(observation.timers.get(relative));
+    observation.timers.set(
+      relative,
+      setTimeout(() => {
+        observation.timers.delete(relative);
+        print({ type: "changed", subscriptionId, paths: [relative] });
+        void addDiscoveredDirectories(observation, scoped, subscriptionId, ignoredPaths);
+      }, 50),
+    );
+  });
+  watcher.on("error", (error) => print({ type: "error", subscriptionId, message: error.message }));
+  observation.watchers.set(scoped.absolute, watcher);
+  await addDiscoveredDirectories(observation, scoped, subscriptionId, ignoredPaths);
+}
+
+async function addDiscoveredDirectories(observation, scoped, subscriptionId, ignoredPaths) {
+  const entries = await readdir(scoped.absolute, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const absolute = path.join(scoped.absolute, entry.name);
+    const relative = normalize(path.relative(root, absolute));
+    if (isIgnored(relative, ignoredPaths)) continue;
+    await watchDirectoryTree(observation, { absolute, relative }, subscriptionId, ignoredPaths);
+  }
+}
+
+function isIgnored(relativePath, ignoredPaths) {
+  for (const ignored of ignoredPaths) {
+    if (relativePath === ignored || relativePath.startsWith(`${ignored}/`)) return true;
+  }
+  return false;
 }
 
 async function resolveScoped(workspaceRoot, relativePath = ".") {

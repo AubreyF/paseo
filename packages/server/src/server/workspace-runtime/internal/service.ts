@@ -1,5 +1,6 @@
 import type {
   CreateWorkspaceInput,
+  BoundWorkspaceRuntime,
   WorkspaceProcess,
   WorkspaceProcessInput,
   WorkspaceRuntimeRecordStore,
@@ -34,6 +35,10 @@ export function createService(
   >();
   const boundFiles = new Map<string, WorkspaceFiles>();
   const unavailableFiles = new Map<string, "paused" | "destroyed">();
+  const boundRuntimes = new Map<
+    string,
+    { runtimeId: string; revision: string; runtime: BoundWorkspaceRuntime }
+  >();
 
   function requireRegistered(runtimeId: string): WorkspaceRuntimeDriver {
     const driver = driversById.get(runtimeId);
@@ -157,6 +162,27 @@ export function createService(
         openTerminalWithDriver(await resolve(input.workspaceId), input),
       );
     },
+    async bind(workspaceId) {
+      const driver = await resolve(workspaceId);
+      const inspection = await driver.inspect(workspaceId);
+      if (inspection.status !== "ready") {
+        throw new Error(`Workspace runtime is ${inspection.status}: ${workspaceId}`);
+      }
+      const cached = boundRuntimes.get(workspaceId);
+      if (cached?.runtimeId === driver.id && cached.revision === inspection.state.revision) {
+        return cached.runtime;
+      }
+      const runtime: BoundWorkspaceRuntime = {
+        run: (input) => runWithDriver(driver, { workspaceId, ...input }),
+        files: bindFiles(workspaceId),
+      };
+      boundRuntimes.set(workspaceId, {
+        runtimeId: driver.id,
+        revision: inspection.state.revision,
+        runtime,
+      });
+      return runtime;
+    },
     files(workspaceId) {
       let files = boundFiles.get(workspaceId);
       if (!files) {
@@ -169,6 +195,7 @@ export function createService(
       await sequence(workspaceId, async () => {
         const driver = await resolve(workspaceId);
         unavailableFiles.set(workspaceId, "paused");
+        boundRuntimes.delete(workspaceId);
         await closeFiles(workspaceId);
         await stopProcesses(workspaceId);
         await driver.pause(workspaceId);
@@ -184,6 +211,7 @@ export function createService(
       await sequence(workspaceId, async () => {
         const driver = await resolve(workspaceId);
         unavailableFiles.set(workspaceId, "destroyed");
+        boundRuntimes.delete(workspaceId);
         await closeFiles(workspaceId);
         await stopProcesses(workspaceId);
         await driver.destroy(workspaceId);

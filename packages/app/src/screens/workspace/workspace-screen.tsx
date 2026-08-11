@@ -62,6 +62,7 @@ import { RetainedPanel } from "@/components/retained-panel";
 import { WindowChromeRegion } from "@/utils/desktop-window";
 import { SourceControlPanelIcon } from "@/components/icons/source-control-panel-icon";
 import { WorkspaceActions } from "@/git/workspace-actions";
+import { useBoundWorkspaceGit, WorkspaceGitBoundary } from "@/git/workspace-git";
 import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-in-editor-button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
@@ -1735,6 +1736,18 @@ function WorkspaceScreenContent({
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
   );
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
+  const workspaceGitAddress = useMemo(
+    () =>
+      normalizedWorkspaceId && workspaceDirectory
+        ? ({
+            kind: "selected",
+            workspaceId: normalizedWorkspaceId,
+            cwd: workspaceDirectory,
+          } as const)
+        : null,
+    [normalizedWorkspaceId, workspaceDirectory],
+  );
+  const workspaceGit = useBoundWorkspaceGit(client, workspaceGitAddress);
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
   const canOpenImportSheet = [client, isConnected, workspaceDirectory].every(Boolean);
@@ -1865,7 +1878,7 @@ function WorkspaceScreenContent({
   const { archiveAgent } = useArchiveAgent();
 
   const { checkoutQuery, isCheckoutStatusLoading } = useWorkspaceCheckoutStatus({
-    client,
+    workspaceGit,
     isConnected,
     isRouteFocused,
     normalizedServerId,
@@ -3477,6 +3490,7 @@ function WorkspaceScreenContent({
         {!isMobile && workspaceDirectory ? (
           <WorkspaceOpenInEditorButton
             serverId={normalizedServerId}
+            workspaceId={normalizedWorkspaceId}
             cwd={workspaceDirectory}
             activeFile={activeFileLocation}
             hideLabels
@@ -3486,6 +3500,7 @@ function WorkspaceScreenContent({
           <>
             <WorkspaceActions
               serverId={normalizedServerId}
+              workspaceId={normalizedWorkspaceId}
               cwd={workspaceDirectory}
               hideLabels={showCompactButtonLabels}
             />
@@ -3825,46 +3840,48 @@ function WorkspaceScreenContent({
   );
 
   return (
-    gatedWorkspaceScreen ?? (
-      <WorkspaceFocusProvider workspaceKey={persistenceKey}>
-        <RenderProfile id="WorkspaceScreenContent">
-          <View style={containerStyle}>
-            <WorkspaceDocumentTitleEffectSlot
-              tab={activeTabDescriptor}
-              serverId={normalizedServerId}
-              workspaceId={normalizedWorkspaceId}
-              isRouteFocused={isRouteFocused}
-            />
-            <WorkspaceChromeRow
-              portalHostName={workspaceFloatingPanelPortalHostName}
-              showExplorerSidebar={showExplorerSidebar}
-              explorerOpen={isExplorerOpen}
-              serverId={normalizedServerId}
-              workspaceId={normalizedWorkspaceId}
-              workspaceRoot={workspaceDirectory}
-              isGit={isGitCheckout}
-              onOpenFile={handleOpenFileFromExplorer}
-            >
-              {workspaceCenterColumn}
-            </WorkspaceChromeRow>
-            <ImportSessionSheet
-              visible={isRouteFocused && isImportSheetVisible}
-              client={client}
-              serverId={normalizedServerId}
-              cwd={workspaceDirectory}
-              workspaceId={normalizedWorkspaceId}
-              onClose={closeImportSheet}
-              onImportedAgent={handleImportedAgent}
-            />
-            <WorkspaceTabRenameModal
-              renamingTab={isRouteFocused ? renamingTab : null}
-              onSubmit={handleRenameModalSubmit}
-              onClose={handleRenameModalClose}
-            />
-          </View>
-        </RenderProfile>
-      </WorkspaceFocusProvider>
-    )
+    <WorkspaceGitBoundary workspaceGit={workspaceGit}>
+      {gatedWorkspaceScreen ?? (
+        <WorkspaceFocusProvider workspaceKey={persistenceKey}>
+          <RenderProfile id="WorkspaceScreenContent">
+            <View style={containerStyle}>
+              <WorkspaceDocumentTitleEffectSlot
+                tab={activeTabDescriptor}
+                serverId={normalizedServerId}
+                workspaceId={normalizedWorkspaceId}
+                isRouteFocused={isRouteFocused}
+              />
+              <WorkspaceChromeRow
+                portalHostName={workspaceFloatingPanelPortalHostName}
+                showExplorerSidebar={showExplorerSidebar}
+                explorerOpen={isExplorerOpen}
+                serverId={normalizedServerId}
+                workspaceId={normalizedWorkspaceId}
+                workspaceRoot={workspaceDirectory}
+                isGit={isGitCheckout}
+                onOpenFile={handleOpenFileFromExplorer}
+              >
+                {workspaceCenterColumn}
+              </WorkspaceChromeRow>
+              <ImportSessionSheet
+                visible={isRouteFocused && isImportSheetVisible}
+                client={client}
+                serverId={normalizedServerId}
+                cwd={workspaceDirectory}
+                workspaceId={normalizedWorkspaceId}
+                onClose={closeImportSheet}
+                onImportedAgent={handleImportedAgent}
+              />
+              <WorkspaceTabRenameModal
+                renamingTab={isRouteFocused ? renamingTab : null}
+                onSubmit={handleRenameModalSubmit}
+                onClose={handleRenameModalClose}
+              />
+            </View>
+          </RenderProfile>
+        </WorkspaceFocusProvider>
+      )}
+    </WorkspaceGitBoundary>
   );
 }
 

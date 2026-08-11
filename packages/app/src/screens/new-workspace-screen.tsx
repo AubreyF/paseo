@@ -30,9 +30,10 @@ import { ScreenHeader } from "@/components/headers/screen-header";
 import { HEADER_INNER_HEIGHT, MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
-import { useForgeSearchQuery } from "@/git/use-forge-search-query";
-import { useCheckoutStatusQuery } from "@/git/use-status-query";
-import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
+import { useLegacyForgeSearchQuery } from "@/git/use-forge-search-query";
+import { useLegacyCheckoutStatusQuery } from "@/git/use-status-query";
+import { ensureLegacyCheckoutStatus } from "@/git/checkout-status-cache";
+import { PreWorkspaceComposerGitOwner } from "@/git/workspace-git";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
@@ -1717,7 +1718,7 @@ export function NewWorkspaceScreen({
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
   const pickerQueryEnabled = pickerOpen && clientReady && hasSelectedSourceDirectory;
 
-  const { status: checkoutStatus } = useCheckoutStatusQuery({
+  const { status: checkoutStatus } = useLegacyCheckoutStatusQuery({
     serverId: selectedServerId,
     cwd: selectedSourceDirectory ?? "",
   });
@@ -1754,7 +1755,7 @@ export function NewWorkspaceScreen({
     staleTime: 15_000,
   });
 
-  const githubPrSearchQuery = useForgeSearchQuery({
+  const githubPrSearchQuery = useLegacyForgeSearchQuery({
     client,
     serverId: selectedServerId,
     cwd: selectedSourceDirectory ?? "",
@@ -1994,7 +1995,7 @@ export function NewWorkspaceScreen({
       const connectedClient = withConnectedClient();
       const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
       const checkoutStatusForCreate = createsWorktree
-        ? await ensureCheckoutStatus({
+        ? await ensureLegacyCheckoutStatus({
             queryClient,
             client: connectedClient,
             serverId: selectedServerId,
@@ -2281,75 +2282,77 @@ export function NewWorkspaceScreen({
   const screenHeaderLeft = useMemo(() => <SidebarMenuToggle />, []);
 
   return (
-    <FileDropZone style={styles.container}>
-      <ScreenHeader left={screenHeaderLeft} borderless />
-      <View style={contentStyle}>
-        <TitlebarDragRegion />
-        <ReanimatedAnimated.View style={centeredStyle}>
-          <View style={styles.composerTitleContainer}>
-            <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
-          </View>
-          {formStack}
-          {isTerminalLaunch ? (
-            <Composer
-              externalKeyboardShift
-              inputMode="terminal"
-              readOnly={!terminalTakesPrompt}
-              placeholder={terminalPlaceholder}
-              submitLabel={terminalSubmitLabel}
-              agentId={draftKey}
-              serverId={selectedServerId}
-              isPaneFocused={true}
-              onSubmitMessage={handleSubmitTerminalLaunch}
-              allowEmptySubmit={true}
-              submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
-              submitButtonTestID="new-workspace-launch-submit"
-              isSubmitLoading={isPending}
-              submitBehavior="preserve-and-lock"
-              blurOnSubmit={true}
-              value={terminalComposerValue}
-              onChangeText={setTerminalPromptText}
-              attachments={NO_TERMINAL_ATTACHMENTS}
-              onChangeAttachments={noopChangeAttachments}
-              cwd={selectedSourceDirectory ?? ""}
-              clearDraft={noopClearDraft}
-              autoFocus={terminalTakesPrompt}
-              autoFocusKey={launchFocusKey}
-            />
-          ) : (
-            <Composer
-              externalKeyboardShift
-              agentId={draftKey}
-              serverId={selectedServerId}
-              isPaneFocused={true}
-              onSubmitMessage={handleSubmitNewWorkspace}
-              allowEmptySubmit={true}
-              submitButtonAccessibilityLabel={t("newWorkspace.create")}
-              submitButtonTestID="workspace-create-submit"
-              submitIcon="return"
-              isSubmitLoading={isPending}
-              waitForGithubAutoAttachOnSubmit
-              submitBehavior="preserve-and-lock"
-              blurOnSubmit={true}
-              value={chatDraft.text}
-              onChangeText={chatDraft.setText}
-              attachments={chatDraft.attachments}
-              attachmentScopeKeys={visibleDraftContextScopeKeys}
-              onChangeAttachments={chatDraft.setAttachments}
-              onGithubPrDetected={handleGithubPrDetected}
-              onGithubPrAutoAttach={handleGithubPrAutoAttach}
-              cwd={selectedSourceDirectory ?? ""}
-              clearDraft={handleClearDraft}
-              autoFocus
-              autoFocusKey={launchFocusKey}
-              commandDraftConfig={composerState?.commandDraftConfig}
-              agentControls={agentControlsWithDisabled}
-            />
-          )}
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-        </ReanimatedAnimated.View>
-      </View>
-    </FileDropZone>
+    <PreWorkspaceComposerGitOwner client={client} cwd={selectedSourceDirectory}>
+      <FileDropZone style={styles.container}>
+        <ScreenHeader left={screenHeaderLeft} borderless />
+        <View style={contentStyle}>
+          <TitlebarDragRegion />
+          <ReanimatedAnimated.View style={centeredStyle}>
+            <View style={styles.composerTitleContainer}>
+              <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
+            </View>
+            {formStack}
+            {isTerminalLaunch ? (
+              <Composer
+                externalKeyboardShift
+                inputMode="terminal"
+                readOnly={!terminalTakesPrompt}
+                placeholder={terminalPlaceholder}
+                submitLabel={terminalSubmitLabel}
+                agentId={draftKey}
+                serverId={selectedServerId}
+                isPaneFocused={true}
+                onSubmitMessage={handleSubmitTerminalLaunch}
+                allowEmptySubmit={true}
+                submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
+                submitButtonTestID="new-workspace-launch-submit"
+                isSubmitLoading={isPending}
+                submitBehavior="preserve-and-lock"
+                blurOnSubmit={true}
+                value={terminalComposerValue}
+                onChangeText={setTerminalPromptText}
+                attachments={NO_TERMINAL_ATTACHMENTS}
+                onChangeAttachments={noopChangeAttachments}
+                cwd={selectedSourceDirectory ?? ""}
+                clearDraft={noopClearDraft}
+                autoFocus={terminalTakesPrompt}
+                autoFocusKey={launchFocusKey}
+              />
+            ) : (
+              <Composer
+                externalKeyboardShift
+                agentId={draftKey}
+                serverId={selectedServerId}
+                isPaneFocused={true}
+                onSubmitMessage={handleSubmitNewWorkspace}
+                allowEmptySubmit={true}
+                submitButtonAccessibilityLabel={t("newWorkspace.create")}
+                submitButtonTestID="workspace-create-submit"
+                submitIcon="return"
+                isSubmitLoading={isPending}
+                waitForGithubAutoAttachOnSubmit
+                submitBehavior="preserve-and-lock"
+                blurOnSubmit={true}
+                value={chatDraft.text}
+                onChangeText={chatDraft.setText}
+                attachments={chatDraft.attachments}
+                attachmentScopeKeys={visibleDraftContextScopeKeys}
+                onChangeAttachments={chatDraft.setAttachments}
+                onGithubPrDetected={handleGithubPrDetected}
+                onGithubPrAutoAttach={handleGithubPrAutoAttach}
+                cwd={selectedSourceDirectory ?? ""}
+                clearDraft={handleClearDraft}
+                autoFocus
+                autoFocusKey={launchFocusKey}
+                commandDraftConfig={composerState?.commandDraftConfig}
+                agentControls={agentControlsWithDisabled}
+              />
+            )}
+            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          </ReanimatedAnimated.View>
+        </View>
+      </FileDropZone>
+    </PreWorkspaceComposerGitOwner>
   );
 }
 

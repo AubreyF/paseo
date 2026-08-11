@@ -121,6 +121,7 @@ import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
+import { useWorkspaceGit } from "@/git/workspace-git";
 import { getForgePresentation } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerGithubAutoAttach } from "./github/auto-attach";
@@ -1131,7 +1132,8 @@ export function Composer({
     onOpenWorkspaceAttachment,
   });
   const setSelectedAttachments = onChangeAttachments;
-  const checkoutStatusQuery = useCheckoutStatusQuery({ serverId, cwd });
+  const checkoutStatusQuery = useCheckoutStatusQuery({ serverId });
+  const workspaceGitClient = useWorkspaceGit();
   const supportsForgeSearch = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
   );
@@ -1139,10 +1141,9 @@ export function Composer({
     text: userInput,
     remoteUrl: resolveCheckoutRemoteUrl(checkoutStatusQuery.status),
     attachments,
-    client,
+    client: workspaceGitClient,
     isConnected,
     serverId,
-    cwd,
     supportsForgeSearch,
     setAttachments: setSelectedAttachments,
     onPullRequestDetected: onGithubPrDetected,
@@ -1856,16 +1857,14 @@ export function Composer({
   // until the forge-specific picker or attachment presentation is visible.
   const { forge } = useCheckoutPrStatusQuery({
     serverId,
-    cwd,
     enabled: isConnected && cwd.trim().length > 0 && (isGithubPickerOpen || hasGithubAttachment),
   });
   const forgePresentation = useMemo(() => getForgePresentation(forge), [forge]);
 
   const githubSearchQueryTrimmed = githubSearchQuery.trim();
   const githubSearchResultsQuery = useForgeSearchQuery({
-    client,
+    client: workspaceGitClient,
     serverId,
-    cwd,
     query: githubSearchQueryTrimmed,
     supportsForgeSearch,
     enabled: resolveGithubSearchEnabled(isGithubPickerOpen, isConnected, cwd),

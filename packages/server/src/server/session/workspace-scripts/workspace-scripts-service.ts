@@ -9,7 +9,7 @@ import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { ServiceProxySubsystem } from "../../service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "../../workspace-script-runtime-store.js";
 import type { ScriptHealthState } from "../../script-health-monitor.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceGitDirectory } from "../../workspace-git-directory.js";
 import type {
   PersistedProjectRecord,
   PersistedWorkspaceRecord,
@@ -52,15 +52,13 @@ export interface WorkspaceScriptsService {
   start(request: StartWorkspaceScriptRequest): Promise<void>;
 }
 
-type WorkspaceScriptsGitSource = Pick<WorkspaceGitService, "peekSnapshot">;
-
 export function createWorkspaceScriptsService(deps: {
   serviceProxy: ServiceProxySubsystem | null;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   terminalManager: TerminalManager | null;
   workspaceRegistry: Pick<WorkspaceRegistry, "get">;
   projectRegistry: Pick<ProjectRegistry, "get">;
-  workspaceGitService: WorkspaceScriptsGitSource;
+  workspaceGitDirectory: Pick<WorkspaceGitDirectory, "bindRecord">;
   workspaceRuntime?: WorkspaceRuntimeService;
   getDaemonTcpPort: (() => number | null) | null;
   getDaemonTcpHost: (() => string | null) | null;
@@ -77,7 +75,7 @@ export function createWorkspaceScriptsService(deps: {
     terminalManager,
     workspaceRegistry,
     projectRegistry,
-    workspaceGitService,
+    workspaceGitDirectory,
     workspaceRuntime,
     getDaemonTcpPort,
     getDaemonTcpHost,
@@ -93,7 +91,7 @@ export function createWorkspaceScriptsService(deps: {
     workspace: PersistedWorkspaceRecord,
     project: { projectId: string; rootPath: string } | null,
   ) {
-    const snapshot = workspaceGitService.peekSnapshot(workspace.cwd);
+    const snapshot = workspaceGitDirectory.bindRecord(workspace).peekSnapshot();
     const currentBranch = snapshot?.git.currentBranch ?? workspace.branch ?? null;
     if (project) {
       return {

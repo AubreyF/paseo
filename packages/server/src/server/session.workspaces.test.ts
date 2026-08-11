@@ -153,6 +153,9 @@ interface SessionTestAccess {
     ): Promise<unknown>;
     upsert(record: unknown): Promise<unknown>;
   };
+  workspaceGitDirectory: {
+    bindRecord(record: PersistedWorkspaceRecord): unknown;
+  };
   agentUpdates: AgentUpdatesService;
   workspaceUpdatesSubscription: unknown;
   interruptAgentIfRunning(agentId: string): unknown;
@@ -640,7 +643,9 @@ function createSessionForWorkspaceTests(
     archive: async () => {},
     remove: async () => {},
   };
-  const workspaceGitService = options.workspaceGitService ?? createNoopWorkspaceGitService();
+  const workspaceGitService = options.renameCurrentBranch
+    ? createNoopWorkspaceGitService({ renameBranch: options.renameCurrentBranch })
+    : (options.workspaceGitService ?? createNoopWorkspaceGitService());
   const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
 
   const session = asTestSession(
@@ -728,7 +733,12 @@ function createSessionForWorkspaceTests(
           initial: { cwd: "/tmp", files: [], error: null },
           unsubscribe: () => {},
         }),
+        subscribeWorkspace: async ({ workspaceGit }) => ({
+          initial: { cwd: workspaceGit.cwd, files: [], error: null },
+          unsubscribe: () => {},
+        }),
         scheduleRefreshForCwd: () => {},
+        scheduleRefreshForWorkspace: () => {},
         onWorkspaceStateMayHaveChanged: () => {},
         invalidateForge: () => {},
         getMetrics: () => ({
@@ -753,7 +763,6 @@ function createSessionForWorkspaceTests(
         logger: asSessionLogger(logger),
         generateWorkspaceName: options.generateWorkspaceName,
       }),
-      renameCurrentBranch: options.renameCurrentBranch,
       daemonConfigStore: asDaemonConfigStore({
         get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
         onChange: () => () => {},
@@ -7190,6 +7199,8 @@ test("subscribed fetch_workspaces includes git enrichment in the initial snapsho
   const describeWorkspaceRecordWithGitDataSubscribed = vi.fn(async () => enrichedGitDescriptor);
   session.describeWorkspaceRecord = describeWorkspaceRecordSubscribed;
   session.describeWorkspaceRecordWithGitData = describeWorkspaceRecordWithGitDataSubscribed;
+  session.workspaceGitDirectory.bindRecord(gitWorkspace);
+  session.workspaceGitDirectory.bindRecord(directoryWorkspace);
 
   await session.handleMessage({
     type: "fetch_workspaces_request",
@@ -7758,6 +7769,17 @@ test("queued workspace updates are dropped when a new workspace subscription rep
     }
     return new Map([[currentDescriptor.id, currentDescriptor]]);
   };
+  session.workspaceGitDirectory.bindRecord(
+    createPersistedWorkspaceRecord({
+      workspaceId: descriptor.id,
+      projectId: descriptor.projectId,
+      cwd: descriptor.workspaceDirectory,
+      kind: descriptor.workspaceKind,
+      displayName: descriptor.name,
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    }),
+  );
 
   await session.handleMessage({
     type: "fetch_workspaces_request",

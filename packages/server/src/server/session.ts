@@ -66,6 +66,10 @@ import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-uti
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import {
+  createWorkspaceGitDirectory,
+  type WorkspaceGitDirectory,
+} from "./workspace-git-directory.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
@@ -177,7 +181,6 @@ import {
   archiveWorkspaceContents,
 } from "./workspace-archive-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
-import { renameCurrentBranch as renameCurrentBranchDefault } from "../utils/checkout-git.js";
 import {
   createGitMutationService,
   type GitMutationService,
@@ -458,9 +461,6 @@ export interface SessionOptions {
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
-  // Injected so tests can substitute the git branch rename without module mocks;
-  // defaults to the real checkout-git implementation.
-  renameCurrentBranch?: typeof renameCurrentBranchDefault;
   workspaceGitService: WorkspaceGitService;
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
@@ -628,8 +628,8 @@ export class Session {
   private readonly workspaceRuntime: WorkspaceRuntimeService | undefined;
   private readonly filesystem: SessionFileSystem;
   private readonly github: ForgeService;
-  private readonly renameCurrentBranch: typeof renameCurrentBranchDefault;
   private readonly workspaceGitService: WorkspaceGitService;
+  private readonly workspaceGitDirectory: WorkspaceGitDirectory;
   private readonly workspaceAutoName: WorkspaceAutoName;
   private readonly gitMutation: GitMutationService;
   private readonly workspaceProvisioning: WorkspaceProvisioningService;
@@ -713,7 +713,6 @@ export class Session {
       loopService,
       checkoutDiffManager,
       github,
-      renameCurrentBranch,
       workspaceGitService,
       workspaceAutoName,
       daemonConfigStore,
@@ -779,8 +778,11 @@ export class Session {
     this.workspaceRuntime = workspaceRuntime;
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
-    this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
     this.workspaceGitService = workspaceGitService;
+    this.workspaceGitDirectory = createWorkspaceGitDirectory({
+      workspaceRegistry: this.workspaceRegistry,
+      workspaceGitService: this.workspaceGitService,
+    });
     this.gitMutation = createGitMutationService({
       workspaceGitService: this.workspaceGitService,
       logger: this.sessionLogger,
@@ -807,12 +809,11 @@ export class Session {
       host: {
         emit: (msg) => this.emit(msg),
         emitWorkspaceUpdateForCwd: (cwd) => this.emitWorkspaceUpdateForCwd(cwd),
-        handleWorkspaceGitBranchSnapshot: (cwd, branchName) =>
-          this.workspaceGitObserver.handleBranchSnapshot(cwd, branchName),
-        renameCurrentBranch: (cwd, branch) => this.renameCurrentBranch(cwd, branch),
+        handleWorkspaceGitBranchSnapshot: (address, branchName) =>
+          this.workspaceGitObserver.handleBranchSnapshot(address, branchName),
       },
       gitMutation: this.gitMutation,
-      workspaceGitService: this.workspaceGitService,
+      workspaceGitDirectory: this.workspaceGitDirectory,
       github: this.github,
       checkoutDiffManager,
       gitMetadataGenerator: createGitMetadataGenerator({
@@ -824,18 +825,17 @@ export class Session {
           getFocusedSelection: (cwd) => this.getFocusedAgentSelectionForCwd(cwd),
         }),
       }),
-      paseoHome: this.paseoHome,
-      worktreesRoot: this.worktreesRoot,
       logger: this.sessionLogger,
     });
     this.workspaceGitObserver = createWorkspaceGitObserverService({
-      workspaceGitService: this.workspaceGitService,
+      resolveWorkspaceGit: (workspaceId, cwd) =>
+        this.workspaceGitDirectory.getObservationBinding(workspaceId, cwd),
       describeWorkspaceRecordWithGitData: (workspace) =>
         this.describeWorkspaceRecordWithGitData(workspace),
-      emitWorkspaceUpdateForCwd: (cwd) => this.emitWorkspaceUpdateForCwd(cwd),
       emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
         this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
-      emitStatusUpdate: (cwd, snapshot) => this.checkoutSession.emitStatusUpdate(cwd, snapshot),
+      emitStatusUpdate: (workspaceId, cwd, snapshot) =>
+        this.checkoutSession.emitStatusUpdate(workspaceId, cwd, snapshot),
       onBranchChanged,
       logger: this.sessionLogger,
     });
@@ -995,7 +995,7 @@ export class Session {
       workspaceRuntime: this.workspaceRuntime,
       workspaceRegistry: this.workspaceRegistry,
       projectRegistry: this.projectRegistry,
-      workspaceGitService: this.workspaceGitService,
+      workspaceGitDirectory: this.workspaceGitDirectory,
       getDaemonTcpPort: this.getDaemonTcpPort,
       getDaemonTcpHost: this.getDaemonTcpHost,
       serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
@@ -1747,7 +1747,7 @@ export class Session {
     if (!project) {
       throw new Error(`Project not found for workspace ${workspace.workspaceId}`);
     }
-    const snapshot = this.workspaceGitService.peekSnapshot(workspace.cwd);
+    const snapshot = this.workspaceGitDirectory.bindRecord(workspace).peekSnapshot();
     const checkout = checkoutFromPersistedWorkspacePlacement({
       workspace,
       // COMPAT(workspacePlacementBackfill): added in v0.1.107, remove after 2027-01-15.
@@ -4447,7 +4447,7 @@ export class Session {
       projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
 
     let diffStat: { additions: number; deletions: number } | null = null;
-    const snapshot = this.workspaceGitService.peekSnapshot(workspace.cwd);
+    const snapshot = this.workspaceGitDirectory.bindRecord(workspace).peekSnapshot();
     if (snapshot?.git.diffStat) {
       diffStat = snapshot.git.diffStat;
     }
@@ -4520,7 +4520,7 @@ export class Session {
     projectRecord?: PersistedProjectRecord | null,
   ): Promise<WorkspaceDescriptorPayload> {
     const base = await this.describeWorkspaceRecord(workspace, projectRecord);
-    const snapshot = this.workspaceGitService.peekSnapshot(workspace.cwd);
+    const snapshot = this.workspaceGitDirectory.bindRecord(workspace).peekSnapshot();
     if (!snapshot) {
       return base;
     }

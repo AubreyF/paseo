@@ -197,6 +197,12 @@ function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSna
 
 function createFallbackWorkspaceGitService(): WorkspaceGitService {
   return {
+    bindWorkspace: ({ workspaceId }) => {
+      throw new Error(`Workspace Git runtime is not available: ${workspaceId}`);
+    },
+    bindLegacy: () => {
+      throw new Error("Workspace Git service is not available");
+    },
     registerWorkspace: () => ({
       unsubscribe: () => {},
     }),
@@ -215,6 +221,19 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     }),
     getSnapshot: async (cwd: string) => createFallbackWorkspaceGitSnapshot(cwd),
     resolveForge: async () => null,
+    commit: async () => {},
+    createBranch: async () => {},
+    switchBranch: async () => ({ source: "local" }),
+    fetch: async () => {},
+    listCommits: async () => ({ baseRef: null, commits: [] }),
+    getCommitFileDiff: async () => null,
+    stashPush: async () => {},
+    stashPop: async () => {},
+    mergeToBase: async (cwd) => cwd,
+    mergeFromBase: async () => {},
+    pull: async () => {},
+    push: async () => {},
+    renameBranch: async (_cwd, branch) => ({ previousBranch: null, currentBranch: branch }),
     getCheckoutDiff: async () => ({ diff: "" }),
     validateBranchRef: async () => ({ kind: "not-found" }),
     hasLocalBranch: async () => false,

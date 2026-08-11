@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 
 import { createWorkspaceRuntimeService } from "./index.js";
+import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../../../..", import.meta.url));
 const dockerRuntimeRoot = path.join(repositoryRoot, "packages/docker-workspace-runtime");
@@ -71,6 +72,27 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
     expect(workspace).toEqual({ workspaceId, runtimeId: "docker" });
     expect("cwd" in workspace).toBe(false);
 
+    for (const [name, value] of [
+      ["user.email", "test@example.com"],
+      ["user.name", "Paseo Test"],
+    ] as const) {
+      const configure = await service.run({
+        workspaceId,
+        argv: ["git", "config", name, value],
+        env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
+        purpose: { kind: "git" },
+      });
+      configure.stdin.end();
+      await expect(configure.exited).resolves.toEqual({ code: 0, signal: null });
+    }
+
+    const workspaceGitService = new WorkspaceGitServiceImpl({
+      logger: createLogger(),
+      paseoHome: options.paseoHome,
+      workspaceRuntime: service,
+    });
+    const workspaceGit = workspaceGitService.bindWorkspace({ workspaceId, cwd: repo });
+
     const files = service.files(workspaceId);
     const listing = await files.list(".");
     expect(listing.entries.map((entry) => entry.name)).toContain("committed.txt");
@@ -92,6 +114,24 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
     terminalFileEdit.stdin.end();
     await expect(terminalFileEdit.exited).resolves.toEqual({ code: 0, signal: null });
     await expect(fileChanged).resolves.toBeUndefined();
+    const dirtyGit = await workspaceGit.getSnapshot({
+      force: true,
+      includeForge: false,
+      reason: "docker-edit",
+    });
+    const dockerDiff = await workspaceGit.getCheckoutDiff(
+      { mode: "uncommitted", includeStructured: true },
+      { force: true, reason: "docker-edit" },
+    );
+    expect(dirtyGit.git).toMatchObject({ isGit: true, isDirty: true, currentBranch: "main" });
+    expect(JSON.stringify(dockerDiff)).toContain("container-change");
+    await workspaceGit.commit({ message: "container commit", addAll: true });
+    await workspaceGit.createBranch({ branch: "container-branch", baseRef: "main" });
+    await workspaceGit.switchBranch("main");
+    await workspaceGit.fetch();
+    const cleanGit = await workspaceGit.getSnapshot();
+    expect(cleanGit.git).toMatchObject({ isDirty: false, currentBranch: "main" });
+    expect(await readFileFromHost(repo, "committed.txt")).toBe("committed\n");
     const containerFile = await files.read("committed.txt");
     await expect(collect(containerFile.chunks)).resolves.toBe("container-change");
     const conflict = await files.write({
@@ -278,6 +318,7 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
       ).trim(),
     ).toBe("false");
 
+    await workspaceGitService.dispose();
     await recovered.destroy(workspaceId);
     expect(dockerResourceCount("ps", workspaceId)).toBe(0);
     expect(dockerResourceCount("volume", workspaceId)).toBe(0);
@@ -314,7 +355,6 @@ test("Docker creation validates roots and rolls back when runtime selection cann
       },
     },
   });
-
   await expect(
     service.create({
       workspaceId: `${workspaceId}-escape`,
@@ -516,4 +556,15 @@ async function readFileFromHost(root: string, name: string): Promise<string | nu
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+}
+
+function createLogger() {
+  const logger = {
+    child: () => logger,
+    debug: vi.fn(),
+    info: vi.fn(),
+    trace: vi.fn(),
+    warn: vi.fn(),
+  };
+  return logger;
 }

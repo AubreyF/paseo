@@ -52,6 +52,7 @@ import {
 } from "../services/github-service.js";
 import type { CheckDetails, ForgeService } from "../services/forge-service.js";
 import type { GitHubPullRequestStatusFacts } from "../services/github-facts.js";
+import { bindWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 
 interface SessionHandlerInternals {
   interruptAgentIfRunning(agentId: string): Promise<void>;
@@ -242,7 +243,6 @@ vi.mock("../utils/checkout-git.js", async (importOriginal) => {
     mergeToBase: checkoutGitMocks.mergeToBase,
     pullCurrentBranch: checkoutGitMocks.pullCurrentBranch,
     pushCurrentBranch: checkoutGitMocks.pushCurrentBranch,
-    renameCurrentBranch: checkoutGitMocks.renameCurrentBranch,
     resolveBranchCheckout: checkoutGitMocks.resolveBranchCheckout,
     warmCheckoutShortstatInBackground: checkoutGitMocks.warmCheckoutShortstatInBackground,
   };
@@ -286,7 +286,10 @@ interface SessionForTestOptions {
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
   agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
   github?: Partial<ForgeService & GitHubService>;
-  checkoutDiffManager?: { scheduleRefreshForCwd: ReturnType<typeof vi.fn> };
+  checkoutDiffManager?: {
+    scheduleRefreshForCwd: ReturnType<typeof vi.fn>;
+    scheduleRefreshForWorkspace?: ReturnType<typeof vi.fn>;
+  };
   workspaceGitService?: {
     getCheckout?: ReturnType<typeof vi.fn>;
     getCheckoutDiff?: ReturnType<typeof vi.fn>;
@@ -331,10 +334,41 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     createPullRequest: vi.fn(),
     mergePullRequest: vi.fn(),
   };
-  const checkoutDiffManager = options.checkoutDiffManager ?? {
+  const legacyCheckoutDiffManager = options.checkoutDiffManager ?? {
     scheduleRefreshForCwd: vi.fn(),
   };
+  const checkoutDiffManager = {
+    ...legacyCheckoutDiffManager,
+    scheduleRefreshForWorkspace:
+      legacyCheckoutDiffManager.scheduleRefreshForWorkspace ??
+      vi.fn((workspaceGit: { cwd: string }) =>
+        legacyCheckoutDiffManager.scheduleRefreshForCwd(workspaceGit.cwd),
+      ),
+  };
+  const boundWorkspaceGit = new Map<string, ReturnType<typeof bindWorkspaceGitService>>();
   const workspaceGitService = {
+    bindLegacy(cwd: string) {
+      let bound = boundWorkspaceGit.get(`legacy:${cwd}`);
+      if (!bound) {
+        bound = bindWorkspaceGitService(
+          workspaceGitService as unknown as SessionOptions["workspaceGitService"],
+          cwd,
+        );
+        boundWorkspaceGit.set(`legacy:${cwd}`, bound);
+      }
+      return bound;
+    },
+    bindWorkspace({ workspaceId, cwd }: { workspaceId: string; cwd: string }) {
+      let bound = boundWorkspaceGit.get(workspaceId);
+      if (!bound) {
+        bound = bindWorkspaceGitService(
+          workspaceGitService as unknown as SessionOptions["workspaceGitService"],
+          cwd,
+        );
+        boundWorkspaceGit.set(workspaceId, bound);
+      }
+      return bound;
+    },
     getCheckout: vi.fn(),
     getCheckoutDiff: vi.fn(),
     getSnapshot: vi.fn(),
@@ -350,7 +384,56 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     // Mirror production: invalidateForge resolves the forge and busts the
     // adapter's cache. The resolved forge here is github, so delegate to it.
     invalidateForge: vi.fn((cwd: string) => github.invalidate({ cwd })),
+    refresh: vi.fn(async (cwd: string) => {
+      workspaceGitService.invalidateForge(cwd);
+      await workspaceGitService.getSnapshot(cwd, {
+        force: true,
+        includeForge: true,
+        reason: "manual-refresh",
+      });
+    }),
     getProjectSlug: vi.fn(),
+    commit: vi.fn((cwd: string, input: { message: string; addAll: boolean }) =>
+      checkoutGitMocks.commitChanges(cwd, input),
+    ),
+    mergeToBase: vi.fn((cwd: string, input: { baseRef?: string; mode?: "merge" | "squash" }) =>
+      checkoutGitMocks.mergeToBase(cwd, input, {
+        paseoHome: options.paseoHome ?? "/tmp/paseo-home",
+      }),
+    ),
+    mergeFromBase: vi.fn((cwd: string, input: { baseRef?: string }) =>
+      checkoutGitMocks.mergeFromBase(cwd, input),
+    ),
+    pull: vi.fn((cwd: string) => checkoutGitMocks.pullCurrentBranch(cwd)),
+    push: vi.fn((cwd: string) => checkoutGitMocks.pushCurrentBranch(cwd)),
+    renameBranch: vi.fn((cwd: string, branch: string) =>
+      checkoutGitMocks.renameCurrentBranch(cwd, branch),
+    ),
+    switchBranch: vi.fn((cwd: string, branch: string) =>
+      checkoutGitMocks.checkoutResolvedBranch({
+        cwd,
+        resolution: { kind: "local", name: branch },
+      }),
+    ),
+    createBranch: vi.fn((cwd: string, input: { branch: string; baseRef: string }) =>
+      gitCommandMocks.runGitCommand(["checkout", "-b", input.branch, input.baseRef], {
+        cwd,
+        timeout: 120_000,
+      }),
+    ),
+    fetch: vi.fn(),
+    stashPush: vi.fn((cwd: string, message: string) =>
+      gitCommandMocks.runGitCommand(["stash", "push", "--include-untracked", "-m", message], {
+        cwd,
+        timeout: 120_000,
+      }),
+    ),
+    stashPop: vi.fn((cwd: string, index: number) =>
+      gitCommandMocks.runGitCommand(["stash", "pop", `stash@{${index}}`], {
+        cwd,
+        timeout: 120_000,
+      }),
+    ),
     ...options.workspaceGitService,
   };
   const messages = options.messages ?? [];
@@ -1885,7 +1968,7 @@ describe("session checkout merge handling", () => {
     });
     expect(github.invalidate).toHaveBeenCalledTimes(1);
     expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/base-worktree" });
-    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith("/tmp/base-worktree");
     expect(messages).toContainEqual({
       type: "checkout_merge_response",
       payload: {

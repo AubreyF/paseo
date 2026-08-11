@@ -4,6 +4,7 @@ import { GIT_ACTION_ICONS } from "@/git/action-icons";
 
 interface WorkspaceActionsProps {
   serverId: string;
+  workspaceId: string;
   cwd: string;
   hideLabels?: boolean;
 }

@@ -68,7 +68,7 @@ export interface WorkspaceFiles {
     expectedRevision?: string;
   }): Promise<WorkspaceFileWriteResult>;
   subscribe(
-    input: { paths: readonly string[] },
+    input: { paths: readonly string[]; recursive?: boolean; ignoredPaths?: readonly string[] },
     listener: (event: WorkspaceWatchEvent) => void,
   ): Promise<WorkspaceFilesSubscription>;
 }

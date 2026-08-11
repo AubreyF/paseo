@@ -19,7 +19,7 @@ import type {
 import type {
   CheckoutDiffSnapshotPayload,
   CheckoutDiffSubscription,
-  CheckoutDiffSubscriptionRequest,
+  CheckoutDiffWorkspaceSubscriptionRequest,
 } from "../../checkout-diff-manager.js";
 import { toCheckoutError } from "../../checkout-git-utils.js";
 import {
@@ -28,9 +28,11 @@ import {
 } from "../../checkout/status-projection.js";
 import type {
   WorkspaceGitRuntimeSnapshot,
-  WorkspaceGitService,
   WorkspaceGitSnapshotOptions,
+  WorkspaceGitWorkspace,
 } from "../../workspace-git-service.js";
+import type { WorkspaceGitDirectory } from "../../workspace-git-directory.js";
+import type { WorkspaceGitAddress } from "../../workspace-git-directory.js";
 import { assertSafeGitRef } from "../../worktree-session.js";
 import type { GitMutationService } from "../git-mutation/git-mutation-service.js";
 import type {
@@ -40,18 +42,10 @@ import type {
   SearchResult,
 } from "../../../services/forge-service.js";
 import {
-  commitChanges,
   createPullRequest,
   forgeAuthStateFromError,
   isForgeAuthError,
-  mergeFromBase,
-  mergeToBase,
-  pullCurrentBranch,
-  pushCurrentBranch,
-  listCheckoutCommits,
-  getCommitFileDiff,
 } from "../../../utils/checkout-git.js";
-import { runGitCommand } from "../../../utils/run-git-command.js";
 import { expandTilde } from "../../../utils/path.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
@@ -67,11 +61,7 @@ import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 export interface CheckoutSessionHost {
   emit(msg: SessionOutboundMessage): void;
   emitWorkspaceUpdateForCwd(cwd: string): Promise<void>;
-  handleWorkspaceGitBranchSnapshot(cwd: string, branchName: string | null): void;
-  renameCurrentBranch(
-    cwd: string,
-    branch: string,
-  ): Promise<{ previousBranch: string | null; currentBranch: string | null }>;
+  handleWorkspaceGitBranchSnapshot(address: WorkspaceGitAddress, branchName: string | null): void;
 }
 
 type CurrentWorkspacePullRequest = NonNullable<
@@ -107,22 +97,20 @@ function toLegacyGithubSearchItems(items: ForgeSearchResultItem[]): LegacyGithub
  * real CheckoutDiffManager satisfies this structurally; tests supply a fake.
  */
 export interface CheckoutDiffSubscriber {
-  subscribe(
-    params: CheckoutDiffSubscriptionRequest,
+  subscribeWorkspace(
+    params: CheckoutDiffWorkspaceSubscriptionRequest,
     listener: (snapshot: CheckoutDiffSnapshotPayload) => void,
   ): Promise<CheckoutDiffSubscription>;
-  scheduleRefreshForCwd(cwd: string): void;
+  scheduleRefreshForWorkspace(workspaceGit: WorkspaceGitWorkspace): void;
 }
 
 export interface CheckoutSessionOptions {
   host: CheckoutSessionHost;
-  gitMutation: Pick<GitMutationService, "checkoutExistingBranch" | "notifyGitMutation">;
-  workspaceGitService: WorkspaceGitService;
+  gitMutation: Pick<GitMutationService, "bind">;
+  workspaceGitDirectory: WorkspaceGitDirectory;
   github: ForgeService;
   checkoutDiffManager: CheckoutDiffSubscriber;
   gitMetadataGenerator: GitMetadataGenerator;
-  paseoHome: string;
-  worktreesRoot: string | undefined;
   logger: pino.Logger;
 }
 
@@ -140,35 +128,40 @@ export class CheckoutSession {
   private static readonly PASEO_STASH_PREFIX = "paseo-auto-stash:";
 
   private readonly host: CheckoutSessionHost;
-  private readonly gitMutation: Pick<
-    GitMutationService,
-    "checkoutExistingBranch" | "notifyGitMutation"
-  >;
-  private readonly workspaceGitService: WorkspaceGitService;
+  private readonly gitMutation: Pick<GitMutationService, "bind">;
+  private readonly workspaceGitDirectory: WorkspaceGitDirectory;
   private readonly github: ForgeService;
   private readonly checkoutDiffManager: CheckoutDiffSubscriber;
   private readonly gitMetadataGenerator: GitMetadataGenerator;
-  private readonly paseoHome: string;
-  private readonly worktreesRoot: string | undefined;
   private readonly logger: pino.Logger;
   private readonly diffSubscriptions = new Map<string, () => void>();
 
   constructor(options: CheckoutSessionOptions) {
     this.host = options.host;
     this.gitMutation = options.gitMutation;
-    this.workspaceGitService = options.workspaceGitService;
+    this.workspaceGitDirectory = options.workspaceGitDirectory;
     this.github = options.github;
     this.checkoutDiffManager = options.checkoutDiffManager;
     this.gitMetadataGenerator = options.gitMetadataGenerator;
-    this.paseoHome = options.paseoHome;
-    this.worktreesRoot = options.worktreesRoot;
     this.logger = options.logger;
   }
 
+  private resolveWorkspaceGit(input: {
+    cwd: string;
+    workspaceId?: string;
+  }): Promise<WorkspaceGitWorkspace> {
+    const cwd = expandTilde(input.cwd);
+    return this.workspaceGitDirectory.resolve(
+      input.workspaceId === undefined
+        ? { kind: "legacy", cwd }
+        : { kind: "selected", workspaceId: input.workspaceId, cwd },
+    );
+  }
+
   private async resolveForgeService(
-    cwd: string,
+    workspaceGit: WorkspaceGitWorkspace,
   ): Promise<{ forge: string; service: ForgeService } | null> {
-    const resolution = await this.workspaceGitService.resolveForge(cwd);
+    const resolution = await workspaceGit.resolveForge();
     if (!resolution) {
       return null;
     }
@@ -176,29 +169,32 @@ export class CheckoutSession {
   }
 
   private async requireForgeService(
-    cwd: string,
+    workspaceGit: WorkspaceGitWorkspace,
   ): Promise<{ forge: string; service: ForgeService }> {
-    const resolution = await this.resolveForgeService(cwd);
+    const resolution = await this.resolveForgeService(workspaceGit);
     if (!resolution) {
-      throw new NoResolvedForgeServiceError(cwd);
+      throw new NoResolvedForgeServiceError(workspaceGit.cwd);
     }
     return resolution;
   }
 
-  private async resolveForgeIdForError(cwd: string): Promise<string> {
+  private async resolveForgeIdForError(workspaceGit: WorkspaceGitWorkspace): Promise<string> {
     try {
-      return (await this.workspaceGitService.resolveForge(cwd))?.forge ?? "github";
+      return (await workspaceGit.resolveForge())?.forge ?? "github";
     } catch {
       return "github";
     }
   }
 
-  private async resolveAuthStateForError(cwd: string, error: unknown): Promise<ForgeAuthState> {
+  private async resolveAuthStateForError(
+    workspaceGit: WorkspaceGitWorkspace,
+    error: unknown,
+  ): Promise<ForgeAuthState> {
     if (error instanceof NoResolvedForgeServiceError) {
       return error.authState;
     }
     try {
-      return (await this.workspaceGitService.resolveForge(cwd)) ? "error" : "no_remote";
+      return (await workspaceGit.resolveForge()) ? "error" : "no_remote";
     } catch {
       return "error";
     }
@@ -211,14 +207,17 @@ export class CheckoutSession {
    * independently in the same error path.
    */
   private async resolveForgeContextForError(
-    cwd: string,
+    workspaceGit: WorkspaceGitWorkspace,
     error: unknown,
   ): Promise<{ forge: string; authState: ForgeAuthState }> {
     if (error instanceof NoResolvedForgeServiceError) {
-      return { forge: await this.resolveForgeIdForError(cwd), authState: error.authState };
+      return {
+        forge: await this.resolveForgeIdForError(workspaceGit),
+        authState: error.authState,
+      };
     }
     try {
-      const resolution = await this.workspaceGitService.resolveForge(cwd);
+      const resolution = await workspaceGit.resolveForge();
       return {
         forge: resolution?.forge ?? "github",
         authState: resolution ? "error" : "no_remote",
@@ -230,22 +229,21 @@ export class CheckoutSession {
 
   async handleStatusRequest(msg: CheckoutStatusRequest): Promise<void> {
     const { cwd, requestId } = msg;
-    const resolvedCwd = expandTilde(cwd);
-
     try {
-      const snapshot = await this.workspaceGitService.getSnapshot(resolvedCwd);
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const snapshot = await workspaceGit.getSnapshot();
       this.host.emit({
         type: "checkout_status_response",
-        payload: buildCheckoutStatusPayloadFromSnapshot({
-          cwd,
-          requestId,
-          snapshot,
-        }),
+        payload: {
+          ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
+          ...buildCheckoutStatusPayloadFromSnapshot({ cwd, requestId, snapshot }),
+        },
       });
     } catch (error) {
       this.host.emit({
         type: "checkout_status_response",
         payload: {
+          ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
           cwd,
           isGit: false,
           repoRoot: null,
@@ -269,7 +267,8 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
-      const { baseRef, commits } = await listCheckoutCommits({ cwd: expandTilde(cwd) });
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const { baseRef, commits } = await workspaceGit.listCommits();
       this.host.emit({
         type: "checkout.commits.list.response",
         payload: { cwd, baseRef, commits, error: null, requestId },
@@ -290,7 +289,11 @@ export class CheckoutSession {
       if (path.length === 0 || isAbsolute(path) || path.split(/[\\/]/).includes("..")) {
         throw new Error(`Invalid path: ${path}`);
       }
-      const file = await getCommitFileDiff({ cwd: expandTilde(cwd), sha, path });
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const file = await workspaceGit.getCommitFileDiff({
+        sha,
+        path,
+      });
       this.host.emit({
         type: "checkout.commits.file_diff.response",
         payload: { cwd, sha, path, file, error: null, requestId },
@@ -304,13 +307,13 @@ export class CheckoutSession {
   }
 
   async handleValidateBranchRequest(msg: ValidateBranchRequest): Promise<void> {
-    const { cwd, branchName, requestId } = msg;
+    const { branchName, requestId } = msg;
 
     try {
-      const resolvedCwd = expandTilde(cwd);
       assertSafeGitRef(branchName, "branch");
 
-      const resolution = await this.workspaceGitService.validateBranchRef(resolvedCwd, branchName);
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const resolution = await workspaceGit.validateBranchRef(branchName);
       switch (resolution.kind) {
         case "local":
           this.host.emit({
@@ -368,11 +371,11 @@ export class CheckoutSession {
   }
 
   async handleBranchSuggestionsRequest(msg: BranchSuggestionsRequest): Promise<void> {
-    const { cwd, query, limit, requestId } = msg;
+    const { query, limit, requestId } = msg;
 
     try {
-      const resolvedCwd = expandTilde(cwd);
-      const branchDetails = await this.workspaceGitService.suggestBranchesForCwd(resolvedCwd, {
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const branchDetails = await workspaceGit.suggestBranches({
         query,
         limit,
       });
@@ -399,20 +402,21 @@ export class CheckoutSession {
   }
 
   async handleSubscribeDiffRequest(msg: SubscribeCheckoutDiffRequest): Promise<void> {
-    const cwd = expandTilde(msg.cwd);
     this.diffSubscriptions.get(msg.subscriptionId)?.();
     const abort = new AbortController();
     const unsubscribe = () => abort.abort();
     this.diffSubscriptions.set(msg.subscriptionId, unsubscribe);
 
     try {
-      const subscription = await this.checkoutDiffManager.subscribe(
-        { cwd, compare: msg.compare, signal: abort.signal },
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const subscription = await this.checkoutDiffManager.subscribeWorkspace(
+        { workspaceGit, compare: msg.compare, signal: abort.signal },
         (snapshot) => {
           this.host.emit({
             type: "checkout_diff_update",
             payload: {
               subscriptionId: msg.subscriptionId,
+              ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
               ...snapshot,
             },
           });
@@ -423,6 +427,7 @@ export class CheckoutSession {
         type: "subscribe_checkout_diff_response",
         payload: {
           subscriptionId: msg.subscriptionId,
+          ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
           ...subscription.initial,
           requestId: msg.requestId,
         },
@@ -444,16 +449,11 @@ export class CheckoutSession {
 
   async handleRefreshRequest(msg: CheckoutRefreshRequest): Promise<void> {
     const { cwd, requestId } = msg;
-    const resolvedCwd = expandTilde(cwd);
 
     try {
-      (await this.resolveForgeService(resolvedCwd))?.service.invalidate({ cwd: resolvedCwd });
-      await this.workspaceGitService.getSnapshot(resolvedCwd, {
-        force: true,
-        includeForge: true,
-        reason: "manual-refresh",
-      });
-      this.checkoutDiffManager.scheduleRefreshForCwd(resolvedCwd);
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      await workspaceGit.refresh({ priority: "high" });
+      this.checkoutDiffManager.scheduleRefreshForWorkspace(workspaceGit);
       this.host.emit({
         type: "checkout.refresh.response",
         payload: {
@@ -476,12 +476,13 @@ export class CheckoutSession {
     }
   }
 
-  emitStatusUpdate(cwd: string, snapshot: WorkspaceGitRuntimeSnapshot): void {
+  emitStatusUpdate(workspaceId: string, cwd: string, snapshot: WorkspaceGitRuntimeSnapshot): void {
     try {
-      const requestId = `subscription:${cwd}`;
+      const requestId = `subscription:${workspaceId}`;
       this.host.emit({
         type: "checkout_status_update",
         payload: {
+          workspaceId,
           ...buildCheckoutStatusPayloadFromSnapshot({
             cwd,
             requestId,
@@ -503,8 +504,8 @@ export class CheckoutSession {
    * Notify the live diff subscriptions that the working tree at `cwd` changed.
    * Called by the command handlers below after they mutate the repository.
    */
-  private scheduleDiffRefresh(cwd: string): void {
-    this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+  private scheduleDiffRefresh(workspaceGit: WorkspaceGitWorkspace): void {
+    this.checkoutDiffManager.scheduleRefreshForWorkspace(workspaceGit);
   }
 
   // ---------------------------------------------------------------------------
@@ -517,8 +518,11 @@ export class CheckoutSession {
     const { cwd, branch, requestId } = msg;
 
     try {
-      const checkoutResult = await this.gitMutation.checkoutExistingBranch(cwd, branch);
-      this.scheduleDiffRefresh(cwd);
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const checkoutResult = await this.gitMutation
+        .bind(workspaceGit)
+        .checkoutExistingBranch(branch);
+      this.scheduleDiffRefresh(workspaceGit);
 
       // Push a workspace_update immediately so the sidebar/header reflect
       // the new branch name without waiting for the background git watcher.
@@ -568,10 +572,18 @@ export class CheckoutSession {
     }
 
     try {
-      const result = await this.host.renameCurrentBranch(cwd, branch);
-      await this.gitMutation.notifyGitMutation(cwd, "rename-branch", { invalidateForge: true });
-      this.scheduleDiffRefresh(cwd);
-      this.host.handleWorkspaceGitBranchSnapshot(cwd, result.currentBranch);
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const result = await workspaceGit.renameBranch(branch);
+      await this.gitMutation.bind(workspaceGit).notify("rename-branch", {
+        invalidateForge: true,
+      });
+      this.scheduleDiffRefresh(workspaceGit);
+      this.host.handleWorkspaceGitBranchSnapshot(
+        msg.workspaceId === undefined
+          ? { kind: "legacy", cwd }
+          : { kind: "selected", workspaceId: msg.workspaceId, cwd },
+        result.currentBranch,
+      );
 
       // Branch is a git fact derived per-descriptor from each workspace's own
       // live git snapshot (id → cwd); the reconciliation pass re-persists the
@@ -610,16 +622,14 @@ export class CheckoutSession {
   ): Promise<void> {
     const { cwd, requestId } = msg;
     try {
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
       const branchLabel = msg.branch?.trim() ?? "";
       const message = branchLabel
         ? `${CheckoutSession.PASEO_STASH_PREFIX} ${branchLabel}`
         : `${CheckoutSession.PASEO_STASH_PREFIX} unnamed`;
-      await runGitCommand(["stash", "push", "--include-untracked", "-m", message], {
-        cwd,
-        timeout: 120_000,
-      });
-      await this.gitMutation.notifyGitMutation(cwd, "stash-push");
-      this.scheduleDiffRefresh(cwd);
+      await workspaceGit.stashPush(message);
+      await this.gitMutation.bind(workspaceGit).notify("stash-push");
+      this.scheduleDiffRefresh(workspaceGit);
       this.host.emit({
         type: "stash_save_response",
         payload: { cwd, success: true, error: null, requestId },
@@ -637,12 +647,10 @@ export class CheckoutSession {
   ): Promise<void> {
     const { cwd, stashIndex, requestId } = msg;
     try {
-      await runGitCommand(["stash", "pop", `stash@{${stashIndex}}`], {
-        cwd,
-        timeout: 120_000,
-      });
-      await this.gitMutation.notifyGitMutation(cwd, "stash-pop");
-      this.scheduleDiffRefresh(cwd);
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      await workspaceGit.stashPop(stashIndex);
+      await this.gitMutation.bind(workspaceGit).notify("stash-pop");
+      this.scheduleDiffRefresh(workspaceGit);
       this.host.emit({
         type: "stash_pop_response",
         payload: { cwd, success: true, error: null, requestId },
@@ -661,7 +669,8 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
     const paseoOnly = msg.paseoOnly !== false;
     try {
-      const entries = await this.workspaceGitService.listStashes(cwd, { paseoOnly });
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const entries = await workspaceGit.listStashes({ paseoOnly });
 
       this.host.emit({
         type: "stash_list_response",
@@ -681,20 +690,24 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
       let message = msg.message?.trim() ?? "";
       if (!message) {
+        if (msg.workspaceId) {
+          throw new Error("Selected workspace Git requires an explicit commit message");
+        }
         message = await this.gitMetadataGenerator.generateCommitMessage(cwd);
       }
       if (!message) {
         throw new Error("Commit message is required");
       }
 
-      await commitChanges(cwd, {
+      await workspaceGit.commit({
         message,
         addAll: msg.addAll ?? true,
       });
-      await this.gitMutation.notifyGitMutation(cwd, "commit-changes");
-      this.scheduleDiffRefresh(cwd);
+      await this.gitMutation.bind(workspaceGit).notify("commit-changes");
+      this.scheduleDiffRefresh(workspaceGit);
 
       this.host.emit({
         type: "checkout_commit_response",
@@ -724,7 +737,8 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
-      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const snapshot = await workspaceGit.getSnapshot();
       if (!snapshot.git.isGit) {
         throw new Error(`Not a git repository: ${cwd}`);
       }
@@ -743,19 +757,18 @@ export class CheckoutSession {
         baseRef = baseRef.slice("origin/".length);
       }
 
-      const mutatedCwd = await mergeToBase(
-        cwd,
-        {
-          baseRef,
-          mode: msg.strategy === "squash" ? "squash" : "merge",
-        },
-        { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
-      );
-      await Promise.all([
-        this.gitMutation.notifyGitMutation(mutatedCwd, "merge-to-base", { invalidateForge: true }),
-        ...(mutatedCwd !== cwd ? [this.gitMutation.notifyGitMutation(cwd, "merge-to-base")] : []),
-      ]);
-      this.scheduleDiffRefresh(cwd);
+      const mutatedCwd = await workspaceGit.mergeToBase({
+        baseRef,
+        mode: msg.strategy === "squash" ? "squash" : "merge",
+      });
+      const mutatedWorkspaceGit =
+        mutatedCwd === workspaceGit.cwd
+          ? workspaceGit
+          : await this.workspaceGitDirectory.resolve({ kind: "legacy", cwd: mutatedCwd });
+      await this.gitMutation.bind(mutatedWorkspaceGit).notify("merge-to-base", {
+        invalidateForge: true,
+      });
+      this.scheduleDiffRefresh(mutatedWorkspaceGit);
 
       this.host.emit({
         type: "checkout_merge_response",
@@ -785,19 +798,22 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
       if (msg.requireCleanTarget ?? true) {
-        const snapshot = await this.workspaceGitService.getSnapshot(cwd);
+        const snapshot = await workspaceGit.getSnapshot();
         if (snapshot.git.isDirty) {
           throw new Error("Working directory has uncommitted changes.");
         }
       }
 
-      await mergeFromBase(cwd, {
+      await workspaceGit.mergeFromBase({
         baseRef: msg.baseRef,
         requireCleanTarget: msg.requireCleanTarget ?? true,
       });
-      await this.gitMutation.notifyGitMutation(cwd, "merge-from-base", { invalidateForge: true });
-      this.scheduleDiffRefresh(cwd);
+      await this.gitMutation.bind(workspaceGit).notify("merge-from-base", {
+        invalidateForge: true,
+      });
+      this.scheduleDiffRefresh(workspaceGit);
 
       this.host.emit({
         type: "checkout_merge_from_base_response",
@@ -827,9 +843,10 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
-      await pullCurrentBranch(cwd);
-      await this.gitMutation.notifyGitMutation(cwd, "pull", { invalidateForge: true });
-      this.scheduleDiffRefresh(cwd);
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      await workspaceGit.pull();
+      await this.gitMutation.bind(workspaceGit).notify("pull", { invalidateForge: true });
+      this.scheduleDiffRefresh(workspaceGit);
 
       this.host.emit({
         type: "checkout_pull_response",
@@ -859,8 +876,9 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
-      await pushCurrentBranch(cwd);
-      await this.gitMutation.notifyGitMutation(cwd, "push", { invalidateForge: true });
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      await workspaceGit.push();
+      await this.gitMutation.bind(workspaceGit).notify("push", { invalidateForge: true });
       this.host.emit({
         type: "checkout_push_response",
         payload: {
@@ -889,6 +907,10 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      if (msg.workspaceId) {
+        throw new Error("Selected workspace Git does not support pull requests");
+      }
       let title = msg.title?.trim() ?? "";
       let body = msg.body?.trim() ?? "";
 
@@ -898,7 +920,7 @@ export class CheckoutSession {
         if (!body) body = generated.body;
       }
 
-      const { service } = await this.requireForgeService(cwd);
+      const { service } = await this.requireForgeService(workspaceGit);
       const result = await createPullRequest(
         cwd,
         {
@@ -908,7 +930,7 @@ export class CheckoutSession {
         },
         service,
       );
-      await this.gitMutation.notifyGitMutation(cwd, "create-pr", { invalidateForge: true });
+      await this.gitMutation.bind(workspaceGit).notify("create-pr", { invalidateForge: true });
 
       this.host.emit({
         type: "checkout_pr_create_response",
@@ -940,19 +962,20 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
-      const pullRequest = await this.resolveCurrentPullRequest(cwd, "merge", {
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const pullRequest = await this.resolveCurrentPullRequest(workspaceGit, "merge", {
         force: true,
         includeForge: true,
         reason: "merge-pr-validation",
       });
-      const { service } = await this.requireForgeService(cwd);
+      const { service } = await this.requireForgeService(workspaceGit);
       await service.mergePullRequest({
         cwd,
         prNumber: pullRequest.number,
         mergeMethod: msg.mergeMethod,
         status: pullRequest,
       });
-      await this.gitMutation.notifyGitMutation(cwd, "merge-pr", { invalidateForge: true });
+      await this.gitMutation.bind(workspaceGit).notify("merge-pr", { invalidateForge: true });
 
       this.host.emit({
         type: "checkout_pr_merge_response",
@@ -991,12 +1014,13 @@ export class CheckoutSession {
         : "checkout.github.set_auto_merge.response";
 
     try {
-      const pullRequest = await this.resolveCurrentPullRequest(cwd, "auto-merge", {
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const pullRequest = await this.resolveCurrentPullRequest(workspaceGit, "auto-merge", {
         force: true,
         includeForge: true,
         reason: "auto-merge-validation",
       });
-      const { service } = await this.requireForgeService(cwd);
+      const { service } = await this.requireForgeService(workspaceGit);
       if (msg.enabled) {
         const mergeMethod = msg.mergeMethod;
         if (!mergeMethod) {
@@ -1018,13 +1042,11 @@ export class CheckoutSession {
           status: pullRequest,
         });
       }
-      await this.gitMutation.notifyGitMutation(
-        cwd,
-        msg.enabled ? "enable-pr-auto-merge" : "disable-pr-auto-merge",
-        {
+      await this.gitMutation
+        .bind(workspaceGit)
+        .notify(msg.enabled ? "enable-pr-auto-merge" : "disable-pr-auto-merge", {
           invalidateForge: true,
-        },
-      );
+        });
 
       this.host.emit({
         type: responseType,
@@ -1051,11 +1073,11 @@ export class CheckoutSession {
   }
 
   private async resolveCurrentPullRequest(
-    cwd: string,
+    workspaceGit: WorkspaceGitWorkspace,
     operation: "merge" | "auto-merge",
     options?: WorkspaceGitSnapshotOptions,
   ): Promise<CurrentWorkspacePullRequest> {
-    const snapshot = await this.workspaceGitService.getSnapshot(cwd, options);
+    const snapshot = await workspaceGit.getSnapshot(options);
     const pullRequest = snapshot.forge.pullRequest;
     if (!pullRequest || typeof pullRequest.number !== "number") {
       throw new Error(`Unable to determine current change request number for ${operation}`);
@@ -1067,9 +1089,11 @@ export class CheckoutSession {
     msg: Extract<SessionInboundMessage, { type: "checkout_pr_status_request" }>,
   ): Promise<void> {
     const { cwd, requestId } = msg;
+    let workspaceGit: WorkspaceGitWorkspace | null = null;
 
     try {
-      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
+      workspaceGit = await this.resolveWorkspaceGit(msg);
+      const snapshot = await workspaceGit.getSnapshot();
       this.host.emit({
         type: "checkout_pr_status_response",
         payload: buildCheckoutPrStatusPayloadFromSnapshot({
@@ -1079,7 +1103,9 @@ export class CheckoutSession {
         }),
       });
     } catch (error) {
-      const { forge, authState } = await this.resolveForgeContextForError(cwd, error);
+      const { forge, authState } = workspaceGit
+        ? await this.resolveForgeContextForError(workspaceGit, error)
+        : { forge: "github", authState: "error" as const };
       this.host.emit({
         type: "checkout_pr_status_response",
         payload: {
@@ -1119,7 +1145,8 @@ export class CheckoutSession {
       return;
     }
 
-    const resolvedForge = await this.resolveForgeService(cwd);
+    const workspaceGit = await this.resolveWorkspaceGit(msg);
+    const resolvedForge = await this.resolveForgeService(workspaceGit);
     if (!resolvedForge) {
       this.host.emit({
         type: "pull_request_timeline_response",
@@ -1244,7 +1271,8 @@ export class CheckoutSession {
           "Check details request must address a check by checkRunId or workflowRunId",
         );
       }
-      const { service } = await this.requireForgeService(cwd);
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      const { service } = await this.requireForgeService(workspaceGit);
       const details = await service.getCheckDetails({
         cwd,
         repoOwner,
@@ -1287,13 +1315,17 @@ export class CheckoutSession {
 
     try {
       const resolvedCwd = expandTilde(cwd);
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
       // COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 —
       // the legacy github_search RPC is GitHub by definition; the modern
       // forge.search RPC resolves the cwd's forge.
-      const resolvedForge =
-        msg.type === "github_search_request"
-          ? { forge: "github", service: this.github }
-          : await this.resolveForgeService(resolvedCwd);
+      let resolvedForge: { forge: string; service: ForgeService } | null;
+      if (msg.type === "github_search_request") {
+        await workspaceGit.resolveForge();
+        resolvedForge = { forge: "github", service: this.github };
+      } else {
+        resolvedForge = await this.resolveForgeService(workspaceGit);
+      }
       if (!resolvedForge) {
         if (msg.type === "github_search_request") {
           this.host.emit({
@@ -1357,8 +1389,12 @@ export class CheckoutSession {
         },
       });
     } catch (error) {
-      const resolvedCwd = expandTilde(cwd);
-      const authState = await this.resolveAuthStateForError(resolvedCwd, error);
+      let authState: ForgeAuthState = "error";
+      try {
+        authState = await this.resolveAuthStateForError(await this.resolveWorkspaceGit(msg), error);
+      } catch {
+        authState = "error";
+      }
       if (msg.type === "github_search_request") {
         this.host.emit({
           type: "github_search_response",

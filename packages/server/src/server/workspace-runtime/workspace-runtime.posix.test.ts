@@ -23,6 +23,16 @@ afterEach(async () => {
 });
 
 posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract", (runtimeId) => {
+  test("bound runtime exposes only process and file primitives", async () => {
+    const fixture = await createFixture(runtimeId);
+    await fixture.service.create(fixture.createInput);
+
+    const runtime = await fixture.service.bind(fixture.workspaceId);
+
+    expect(Object.keys(runtime).sort()).toEqual(["files", "run"]);
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+
   test("binds streaming files and live observation to the selected runtime", async () => {
     const fixture = await createFixture(runtimeId);
     await fixture.service.create(fixture.createInput);
@@ -84,7 +94,7 @@ posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract",
       argv: [
         process.execPath,
         "-e",
-        "process.stdin.setEncoding('utf8');process.stdout.write(`${process.cwd()}|${process.stdout.isTTY}|${process.stdout.columns}x${process.stdout.rows}|λ`);process.stdin.once('data',data=>{process.stdout.write(`|${data.trim()}|${process.stdout.columns}x${process.stdout.rows}`);process.exit(7)})",
+        "process.stdin.setEncoding('utf8');process.stdout.write(`${process.cwd()}|${process.stdout.isTTY}|${process.stdout.columns}x${process.stdout.rows}|λ`);process.stdin.once('data',data=>{const finish=()=>{process.stdout.write(`|${data.trim()}|${process.stdout.columns}x${process.stdout.rows}`);process.exit(7)};process.stdout.columns===101?finish():process.stdout.once('resize',finish)})",
       ],
       env: { PATH: process.env.PATH ?? "" },
       purpose: { kind: "terminal", terminalId: `${runtimeId}-terminal` },

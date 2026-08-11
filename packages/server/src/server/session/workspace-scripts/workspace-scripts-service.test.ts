@@ -18,7 +18,7 @@ import type {
   SpawnWorkspaceScriptOptions,
   WorktreeScriptResult,
 } from "../../worktree-bootstrap.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceGitWorkspace } from "../../workspace-git-service.js";
 import { createWorkspaceScriptsService } from "./workspace-scripts-service.js";
 import { deriveProjectServiceSlug } from "../../workspace-git-metadata.js";
 import {
@@ -80,7 +80,7 @@ interface BuildOptions {
   workspace?: PersistedWorkspaceRecord | null;
   project?: PersistedProjectRecord | null;
   spawnThrows?: string;
-  gitService?: Pick<WorkspaceGitService, "peekSnapshot">;
+  gitService?: Pick<WorkspaceGitWorkspace, "peekSnapshot">;
   workspaceRuntime?: WorkspaceRuntimeService;
 }
 
@@ -105,7 +105,9 @@ function buildService(options: BuildOptions = {}) {
       options.terminalManager === undefined ? availableTerminalManager : options.terminalManager,
     workspaceRegistry: fakeWorkspaceRegistry(workspace),
     projectRegistry: fakeProjectRegistry(options.project ?? null),
-    workspaceGitService: options.gitService ?? fakeGitService(),
+    workspaceGitDirectory: {
+      bindRecord: () => options.gitService ?? fakeGitService(),
+    },
     workspaceRuntime: options.workspaceRuntime,
     getDaemonTcpPort: () => 6767,
     getDaemonTcpHost: () => "127.0.0.1",

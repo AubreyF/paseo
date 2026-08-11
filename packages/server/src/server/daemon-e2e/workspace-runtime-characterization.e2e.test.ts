@@ -193,17 +193,23 @@ async function expectFileEditAndWatch(workspace: CharacterizedWorkspace): Promis
 }
 
 async function expectGitObservation(workspace: CharacterizedWorkspace): Promise<void> {
+  const workspaceGit = client.bindWorkspaceGit({ workspaceId: workspace.id, cwd: workspace.cwd });
   await expect
-    .poll(() => client.getCheckoutStatus(workspace.cwd), { timeout: 15_000 })
+    .poll(() => workspaceGit.getStatus(), { timeout: 15_000 })
     .toMatchObject({
       isGit: true,
       isDirty: true,
     });
-  const diff = await client.getCheckoutDiff(workspace.cwd, { mode: "uncommitted" });
+  const diff = await workspaceGit.getDiff({ mode: "uncommitted" });
   expect(diff.error).toBeNull();
   expect(diff.files).toContainEqual(
     expect.objectContaining({ path: "characterized.txt", status: "ok" }),
   );
+  await expect(
+    workspaceGit.commit({ message: "characterize runtime Git", addAll: true }),
+  ).resolves.toMatchObject({ success: true, error: null });
+  await expect(workspaceGit.refresh()).resolves.toMatchObject({ success: true, error: null });
+  await expect(workspaceGit.getStatus()).resolves.toMatchObject({ isGit: true, isDirty: false });
 }
 
 async function expectTerminalCommand(workspace: CharacterizedWorkspace): Promise<void> {

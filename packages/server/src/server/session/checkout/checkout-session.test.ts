@@ -19,6 +19,7 @@ import type {
   WorkspaceGitService,
 } from "../../workspace-git-service.js";
 import {
+  bindWorkspaceGitService,
   createNoGitWorkspaceRuntimeSnapshot,
   createNoopWorkspaceGitService,
 } from "../../test-utils/workspace-git-service-stub.js";
@@ -44,10 +45,10 @@ function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
   const subscriptions: FakeDiffSubscription[] = [];
   const refreshedCwds: string[] = [];
   const subscriber: CheckoutDiffSubscriber = {
-    subscribe: async (params, listener) => {
+    subscribeWorkspace: async (params, listener) => {
       let isSubscribed = true;
       const subscription: FakeDiffSubscription = {
-        cwd: params.cwd,
+        cwd: params.workspaceGit.cwd,
         compare: params.compare,
         unsubscribeCalls: 0,
         emit: (snapshot) => {
@@ -66,12 +67,12 @@ function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
       params.signal?.addEventListener("abort", unsubscribe, { once: true });
       subscriptions.push(subscription);
       return {
-        initial: { ...initial, cwd: params.cwd },
+        initial: { ...initial, cwd: params.workspaceGit.cwd },
         unsubscribe,
       };
     },
-    scheduleRefreshForCwd: (cwd) => {
-      refreshedCwds.push(cwd);
+    scheduleRefreshForWorkspace: (workspaceGit) => {
+      refreshedCwds.push(workspaceGit.cwd);
     },
   };
   return { subscriber, subscriptions, refreshedCwds };
@@ -79,7 +80,12 @@ function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
 
 interface RecordedHostCalls {
   emitWorkspaceUpdateForCwd: string[];
-  handleWorkspaceGitBranchSnapshot: Array<{ cwd: string; branchName: string | null }>;
+  handleWorkspaceGitBranchSnapshot: Array<{
+    address:
+      | { kind: "selected"; cwd: string; workspaceId: string }
+      | { kind: "legacy"; cwd: string };
+    branchName: string | null;
+  }>;
   renameCurrentBranch: Array<{ cwd: string; branch: string }>;
 }
 
@@ -126,12 +132,8 @@ function makeCheckoutSession(options?: {
     emitWorkspaceUpdateForCwd: async (cwd) => {
       hostCalls.emitWorkspaceUpdateForCwd.push(cwd);
     },
-    handleWorkspaceGitBranchSnapshot: (cwd, branchName) => {
-      hostCalls.handleWorkspaceGitBranchSnapshot.push({ cwd, branchName });
-    },
-    renameCurrentBranch: async (cwd, branch) => {
-      hostCalls.renameCurrentBranch.push({ cwd, branch });
-      return { previousBranch: null, currentBranch: branch };
+    handleWorkspaceGitBranchSnapshot: (address, branchName) => {
+      hostCalls.handleWorkspaceGitBranchSnapshot.push({ address, branchName });
     },
     ...options?.host,
   };
@@ -157,16 +159,33 @@ function makeCheckoutSession(options?: {
     ...options?.gitMetadataGenerator,
   };
   const github: ForgeService = { ...createGitHubService(), ...options?.github };
+  const workspaceGitService = createNoopWorkspaceGitService({
+    renameBranch: async (cwd, branch) => {
+      hostCalls.renameCurrentBranch.push({ cwd, branch });
+      return { previousBranch: null, currentBranch: branch };
+    },
+    ...options?.git,
+  });
   const checkout = new CheckoutSession({
     host,
-    gitMutation,
-    workspaceGitService: createNoopWorkspaceGitService(options?.git),
+    gitMutation: {
+      bind: (workspaceGit) => ({
+        checkoutExistingBranch: (branch) =>
+          gitMutation.checkoutExistingBranch(workspaceGit.cwd, branch),
+        createBranchFromBase: async () => {},
+        notify: (reason, notifyOptions) =>
+          gitMutation.notifyGitMutation(workspaceGit.cwd, reason, notifyOptions),
+      }),
+    },
+    workspaceGitDirectory: {
+      resolve: async ({ cwd }) => bindWorkspaceGitService(workspaceGitService, cwd),
+      bindRecord: (record) => bindWorkspaceGitService(workspaceGitService, record.cwd),
+      getBound: (_workspaceId, cwd) => bindWorkspaceGitService(workspaceGitService, cwd),
+    },
     github,
     checkoutDiffManager:
       options?.diff ?? createFakeDiffSubscriber({ cwd: "", files: [], error: null }).subscriber,
     gitMetadataGenerator,
-    paseoHome: "/tmp/paseo-home",
-    worktreesRoot: undefined,
     logger: pino({ level: "silent" }),
   });
   return { checkout, emitted, hostCalls, gitMutationCalls, generatorCalls };
@@ -375,8 +394,8 @@ describe("CheckoutSession", () => {
   });
 
   describe("refresh", () => {
-    it("forces a github-inclusive snapshot, nudges diffs, and confirms success", async () => {
-      const snapshotCalls: Array<{ cwd: string; options: unknown }> = [];
+    it("refreshes the bound workspace, nudges diffs, and confirms success", async () => {
+      const refreshCalls: Array<{ cwd: string; options: unknown }> = [];
       const { subscriber, refreshedCwds } = createFakeDiffSubscriber({
         cwd: "",
         files: [],
@@ -384,9 +403,8 @@ describe("CheckoutSession", () => {
       });
       const { checkout, emitted } = makeCheckoutSession({
         git: {
-          getSnapshot: async (cwd, snapshotOptions) => {
-            snapshotCalls.push({ cwd, options: snapshotOptions });
-            return createNoGitWorkspaceRuntimeSnapshot(cwd);
+          refresh: async (cwd, refreshOptions) => {
+            refreshCalls.push({ cwd, options: refreshOptions });
           },
         },
         diff: subscriber,
@@ -398,9 +416,7 @@ describe("CheckoutSession", () => {
         requestId: "r7",
       });
 
-      expect(snapshotCalls).toEqual([
-        { cwd: "/repo", options: { force: true, includeForge: true, reason: "manual-refresh" } },
-      ]);
+      expect(refreshCalls).toEqual([{ cwd: "/repo", options: { priority: "high" } }]);
       expect(refreshedCwds).toEqual(["/repo"]);
       expect(emitted).toEqual([
         {
@@ -411,7 +427,7 @@ describe("CheckoutSession", () => {
     });
 
     it("expands a tilde cwd before refreshing git and diffs", async () => {
-      const snapshotCalls: string[] = [];
+      const refreshCalls: string[] = [];
       const { subscriber, refreshedCwds } = createFakeDiffSubscriber({
         cwd: "",
         files: [],
@@ -419,9 +435,8 @@ describe("CheckoutSession", () => {
       });
       const { checkout } = makeCheckoutSession({
         git: {
-          getSnapshot: async (cwd) => {
-            snapshotCalls.push(cwd);
-            return createNoGitWorkspaceRuntimeSnapshot(cwd);
+          refresh: async (cwd) => {
+            refreshCalls.push(cwd);
           },
         },
         diff: subscriber,
@@ -434,7 +449,7 @@ describe("CheckoutSession", () => {
       });
 
       const resolvedCwd = expandTilde("~/repo");
-      expect(snapshotCalls).toEqual([resolvedCwd]);
+      expect(refreshCalls).toEqual([resolvedCwd]);
       expect(refreshedCwds).toEqual([resolvedCwd]);
     });
   });
@@ -550,12 +565,16 @@ describe("CheckoutSession", () => {
     it("emits a checkout status update for a workspace git snapshot", () => {
       const { checkout, emitted } = makeCheckoutSession();
 
-      checkout.emitStatusUpdate("/repo", createGitSnapshot("/repo", "main"));
+      checkout.emitStatusUpdate("workspace-1", "/repo", createGitSnapshot("/repo", "main"));
 
       expect(emitted).toEqual([
         {
           type: "checkout_status_update",
-          payload: expect.objectContaining({ cwd: "/repo", currentBranch: "main" }),
+          payload: expect.objectContaining({
+            workspaceId: "workspace-1",
+            cwd: "/repo",
+            currentBranch: "main",
+          }),
         },
       ]);
     });
@@ -672,7 +691,7 @@ describe("CheckoutSession", () => {
       ]);
       expect(refreshedCwds).toEqual(["/repo"]);
       expect(hostCalls.handleWorkspaceGitBranchSnapshot).toEqual([
-        { cwd: "/repo", branchName: "feature-renamed" },
+        { address: { kind: "legacy", cwd: "/repo" }, branchName: "feature-renamed" },
       ]);
       expect(hostCalls.emitWorkspaceUpdateForCwd).toEqual(["/repo"]);
       expect(emitted).toEqual([

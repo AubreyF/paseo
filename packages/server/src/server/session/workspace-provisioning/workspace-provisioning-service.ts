@@ -13,6 +13,7 @@ import {
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import { createWorkspaceGitDirectory } from "../../workspace-git-directory.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
@@ -88,10 +89,17 @@ export function createWorkspaceProvisioningService(deps: {
   serverId?: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
-  workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot" | "peekSnapshot">;
+  workspaceGitService: Pick<
+    WorkspaceGitService,
+    "bindLegacy" | "bindWorkspace" | "getCheckout" | "getSnapshot" | "peekSnapshot"
+  >;
   logger: Logger;
 }): WorkspaceProvisioningService {
   const { serverId, workspaceRegistry, projectRegistry, workspaceGitService, logger } = deps;
+  const workspaceGitDirectory = createWorkspaceGitDirectory({
+    workspaceRegistry,
+    workspaceGitService,
+  });
 
   async function runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
@@ -330,7 +338,8 @@ export function createWorkspaceProvisioningService(deps: {
     if (!workspace.archivedAt) {
       return workspace.autoArchivedChangeRequestUrl;
     }
-    const snapshot = await workspaceGitService.getSnapshot(workspace.cwd, {
+    if (workspace.runtime?.runtimeId) return workspace.autoArchivedChangeRequestUrl;
+    const snapshot = await workspaceGitDirectory.bindRecord(workspace).getSnapshot({
       force: true,
       includeForge: true,
       reason: "workspace-restore-auto-archive-latch",
@@ -348,7 +357,7 @@ export function createWorkspaceProvisioningService(deps: {
     const timestamp = new Date().toISOString();
     const checkout =
       workspace.archivedAt || project.archivedAt
-        ? await workspaceGitService.getCheckout(workspace.cwd)
+        ? await workspaceGitDirectory.bindRecord(workspace).getCheckout()
         : null;
     const autoArchivedChangeRequestUrl =
       await resolveRestoredAutoArchiveChangeRequestUrl(workspace);
@@ -396,7 +405,7 @@ export function createWorkspaceProvisioningService(deps: {
   async function refreshWorkspaceRecord(
     workspace: PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord> {
-    const checkout = await workspaceGitService.getCheckout(workspace.cwd);
+    const checkout = await workspaceGitDirectory.bindRecord(workspace).getCheckout();
     const project = await projectRegistry.get(workspace.projectId);
     if (project && !project.archivedAt) {
       await refreshProjectKind(project, workspace.cwd, checkout);

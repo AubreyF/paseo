@@ -15,6 +15,7 @@ interface RuntimeState {
   revision: string;
   executionDomainId: string;
   lifecycle: "ready" | "paused";
+  lifecycleEnvironment: Readonly<Record<string, string>>;
 }
 
 interface LifecycleRequest {
@@ -29,6 +30,7 @@ interface LifecycleRequest {
     placement: { relativeCwd?: string };
   };
   options: { image?: unknown };
+  workspaceIds?: string[];
 }
 
 interface ExecRequest {
@@ -63,7 +65,12 @@ const requestedWorkspaceId = argument("--workspace-id");
 
 try {
   if (operation === "describe") {
-    writeJson({ protocolVersion: 1, modes: ["pipes", "pty"] });
+    writeJson({ protocolVersion: 1, modes: ["pipes", "pty"], reconcile: true });
+  } else if (operation === "reconcile") {
+    const request = JSON.parse(await readStdin()) as LifecycleRequest;
+    assertProtocol(request.protocolVersion);
+    await reconcile(request.workspaceIds ?? []);
+    writeJson({ protocolVersion: 1, type: "ok" });
   } else if (!requestedWorkspaceId) {
     throw new Error("--workspace-id is required");
   } else if (operation === "exec") {
@@ -80,11 +87,15 @@ try {
     assertProtocol(request.protocolVersion);
     switch (operation) {
       case "create":
-        writeJson({
-          protocolVersion: 1,
-          type: "state",
-          state: await create(requestedWorkspaceId, request),
-        });
+        {
+          const state = await create(requestedWorkspaceId, request);
+          writeJson({
+            protocolVersion: 1,
+            type: "state",
+            state,
+            placement: runtimePlacement(state),
+          });
+        }
         break;
       case "inspect":
         writeJson({
@@ -98,11 +109,15 @@ try {
         writeJson({ protocolVersion: 1, type: "ok" });
         break;
       case "resume":
-        writeJson({
-          protocolVersion: 1,
-          type: "state",
-          state: await resume(requestedWorkspaceId),
-        });
+        {
+          const state = await resume(requestedWorkspaceId);
+          writeJson({
+            protocolVersion: 1,
+            type: "state",
+            state,
+            placement: runtimePlacement(state),
+          });
+        }
         break;
       case "destroy":
         await destroy(requestedWorkspaceId);
@@ -131,7 +146,7 @@ async function create(workspaceId: string, request: LifecycleRequest): Promise<R
   const names = resourceNames(workspaceId);
   const existingVolume = await inspectVolume(names.volume);
   if (existingVolume) {
-    if (existingVolume.owner !== workspaceId) {
+    if (existingVolume.runtime !== "workspace" || existingVolume.owner !== workspaceId) {
       throw new Error(`Docker volume ownership mismatch: ${names.volume}`);
     }
     throw new Error(`Docker workspace has an incomplete owned volume: ${workspaceId}`);
@@ -225,9 +240,14 @@ async function create(workspaceId: string, request: LifecycleRequest): Promise<R
   }
 }
 
-async function inspect(
-  workspaceId: string,
-): Promise<{ status: "missing" } | { status: "ready" | "paused"; state: RuntimeState }> {
+async function inspect(workspaceId: string): Promise<
+  | { status: "missing" }
+  | {
+      status: "ready" | "paused";
+      state: RuntimeState;
+      placement: { cwd: string };
+    }
+> {
   const names = resourceNames(workspaceId);
   const inspection = await docker(
     [
@@ -243,15 +263,17 @@ async function inspect(
   if (owner !== "workspace" || inspectedWorkspaceId !== workspaceId || !root || !revision) {
     throw new Error(`Docker resource ownership mismatch: ${names.container}`);
   }
+  const state = stateFor(
+    workspaceId,
+    root,
+    revision,
+    names.container,
+    running === "true" ? "ready" : "paused",
+  );
   return {
     status: running === "true" ? "ready" : "paused",
-    state: stateFor(
-      workspaceId,
-      root,
-      revision,
-      names.container,
-      running === "true" ? "ready" : "paused",
-    ),
+    state,
+    placement: runtimePlacement(state),
   };
 }
 
@@ -275,18 +297,76 @@ async function destroy(workspaceId: string): Promise<void> {
   const names = resourceNames(workspaceId);
   const current = await inspect(workspaceId);
   const volume = await inspectVolume(names.volume);
-  if (volume && volume.owner !== workspaceId) {
+  if (volume && (volume.runtime !== "workspace" || volume.owner !== workspaceId)) {
     throw new Error(`Docker volume ownership mismatch: ${names.volume}`);
   }
   if (current.status !== "missing") await docker(["rm", "-f", names.container]);
   if (volume) await docker(["volume", "rm", names.volume]);
 }
 
-async function inspectVolume(name: string): Promise<{ owner: string | null } | null> {
+async function inspectVolume(
+  name: string,
+): Promise<{ owner: string | null; runtime: string | null } | null> {
   const output = await docker(["volume", "inspect", name], true);
   if (!output) return null;
   const inspection = JSON.parse(output) as Array<{ Labels?: Record<string, string> | null }>;
-  return { owner: inspection[0]?.Labels?.["sh.paseo.workspace-id"] ?? null };
+  return {
+    owner: inspection[0]?.Labels?.["sh.paseo.workspace-id"] ?? null,
+    runtime: inspection[0]?.Labels?.["sh.paseo.runtime"] ?? null,
+  };
+}
+
+async function reconcile(workspaceIds: readonly string[]): Promise<void> {
+  const known = new Set(workspaceIds);
+  const containers = await labeledResources("ps");
+  const volumes = await labeledResources("volume");
+  const candidateWorkspaceIds = new Set([...containers.values(), ...volumes.values()]);
+  for (const workspaceId of candidateWorkspaceIds) {
+    if (!workspaceId || known.has(workspaceId)) continue;
+    const names = resourceNames(workspaceId);
+    const containerProven = containers.get(names.container) === workspaceId;
+    const volumeProven = volumes.get(names.volume) === workspaceId;
+    if (!containerProven && !volumeProven) continue;
+    if (containerProven) {
+      const inspection = await inspect(workspaceId);
+      if (inspection.status === "missing") continue;
+    }
+    const volume = await inspectVolume(names.volume);
+    if (volume && (volume.runtime !== "workspace" || volume.owner !== workspaceId)) continue;
+    if (containerProven) await docker(["rm", "-f", names.container]);
+    if (volumeProven && volume) await docker(["volume", "rm", names.volume]);
+  }
+}
+
+async function labeledResources(kind: "ps" | "volume"): Promise<Map<string, string>> {
+  const output =
+    kind === "ps"
+      ? await docker([
+          "ps",
+          "-a",
+          "--filter",
+          "label=sh.paseo.runtime=workspace",
+          "--format",
+          '{{.Names}}|{{.Label "sh.paseo.workspace-id"}}',
+        ])
+      : await docker([
+          "volume",
+          "ls",
+          "--filter",
+          "label=sh.paseo.runtime=workspace",
+          "--format",
+          '{{.Name}}|{{.Label "sh.paseo.workspace-id"}}',
+        ]);
+  return new Map(
+    output
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const separator = line.indexOf("|");
+        return separator < 0 ? [line, ""] : [line.slice(0, separator), line.slice(separator + 1)];
+      }),
+  );
 }
 
 async function execute(workspaceId: string): Promise<void> {
@@ -647,7 +727,23 @@ function stateFor(
   container: string,
   lifecycle: "ready" | "paused" = "ready",
 ): RuntimeState {
-  return { workspaceId, root, revision, executionDomainId: `docker:${container}`, lifecycle };
+  return {
+    workspaceId,
+    root,
+    revision,
+    executionDomainId: `docker:${container}`,
+    lifecycle,
+    lifecycleEnvironment: {
+      PASEO_SOURCE_CHECKOUT_PATH: "/workspace",
+      PASEO_ROOT_PATH: "/workspace",
+      PASEO_WORKTREE_PATH: "/workspace",
+      PASEO_BRANCH_NAME: "",
+    },
+  };
+}
+
+function runtimePlacement(state: RuntimeState): { cwd: string } {
+  return { cwd: state.root };
 }
 
 async function waitUntilReady(container: string): Promise<void> {

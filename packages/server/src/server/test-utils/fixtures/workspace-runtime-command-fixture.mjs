@@ -33,7 +33,15 @@ try {
     const request = JSON.parse(await readStream(process.stdin));
     switch (operation) {
       case "create":
-        writeJson({ protocolVersion: 1, type: "state", state: await create(workspaceId, request) });
+        {
+          const state = await create(workspaceId, request);
+          writeJson({
+            protocolVersion: 1,
+            type: "state",
+            state,
+            placement: publicPlacement(state),
+          });
+        }
         break;
       case "inspect":
         writeJson({
@@ -47,11 +55,15 @@ try {
         writeJson({ protocolVersion: 1, type: "ok" });
         break;
       case "resume":
-        writeJson({
-          protocolVersion: 1,
-          type: "state",
-          state: await setLifecycle(workspaceId, request.options, "ready"),
-        });
+        {
+          const state = await setLifecycle(workspaceId, request.options, "ready");
+          writeJson({
+            protocolVersion: 1,
+            type: "state",
+            state,
+            placement: publicPlacement(state),
+          });
+        }
         break;
       case "destroy":
         await rm(stateFile(workspaceId, request.options), { force: true });
@@ -85,7 +97,13 @@ async function create(id, request) {
 async function inspect(id, options) {
   await applyInspectBarrier(options);
   const state = await readState(id, options);
-  return state ? { status: state.lifecycle, state } : { status: "missing" };
+  return state
+    ? { status: state.lifecycle, state, placement: publicPlacement(state) }
+    : { status: "missing" };
+}
+
+function publicPlacement(state) {
+  return { cwd: state.root, hostVisiblePath: state.root };
 }
 
 async function setLifecycle(id, options, lifecycle) {

@@ -7,6 +7,7 @@ import { StringDecoder } from "node:string_decoder";
 import type {
   WorkspaceDriverCreateInput,
   WorkspaceDriverInspection,
+  WorkspaceDriverState,
   WorkspaceDriverSpawnInput,
   WorkspacePipeProcess,
   WorkspacePtyProcess,
@@ -31,6 +32,7 @@ export function createCommandRuntime(
   config: CommandRuntimeConfig,
 ): WorkspaceRuntimeDriver {
   let described: Promise<ReadonlySet<"pipes" | "pty">> | null = null;
+  let supportsReconciliation = false;
 
   function describe(): Promise<ReadonlySet<"pipes" | "pty">> {
     described ??= runCommand(["describe"], undefined).then((output) => {
@@ -38,6 +40,7 @@ export function createCommandRuntime(
       if (!description.modes.includes("pipes")) {
         throw new Error(`Workspace runtime ${runtimeId} does not support pipes`);
       }
+      supportsReconciliation = description.reconcile;
       return new Set(description.modes);
     });
     return described;
@@ -58,16 +61,23 @@ export function createCommandRuntime(
 
   return {
     id: runtimeId,
+    reconciliationDomainId: JSON.stringify({ command: config.command, options: config.options }),
     workspaceHelperCommand: config.helperCommand ?? ["paseo-workspace-helper"],
     async create(input) {
       const response = await lifecycle("create", input.workspaceId, input);
       if (response.type !== "state") throw new Error(`Invalid create response from ${runtimeId}`);
-      return response.state;
+      return commandReady(response.state, response.placement);
     },
     async inspect(workspaceId): Promise<WorkspaceDriverInspection> {
       const response = await lifecycle("inspect", workspaceId);
       if (response.type !== "inspection") {
         throw new Error(`Invalid inspect response from ${runtimeId}`);
+      }
+      if (response.inspection.status === "ready" || response.inspection.status === "paused") {
+        return {
+          ...response.inspection,
+          ...commandReady(response.inspection.state, response.inspection.placement),
+        };
       }
       return response.inspection as WorkspaceDriverInspection;
     },
@@ -88,11 +98,21 @@ export function createCommandRuntime(
     async resume(workspaceId) {
       const response = await lifecycle("resume", workspaceId);
       if (response.type !== "state") throw new Error(`Invalid resume response from ${runtimeId}`);
-      return response.state;
+      return commandReady(response.state, response.placement);
     },
     async destroy(workspaceId) {
       const response = await lifecycle("destroy", workspaceId);
       if (response.type !== "ok") throw new Error(`Invalid destroy response from ${runtimeId}`);
+    },
+    async reconcile(workspaceIds) {
+      await describe();
+      if (!supportsReconciliation) return;
+      const output = await runCommand(
+        ["reconcile"],
+        JSON.stringify({ protocolVersion: 1, workspaceIds, options: config.options ?? {} }),
+      );
+      const response = CommandRuntimeLifecycleResponseSchema.parse(JSON.parse(output));
+      if (response.type !== "ok") throw new Error(`Invalid reconcile response from ${runtimeId}`);
     },
   };
 
@@ -119,6 +139,16 @@ export function createCommandRuntime(
     }
     return stdout;
   }
+}
+
+function commandReady(
+  state: WorkspaceDriverState,
+  placement: { cwd: string; hostVisiblePath?: string } | undefined,
+) {
+  if (!placement) {
+    throw new Error("Workspace runtime did not return public placement");
+  }
+  return { state, placement };
 }
 
 function spawnCommandPty(

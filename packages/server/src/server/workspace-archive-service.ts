@@ -24,7 +24,7 @@ import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
   "workspaceId" | "cwd" | "kind" | "worktreeRoot" | "isPaseoOwnedWorktree" | "mainRepoRoot"
->;
+> & { hostVisiblePath?: string | null; runtimeId?: string | null };
 
 export interface ArchiveDependencies {
   paseoHome?: string;
@@ -96,6 +96,7 @@ interface BackingDirectory {
 
 interface ArchiveTarget {
   backing: BackingDirectory | null;
+  preserveBackingDirectory: boolean;
   teardownTargets: Array<{ workspaceId: string | null; cwd: string }>;
   setupWorkspaceIds: string[];
   workspaceIds: string[];
@@ -107,11 +108,19 @@ export async function resolveWorkspaceIdAtPath(
 ): Promise<string | null> {
   const matchesTarget = createRealpathAwarePathMatcher(targetPath);
   const activeWorkspaces = await dependencies.listActiveWorkspaces();
-  const exactMatches = activeWorkspaces.filter((workspace) => matchesTarget(workspace.cwd));
-  const worktreeMatch = exactMatches.find((workspace) => workspace.kind === "worktree");
-  if (worktreeMatch) {
-    return worktreeMatch.workspaceId;
+  const exactMatches = activeWorkspaces.filter((workspace) => {
+    const visiblePath = workspace.runtimeId ? workspace.hostVisiblePath : workspace.cwd;
+    return visiblePath ? matchesTarget(visiblePath) : false;
+  });
+  if (exactMatches.length > 1) {
+    throw new Error(
+      `Ambiguous workspace path '${targetPath}' matches: ${exactMatches
+        .map((workspace) => workspace.workspaceId)
+        .sort()
+        .join(", ")}`,
+    );
   }
+  if (exactMatches.length === 1) return exactMatches[0]!.workspaceId;
   return dependencies.findWorkspaceIdForCwd(targetPath);
 }
 
@@ -203,11 +212,23 @@ async function resolveArchiveTarget(
         { workspaceId },
         "Workspace not found for archive-by-scope; skipping",
       );
-      return { backing: null, teardownTargets: [], setupWorkspaceIds: [], workspaceIds: [] };
+      return {
+        backing: null,
+        preserveBackingDirectory: false,
+        teardownTargets: [],
+        setupWorkspaceIds: [],
+        workspaceIds: [],
+      };
     }
     const isArchived = "archivedAt" in record && Boolean(record.archivedAt);
+    const isRuntimeSelected =
+      ("runtime" in record && Boolean(record.runtime)) ||
+      ("runtimeId" in record && Boolean(record.runtimeId));
     return {
-      backing: await resolveWorkspaceBackingDirectory(record, dependencies),
+      backing: isRuntimeSelected
+        ? null
+        : await resolveWorkspaceBackingDirectory(record, dependencies),
+      preserveBackingDirectory: isRuntimeSelected,
       teardownTargets: isArchived ? [] : [{ workspaceId, cwd: record.cwd }],
       setupWorkspaceIds: [workspaceId],
       workspaceIds: isArchived ? [] : [workspaceId],
@@ -232,6 +253,9 @@ async function resolveArchiveTarget(
       ...backing,
       mainRepoRoot: persistedMainRepoRoot ?? backing.mainRepoRoot,
     },
+    preserveBackingDirectory: targetWorkspaces.some(
+      (workspace) => workspace.runtimeId !== null && workspace.runtimeId !== undefined,
+    ),
     teardownTargets:
       targetWorkspaces.length > 0
         ? targetWorkspaces.map((workspace) => ({
@@ -352,7 +376,7 @@ async function maybeRemoveDirectory(
   archivedWorkspaceIds: string[],
 ): Promise<boolean> {
   const backing = target.backing;
-  if (!backing?.isPaseoOwnedWorktree) {
+  if (target.preserveBackingDirectory || !backing?.isPaseoOwnedWorktree) {
     return false;
   }
 

@@ -336,7 +336,7 @@ function WorkspaceRowBody({
               archiveStatus={archiveStatus}
               archivePendingLabel={archivePendingLabel}
               archiveShortcutKeys={archiveShortcutKeys}
-              openInFileManagerPath={workspace.workspaceDirectory}
+              openInFileManagerPath={workspace.hostVisiblePath}
               disabled={isArchiving}
               aria-selected={selected}
               accessibilityRole="button"

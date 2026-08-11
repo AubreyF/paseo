@@ -19,6 +19,10 @@ import { createTestLogger } from "../test-utils/test-logger.js";
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
 import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
+import {
+  bindProviderWorkspace,
+  resolveProviderPlacementPolicy,
+} from "./agent/providers/workspace/index.js";
 import type { AgentUpdatesService } from "./session/agent-updates/agent-updates-service.js";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -714,15 +718,18 @@ function createSessionForWorkspaceTests(
           const workspace = await workspaceRegistry.get(workspaceId);
           return workspace?.runtime?.runtimeId ?? null;
         },
-        persistRuntimeId: async (workspaceId, runtimeId) => {
+        persistRuntimeId: async (workspaceId, runtimeId, placement) => {
           const workspace = await workspaceRegistry.get(workspaceId);
           if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-          if (workspace.runtime?.runtimeId === runtimeId) return;
           await workspaceRegistry.upsert({
             ...workspace,
+            cwd: placement.cwd,
+            hostVisiblePath: placement.hostVisiblePath ?? null,
             runtime: { runtimeId },
           });
         },
+        beginWorkspaceDeletion: async () => {},
+        removeWorkspaceRecord: (workspaceId) => workspaceRegistry.remove(workspaceId),
       }),
       filesystem: { isDirectory: async () => true },
       chatService: asChatService(),
@@ -929,17 +936,22 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
       error: vi.fn(),
     };
     const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+    let workspaceRegistry!: FileBackedWorkspaceRegistry;
     const agentManager = new AgentManager({
       clients: { codex: new CreateAgentTestClient() },
       registry: agentStorage,
       logger: asSessionLogger(logger),
       idFactory: () => "00000000-0000-4000-8000-000000000551",
+      resolveProviderWorkspace: async (workspaceId) => {
+        const workspace = await workspaceRegistry.get(workspaceId);
+        return workspace?.runtime ? undefined : null;
+      },
     });
     const projectRegistry = new FileBackedProjectRegistry(
       path.join(workdir, "projects.json"),
       asSessionLogger(logger),
     );
-    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    workspaceRegistry = new FileBackedWorkspaceRegistry(
       path.join(workdir, "workspaces.json"),
       asSessionLogger(logger),
     );
@@ -1084,12 +1096,6 @@ test("create_agent_request launches from an exact subdirectory in a created work
       error: vi.fn(),
     };
     const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
-    const agentManager = new AgentManager({
-      clients: { codex: new CreateAgentTestClient() },
-      registry: agentStorage,
-      logger: asSessionLogger(logger),
-      idFactory: () => "00000000-0000-4000-8000-000000000552",
-    });
     const projectRegistry = new FileBackedProjectRegistry(
       path.join(workdir, "projects.json"),
       asSessionLogger(logger),
@@ -1098,6 +1104,43 @@ test("create_agent_request launches from an exact subdirectory in a created work
       path.join(workdir, "workspaces.json"),
       asSessionLogger(logger),
     );
+    const workspaceRuntime = createWorkspaceRuntimeService({
+      paseoHome: path.join(workdir, "paseo-home"),
+      worktreesRoot: path.join(workdir, "worktrees"),
+      resolveRuntimeId: async (workspaceId) =>
+        (await workspaceRegistry.get(workspaceId))?.runtime?.runtimeId ?? null,
+      persistRuntimeId: async (workspaceId, runtimeId, placement) => {
+        const updated = await workspaceRegistry.update(workspaceId, (workspace) => ({
+          ...workspace,
+          cwd: placement.cwd,
+          hostVisiblePath: placement.hostVisiblePath ?? null,
+          runtime: { runtimeId },
+        }));
+        if (!updated) throw new Error(`Workspace not found: ${workspaceId}`);
+      },
+      beginWorkspaceDeletion: async (workspaceId) => {
+        await workspaceRegistry.requestDeletion(workspaceId, new Date().toISOString());
+      },
+      removeWorkspaceRecord: (workspaceId) => workspaceRegistry.remove(workspaceId),
+    });
+    const agentManager = new AgentManager({
+      clients: { codex: new CreateAgentTestClient() },
+      registry: agentStorage,
+      logger: asSessionLogger(logger),
+      idFactory: () => "00000000-0000-4000-8000-000000000552",
+      resolveProviderWorkspace: async (workspaceId) => {
+        const workspace = await workspaceRegistry.get(workspaceId);
+        if (!workspace?.runtime) return null;
+        return bindProviderWorkspace({
+          runtime: await workspaceRuntime.bind(workspaceId),
+          cwd: ".",
+          policy: resolveProviderPlacementPolicy({
+            runtimeId: workspace.runtime.runtimeId,
+            hostEnvironment: process.env,
+          }),
+        });
+      },
+    });
     const workspaceGitService = createNoopWorkspaceGitService({
       getCheckout: async (cwd: string) => ({
         cwd,
@@ -1147,6 +1190,7 @@ test("create_agent_request launches from an exact subdirectory in a created work
       agentStorage,
       projectRegistry,
       workspaceRegistry,
+      workspaceRuntime,
       chatService: asChatService(),
       scheduleService: asScheduleService(),
       loopService: asLoopService(),
@@ -1238,6 +1282,7 @@ test("create_agent_request does not title an existing workspace from the agent p
       registry: agentStorage,
       logger: asSessionLogger(logger),
       idFactory: () => "00000000-0000-4000-8000-000000000552",
+      resolveProviderWorkspace: async () => null,
     });
     const projectRegistry = new FileBackedProjectRegistry(
       path.join(workdir, "projects.json"),
@@ -3993,6 +4038,13 @@ test("create paseo worktree response preserves an explicit non-Git project", asy
     record: ReturnType<typeof createPersistedWorkspaceRecord>,
   ) => {
     workspaces.set(record.workspaceId, record);
+  };
+  session.workspaceRegistry.update = async (workspaceId, updater) => {
+    const workspace = workspaces.get(workspaceId);
+    if (!workspace) return null;
+    const updated = updater(workspace);
+    workspaces.set(workspaceId, updated);
+    return updated;
   };
   session.projectRegistry.get = async (projectId: string) => projects.get(projectId) ?? null;
   session.projectRegistry.list = async () => Array.from(projects.values());
@@ -8928,6 +8980,13 @@ test("workspace.create worktree source checks out a GitHub PR from githubPrNumbe
     upsert: async (record) => {
       workspaces.set(record.workspaceId, record);
     },
+    update: async (workspaceId, updater) => {
+      const workspace = workspaces.get(workspaceId);
+      if (!workspace) return null;
+      const updated = updater(workspace);
+      workspaces.set(workspaceId, updated);
+      return updated;
+    },
     archive: async () => {},
     remove: async () => {},
   };
@@ -8965,6 +9024,12 @@ test("workspace.create worktree source checks out a GitHub PR from githubPrNumbe
       gitRuntime: { currentBranch: fixture.headRef },
     });
     const workspaceDirectory = response?.payload.workspace?.workspaceDirectory as string;
+    const persistedWorkspace = workspaces.get(response?.payload.workspace?.id ?? "");
+    expect(persistedWorkspace).toMatchObject({
+      cwd: workspaceDirectory,
+      hostVisiblePath: workspaceDirectory,
+      runtime: { runtimeId: "worktree" },
+    });
     expect(readCurrentBranch(workspaceDirectory)).toBe(fixture.headRef);
     expect(existsSync(path.join(workspaceDirectory, fixture.prFileName))).toBe(true);
   } finally {

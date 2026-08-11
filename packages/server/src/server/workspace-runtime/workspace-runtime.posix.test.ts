@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -139,8 +139,22 @@ posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract",
   test("creates, pipes an exact environment, preserves status, and owns only its resources", async () => {
     const fixture = await createFixture(runtimeId);
     const created = await fixture.service.create(fixture.createInput);
-    expect(created).toEqual({ workspaceId: fixture.workspaceId, runtimeId });
-    expect("cwd" in created).toBe(false);
+    const compatibilityCwd =
+      runtimeId === "local" ? fixture.runtimeRoot() : await realpath(fixture.runtimeRoot());
+    expect(created).toEqual({
+      workspaceId: fixture.workspaceId,
+      runtimeId,
+      cwd: compatibilityCwd,
+      hostVisiblePath: compatibilityCwd,
+    });
+    await expect(fixture.service.inspect(fixture.workspaceId)).resolves.toEqual({
+      status: "ready",
+      cwd: compatibilityCwd,
+      hostVisiblePath: compatibilityCwd,
+    });
+    await expect(fixture.service.requireHostVisiblePath(fixture.workspaceId)).resolves.toBe(
+      compatibilityCwd,
+    );
 
     const runtimeRoot = fixture.runtimeRoot();
     expect(await readFile(path.join(runtimeRoot, "committed.txt"), "utf8")).toBe("committed\n");
@@ -215,7 +229,7 @@ posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract",
         env: {},
         purpose: { kind: "workspace-script", script: "missing-contract" },
       }),
-    ).rejects.toThrow(`Workspace runtime is missing: ${fixture.workspaceId}`);
+    ).rejects.toThrow(`Workspace runtime is not selected: ${fixture.workspaceId}`);
   });
 
   test("repeated create does not rerun setup or change paused state", async () => {
@@ -244,6 +258,243 @@ posixDescribe.each(["local", "worktree"] as const)("%s runtime public contract",
     ).rejects.toThrow(`Workspace runtime is paused: ${fixture.workspaceId}`);
     await fixture.service.resume(fixture.workspaceId);
     await fixture.service.destroy(fixture.workspaceId);
+  });
+
+  test("archive, restore, reconstruction, and permanent deletion converge", async () => {
+    const fixture = await createFixture(runtimeId, { lifecycleRecords: true });
+    await fixture.service.create(fixture.createInput);
+    const runtimeRoot = fixture.runtimeRoot();
+    await writeFile(path.join(runtimeRoot, "dirty-untracked.txt"), "preserved\n");
+    let resolveRestoredChange!: (paths: string[]) => void;
+    const restoredChange = new Promise<string[]>((resolve) => {
+      resolveRestoredChange = resolve;
+    });
+    const subscription = await fixture.service
+      .files(fixture.workspaceId)
+      .subscribe({ paths: ["dirty-untracked.txt"] }, (event) => {
+        if (event.type === "changed") resolveRestoredChange(event.paths);
+      });
+
+    await Promise.all([
+      fixture.service.archive(fixture.workspaceId),
+      fixture.service.archive(fixture.workspaceId),
+    ]);
+    expect(fixture.archivedWorkspaceIds.has(fixture.workspaceId)).toBe(true);
+
+    await Promise.all([
+      fixture.service.restore(fixture.workspaceId),
+      fixture.service.restore(fixture.workspaceId),
+    ]);
+    expect(fixture.archivedWorkspaceIds.has(fixture.workspaceId)).toBe(false);
+    await writeFile(path.join(runtimeRoot, "dirty-untracked.txt"), "observed\n");
+    await expect(restoredChange).resolves.toEqual(["dirty-untracked.txt"]);
+    await subscription.unsubscribe();
+
+    await fixture.service.archive(fixture.workspaceId);
+    const reconstructed = createWorkspaceRuntimeService(fixture.options);
+    await expect(
+      reconstructed.run({
+        workspaceId: fixture.workspaceId,
+        argv: ["/bin/true"],
+        env: {},
+        purpose: { kind: "workspace-script", script: "archived-admission" },
+      }),
+    ).rejects.toThrow(`Workspace runtime is paused: ${fixture.workspaceId}`);
+    await Promise.all([
+      reconstructed.restore(fixture.workspaceId),
+      reconstructed.restore(fixture.workspaceId),
+    ]);
+    expect(fixture.archivedWorkspaceIds.has(fixture.workspaceId)).toBe(false);
+    expect(await readFile(path.join(runtimeRoot, "dirty-untracked.txt"), "utf8")).toBe(
+      "observed\n",
+    );
+
+    await Promise.all([
+      reconstructed.destroy(fixture.workspaceId),
+      reconstructed.destroy(fixture.workspaceId),
+    ]);
+    expect(fixture.runtimeIds.has(fixture.workspaceId)).toBe(false);
+    expect(existsSync(fixture.repo)).toBe(true);
+    expect(existsSync(runtimeRoot)).toBe(runtimeId === "local");
+  });
+
+  test("registry failures leave lifecycle transitions retryable without opening an admission gap", async () => {
+    const fixture = await createFixture(runtimeId, { lifecycleRecords: true });
+    await fixture.service.create(fixture.createInput);
+    fixture.lifecycleFailures.archive = 1;
+    await expect(fixture.service.archive(fixture.workspaceId)).rejects.toThrow(
+      "archive persistence failed",
+    );
+    await expect(
+      fixture.service.run({
+        workspaceId: fixture.workspaceId,
+        argv: ["/bin/true"],
+        env: {},
+        purpose: { kind: "workspace-script", script: "failed-archive-barrier" },
+      }),
+    ).rejects.toThrow(`Workspace runtime is paused: ${fixture.workspaceId}`);
+    await fixture.service.archive(fixture.workspaceId);
+
+    fixture.lifecycleFailures.restore = 1;
+    await expect(fixture.service.restore(fixture.workspaceId)).rejects.toThrow(
+      "restore persistence failed",
+    );
+    await expect(
+      fixture.service.run({
+        workspaceId: fixture.workspaceId,
+        argv: ["/bin/true"],
+        env: {},
+        purpose: { kind: "workspace-script", script: "failed-restore-barrier" },
+      }),
+    ).rejects.toThrow(`Workspace runtime is recovering: ${fixture.workspaceId}`);
+    await fixture.service.restore(fixture.workspaceId);
+    const admitted = await fixture.service.run({
+      workspaceId: fixture.workspaceId,
+      argv: ["/usr/bin/true"],
+      env: {},
+      purpose: { kind: "workspace-script", script: "restored-admission" },
+    });
+    admitted.stdin.end();
+    await expect(admitted.exited).resolves.toEqual({ code: 0, signal: null });
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+
+  test("permanent deletion survives intent and final-record persistence failures", async () => {
+    const fixture = await createFixture(runtimeId, { lifecycleRecords: true });
+    await fixture.service.create(fixture.createInput);
+    const runtimeRoot = fixture.runtimeRoot();
+    await writeFile(path.join(runtimeRoot, "adopted-state.txt"), "keep local data\n");
+
+    fixture.lifecycleFailures.beginDelete = 1;
+    await expect(fixture.service.destroy(fixture.workspaceId)).rejects.toThrow(
+      "delete intent persistence failed",
+    );
+    expect(existsSync(runtimeRoot)).toBe(true);
+    const usable = await fixture.service.run({
+      workspaceId: fixture.workspaceId,
+      argv: ["/usr/bin/true"],
+      env: {},
+      purpose: { kind: "workspace-script", script: "failed-delete-intent" },
+    });
+    usable.stdin.end();
+    await expect(usable.exited).resolves.toEqual({ code: 0, signal: null });
+
+    fixture.lifecycleFailures.remove = 1;
+    await expect(fixture.service.destroy(fixture.workspaceId)).rejects.toThrow(
+      "record removal persistence failed",
+    );
+    expect(fixture.deletingWorkspaceIds.has(fixture.workspaceId)).toBe(true);
+    expect(fixture.runtimeIds.has(fixture.workspaceId)).toBe(true);
+    expect(existsSync(runtimeRoot)).toBe(runtimeId === "local");
+
+    const reconstructed = createWorkspaceRuntimeService(fixture.options);
+    await reconstructed.reconcile();
+    await reconstructed.destroy(fixture.workspaceId);
+    expect(fixture.runtimeIds.has(fixture.workspaceId)).toBe(false);
+    expect(existsSync(fixture.repo)).toBe(true);
+    if (runtimeId === "local") {
+      await expect(readFile(path.join(runtimeRoot, "adopted-state.txt"), "utf8")).resolves.toBe(
+        "keep local data\n",
+      );
+    }
+  });
+
+  test("startup reconciliation converges interrupted archive and restore transitions", async () => {
+    const fixture = await createFixture(runtimeId, { lifecycleRecords: true });
+    await fixture.service.create(fixture.createInput);
+    await fixture.service.pause(fixture.workspaceId);
+
+    const reconstructed = createWorkspaceRuntimeService(fixture.options);
+    await reconstructed.reconcile();
+    const resumed = await reconstructed.run({
+      workspaceId: fixture.workspaceId,
+      argv: ["/usr/bin/true"],
+      env: {},
+      purpose: { kind: "workspace-script", script: "reconciled-resume" },
+    });
+    resumed.stdin.end();
+    await expect(resumed.exited).resolves.toEqual({ code: 0, signal: null });
+
+    await reconstructed.archive(fixture.workspaceId);
+    await reconstructed.resume(fixture.workspaceId);
+    const afterInterruptedRestore = createWorkspaceRuntimeService(fixture.options);
+    await afterInterruptedRestore.reconcile();
+    await expect(
+      afterInterruptedRestore.run({
+        workspaceId: fixture.workspaceId,
+        argv: ["/usr/bin/true"],
+        env: {},
+        purpose: { kind: "workspace-script", script: "reconciled-archive" },
+      }),
+    ).rejects.toThrow(`Workspace runtime is paused: ${fixture.workspaceId}`);
+    await afterInterruptedRestore.destroy(fixture.workspaceId);
+  });
+
+  test("archive hooks execute inside the selected runtime exactly once", async () => {
+    const fixture = await createFixture(runtimeId, { lifecycleRecords: true });
+    await fixture.service.create(fixture.createInput);
+    const configure = await fixture.service.run({
+      workspaceId: fixture.workspaceId,
+      argv: [
+        process.execPath,
+        "-e",
+        `require("node:fs").writeFileSync("paseo.json", ${JSON.stringify(
+          JSON.stringify({
+            worktree: { teardown: ["printf archived >> archive-hook.txt"] },
+          }),
+        )})`,
+      ],
+      env: {},
+      purpose: { kind: "setup" },
+    });
+    configure.stdin.end();
+    await expect(configure.exited).resolves.toEqual({ code: 0, signal: null });
+
+    await fixture.service.archive(fixture.workspaceId);
+    await fixture.service.archive(fixture.workspaceId);
+    expect(await readFile(path.join(fixture.runtimeRoot(), "archive-hook.txt"), "utf8")).toBe(
+      "archived",
+    );
+    await fixture.service.restore(fixture.workspaceId);
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+});
+
+posixDescribe("reconstruction placement recovery", () => {
+  test("refreshes persisted compatibility cwd from driver inspect", async () => {
+    const root = await temporaryRoot("reconcile-compatibility-cwd");
+    const repo = await createRepository(root);
+    const runtimeIds = new Map<string, string>();
+    const placements = new Map<string, { cwd: string; hostVisiblePath?: string }>();
+    const options: WorkspaceRuntimeOptions = {
+      paseoHome: path.join(root, "home"),
+      resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
+      persistRuntimeId: async (workspaceId, runtimeId, placement) => {
+        runtimeIds.set(workspaceId, runtimeId);
+        placements.set(workspaceId, placement);
+      },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (workspaceId) => {
+        runtimeIds.delete(workspaceId);
+        placements.delete(workspaceId);
+      },
+      listRuntimeRecords: async () => [
+        { workspaceId: "recover-cwd", runtimeId: "local", archived: false },
+      ],
+    };
+    const service = createWorkspaceRuntimeService(options);
+    await service.create({
+      workspaceId: "recover-cwd",
+      runtimeId: "local",
+      project: { id: "project", source: { kind: "host-directory", path: repo } },
+      placement: { kind: "existing" },
+    });
+    placements.set("recover-cwd", { cwd: "/stale/presentation/path" });
+
+    await createWorkspaceRuntimeService(options).reconcile();
+
+    expect(placements.get("recover-cwd")).toEqual({ cwd: repo, hostVisiblePath: repo });
+    await service.destroy("recover-cwd");
   });
 });
 
@@ -387,10 +638,16 @@ posixDescribe.each(["local", "worktree"] as const)(
   },
 );
 
-async function createFixture(runtimeId: "local" | "worktree") {
+async function createFixture(
+  runtimeId: "local" | "worktree",
+  fixtureOptions: { lifecycleRecords?: boolean } = {},
+) {
   const root = await temporaryRoot(runtimeId);
   const repo = await createRepository(root);
   const runtimeIds = new Map<string, string>();
+  const archivedWorkspaceIds = new Set<string>();
+  const deletingWorkspaceIds = new Set<string>();
+  const lifecycleFailures = { archive: 0, restore: 0, beginDelete: 0, remove: 0 };
   const worktreesRoot = path.join(root, "worktrees");
   const options: WorkspaceRuntimeOptions = {
     paseoHome: path.join(root, "home"),
@@ -399,6 +656,47 @@ async function createFixture(runtimeId: "local" | "worktree") {
     persistRuntimeId: async (workspaceId, selectedRuntimeId) => {
       runtimeIds.set(workspaceId, selectedRuntimeId);
     },
+    beginWorkspaceDeletion: async (workspaceId) => {
+      if (lifecycleFailures.beginDelete > 0) {
+        lifecycleFailures.beginDelete -= 1;
+        throw new Error("delete intent persistence failed");
+      }
+      deletingWorkspaceIds.add(workspaceId);
+    },
+    removeWorkspaceRecord: async (workspaceId) => {
+      if (lifecycleFailures.remove > 0) {
+        lifecycleFailures.remove -= 1;
+        throw new Error("record removal persistence failed");
+      }
+      runtimeIds.delete(workspaceId);
+      archivedWorkspaceIds.delete(workspaceId);
+      deletingWorkspaceIds.delete(workspaceId);
+    },
+    ...(fixtureOptions.lifecycleRecords
+      ? {
+          archiveWorkspaceRecord: async (workspaceId: string) => {
+            if (lifecycleFailures.archive > 0) {
+              lifecycleFailures.archive -= 1;
+              throw new Error("archive persistence failed");
+            }
+            archivedWorkspaceIds.add(workspaceId);
+          },
+          restoreWorkspaceRecord: async (workspaceId: string) => {
+            if (lifecycleFailures.restore > 0) {
+              lifecycleFailures.restore -= 1;
+              throw new Error("restore persistence failed");
+            }
+            archivedWorkspaceIds.delete(workspaceId);
+          },
+          listRuntimeRecords: async () =>
+            [...runtimeIds].map(([workspaceId, selectedRuntimeId]) => ({
+              workspaceId,
+              runtimeId: selectedRuntimeId,
+              archived: archivedWorkspaceIds.has(workspaceId),
+              deleting: deletingWorkspaceIds.has(workspaceId),
+            })),
+        }
+      : {}),
   };
   const workspaceId = `${runtimeId}-workspace`;
   const createInput: CreateWorkspaceInput = {
@@ -423,6 +721,10 @@ async function createFixture(runtimeId: "local" | "worktree") {
     root,
     repo,
     options,
+    runtimeIds,
+    archivedWorkspaceIds,
+    deletingWorkspaceIds,
+    lifecycleFailures,
     workspaceId,
     createInput,
     service: createWorkspaceRuntimeService(options),

@@ -110,6 +110,7 @@ interface CreatePaseoWorktreeInBackgroundDependencies {
   getDaemonTcpHost: (() => string | null) | null;
   serviceProxyPublicBaseUrl?: string | null;
   onScriptsChanged: ((workspaceId: string, workspaceDirectory: string) => void) | null;
+  runWorkspaceSetup?: (workspaceId: string, signal?: AbortSignal) => Promise<void>;
 }
 
 interface CreatePaseoWorktreeWorkflowDependencies extends CreatePaseoWorktreeInBackgroundDependencies {
@@ -650,6 +651,15 @@ export async function createPaseoWorktreeWorkflow(
       setupContinuation: {
         kind: "agent",
         startAfterAgentCreate: ({ agentId }) => {
+          if (dependencies.runWorkspaceSetup) {
+            void dependencies.runWorkspaceSetup(workspace.workspaceId).catch((error) => {
+              dependencies.sessionLogger.error(
+                { err: error, workspaceId: workspace.workspaceId, agentId },
+                "Runtime-owned workspace setup failed",
+              );
+            });
+            return;
+          }
           void runAsyncWorktreeBootstrap({
             agentId,
             workspaceId: workspace.workspaceId,
@@ -735,6 +745,10 @@ export async function runWorktreeSetupInBackground(
       emitSetupProgress("running", null);
 
       if (!options.shouldBootstrap) {
+        emitSetupProgress("completed", null);
+      } else if (dependencies.runWorkspaceSetup) {
+        setupStarted = true;
+        await dependencies.runWorkspaceSetup(workspaceId, signal);
         emitSetupProgress("completed", null);
       } else {
         const workspaceCwd = options.workspaceCwd ?? worktree.worktreePath;

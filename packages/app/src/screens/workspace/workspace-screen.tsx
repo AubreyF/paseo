@@ -3496,6 +3496,7 @@ function WorkspaceScreenContent({
             serverId={normalizedServerId}
             workspaceId={normalizedWorkspaceId}
             cwd={workspaceDirectory}
+            hostVisiblePath={workspaceDescriptor?.hostVisiblePath}
             activeFile={activeFileLocation}
             hideLabels
           />

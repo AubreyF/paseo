@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, watch } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,6 +14,9 @@ const fixtureExecutable = fileURLToPath(
 );
 const helperExecutable = fileURLToPath(
   new URL("../workspace-helper/executable.mjs", import.meta.url),
+);
+const rebindHelperExecutable = fileURLToPath(
+  new URL("../test-utils/fixtures/workspace-helper-rebind-fixture.mjs", import.meta.url),
 );
 const cleanupRoots: string[] = [];
 
@@ -93,6 +97,67 @@ test("a command runtime tears down and reconstructs its bound files capability",
     type: "error",
     error: "Workspace files client is closed",
   });
+});
+
+test("a failed second subscription rebind rolls back the staged observer set before retry", async () => {
+  const fixture = await createFixture("transactional-rebind", false, "pty", {}, (root) => [
+    processExecPath(),
+    rebindHelperExecutable,
+    helperExecutable,
+    path.join(root, "watch-launches"),
+  ]);
+  await Promise.all([
+    writeFile(path.join(fixture.source, "first.txt"), "before\n"),
+    writeFile(path.join(fixture.source, "second.txt"), "before\n"),
+  ]);
+  await fixture.service.create(fixture.createInput);
+  const files = fixture.service.files(fixture.workspaceId);
+  let observeChanges = false;
+  let resolveFirstChange!: () => void;
+  let resolveSecondChange!: () => void;
+  const firstChange = new Promise<void>((resolve) => {
+    resolveFirstChange = resolve;
+  });
+  const secondChange = new Promise<void>((resolve) => {
+    resolveSecondChange = resolve;
+  });
+  const subscriptions = await Promise.all([
+    files.subscribe({ paths: ["first.txt"] }, (event) => {
+      if (observeChanges && event.type === "changed") resolveFirstChange();
+    }),
+    files.subscribe({ paths: ["second.txt"] }, (event) => {
+      if (observeChanges && event.type === "changed") resolveSecondChange();
+    }),
+  ]);
+
+  await fixture.service.pause(fixture.workspaceId);
+  await expect(fixture.service.resume(fixture.workspaceId)).rejects.toThrow(
+    "Workspace helper subscribe acknowledgement timed out",
+  );
+  await expect(files.list(".")).rejects.toThrow(
+    `Workspace runtime is recovering: ${fixture.workspaceId}`,
+  );
+  await fixture.service.resume(fixture.workspaceId);
+
+  observeChanges = true;
+  await Promise.all([
+    writeFile(path.join(fixture.source, "first.txt"), "after\n"),
+    writeFile(path.join(fixture.source, "second.txt"), "after\n"),
+  ]);
+  await Promise.all([firstChange, secondChange]);
+  expect(Number(await readFile(path.join(fixture.root, "watch-launches"), "utf8"))).toBe(4);
+
+  await Promise.all(subscriptions.map((subscription) => subscription.unsubscribe()));
+  expect(
+    execFileSync("ps", ["-axo", "command="], { encoding: "utf8" })
+      .split("\n")
+      .some(
+        (command) =>
+          command.includes("workspace-helper-rebind-fixture.mjs") &&
+          command.includes(path.basename(fixture.root)),
+      ),
+  ).toBe(false);
+  await fixture.service.destroy(fixture.workspaceId);
 });
 
 test("a file operation racing pause cannot reconstruct the closing helper client", async () => {
@@ -359,6 +424,7 @@ async function createFixture(
   withBarrier = false,
   modes: "pipes" | "pty" = "pty",
   runtimeOptions: Readonly<Record<string, unknown>> = {},
+  helperCommand?: (root: string) => readonly [string, ...string[]],
 ) {
   const root = await mkdtemp(path.join(tmpdir(), `paseo-command-runtime-${name}-`));
   cleanupRoots.push(root);
@@ -374,6 +440,10 @@ async function createFixture(
     persistRuntimeId: async (id, runtimeId) => {
       runtimeIds.set(id, runtimeId);
     },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
     externalRuntimes: {
       fixture: {
         type: "command",
@@ -382,7 +452,7 @@ async function createFixture(
           fixtureExecutable,
           ...(modes === "pipes" ? ["--modes", "pipes"] : []),
         ],
-        helperCommand: [processExecPath(), helperExecutable],
+        helperCommand: helperCommand?.(root) ?? [processExecPath(), helperExecutable],
         options: {
           stateDirectory,
           ...runtimeOptions,
@@ -392,6 +462,7 @@ async function createFixture(
     },
   });
   return {
+    root,
     source,
     stateDirectory,
     barrierDirectory,

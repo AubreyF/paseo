@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, test } from "vitest";
 
+import type { WorkspaceWatchEvent } from "./index.js";
 import { bindWorkspaceHelper, type WorkspaceHelperProcess } from "./integration/index.js";
 
 const posixDescribe = describe.runIf(process.platform !== "win32");
@@ -93,6 +94,75 @@ posixDescribe("workspace-helper public capability", () => {
 
     await writeFile(path.join(root, "a", "file.txt"), "changed\n");
     await expect(changed).resolves.toEqual(["a/file.txt"]);
+    await subscription.unsubscribe();
+    await client.close();
+  });
+
+  test("a clean watcher restart does not replay a stale file version", async () => {
+    const { client, root } = await fixture();
+    const first = await client.files.subscribe({ paths: ["later.txt"] }, () => undefined);
+    await first.unsubscribe();
+    const events: WorkspaceWatchEvent[] = [];
+    let resolveChanged!: () => void;
+    const changed = new Promise<void>((resolve) => {
+      resolveChanged = resolve;
+    });
+    const second = await client.files.subscribe({ paths: ["later.txt"] }, (event) => {
+      events.push(event);
+      if (event.type === "changed") resolveChanged();
+    });
+
+    expect(events).toEqual([]);
+    await writeFile(path.join(root, "later.txt"), "created\n");
+    await changed;
+    expect(events).toContainEqual({ type: "changed", paths: ["later.txt"] });
+
+    await second.unsubscribe();
+    await client.close();
+  });
+
+  test("a helper crash relaunches the watcher and replays live subscriptions", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "paseo-workspace-helper-replay-"));
+    cleanupRoots.push(parent);
+    const root = path.join(parent, "workspace");
+    await mkdir(root);
+    await writeFile(path.join(root, "watched.txt"), "before\n");
+    const watcherChildren: ReturnType<typeof spawn>[] = [];
+    let resolveSecondSubscription!: () => void;
+    const secondSubscription = new Promise<void>((resolve) => {
+      resolveSecondSubscription = resolve;
+    });
+    const client = bindWorkspaceHelper({
+      root,
+      command: [process.execPath, workspaceHelper],
+      launch: async (argv) => {
+        const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+        if (argv.includes("watch")) {
+          watcherChildren.push(child);
+          if (watcherChildren.length === 2) {
+            child.stdout.on("data", (chunk) => {
+              if (chunk.toString().includes('"type":"subscribed"')) {
+                resolveSecondSubscription();
+              }
+            });
+          }
+        }
+        return childProcess(child);
+      },
+    });
+    let resolveChanged!: (paths: string[]) => void;
+    const changed = new Promise<string[]>((resolve) => {
+      resolveChanged = resolve;
+    });
+    const subscription = await client.files.subscribe({ paths: ["watched.txt"] }, (event) => {
+      if (event.type === "changed") resolveChanged(event.paths);
+    });
+
+    watcherChildren[0]?.kill("SIGKILL");
+    await secondSubscription;
+    await writeFile(path.join(root, "watched.txt"), "after\n");
+
+    await expect(changed).resolves.toEqual(["watched.txt"]);
     await subscription.unsubscribe();
     await client.close();
   });
@@ -260,7 +330,7 @@ posixDescribe("workspace-helper public capability", () => {
     await subscription.unsubscribe();
     await changeSubscription.unsubscribe();
     await client.close();
-  });
+  }, 15_000);
 });
 
 async function recordedClient(mode: string) {
@@ -306,6 +376,10 @@ async function launchTestProcess(
   argv: readonly [string, ...string[]],
 ): Promise<WorkspaceHelperProcess> {
   const child = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+  return childProcess(child);
+}
+
+function childProcess(child: ReturnType<typeof spawn>): WorkspaceHelperProcess {
   return {
     stdin: child.stdin,
     stdout: child.stdout,

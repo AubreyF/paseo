@@ -36,6 +36,7 @@ const fixtureAgentPath = fileURLToPath(
 interface CharacterizedWorkspace {
   cwd: string;
   id: string;
+  projectId: string;
   kind: "local" | "worktree";
 }
 
@@ -126,6 +127,7 @@ async function createCharacterizedWorkspace(kind: "local" | "worktree") {
   return {
     cwd: workspace.workspaceDirectory,
     id: workspace.id,
+    projectId: workspace.projectId,
     kind,
   } satisfies CharacterizedWorkspace;
 }
@@ -298,12 +300,21 @@ async function expectProviderDiscoveryAndAgentExecution(
   await client.sendMessage(agent.id, `characterize ${workspace.kind}`);
   const finished = await client.waitForFinish(agent.id, 30_000);
   expect(finished.status).toBe("idle");
-  const agentRead = await client.readFile(workspace.cwd, "stdio-agent-output.txt");
+  const agentRead = await client.readFile(
+    workspace.cwd,
+    "stdio-agent-output.txt",
+    undefined,
+    workspace.id,
+  );
   expect(new TextDecoder().decode(agentRead.bytes)).toBe(`characterize ${workspace.kind}\n`);
 }
 
-async function readWorkspaceTextFile(cwd: string, filePath: string): Promise<string> {
-  const file = await client.readFile(cwd, filePath);
+async function readWorkspaceTextFile(
+  workspaceId: string,
+  cwd: string,
+  filePath: string,
+): Promise<string> {
+  const file = await client.readFile(cwd, filePath, undefined, workspaceId);
   return new TextDecoder().decode(file.bytes);
 }
 
@@ -325,8 +336,12 @@ describe("current workspace runtime journeys", () => {
       expect(archive.error).toBeNull();
       expect(existsSync(workspace.cwd)).toBe(true);
       expect(readFileSync(path.join(workspace.cwd, "characterized.txt"), "utf8")).toBe("after\n");
+      await client.restoreWorkspace(workspace.id);
+      const removal = await client.removeProject(workspace.projectId);
+      expect(removal.removedWorkspaceIds).toContain(workspace.id);
+      expect(existsSync(workspace.cwd)).toBe(true);
     } finally {
-      await client.archiveWorkspace(workspace.id).catch(() => undefined);
+      await client.removeProject(workspace.projectId).catch(() => undefined);
     }
   }, 120_000);
 
@@ -336,32 +351,62 @@ describe("current workspace runtime journeys", () => {
       const records = JSON.parse(
         readFileSync(path.join(daemon.paseoHome, "projects", "workspaces.json"), "utf8"),
       ) as Array<{ workspaceId: string; runtime?: { runtimeId: string } }>;
-      expect(
-        records.find((record) => record.workspaceId === workspace.id)?.runtime,
-      ).toBeUndefined();
+      expect(records.find((record) => record.workspaceId === workspace.id)?.runtime).toEqual({
+        runtimeId: "worktree",
+      });
       await expect
         .poll(() => client.fetchWorkspaceSetupStatus(workspace.id), { timeout: 30_000 })
         .toMatchObject({ snapshot: { status: "completed", error: null } });
-      await expect(readWorkspaceTextFile(workspace.cwd, "setup-output.txt")).resolves.toBe(
-        "setup complete\n",
-      );
+      await expect(
+        readWorkspaceTextFile(workspace.id, workspace.cwd, "setup-output.txt"),
+      ).resolves.toBe("setup complete\n");
 
       await expectFileEditAndWatch(workspace);
       await expectGitObservation(workspace);
       await expectTerminalCommand(workspace);
       await expectProviderDiscoveryAndAgentExecution(workspace);
 
-      const removal = await client.archivePaseoWorktree({
-        worktreePath: workspace.cwd,
+      let resolveRestoredObservation!: () => void;
+      const restoredObservation = new Promise<void>((resolve) => {
+        resolveRestoredObservation = resolve;
+      });
+      const restoredSubscription = await client.subscribeFile(
+        { cwd: workspace.cwd, path: "characterized.txt", workspaceId: workspace.id },
+        (version) => {
+          if (version.status === "ready") resolveRestoredObservation();
+        },
+      );
+      if (restoredSubscription.initial.status !== "ready") {
+        throw new Error("Expected characterized.txt before archive");
+      }
+
+      const archive = await client.archiveWorkspace(workspace.id);
+      expect(archive.error).toBeNull();
+      expect(existsSync(workspace.cwd)).toBe(true);
+      expect(readFileSync(path.join(workspace.cwd, "characterized.txt"), "utf8")).toBe("after\n");
+
+      await client.restoreWorkspace(workspace.id);
+      const restoredWrite = await client.writeFile({
+        cwd: workspace.cwd,
+        path: "characterized.txt",
+        content: "restored\n",
+        expectedModifiedAt: restoredSubscription.initial.modifiedAt,
+        expectedRevision: restoredSubscription.initial.revision,
         workspaceId: workspace.id,
       });
-      expect(removal).toMatchObject({ success: true, error: null });
-      await expect.poll(() => existsSync(workspace.cwd), { timeout: 15_000 }).toBe(false);
+      expect(restoredWrite.status).toBe("written");
+      await expect(restoredObservation).resolves.toBeUndefined();
+      restoredSubscription.unsubscribe();
+      expect(readFileSync(path.join(workspace.cwd, "characterized.txt"), "utf8")).toBe(
+        "restored\n",
+      );
+
+      const removal = await client.removeProject(workspace.projectId);
+      expect(removal.removedWorkspaceIds).toContain(workspace.id);
+      expect(existsSync(workspace.cwd)).toBe(false);
     } finally {
       if (existsSync(workspace.cwd)) {
-        await client
-          .archivePaseoWorktree({ worktreePath: workspace.cwd, workspaceId: workspace.id })
-          .catch(() => undefined);
+        await client.removeProject(workspace.projectId).catch(() => undefined);
       }
     }
   }, 120_000);
@@ -385,11 +430,18 @@ test("selected worktree provider journey stays behind the public daemon and clie
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
   mkdirSync(paseoHome, { recursive: true });
   const workspaceId = `selected-worktree-${Date.now()}`;
+  let runtimeSelected = true;
   const seedRuntime = createWorkspaceRuntimeService({
     paseoHome,
     worktreesRoot: path.join(root, "worktrees"),
-    resolveRuntimeId: async (id) => (id === workspaceId ? "worktree" : null),
-    persistRuntimeId: async () => undefined,
+    resolveRuntimeId: async (id) => (id === workspaceId && runtimeSelected ? "worktree" : null),
+    persistRuntimeId: async () => {
+      runtimeSelected = true;
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async () => {
+      runtimeSelected = false;
+    },
   });
   await seedRuntime.create({
     workspaceId,

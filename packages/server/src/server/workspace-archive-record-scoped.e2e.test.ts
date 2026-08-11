@@ -248,7 +248,7 @@ test("renaming a workspace updates every subscribed client", async () => {
   }
 });
 
-test("archiving the last reference to a worktree removes it from disk regardless of the disk flag", async () => {
+test("archive preserves an owned worktree and permanent project deletion removes it", async () => {
   const repoDir = createGitRepo();
 
   const keepResult = await ctx.client.createWorkspace({
@@ -261,43 +261,18 @@ test("archiving the last reference to a worktree removes it from disk regardless
   const keepDir = keepWorkspace.workspaceDirectory;
   expect(existsSync(keepDir)).toBe(true);
 
-  // Last reference, deleteWorktreeFromDisk omitted (defaults ignored) → dir removed.
   const keepArchive = await ctx.client.archivePaseoWorktree({ worktreePath: keepDir });
   expect(keepArchive.success).toBe(true);
-  await expect
-    .poll(async () => (await activeWorkspaceIds()).has(keepWorkspace.id), {
-      timeout: 10000,
-      interval: 100,
-    })
-    .toBe(false);
-  await expect.poll(() => existsSync(keepDir), { timeout: 10000, interval: 100 }).toBe(false);
+  expect((await activeWorkspaceIds()).has(keepWorkspace.id)).toBe(false);
+  expect(existsSync(keepDir)).toBe(true);
 
-  const deleteResult = await ctx.client.createWorkspace({
-    source: {
-      kind: "worktree",
-      cwd: repoDir,
-      worktreeSlug: "delete-from-disk",
-      baseBranch: "main",
-    },
-  });
-  const deleteWorkspace = deleteResult.workspace;
-  if (!deleteWorkspace?.workspaceDirectory) {
-    throw new Error(deleteResult.error ?? "Failed to create worktree workspace");
-  }
-  const deleteDir = deleteWorkspace.workspaceDirectory;
-  expect(existsSync(deleteDir)).toBe(true);
+  await ctx.client.restoreWorkspace(keepWorkspace.id);
+  expect((await activeWorkspaceIds()).has(keepWorkspace.id)).toBe(true);
+  expect(existsSync(keepDir)).toBe(true);
 
-  // Last reference on a fresh worktree still removes the directory without any
-  // caller-supplied disk-deletion flag.
-  const deleteArchive = await ctx.client.archivePaseoWorktree({ worktreePath: deleteDir });
-  expect(deleteArchive.success).toBe(true);
-  await expect
-    .poll(async () => (await activeWorkspaceIds()).has(deleteWorkspace.id), {
-      timeout: 10000,
-      interval: 100,
-    })
-    .toBe(false);
-  await expect.poll(() => existsSync(deleteDir), { timeout: 10000, interval: 100 }).toBe(false);
+  const removed = await ctx.client.removeProject(keepWorkspace.projectId);
+  expect(removed.removedWorkspaceIds).toContain(keepWorkspace.id);
+  expect(existsSync(keepDir)).toBe(false);
 }, 60000);
 
 test.skipIf(process.platform === "win32")(
@@ -347,7 +322,7 @@ test.skipIf(process.platform === "win32")(
         retryError: null,
       });
       expect((await activeWorkspaceIds()).has(workspace.id)).toBe(false);
-      expect(existsSync(workspace.workspaceDirectory)).toBe(false);
+      expect(existsSync(workspace.workspaceDirectory)).toBe(true);
     } finally {
       writeFileSync(stopSetupPath, "stop\n");
     }
@@ -356,7 +331,7 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32")(
-  "repeating archive removes a residual worktree for an already-archived workspace",
+  "repeating archive preserves the same runtime-owned worktree",
   async () => {
     const repoDir = createGitRepo();
     const result = await ctx.client.createWorkspace({
@@ -403,7 +378,7 @@ test.skipIf(process.platform === "win32")(
       const retry = await ctx.client.archiveWorkspace(workspace.id);
 
       expect(retry.error).toBeNull();
-      expect(existsSync(workspace.workspaceDirectory)).toBe(false);
+      expect(existsSync(workspace.workspaceDirectory)).toBe(true);
     } finally {
       writeFileSync(stopWriterPath, "stop\n");
       await writerExit;
@@ -484,15 +459,9 @@ test("keeps the worktree on disk when a sibling workspace still references it", 
   // directory must survive regardless of the legacy disk flag.
   const archive = await ctx.client.archivePaseoWorktree({
     worktreePath: worktreeDir,
+    workspaceId: worktreeWorkspace.id,
   });
   expect(archive.success).toBe(true);
-
-  await expect
-    .poll(async () => (await activeWorkspaceIds()).has(worktreeWorkspace.id), {
-      timeout: 10000,
-      interval: 100,
-    })
-    .toBe(false);
 
   const remaining = await activeWorkspaceIds();
   expect(remaining.has(worktreeWorkspace.id)).toBe(false);

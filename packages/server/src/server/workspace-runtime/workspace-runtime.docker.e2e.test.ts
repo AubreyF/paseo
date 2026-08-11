@@ -21,6 +21,7 @@ import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { allocateWorkspaceServicePort } from "../workspace-service-port-allocator.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -69,6 +70,10 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
     persistRuntimeId: async (workspaceId: string, runtimeId: string) => {
       runtimeIds.set(workspaceId, runtimeId);
     },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId: string) => {
+      runtimeIds.delete(workspaceId);
+    },
     externalRuntimes: {
       docker: {
         type: "command",
@@ -90,8 +95,15 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
       },
       placement: { kind: "existing" },
     });
-    expect(workspace).toEqual({ workspaceId, runtimeId: "docker" });
-    expect("cwd" in workspace).toBe(false);
+
+    expect(workspace).toEqual({ workspaceId, runtimeId: "docker", cwd: "/workspace" });
+    await expect(service.inspect(workspaceId)).resolves.toEqual({
+      status: "ready",
+      cwd: "/workspace",
+    });
+    await expect(service.requireHostVisiblePath(workspaceId)).rejects.toThrow(
+      `Workspace has no host-visible path: ${workspaceId}`,
+    );
 
     for (const [name, value] of [
       ["user.email", "test@example.com"],
@@ -351,7 +363,73 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
         env: {},
         purpose: { kind: "workspace-script", script: "missing-contract" },
       }),
-    ).rejects.toThrow(`Workspace runtime is missing: ${workspaceId}`);
+    ).rejects.toThrow(`Workspace runtime is not selected: ${workspaceId}`);
+  } finally {
+    await service.destroy(workspaceId).catch(() => undefined);
+  }
+}, 120_000);
+
+test("a selected Docker service port script executes in the container and leaves the host decoy untouched", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-port-script-"));
+  cleanupRoots.push(root);
+  const repo = await createRepository(root);
+  const script = path.join(repo, "port-script.sh");
+  await writeFile(
+    script,
+    "#!/bin/sh\nprintf runtime > runtime-port-script.txt\nprintf '41234\\n'\n",
+  );
+  await chmod(script, 0o755);
+  execFileSync("git", ["add", "port-script.sh"], { cwd: repo });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "port script"], {
+    cwd: repo,
+  });
+  const workspaceId = `docker-port-script-${Date.now()}`;
+  const runtimeIds = new Map<string, string>();
+  const service = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "paseo-home"),
+    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
+    persistRuntimeId: async (id, runtimeId) => {
+      runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
+    externalRuntimes: {
+      docker: {
+        type: "command",
+        command: [process.execPath, "--import", "tsx", runtimeExecutable],
+        options: { image },
+      },
+    },
+  });
+  try {
+    await service.create({
+      workspaceId,
+      runtimeId: "docker",
+      project: { id: "docker-port-project", source: { kind: "host-directory", path: repo } },
+      placement: { kind: "existing" },
+    });
+    await writeFile(script, "#!/bin/sh\nprintf host > host-port-script.txt\nprintf '49999\\n'\n");
+
+    await expect(
+      allocateWorkspaceServicePort({
+        allocation: { portScript: "./port-script.sh" },
+        cwd: repo,
+        scriptName: "web",
+        workspaceId,
+        branchName: null,
+        runtime: await service.bind(workspaceId),
+      }),
+    ).resolves.toBe(41234);
+    await expect(service.files(workspaceId).stat("runtime-port-script.txt")).resolves.toMatchObject(
+      {
+        status: "ready",
+      },
+    );
+    await expect(readFile(path.join(repo, "host-port-script.txt"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   } finally {
     await service.destroy(workspaceId).catch(() => undefined);
   }
@@ -397,6 +475,10 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
     resolveRuntimeId: async (workspaceId) => selectedRuntimeIds.get(workspaceId) ?? null,
     persistRuntimeId: async (workspaceId, runtimeId) => {
       selectedRuntimeIds.set(workspaceId, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId) => {
+      selectedRuntimeIds.delete(workspaceId);
     },
   });
   const projectRegistry = new FileBackedProjectRegistry(
@@ -474,8 +556,26 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
   try {
     await publicClient.connect();
     await publicClient.fetchAgents({ subscribe: { subscriptionId: "docker-runtime-agents" } });
+    const recoveredRegistry = new FileBackedWorkspaceRegistry(
+      path.join(paseoHome, "projects", "workspaces.json"),
+      createTestLogger(),
+    );
+    await recoveredRegistry.initialize();
+    const recoveredRecords = await recoveredRegistry.list();
+    const publicCwds = new Map(
+      recoveredRecords
+        .filter((workspace) => workspaceIds.includes(workspace.workspaceId))
+        .map((workspace) => [workspace.workspaceId, workspace.cwd]),
+    );
+    expect(Array.from(publicCwds.values())).toEqual(["/workspace", "/workspace"]);
+    expect(
+      recoveredRecords
+        .filter((workspace) => workspaceIds.includes(workspace.workspaceId))
+        .map((workspace) => workspace.hostVisiblePath),
+    ).toEqual([null, null]);
     for (const workspaceId of workspaceIds) {
-      const snapshot = await publicClient.getProvidersSnapshot({ cwd: repo, workspaceId });
+      const cwd = publicCwds.get(workspaceId)!;
+      const snapshot = await publicClient.getProvidersSnapshot({ cwd, workspaceId });
       expect(snapshot.entries).toContainEqual(
         expect.objectContaining({
           provider: "docker-fixture",
@@ -496,7 +596,8 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
     }
 
     const workspaceId = workspaceIds[0]!;
-    const workspaceGit = publicClient.bindWorkspaceGit({ workspaceId, cwd: repo });
+    const cwd = publicCwds.get(workspaceId)!;
+    const workspaceGit = publicClient.bindWorkspaceGit({ workspaceId, cwd });
     await expect(workspaceGit.getStatus()).resolves.toMatchObject({
       isGit: true,
       isDirty: false,
@@ -504,7 +605,7 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
     const agent = await publicClient.createAgent({
       provider: "docker-fixture",
       model: "fixture-model-v1",
-      cwd: repo,
+      cwd,
       workspaceId,
       title: "Docker public fake provider",
     });
@@ -513,14 +614,14 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
       status: "idle",
     });
     const edited = await publicClient.readFile(
-      repo,
+      cwd,
       "stdio-agent-output.txt",
       undefined,
       workspaceId,
     );
     expect(new TextDecoder().decode(edited.bytes)).toBe("public docker edit\n");
     const editedTrackedFile = await publicClient.readFile(
-      repo,
+      cwd,
       "committed.txt",
       undefined,
       workspaceId,
@@ -529,7 +630,7 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
     const dirtyDiff = await workspaceGit.getDiff({ mode: "uncommitted" });
     expect(dirtyDiff.files.map((file) => file.path)).toContain("committed.txt");
     const isolatedEnvironment = await publicClient.readFile(
-      repo,
+      cwd,
       "stdio-agent-env.txt",
       undefined,
       workspaceId,
@@ -539,7 +640,7 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
     const configuredAgent = await publicClient.createAgent({
       provider: "docker-fixture",
       model: "fixture-model-v1",
-      cwd: repo,
+      cwd: publicCwds.get(workspaceIds[1]!)!,
       workspaceId: workspaceIds[1],
       title: "Configured Docker public fake provider",
     });
@@ -548,7 +649,7 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
       status: "idle",
     });
     const configuredEnvironment = await publicClient.readFile(
-      repo,
+      publicCwds.get(workspaceIds[1]!)!,
       "stdio-agent-env.txt",
       undefined,
       workspaceIds[1],
@@ -568,7 +669,7 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
       placement: { kind: "existing" },
     });
 
-    const rebuiltA = await publicClient.getProvidersSnapshot({ cwd: repo, workspaceId });
+    const rebuiltA = await publicClient.getProvidersSnapshot({ cwd, workspaceId });
     expect(rebuiltA.entries).toContainEqual(
       expect.objectContaining({
         provider: "docker-fixture",
@@ -576,7 +677,7 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
       }),
     );
     const unchangedB = await publicClient.getProvidersSnapshot({
-      cwd: repo,
+      cwd: publicCwds.get(workspaceIds[1]!)!,
       workspaceId: workspaceIds[1],
     });
     expect(unchangedB.entries).toContainEqual(
@@ -652,6 +753,10 @@ test("Docker rejects a committed symlink cwd that resolves outside the selected 
     persistRuntimeId: async (id, runtimeId) => {
       runtimeIds.set(id, runtimeId);
     },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
     externalRuntimes: {
       docker: {
         type: "command",
@@ -708,6 +813,10 @@ test("the Docker runtime never adopts or destroys an unowned deterministic resou
     persistRuntimeId: async (id, runtimeId) => {
       runtimeIds.set(id, runtimeId);
     },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
     externalRuntimes: {
       docker: {
         type: "command",
@@ -736,6 +845,62 @@ test("the Docker runtime never adopts or destroys an unowned deterministic resou
     ).toBe(volume);
   } finally {
     execFileSync("docker", ["volume", "rm", volume]);
+  }
+}, 30_000);
+
+test("Docker reconciliation removes only orphaned resources with deterministic names and ownership labels", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-reconcile-"));
+  cleanupRoots.push(root);
+  const orphanWorkspaceId = `docker-orphan-${Date.now()}`;
+  const foreignWorkspaceId = `${orphanWorkspaceId}-foreign`;
+  const orphanVolume = dockerResourceName(orphanWorkspaceId);
+  const foreignVolume = `${dockerResourceName(foreignWorkspaceId)}-foreign`;
+  execFileSync("docker", [
+    "volume",
+    "create",
+    "--label",
+    "sh.paseo.runtime=workspace",
+    "--label",
+    `sh.paseo.workspace-id=${orphanWorkspaceId}`,
+    orphanVolume,
+  ]);
+  execFileSync("docker", [
+    "volume",
+    "create",
+    "--label",
+    "sh.paseo.runtime=workspace",
+    "--label",
+    `sh.paseo.workspace-id=${foreignWorkspaceId}`,
+    foreignVolume,
+  ]);
+  const service = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "paseo-home"),
+    resolveRuntimeId: async () => null,
+    persistRuntimeId: async () => undefined,
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async () => {},
+    listRuntimeRecords: async () => [],
+    externalRuntimes: {
+      docker: {
+        type: "command",
+        command: [process.execPath, "--import", "tsx", runtimeExecutable],
+        options: { image },
+      },
+    },
+  });
+
+  try {
+    await service.reconcile();
+    expect(dockerResourceCount("volume", orphanWorkspaceId)).toBe(0);
+    expect(
+      execFileSync("docker", ["volume", "inspect", "--format", "{{.Name}}", foreignVolume], {
+        encoding: "utf8",
+      }).trim(),
+    ).toBe(foreignVolume);
+  } finally {
+    execFileSync("docker", ["volume", "rm", "-f", orphanVolume, foreignVolume], {
+      stdio: "ignore",
+    });
   }
 }, 30_000);
 

@@ -130,6 +130,7 @@ interface PreparedSessionConfig {
 interface NormalizeConfigOptions {
   resolveDefaultModel?: boolean;
   env?: Record<string, string>;
+  validateHostCwd?: boolean;
 }
 
 interface TimeoutOptions {
@@ -1113,6 +1114,7 @@ export class AgentManager {
       config,
       resolvedAgentId,
       options?.env,
+      options.workspaceId,
     );
     this.requireEnabledProvider(storedConfig.provider);
     const client = options.workspaceId
@@ -1201,6 +1203,8 @@ export class AgentManager {
     const { storedConfig, launchConfig } = await this.prepareSessionConfig(
       mergedConfig,
       resolvedAgentId,
+      undefined,
+      options?.workspaceId,
     );
 
     const client = this.requireClient(handle.provider);
@@ -1269,6 +1273,8 @@ export class AgentManager {
         cwd: input.cwd,
       },
       resolvedAgentId,
+      undefined,
+      input.workspaceId,
     );
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
@@ -1296,6 +1302,7 @@ export class AgentManager {
     try {
       const importedConfig = await this.normalizeConfig(
         stripInternalPaseoMcpServer(imported.config),
+        { validateHostCwd: false },
       );
       const timelineRows = buildImportedTimelineRows(imported.timeline);
       const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
@@ -1363,7 +1370,12 @@ export class AgentManager {
       ...overrides,
       provider,
     } as AgentSessionConfig;
-    const { storedConfig, launchConfig } = await this.prepareSessionConfig(refreshConfig, agentId);
+    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+      refreshConfig,
+      agentId,
+      undefined,
+      existing.workspaceId,
+    );
     const launchContext = await this.buildLaunchContext(
       agentId,
       client,
@@ -4423,7 +4435,7 @@ export class AgentManager {
     const normalized: AgentSessionConfig = { ...config };
 
     // Always resolve cwd to absolute path for consistent history file lookup
-    if (normalized.cwd) {
+    if (normalized.cwd && options.validateHostCwd !== false) {
       normalized.cwd = resolve(normalized.cwd);
       try {
         const cwdStats = await stat(normalized.cwd);
@@ -4515,8 +4527,12 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string,
     env?: Record<string, string>,
+    workspaceId?: string,
   ): Promise<PreparedSessionConfig> {
-    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
+    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), {
+      env,
+      validateHostCwd: !workspaceId,
+    });
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,

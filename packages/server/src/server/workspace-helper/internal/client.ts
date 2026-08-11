@@ -17,6 +17,12 @@ interface WatchState {
   closed: boolean;
   cleanup: Promise<void> | null;
   diagnostics: Promise<string>;
+  ready: boolean;
+}
+
+interface LogicalWatchSubscription {
+  input: { paths: readonly string[]; recursive?: boolean; ignoredPaths?: readonly string[] };
+  listener: (event: WorkspaceWatchEvent) => void;
 }
 
 const WATCH_ACKNOWLEDGEMENT_TIMEOUT_MS = 750;
@@ -33,6 +39,10 @@ export function createClient(options: {
   let nextSubscriptionId = 0;
   let closing = false;
   let closePromise: Promise<void> | null = null;
+  let watcherRecovery: Promise<void> | null = null;
+  let watcherStart: Promise<WatchState> | null = null;
+  let replayAfterFailure = false;
+  const watchSubscriptions = new Map<string, LogicalWatchSubscription>();
   const processes = new Set<WorkspaceHelperProcess>();
 
   const command = async (name: string, args: readonly string[] = []) => {
@@ -123,41 +133,20 @@ export function createClient(options: {
       },
       async subscribe(input, listener) {
         if (closing) throw new Error("Workspace files client is closed");
-        const state = watcher ?? (await startWatcher());
-        if (state.closed) throw new Error("Workspace helper watcher is not running");
         const id = `subscription-${++nextSubscriptionId}`;
-        state.subscriptions.set(id, listener);
-        const acknowledged = acknowledgement(state, `subscribed:${id}`);
-        state.process.stdin.write(
-          `${JSON.stringify({ protocolVersion: 1, type: "subscribe", id, paths: input.paths, recursive: input.recursive === true, ignoredPaths: input.ignoredPaths ?? [] })}\n`,
-        );
-        await waitForAcknowledgement(
-          state,
-          `subscribed:${id}`,
-          "Workspace helper subscribe acknowledgement timed out",
-          acknowledged,
-        );
-        let active = true;
-        return {
-          async unsubscribe() {
-            if (!active) return;
-            active = false;
-            state.subscriptions.delete(id);
-            if (!state.closed) {
-              const removed = acknowledgement(state, `unsubscribed:${id}`);
-              state.process.stdin.write(
-                `${JSON.stringify({ protocolVersion: 1, type: "unsubscribe", id })}\n`,
-              );
-              await waitForAcknowledgement(
-                state,
-                `unsubscribed:${id}`,
-                "Workspace helper unsubscribe acknowledgement timed out",
-                removed,
-              );
-            }
-            if (state.subscriptions.size === 0) await stopWatcher(state);
-          },
-        };
+        watchSubscriptions.set(id, { input, listener });
+        let state: WatchState | null = null;
+        try {
+          state = await requireWatcher();
+          if (state.subscriptions.has(id)) return subscriptionFor(id);
+          state.subscriptions.set(id, listener);
+          await sendSubscription(state, id, input);
+        } catch (error) {
+          watchSubscriptions.delete(id);
+          state?.subscriptions.delete(id);
+          throw error;
+        }
+        return subscriptionFor(id);
       },
     },
     async resolveCommand(commandName) {
@@ -179,16 +168,65 @@ export function createClient(options: {
     async close() {
       closePromise ??= (async () => {
         closing = true;
+        watchSubscriptions.clear();
         if (watcher) {
           await stopWatcher(watcher, new Error("Workspace files client is closed"));
         }
+        await watcherRecovery?.catch(() => undefined);
         await Promise.all([...processes].map((child) => terminate(child)));
       })();
       await closePromise;
     },
   };
 
+  function subscriptionFor(id: string) {
+    let active = true;
+    return {
+      async unsubscribe() {
+        if (!active) return;
+        active = false;
+        watchSubscriptions.delete(id);
+        await watcherRecovery?.catch(() => undefined);
+        const state = watcher;
+        state?.subscriptions.delete(id);
+        if (state && !state.closed) {
+          const removed = acknowledgement(state, `unsubscribed:${id}`);
+          state.process.stdin.write(
+            `${JSON.stringify({ protocolVersion: 1, type: "unsubscribe", id })}\n`,
+          );
+          try {
+            await waitForAcknowledgement(
+              state,
+              `unsubscribed:${id}`,
+              "Workspace helper unsubscribe acknowledgement timed out",
+              removed,
+            );
+          } catch (error) {
+            if (!(error instanceof Error) || error.message !== "Workspace helper watcher is closed")
+              throw error;
+          }
+        }
+        if (watchSubscriptions.size === 0 && state) await stopWatcher(state);
+      },
+    };
+  }
+
+  async function requireWatcher(): Promise<WatchState> {
+    await watcherRecovery;
+    if (watcherStart) return watcherStart;
+    if (watcher && !watcher.closed) return watcher;
+    return launchWatcher();
+  }
+
+  function launchWatcher(): Promise<WatchState> {
+    watcherStart ??= startWatcher().finally(() => {
+      watcherStart = null;
+    });
+    return watcherStart;
+  }
+
   async function startWatcher(): Promise<WatchState> {
+    const replaying = replayAfterFailure;
     const process = await command("watch");
     const state: WatchState = {
       process,
@@ -197,6 +235,7 @@ export function createClient(options: {
       closed: false,
       cleanup: null,
       diagnostics: collect(process.stderr),
+      ready: false,
     };
     watcher = state;
     process.stdin.on("error", () => undefined);
@@ -226,7 +265,35 @@ export function createClient(options: {
       "Workspace helper ready acknowledgement timed out",
       ready,
     );
+    for (const [id, subscription] of watchSubscriptions) {
+      state.subscriptions.set(id, subscription.listener);
+      await sendSubscription(state, id, subscription.input);
+    }
+    state.ready = true;
+    replayAfterFailure = false;
+    if (replaying) {
+      for (const subscription of watchSubscriptions.values()) {
+        subscription.listener({ type: "changed", paths: [...subscription.input.paths] });
+      }
+    }
     return state;
+  }
+
+  async function sendSubscription(
+    state: WatchState,
+    id: string,
+    input: LogicalWatchSubscription["input"],
+  ): Promise<void> {
+    const acknowledged = acknowledgement(state, `subscribed:${id}`);
+    state.process.stdin.write(
+      `${JSON.stringify({ protocolVersion: 1, type: "subscribe", id, paths: input.paths, recursive: input.recursive === true, ignoredPaths: input.ignoredPaths ?? [] })}\n`,
+    );
+    await waitForAcknowledgement(
+      state,
+      `subscribed:${id}`,
+      "Workspace helper subscribe acknowledgement timed out",
+      acknowledged,
+    );
   }
 
   async function stopWatcher(state: WatchState, reason?: Error): Promise<void> {
@@ -276,9 +343,6 @@ export function createClient(options: {
     if (state.closed) return;
     state.closed = true;
     if (watcher === state) watcher = null;
-    for (const listener of state.subscriptions.values()) {
-      listener({ type: "error", error: error.message });
-    }
     state.subscriptions.clear();
     for (const pending of state.acknowledgements.values()) pending.reject(error);
     state.acknowledgements.clear();
@@ -288,7 +352,23 @@ export function createClient(options: {
       await state.diagnostics.catch(() => undefined);
       return undefined;
     });
-    return state.cleanup;
+    if (!closing && state.ready && watchSubscriptions.size > 0 && !watcherRecovery) {
+      replayAfterFailure = true;
+      watcherRecovery = state.cleanup
+        .then(async () => {
+          if (!closing && watchSubscriptions.size > 0) await launchWatcher();
+          return undefined;
+        })
+        .catch((recoveryError) => {
+          for (const subscription of watchSubscriptions.values()) {
+            subscription.listener({ type: "error", error: toError(recoveryError).message });
+          }
+        })
+        .finally(() => {
+          watcherRecovery = null;
+        });
+    }
+    await state.cleanup;
   }
 }
 

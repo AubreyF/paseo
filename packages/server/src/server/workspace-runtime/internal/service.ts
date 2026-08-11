@@ -13,11 +13,20 @@ import type {
   WorkspaceDriverCreateInput,
   WorkspaceRuntimeDriver,
 } from "../drivers/index.js";
-import type { WorkspaceFiles } from "../../workspace-helper/index.js";
+import type {
+  WorkspaceFiles,
+  WorkspaceFilesSubscription,
+  WorkspaceWatchEvent,
+} from "../../workspace-helper/index.js";
 import {
   bindWorkspaceHelper,
   type WorkspaceFilesOwner,
 } from "../../workspace-helper/integration/index.js";
+import { PaseoConfigSchema } from "@getpaseo/protocol/paseo-config-schema";
+import {
+  createGitCommonObservationCoordinator,
+  type ObservationRebindTransaction,
+} from "../git-observation/integration.js";
 
 const gracefulStopMilliseconds = 1_000;
 const forcedStopMilliseconds = 1_000;
@@ -38,11 +47,34 @@ export function createService(
     { runtimeId: string; revision: string; client: WorkspaceFilesOwner }
   >();
   const boundFiles = new Map<string, WorkspaceFiles>();
-  const unavailableFiles = new Map<string, "paused" | "destroyed">();
+  const fileSubscriptions = new Map<
+    string,
+    Set<{
+      input: Parameters<WorkspaceFiles["subscribe"]>[0];
+      listener: (event: WorkspaceWatchEvent) => void;
+      bound: WorkspaceFilesSubscription | null;
+    }>
+  >();
+  const unavailableFiles = new Map<string, "paused" | "recovering" | "destroyed">();
   const boundRuntimes = new Map<
     string,
     { runtimeId: string; revision: string; runtime: BoundWorkspaceRuntime }
   >();
+  const gitCommonObservations = createGitCommonObservationCoordinator({
+    launchHelper: (driver, workspaceId, argv) => launchHelper(driver, workspaceId, argv),
+    runGit: async (driver, workspaceId, argv) => {
+      const runtimeProcess = await driver.spawn({
+        workspaceId,
+        argv,
+        env: lifecycleEnvironment(),
+        purpose: { kind: "git" },
+        stdio: { kind: "pipes" },
+      });
+      trackProcess(workspaceId, runtimeProcess);
+      return runtimeProcess;
+    },
+    isUnavailable: (workspaceId) => unavailableFiles.has(workspaceId),
+  });
 
   function requireRegistered(runtimeId: string): WorkspaceRuntimeDriver {
     const driver = driversById.get(runtimeId);
@@ -60,6 +92,7 @@ export function createService(
     driver: WorkspaceRuntimeDriver,
     input: WorkspaceProcessInput,
   ): Promise<WorkspaceProcess> {
+    assertWorkspaceAvailable(input.workspaceId);
     validateRelativeCwd(input.cwd);
     const inspection = await driver.inspect(input.workspaceId);
     if (inspection.status !== "ready") {
@@ -77,6 +110,7 @@ export function createService(
     driver: WorkspaceRuntimeDriver,
     input: WorkspaceTerminalInput,
   ): Promise<WorkspaceTerminal> {
+    assertWorkspaceAvailable(input.workspaceId);
     validateRelativeCwd(input.cwd);
     const inspection = await driver.inspect(input.workspaceId);
     if (inspection.status !== "ready") {
@@ -94,6 +128,60 @@ export function createService(
   }
 
   return {
+    async reconcile() {
+      const runtimeRecords = (await records.listRuntimeRecords?.()) ?? [];
+      const failures: unknown[] = [];
+      const reconciledDomains = new Set<string>();
+      for (const driver of drivers) {
+        const domainId = driver.reconciliationDomainId ?? driver.id;
+        if (reconciledDomains.has(domainId)) continue;
+        reconciledDomains.add(domainId);
+        try {
+          await driver.reconcile?.(
+            runtimeRecords
+              .filter(
+                (record) =>
+                  (driversById.get(record.runtimeId)?.reconciliationDomainId ??
+                    record.runtimeId) === domainId,
+              )
+              .map((record) => record.workspaceId),
+          );
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      for (const record of runtimeRecords) {
+        try {
+          await sequence(record.workspaceId, async () => {
+            const driver = requireRegistered(record.runtimeId);
+            if (record.deleting) {
+              await finishDestroy(record.workspaceId, driver);
+              return;
+            }
+            const inspection = await driver.inspect(record.workspaceId);
+            if (inspection.status === "missing" || inspection.status === "error") return;
+            await records.persistRuntimeId(
+              record.workspaceId,
+              record.runtimeId,
+              inspection.placement,
+            );
+            if (record.archived && inspection.status === "ready") {
+              await pauseWithDriver(record.workspaceId, driver);
+            } else if (!record.archived && inspection.status === "paused") {
+              unavailableFiles.set(record.workspaceId, "recovering");
+              await driver.resume(record.workspaceId);
+              const rebind = await stageSubscriptionRebind(record.workspaceId, true);
+              await rebind.commit();
+              unavailableFiles.delete(record.workspaceId);
+            }
+          });
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (failures.length > 0)
+        throw new AggregateError(failures, "Workspace reconciliation failed");
+    },
     async create(input) {
       return sequence(input.workspaceId, async () => {
         const selectedRuntimeId = await records.resolveRuntimeId(input.workspaceId);
@@ -106,11 +194,11 @@ export function createService(
         const before = await driver.inspect(input.workspaceId);
         let ownsNewResource = false;
         try {
-          const state = await driver.create(toDriverCreateInput(input));
+          const ready = await driver.create(toDriverCreateInput(input));
           ownsNewResource = before.status === "missing";
-          if (state.lifecycle === "ready") {
+          if (ready.state.lifecycle === "ready") {
             const helper = bindWorkspaceHelper({
-              root: state.root,
+              root: ready.state.root,
               command: driver.workspaceHelperCommand,
               launch: (argv) => launchHelper(driver, input.workspaceId, argv),
             });
@@ -121,7 +209,10 @@ export function createService(
             }
           }
           if (ownsNewResource) {
-            for (const command of input.setup ?? []) {
+            const setupCommands = input.setupFromPaseoConfig
+              ? await readConfiguredSetupCommands(input.workspaceId)
+              : (input.setup ?? []);
+            for (const command of setupCommands) {
               const process = await runWithDriver(driver, {
                 workspaceId: input.workspaceId,
                 ...command,
@@ -138,9 +229,13 @@ export function createService(
               }
             }
           }
-          await records.persistRuntimeId(input.workspaceId, input.runtimeId);
+          await records.persistRuntimeId(input.workspaceId, input.runtimeId, ready.placement);
           unavailableFiles.delete(input.workspaceId);
-          return { workspaceId: input.workspaceId, runtimeId: input.runtimeId };
+          return {
+            workspaceId: input.workspaceId,
+            runtimeId: input.runtimeId,
+            ...ready.placement,
+          };
         } catch (error) {
           if (ownsNewResource) {
             try {
@@ -167,6 +262,7 @@ export function createService(
       );
     },
     async bind(workspaceId) {
+      assertWorkspaceAvailable(workspaceId);
       const driver = await resolve(workspaceId);
       const inspection = await driver.inspect(workspaceId);
       if (inspection.status !== "ready") {
@@ -183,6 +279,7 @@ export function createService(
         files: bindFiles(workspaceId),
         homeFiles: bindHomeFiles(workspaceId),
       };
+      gitCommonObservations.bind(runtime, workspaceId, driver);
       boundRuntimes.set(workspaceId, {
         runtimeId: driver.id,
         revision: inspection.state.revision,
@@ -198,33 +295,208 @@ export function createService(
       }
       return files;
     },
+    async inspect(workspaceId) {
+      const runtimeId = await records.resolveRuntimeId(workspaceId);
+      if (!runtimeId) return { status: "missing" };
+      const inspection = await requireRegistered(runtimeId).inspect(workspaceId);
+      if (inspection.status === "ready" || inspection.status === "paused") {
+        return { status: inspection.status, ...inspection.placement };
+      }
+      return { status: inspection.status };
+    },
+    async requireHostVisiblePath(workspaceId) {
+      const runtimeId = await records.resolveRuntimeId(workspaceId);
+      if (!runtimeId) throw new Error(`Workspace runtime is not selected: ${workspaceId}`);
+      const inspection = await requireRegistered(runtimeId).inspect(workspaceId);
+      if (inspection.status !== "ready" && inspection.status !== "paused") {
+        throw new Error(`Workspace runtime is ${inspection.status}: ${workspaceId}`);
+      }
+      if (!inspection.placement.hostVisiblePath) {
+        throw new Error(`Workspace has no host-visible path: ${workspaceId}`);
+      }
+      return inspection.placement.hostVisiblePath;
+    },
+    async runSetup(workspaceId, signal) {
+      const commands = await readConfiguredSetupCommands(workspaceId);
+      for (const command of commands) {
+        if (signal?.aborted) throw signal.reason;
+        const process = await sequence(workspaceId, async () =>
+          runWithDriver(await resolve(workspaceId), {
+            workspaceId,
+            ...command,
+            purpose: { kind: "setup" },
+          }),
+        );
+        const abort = () => process.kill("SIGTERM");
+        signal?.addEventListener("abort", abort, { once: true });
+        process.stdin.end();
+        const [stdout, stderr, exit] = await Promise.all([
+          drainText(process.stdout),
+          drainText(process.stderr),
+          process.exited,
+        ]).finally(() => signal?.removeEventListener("abort", abort));
+        if (exit.code !== 0 || exit.signal !== null) {
+          throw new Error(
+            `Workspace setup failed (${exit.code ?? exit.signal}): ${stderr || stdout}`,
+          );
+        }
+      }
+    },
     async pause(workspaceId) {
       await sequence(workspaceId, async () => {
-        const driver = await resolve(workspaceId);
-        unavailableFiles.set(workspaceId, "paused");
-        boundRuntimes.delete(workspaceId);
-        await closeFiles(workspaceId);
-        await stopProcesses(workspaceId);
-        await driver.pause(workspaceId);
+        await pauseWithDriver(workspaceId, await resolve(workspaceId));
       });
     },
     async resume(workspaceId) {
       await sequence(workspaceId, async () => {
+        unavailableFiles.set(workspaceId, "recovering");
         await (await resolve(workspaceId)).resume(workspaceId);
+        const rebind = await stageSubscriptionRebind(workspaceId, true);
+        await rebind.commit();
         unavailableFiles.delete(workspaceId);
+      });
+    },
+    async archive(workspaceId) {
+      await sequence(workspaceId, async () => {
+        if (!records.archiveWorkspaceRecord) {
+          throw new Error("Workspace runtime record store cannot archive workspaces");
+        }
+        const driver = await resolve(workspaceId);
+        const inspection = await driver.inspect(workspaceId);
+        if (inspection.status === "ready") await runArchiveHooks(workspaceId, driver);
+        await pauseWithDriver(workspaceId, driver);
+        await records.archiveWorkspaceRecord(workspaceId);
+      });
+    },
+    async restore(workspaceId) {
+      await sequence(workspaceId, async () => {
+        if (!records.restoreWorkspaceRecord) {
+          throw new Error("Workspace runtime record store cannot restore workspaces");
+        }
+        unavailableFiles.set(workspaceId, "recovering");
+        await (await resolve(workspaceId)).resume(workspaceId);
+        const rebind = await stageSubscriptionRebind(workspaceId, true);
+        try {
+          await records.restoreWorkspaceRecord(workspaceId);
+          await rebind.commit();
+          unavailableFiles.delete(workspaceId);
+        } catch (error) {
+          await rebind.rollback();
+          throw error;
+        }
       });
     },
     async destroy(workspaceId) {
       await sequence(workspaceId, async () => {
-        const driver = await resolve(workspaceId);
-        unavailableFiles.set(workspaceId, "destroyed");
-        boundRuntimes.delete(workspaceId);
-        await closeFiles(workspaceId);
-        await stopProcesses(workspaceId);
-        await driver.destroy(workspaceId);
+        const runtimeId = await records.resolveRuntimeId(workspaceId);
+        if (!runtimeId) {
+          unavailableFiles.delete(workspaceId);
+          return;
+        }
+        if (!records.beginWorkspaceDeletion || !records.removeWorkspaceRecord) {
+          throw new Error("Workspace runtime record store cannot permanently delete workspaces");
+        }
+        const driver = requireRegistered(runtimeId);
+        await records.beginWorkspaceDeletion(workspaceId);
+        await finishDestroy(workspaceId, driver);
       });
     },
   };
+
+  async function finishDestroy(workspaceId: string, driver: WorkspaceRuntimeDriver): Promise<void> {
+    unavailableFiles.set(workspaceId, "destroyed");
+    boundRuntimes.delete(workspaceId);
+    await closeFiles(workspaceId, true);
+    await gitCommonObservations.destroy(workspaceId);
+    await stopProcesses(workspaceId);
+    await driver.destroy(workspaceId);
+    if (!records.removeWorkspaceRecord) {
+      throw new Error("Workspace runtime record store cannot permanently delete workspaces");
+    }
+    await records.removeWorkspaceRecord(workspaceId);
+    unavailableFiles.delete(workspaceId);
+  }
+
+  async function pauseWithDriver(
+    workspaceId: string,
+    driver: WorkspaceRuntimeDriver,
+  ): Promise<void> {
+    unavailableFiles.set(workspaceId, "paused");
+    boundRuntimes.delete(workspaceId);
+    await closeFiles(workspaceId);
+    await gitCommonObservations.pause(workspaceId);
+    await stopProcesses(workspaceId);
+    await driver.pause(workspaceId);
+  }
+
+  async function runArchiveHooks(
+    workspaceId: string,
+    driver: WorkspaceRuntimeDriver,
+  ): Promise<void> {
+    const config = await readWorkspaceConfig(workspaceId);
+    if (!config) return;
+    const inspection = await driver.inspect(workspaceId);
+    if (inspection.status !== "ready") {
+      throw new Error(`Workspace runtime is ${inspection.status}: ${workspaceId}`);
+    }
+    const env = {
+      ...lifecycleEnvironment(),
+      ...inspection.state.lifecycleEnvironment,
+    };
+    for (const command of config.worktree?.teardown ?? []) {
+      const argv = lifecycleShellCommand(command);
+      const process = await runWithDriver(driver, {
+        workspaceId,
+        argv,
+        env,
+        purpose: { kind: "archive" },
+      });
+      process.stdin.end();
+      const [stdout, stderr, exit] = await Promise.all([
+        drainText(process.stdout),
+        drainText(process.stderr),
+        process.exited,
+      ]);
+      if (exit.code !== 0 || exit.signal !== null) {
+        throw new Error(
+          `Workspace archive command failed (${exit.code ?? exit.signal}): ${stderr || stdout}`,
+        );
+      }
+    }
+  }
+
+  async function readConfiguredSetupCommands(workspaceId: string) {
+    const config = await readWorkspaceConfig(workspaceId);
+    const driver = await resolve(workspaceId);
+    const inspection = await driver.inspect(workspaceId);
+    if (inspection.status !== "ready") {
+      throw new Error(`Workspace runtime is ${inspection.status}: ${workspaceId}`);
+    }
+    const env = {
+      ...lifecycleEnvironment(),
+      ...inspection.state.lifecycleEnvironment,
+    };
+    return (config?.worktree?.setup ?? []).map((command) => ({
+      argv: lifecycleShellCommand(command),
+      env,
+    }));
+  }
+
+  async function readWorkspaceConfig(workspaceId: string) {
+    const files = await requireFiles(workspaceId);
+    const stat = await files.stat("paseo.json");
+    if (stat.status === "missing") return null;
+    if (stat.status === "error") throw new Error(stat.error);
+    const file = await files.read("paseo.json");
+    const chunks: Buffer[] = [];
+    for await (const chunk of file.chunks) chunks.push(Buffer.from(chunk));
+    return PaseoConfigSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+  }
+
+  function assertWorkspaceAvailable(workspaceId: string): void {
+    const unavailable = unavailableFiles.get(workspaceId);
+    if (unavailable) throw new Error(`Workspace runtime is ${unavailable}: ${workspaceId}`);
+  }
 
   function bindFiles(workspaceId: string): WorkspaceFiles {
     return {
@@ -241,7 +513,28 @@ export function createService(
         return (await requireFiles(workspaceId)).write(input);
       },
       async subscribe(input, listener) {
-        return (await requireFiles(workspaceId)).subscribe(input, listener);
+        const logical = { input, listener, bound: null as WorkspaceFilesSubscription | null };
+        const subscriptions = fileSubscriptions.get(workspaceId) ?? new Set();
+        subscriptions.add(logical);
+        fileSubscriptions.set(workspaceId, subscriptions);
+        try {
+          logical.bound = await (await requireFiles(workspaceId)).subscribe(input, listener);
+        } catch (error) {
+          subscriptions.delete(logical);
+          if (subscriptions.size === 0) fileSubscriptions.delete(workspaceId);
+          throw error;
+        }
+        let active = true;
+        return {
+          async unsubscribe() {
+            if (!active) return;
+            active = false;
+            subscriptions.delete(logical);
+            if (subscriptions.size === 0) fileSubscriptions.delete(workspaceId);
+            await logical.bound?.unsubscribe();
+            logical.bound = null;
+          },
+        };
       },
     };
   }
@@ -270,9 +563,13 @@ export function createService(
     return (await requireFilesOwner(workspaceId)).files;
   }
 
-  async function requireFilesOwner(workspaceId: string): Promise<WorkspaceFilesOwner> {
+  async function requireFilesOwner(
+    workspaceId: string,
+    allowUnavailable = false,
+  ): Promise<WorkspaceFilesOwner> {
     const unavailable = unavailableFiles.get(workspaceId);
-    if (unavailable) throw new Error(`Workspace runtime is ${unavailable}: ${workspaceId}`);
+    if (unavailable && !allowUnavailable)
+      throw new Error(`Workspace runtime is ${unavailable}: ${workspaceId}`);
     const driver = await resolve(workspaceId);
     const inspection = await driver.inspect(workspaceId);
     if (inspection.status !== "ready") {
@@ -324,13 +621,69 @@ export function createService(
     return client;
   }
 
-  async function closeFiles(workspaceId: string): Promise<void> {
+  async function closeFiles(workspaceId: string, forgetSubscriptions = false): Promise<void> {
     const cached = fileClients.get(workspaceId);
     const cachedHome = homeFileClients.get(workspaceId);
     fileClients.delete(workspaceId);
     homeFileClients.delete(workspaceId);
+    const subscriptions = fileSubscriptions.get(workspaceId);
+    if (subscriptions) {
+      for (const subscription of subscriptions) subscription.bound = null;
+      if (forgetSubscriptions) fileSubscriptions.delete(workspaceId);
+    }
     if (cached) await cached.client.close();
     if (cachedHome) await cachedHome.client.close();
+  }
+
+  async function stageSubscriptionRebind(
+    workspaceId: string,
+    allowUnavailable = false,
+  ): Promise<ObservationRebindTransaction> {
+    const files = await stageFileSubscriptionRebind(workspaceId, allowUnavailable);
+    try {
+      const git = await gitCommonObservations.stageResume(workspaceId);
+      return combineRebindTransactions([files, git]);
+    } catch (error) {
+      await files.rollback();
+      throw error;
+    }
+  }
+
+  async function stageFileSubscriptionRebind(
+    workspaceId: string,
+    allowUnavailable = false,
+  ): Promise<ObservationRebindTransaction> {
+    const subscriptions = fileSubscriptions.get(workspaceId);
+    if (!subscriptions || subscriptions.size === 0) return noOpRebindTransaction();
+    const files = (await requireFilesOwner(workspaceId, allowUnavailable)).files;
+    const staged: Array<{
+      logical: typeof subscriptions extends Set<infer T> ? T : never;
+      bound: WorkspaceFilesSubscription;
+    }> = [];
+    try {
+      for (const logical of subscriptions) {
+        staged.push({
+          logical,
+          bound: await files.subscribe(logical.input, logical.listener),
+        });
+      }
+    } catch (error) {
+      await Promise.allSettled(staged.map(({ bound }) => bound.unsubscribe()));
+      throw error;
+    }
+    let finished = false;
+    return {
+      async commit() {
+        if (finished) return;
+        finished = true;
+        for (const { logical, bound } of staged) logical.bound = bound;
+      },
+      async rollback() {
+        if (finished) return;
+        finished = true;
+        await Promise.allSettled(staged.map(({ bound }) => bound.unsubscribe()));
+      },
+    };
   }
 
   async function launchHelper(
@@ -397,10 +750,56 @@ export function createService(
   }
 }
 
+function combineRebindTransactions(
+  transactions: readonly ObservationRebindTransaction[],
+): ObservationRebindTransaction {
+  let finished = false;
+  return {
+    async commit() {
+      if (finished) return;
+      finished = true;
+      for (const transaction of transactions) await transaction.commit();
+    },
+    async rollback() {
+      if (finished) return;
+      finished = true;
+      await Promise.allSettled(transactions.map((transaction) => transaction.rollback()));
+    },
+  };
+}
+
+function noOpRebindTransaction(): ObservationRebindTransaction {
+  return { commit: async () => {}, rollback: async () => {} };
+}
+
 async function drain(stream: NodeJS.ReadableStream): Promise<void> {
   for await (const _chunk of stream) {
     // Setup output is consumed here so a verbose command cannot block on a full pipe.
   }
+}
+
+async function drainText(stream: NodeJS.ReadableStream): Promise<string> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (bytes < 64 * 1024) chunks.push(buffer.subarray(0, 64 * 1024 - bytes));
+    bytes += buffer.byteLength;
+  }
+  return Buffer.concat(chunks).toString("utf8").trim();
+}
+
+function lifecycleShellCommand(command: string): readonly [string, ...string[]] {
+  return process.platform === "win32"
+    ? ["powershell.exe", "-NoProfile", "-Command", command]
+    : ["/bin/sh", "-c", command];
+}
+
+function lifecycleEnvironment(): Readonly<Record<string, string>> {
+  if (process.platform === "win32") {
+    return { PATH: process.env.PATH ?? "" };
+  }
+  return { PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin" };
 }
 
 function validateRelativeCwd(cwd: string | undefined): void {
@@ -419,6 +818,8 @@ function toDriverCreateInput(input: CreateWorkspaceInput): WorkspaceDriverCreate
       source: input.project.source,
     },
     placement: input.placement,
+    ...(input.markFirstAgentBranchAutoName ? { markFirstAgentBranchAutoName: true } : {}),
+    ...(input.seedPaseoConfigFrom ? { seedPaseoConfigFrom: input.seedPaseoConfigFrom } : {}),
   };
 }
 

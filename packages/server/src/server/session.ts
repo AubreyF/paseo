@@ -640,6 +640,7 @@ export class Session {
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
   private registryMutationQueue: Promise<void> = Promise.resolve();
+  private readonly workspacesAwaitingInitialAgent = new Set<string>();
   private isCleanedUp = false;
   private viewedTimelineAgentIds = new Set<string>();
   private readonly viewedTimelineAgentIdsBySource = new Map<object, Set<string>>();
@@ -801,6 +802,10 @@ export class Session {
       getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
       getProject: (projectId) => this.projectRegistry.get(projectId),
       isDirectory: (path) => this.filesystem.isDirectory(path),
+      inspectRuntime: (workspaceId) => {
+        if (!this.workspaceRuntime) return Promise.resolve("missing");
+        return this.workspaceRuntime.inspect(workspaceId).then((inspection) => inspection.status);
+      },
       unarchiveWorkspace: async (workspace) => {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
       },
@@ -1204,22 +1209,26 @@ export class Session {
     workspace: WorkspaceDescriptorPayload,
     optimisticStatus?: WorkspaceDescriptorPayload["status"],
   ): Promise<void> {
-    if (this.workspaceUpdatesSubscription) {
-      await this.emitWorkspaceUpdatesForWorkspaceIds(
-        [workspace.id],
-        optimisticStatus ? { optimisticStatus } : undefined,
-      );
-      return;
+    try {
+      if (this.workspaceUpdatesSubscription) {
+        await this.emitWorkspaceUpdatesForWorkspaceIds(
+          [workspace.id],
+          optimisticStatus ? { optimisticStatus } : undefined,
+        );
+        return;
+      }
+      // COMPAT(workspaceCreateCausalUpdate): added in v0.1.106, remove after 2027-01-12.
+      // Older clients create before subscribing and require the causal update beside the response.
+      this.emit({
+        type: "workspace_update",
+        payload: {
+          kind: "upsert",
+          workspace: optimisticStatus ? { ...workspace, status: optimisticStatus } : workspace,
+        },
+      });
+    } finally {
+      if (optimisticStatus) this.workspacesAwaitingInitialAgent.delete(workspace.id);
     }
-    // COMPAT(workspaceCreateCausalUpdate): added in v0.1.106, remove after 2027-01-12.
-    // Older clients create before subscribing and require the causal update beside the response.
-    this.emit({
-      type: "workspace_update",
-      payload: {
-        kind: "upsert",
-        workspace: optimisticStatus ? { ...workspace, status: optimisticStatus } : workspace,
-      },
-    });
   }
 
   markWorkspaceArchivingForExternalMutation(
@@ -1459,8 +1468,12 @@ export class Session {
         mutation.kind === "remove" ||
         mutation.workspace?.archivedAt
       ) {
+        this.workspacesAwaitingInitialAgent.delete(mutation.workspaceId);
         this.workspaceGitObserver.removeForWorkspaceId(mutation.workspaceId);
       } else {
+        if (mutation.expectsInitialAgent) {
+          this.workspacesAwaitingInitialAgent.add(mutation.workspaceId);
+        }
         await this.syncWorkspaceMutationObserver(mutation);
       }
       if (this.isCleanedUp) {
@@ -1468,7 +1481,9 @@ export class Session {
       }
       await this.emitWorkspaceUpdatesForWorkspaceIds(
         [mutation.workspaceId],
-        mutation.expectsInitialAgent ? { optimisticStatus: "running" } : undefined,
+        this.workspacesAwaitingInitialAgent.has(mutation.workspaceId)
+          ? { optimisticStatus: "running" }
+          : undefined,
       );
     } catch (error) {
       this.sessionLogger.warn(
@@ -2844,20 +2859,33 @@ export class Session {
       }
 
       const removedWorkspaceIds: string[] = [];
+      const destroyRuntimeWorkspace = async (workspaceId: string): Promise<void> => {
+        if (!this.workspaceRuntime) {
+          throw new Error(`Workspace runtime is not available: ${workspaceId}`);
+        }
+        await this.workspaceRuntime.destroy(workspaceId);
+      };
       try {
-        for (const workspaceId of activeWorkspaceIds) {
-          await archiveWorkspaceContents(
-            {
-              agentManager: this.agentManager,
-              agentStorage: this.agentStorage,
-              killTerminalsForWorkspace: (id) =>
-                this.terminalController.killTerminalsForWorkspace(id),
-              sessionLogger: this.sessionLogger,
-            },
-            workspaceId,
-          );
-          await this.archiveWorkspaceRecord(workspaceId);
-          removedWorkspaceIds.push(workspaceId);
+        for (const workspace of projectWorkspaces) {
+          if (!workspace.archivedAt) {
+            await archiveWorkspaceContents(
+              {
+                agentManager: this.agentManager,
+                agentStorage: this.agentStorage,
+                killTerminalsForWorkspace: (id) =>
+                  this.terminalController.killTerminalsForWorkspace(id),
+                sessionLogger: this.sessionLogger,
+              },
+              workspace.workspaceId,
+            );
+          }
+          if (workspace.runtime) {
+            await destroyRuntimeWorkspace(workspace.workspaceId);
+            removedWorkspaceIds.push(workspace.workspaceId);
+          } else if (!workspace.archivedAt) {
+            await this.archiveWorkspaceRecord(workspace.workspaceId);
+            removedWorkspaceIds.push(workspace.workspaceId);
+          }
         }
 
         await this.projectRegistry.remove(resolvedProjectId);
@@ -3192,10 +3220,7 @@ export class Session {
         createdWorktree,
         workspacePromptTitle,
       });
-      const resolvedCwd = resolve(resolvedIntent.config.cwd);
-      if (!(await this.filesystem.isDirectory(resolvedCwd))) {
-        throw new Error(`Working directory does not exist or is not a directory: ${resolvedCwd}`);
-      }
+      await this.requireCreateAgentWorkspaceReady(resolvedIntent);
 
       const { snapshot, liveSnapshot } = await createAgentCommand(
         {
@@ -3286,6 +3311,26 @@ export class Session {
           content: `Failed to create agent: ${wireError.message}`,
         },
       });
+    }
+  }
+
+  private async requireCreateAgentWorkspaceReady(
+    resolvedIntent: ResolvedSessionCreateAgentIntent,
+  ): Promise<void> {
+    const workspace = await this.workspaceRegistry.get(resolvedIntent.intent.workspaceId);
+    if (!workspace?.runtime) {
+      const cwd = resolve(resolvedIntent.config.cwd);
+      if (!(await this.filesystem.isDirectory(cwd))) {
+        throw new Error(`Working directory does not exist or is not a directory: ${cwd}`);
+      }
+      return;
+    }
+    if (!this.workspaceRuntime) {
+      throw new Error(`Workspace runtime is not available: ${workspace.workspaceId}`);
+    }
+    const inspection = await this.workspaceRuntime.inspect(workspace.workspaceId);
+    if (inspection.status !== "ready") {
+      throw new Error(`Workspace runtime is ${inspection.status}: ${workspace.workspaceId}`);
     }
   }
 
@@ -4467,6 +4512,7 @@ export class Session {
       projectCustomIconRevision: resolvedProjectRecord?.customIconRevision ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
+      hostVisiblePath: workspace.runtime ? (workspace.hostVisiblePath ?? undefined) : workspace.cwd,
       worktreeSlug,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
       workspaceKind: workspace.kind,
@@ -4732,7 +4778,15 @@ export class Session {
   }
 
   private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
-    await this.workspaceRecovery.restore(workspaceId);
+    const existing = await this.workspaceRegistry.get(workspaceId);
+    if (existing?.runtime) {
+      if (!this.workspaceRuntime) {
+        throw new Error(`Workspace runtime is not available: ${workspaceId}`);
+      }
+      await this.workspaceRuntime.restore(workspaceId);
+    } else {
+      await this.workspaceRecovery.restore(workspaceId);
+    }
     const workspace = await this.workspaceRegistry.get(workspaceId);
     if (!workspace) {
       throw new Error(`Recovered workspace record not found: ${workspaceId}`);
@@ -4774,6 +4828,7 @@ export class Session {
       resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
     },
   ): Promise<CreatePaseoWorktreeResult> {
+    if (!this.workspaceRuntime) throw new Error("Workspace runtime service was not composed");
     const result = await createPaseoWorktree(input, {
       github: this.github,
       ...(options?.resolveDefaultBranch
@@ -4781,6 +4836,8 @@ export class Session {
         : {}),
       workspaceGitService: this.workspaceGitService,
       workspaceProvisioning: this.workspaceProvisioning,
+      workspaceRuntime: this.workspaceRuntime,
+      workspaceRegistry: this.workspaceRegistry,
     });
     void Promise.all([
       this.gitMutation.notifyGitMutation(input.cwd, "create-worktree"),
@@ -4801,20 +4858,31 @@ export class Session {
       .map((workspace) => ({
         workspaceId: workspace.workspaceId,
         cwd: workspace.cwd,
+        hostVisiblePath: workspace.hostVisiblePath,
         kind: workspace.kind,
         worktreeRoot: workspace.worktreeRoot,
         isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree,
         mainRepoRoot: workspace.mainRepoRoot,
+        runtimeId: workspace.runtime?.runtimeId ?? null,
       }));
   }
 
   private async archiveWorkspaceRecord(workspaceId: string, archivedAt?: string): Promise<void> {
     const archiveTimestamp = archivedAt ?? new Date().toISOString();
-    const existingWorkspace = await archivePersistedWorkspaceRecord({
-      workspaceId,
-      archivedAt: archiveTimestamp,
-      workspaceRegistry: this.workspaceRegistry,
-    });
+    const currentWorkspace = await this.workspaceRegistry.get(workspaceId);
+    const existingWorkspace = currentWorkspace?.runtime
+      ? await (async () => {
+          if (!this.workspaceRuntime) {
+            throw new Error(`Workspace runtime is not available: ${workspaceId}`);
+          }
+          await this.workspaceRuntime.archive(workspaceId);
+          return currentWorkspace;
+        })()
+      : await archivePersistedWorkspaceRecord({
+          workspaceId,
+          archivedAt: archiveTimestamp,
+          workspaceRegistry: this.workspaceRegistry,
+        });
     if (!existingWorkspace) {
       this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
       return;
@@ -6030,6 +6098,10 @@ export class Session {
         serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
         onScriptsChanged: (workspaceId, workspaceDirectory) => {
           this.workspaceScripts.emitStatusUpdate(workspaceId, workspaceDirectory);
+        },
+        runWorkspaceSetup: async (workspaceId, signal) => {
+          if (!this.workspaceRuntime) throw new Error("Workspace runtime service was not composed");
+          await this.workspaceRuntime.runSetup(workspaceId, signal);
         },
       },
       input,

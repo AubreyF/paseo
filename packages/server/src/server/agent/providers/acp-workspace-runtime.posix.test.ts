@@ -30,6 +30,7 @@ posixDescribe("ACP workspace terminal execution", () => {
       persistRuntimeId: async (workspaceId, runtimeId) => {
         runtimeIds.set(workspaceId, runtimeId);
       },
+      ...lifecycleRecords(runtimeIds),
     });
     await runtime.create({
       workspaceId: "acp-workspace",
@@ -107,6 +108,7 @@ posixDescribe("ACP workspace terminal execution", () => {
         resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
         persistRuntimeId: async (workspaceId, persistedRuntimeId) =>
           runtimeIds.set(workspaceId, persistedRuntimeId),
+        ...lifecycleRecords(runtimeIds),
       });
       await service.create({
         workspaceId: "provider-workspace",
@@ -178,3 +180,12 @@ posixDescribe("ACP workspace terminal execution", () => {
     15_000,
   );
 });
+
+function lifecycleRecords(runtimeIds: Map<string, string>) {
+  return {
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId: string) => {
+      runtimeIds.delete(workspaceId);
+    },
+  };
+}

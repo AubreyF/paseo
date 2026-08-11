@@ -195,6 +195,10 @@ describe("buildSnapshot", () => {
       persistRuntimeId: async (workspaceId, runtimeId) => {
         runtimeIds.set(workspaceId, runtimeId);
       },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (workspaceId) => {
+        runtimeIds.delete(workspaceId);
+      },
     });
     await workspaceRuntime.create({
       workspaceId: "ws-runtime-config",
@@ -208,11 +212,18 @@ describe("buildSnapshot", () => {
       cwd: dir,
       runtime: { runtimeId: "local" },
     } as PersistedWorkspaceRecord;
-    const { service } = buildService({ workspace, workspaceRuntime });
+    const { service, spawnCalls } = buildService({ workspace, workspaceRuntime });
 
     await expect(service.buildSnapshot(workspace)).resolves.toEqual([
       expect.objectContaining({ scriptName: "app", type: "script" }),
     ]);
+    await service.launch({ workspaceId: workspace.workspaceId, scriptName: "app" });
+    expect(spawnCalls[0]).toMatchObject({
+      workspaceId: workspace.workspaceId,
+      runtimeCwd: ".",
+      paseoConfig: { scripts: { app: { command: "npm run app" } } },
+    });
+    expect(spawnCalls[0]?.runtime).toBeDefined();
     await workspaceRuntime.destroy(workspace.workspaceId);
   });
 

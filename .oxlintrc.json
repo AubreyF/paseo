@@ -94,6 +94,14 @@
               {
                 "group": ["**/workspace-helper/integration/**", "**/workspace-helper/internal/**"],
                 "message": "Normal callers consume WorkspaceFiles from workspace-helper/index. Only the workspace-runtime parent integration and workspace-helper tests may assemble helper clients."
+              },
+              {
+                "group": [
+                  "**/workspace-runtime/integration/**",
+                  "**/workspace-runtime/git-observation/integration*",
+                  "**/workspace-runtime/git-observation/internal/**"
+                ],
+                "message": "Git callers consume workspace-runtime/git-observation/index. Only runtime internals may assemble shared observation identity, placement, helpers, and lifecycle."
               }
             ]
           }
@@ -103,6 +111,7 @@
     {
       "files": [
         "packages/server/src/server/workspace-helper/**/*.{ts,tsx}",
+        "packages/server/src/server/workspace-runtime/git-observation/**/*.{ts,tsx}",
         "packages/server/src/server/workspace-runtime/internal/service.ts"
       ],
       "rules": {

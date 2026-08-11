@@ -47,6 +47,16 @@ export interface CreateWorktreeWorkspaceInput {
   expectsInitialAgent?: boolean;
 }
 
+export interface ReserveRuntimeWorktreeWorkspaceInput {
+  sourceCwd: string;
+  projectId?: string;
+  repoRoot: string;
+  branch: string | null;
+  baseBranch: string | null;
+  title: string | null;
+  expectsInitialAgent?: boolean;
+}
+
 export interface WorkspaceProvisioningService {
   runInImportWorkspace<T>(
     input: ImportWorkspaceInput,
@@ -62,6 +72,9 @@ export interface WorkspaceProvisioningService {
   ): Promise<PersistedWorkspaceRecord>;
   createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
+  ): Promise<PersistedWorkspaceRecord>;
+  reserveRuntimeWorktreeWorkspace(
+    input: ReserveRuntimeWorktreeWorkspaceInput,
   ): Promise<PersistedWorkspaceRecord>;
   findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord>;
   ensureWorkspaceRecordUnarchived(
@@ -241,6 +254,38 @@ export function createWorkspaceProvisioningService(deps: {
         mainRepoRoot: repoRoot,
       }),
       title: input.title,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await workspaceRegistry.upsert(workspace, {
+      expectsInitialAgent: input.expectsInitialAgent,
+    });
+    return workspace;
+  }
+
+  async function reserveRuntimeWorktreeWorkspace(
+    input: ReserveRuntimeWorktreeWorkspaceInput,
+  ): Promise<PersistedWorkspaceRecord> {
+    const sourceCwd = resolve(input.sourceCwd);
+    const repoRoot = resolve(input.repoRoot);
+    const project = await resolveSourceProjectForWorktree({
+      sourceCwd,
+      projectId: input.projectId,
+      repoRoot,
+    });
+    const timestamp = new Date().toISOString();
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: generateWorkspaceId(),
+      projectId: project.projectId,
+      ...initialWorkspacePlacement({
+        source: "runtime_worktree",
+        cwd: sourceCwd,
+        branch: input.branch,
+        baseBranch: input.baseBranch,
+        mainRepoRoot: repoRoot,
+      }),
+      title: input.title,
+      runtime: { runtimeId: "worktree" },
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -454,6 +499,7 @@ export function createWorkspaceProvisioningService(deps: {
     resolveOrCreateWorkspaceIdForCreateAgent,
     createWorkspaceForDirectory,
     createWorkspaceForWorktree,
+    reserveRuntimeWorktreeWorkspace,
     findOrCreateProjectForDirectory,
     ensureWorkspaceRecordUnarchived,
   };

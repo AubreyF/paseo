@@ -651,7 +651,7 @@ function WorkspaceRowRightGroup({
   isPinned?: boolean;
   onTogglePin?: () => void;
 }) {
-  const workspacePath = workspace.workspaceDirectory ?? workspace.projectRootPath;
+  const workspacePath = workspace.hostVisiblePath;
   const { t } = useTranslation();
   const trailing = useSidebarWorkspaceTrailing();
   const showShortcut = showShortcutBadge && shortcutNumber !== null;
@@ -1149,7 +1149,7 @@ function WorkspaceRowInner({
               archiveShortcutKeys={archiveShortcutKeys}
               isPinned={isPinned}
               onTogglePin={onTogglePin}
-              openInFileManagerPath={workspace.workspaceDirectory}
+              openInFileManagerPath={workspace.hostVisiblePath}
               disabled={isArchiving}
               aria-selected={selected}
               accessibilityRole="button"

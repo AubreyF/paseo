@@ -44,6 +44,11 @@ const PersistedWorkspaceRecordSchema = z.object({
   workspaceId: z.string(),
   projectId: z.string(),
   cwd: z.string(),
+  hostVisiblePath: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   kind: z.enum(["local_checkout", "worktree", "directory"]),
   displayName: z.string(),
   // User-set title layered over the derived displayName. In Model B the title is
@@ -78,6 +83,12 @@ const PersistedWorkspaceRecordSchema = z.object({
   isPaseoOwnedWorktree: z.boolean().default(false),
   mainRepoRoot: z.string().nullable().default(null),
   runtime: z.object({ runtimeId: z.string().min(1) }).optional(),
+  // COMPAT(workspaceDeletionIntent): added in v0.2.7 on 2026-08-11; remove optional after 2027-02-11.
+  deletionRequestedAt: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -164,6 +175,7 @@ export interface WorkspaceRegistry {
     context?: WorkspaceArchiveContext,
   ): Promise<void>;
   remove(workspaceId: string): Promise<void>;
+  requestDeletion(workspaceId: string, requestedAt: string): Promise<void>;
   /** Central lifecycle seam for daemon-global workspace observers. */
   subscribeToMutations?(
     listener: (mutation: WorkspaceMutation) => void | Promise<void>,
@@ -179,7 +191,7 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   private readonly getId: (record: TRecord) => string;
   private loaded = false;
   private readonly cache = new Map<string, TRecord>();
-  private persistQueue: Promise<void> = Promise.resolve();
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(options: {
     filePath: string;
@@ -221,22 +233,20 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   }
 
   async upsert(record: TRecord): Promise<void> {
-    await this.load();
     const parsed = this.schema.parse(record);
-    this.cache.set(this.getId(parsed), parsed);
-    await this.enqueuePersist();
+    await this.mutate((records) => {
+      records.set(this.getId(parsed), parsed);
+    });
   }
 
   async update(id: string, updater: (record: TRecord) => TRecord): Promise<TRecord | null> {
-    await this.load();
-    const existing = this.cache.get(id);
-    if (!existing) {
-      return null;
-    }
-    const next = this.schema.parse(updater(existing));
-    this.cache.set(id, next);
-    await this.enqueuePersist();
-    return next;
+    return this.mutate((records) => {
+      const existing = records.get(id);
+      if (!existing) return null;
+      const next = this.schema.parse(updater(existing));
+      records.set(id, next);
+      return next;
+    });
   }
 
   async archive(id: string, archivedAt: string): Promise<void> {
@@ -244,29 +254,30 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   }
 
   protected async archiveIfPresent(id: string, archivedAt: string): Promise<TRecord | null> {
-    await this.load();
-    const existing = this.cache.get(id);
-    if (!existing) return null;
-    return this.persistArchive(existing, archivedAt);
+    return this.mutate((records) => this.archiveRecord(records, id, archivedAt));
   }
 
   protected async archiveIfActive(id: string, archivedAt: string): Promise<TRecord | null> {
-    await this.load();
-    const existing = this.cache.get(id);
-    if (!existing || existing.archivedAt) {
-      return null;
-    }
-    return this.persistArchive(existing, archivedAt);
+    return this.mutate((records) => {
+      const existing = records.get(id);
+      if (!existing || existing.archivedAt) return null;
+      return this.archiveRecord(records, id, archivedAt);
+    });
   }
 
-  private async persistArchive(existing: TRecord, archivedAt: string): Promise<TRecord> {
+  private archiveRecord(
+    records: Map<string, TRecord>,
+    id: string,
+    archivedAt: string,
+  ): TRecord | null {
+    const existing = records.get(id);
+    if (!existing) return null;
     const next = this.schema.parse({
       ...existing,
       updatedAt: archivedAt,
       archivedAt,
     });
-    this.cache.set(this.getId(next), next);
-    await this.enqueuePersist();
+    records.set(this.getId(next), next);
     return next;
   }
 
@@ -275,14 +286,12 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
   }
 
   protected async removeIfPresent(id: string): Promise<TRecord | null> {
-    await this.load();
-    const existing = this.cache.get(id);
-    if (!existing) {
-      return null;
-    }
-    this.cache.delete(id);
-    await this.enqueuePersist();
-    return existing;
+    return this.mutate((records) => {
+      const existing = records.get(id);
+      if (!existing) return null;
+      records.delete(id);
+      return existing;
+    });
   }
 
   private async load(): Promise<void> {
@@ -306,16 +315,41 @@ class FileBackedRegistry<TRecord extends RegistryRecord> {
     this.loaded = true;
   }
 
-  private async persist(): Promise<void> {
-    const records = Array.from(this.cache.values());
-    await writeJsonFileAtomic(this.filePath, records);
+  private async persist(records: ReadonlyMap<string, TRecord>): Promise<void> {
+    await writeJsonFileAtomic(this.filePath, Array.from(records.values()));
   }
 
-  private async enqueuePersist(): Promise<void> {
-    const nextPersist = this.persistQueue.then(() => this.persist());
-    this.persistQueue = nextPersist.catch(() => {});
-    await nextPersist;
+  private async mutate<TResult>(
+    mutation: (records: Map<string, TRecord>) => TResult,
+  ): Promise<TResult> {
+    await this.load();
+    const previous = this.mutationQueue;
+    let release!: () => void;
+    this.mutationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      const next = new Map(this.cache);
+      const result = mutation(next);
+      if (mapsEqual(this.cache, next)) return result;
+      await this.persist(next);
+      this.cache.clear();
+      for (const [id, record] of next) this.cache.set(id, record);
+      return result;
+    } finally {
+      release();
+    }
   }
+}
+
+function mapsEqual<TKey, TValue>(
+  left: ReadonlyMap<TKey, TValue>,
+  right: ReadonlyMap<TKey, TValue>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [key, value] of left) if (right.get(key) !== value) return false;
+  return true;
 }
 
 export class FileBackedProjectRegistry
@@ -516,6 +550,16 @@ export class FileBackedWorkspaceRegistry
     await this.notifyMutation({ kind: "remove", workspaceId, workspace: null });
   }
 
+  async requestDeletion(workspaceId: string, requestedAt: string): Promise<void> {
+    const workspace = await super.update(workspaceId, (existing) => ({
+      ...existing,
+      deletionRequestedAt: existing.deletionRequestedAt ?? requestedAt,
+      updatedAt: existing.deletionRequestedAt ? existing.updatedAt : requestedAt,
+    }));
+    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+    await this.notifyMutation({ kind: "upsert", workspaceId, workspace });
+  }
+
   private async notifyMutation(mutation: WorkspaceMutation): Promise<void> {
     await Promise.all([...this.mutationListeners].map((listener) => listener(mutation)));
   }
@@ -559,6 +603,7 @@ export function createPersistedWorkspaceRecord(input: {
   isPaseoOwnedWorktree?: boolean;
   mainRepoRoot?: string | null;
   runtime?: { runtimeId: string };
+  deletionRequestedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -574,6 +619,7 @@ export function createPersistedWorkspaceRecord(input: {
     isPaseoOwnedWorktree: input.isPaseoOwnedWorktree ?? false,
     mainRepoRoot: input.mainRepoRoot ?? null,
     ...(input.runtime ? { runtime: input.runtime } : {}),
+    deletionRequestedAt: input.deletionRequestedAt ?? null,
     archivedAt: input.archivedAt ?? null,
     autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
     pinnedAt: input.pinnedAt ?? null,

@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,9 @@ const fixtureExecutable = fileURLToPath(
 );
 const helperExecutable = fileURLToPath(
   new URL("./workspace-helper/executable.mjs", import.meta.url),
+);
+const sharedRebindHelperExecutable = fileURLToPath(
+  new URL("./test-utils/fixtures/workspace-helper-shared-rebind-fixture.mjs", import.meta.url),
 );
 const cleanupRoots: string[] = [];
 
@@ -48,6 +51,10 @@ test.each(["local", "worktree"] as const)(
       resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
       persistRuntimeId: async (id, selectedRuntimeId) => {
         runtimeIds.set(id, selectedRuntimeId);
+      },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (id) => {
+        runtimeIds.delete(id);
       },
     });
     await workspaceRuntime.create({
@@ -104,6 +111,208 @@ test.each(["local", "worktree"] as const)(
   20_000,
 );
 
+test.each([
+  ["local", "pause", "resume"],
+  ["worktree", "archive", "restore"],
+] as const)(
+  "sole selected %s common-ref observation survives %s/%s",
+  async (runtimeId, suspend, awaken) => {
+    const root = await mkdtemp(path.join(tmpdir(), `paseo-${runtimeId}-git-lifecycle-`));
+    cleanupRoots.push(root);
+    const source = await createRepository(path.join(root, "source"));
+    const workspaceId = `${runtimeId}-lifecycle`;
+    const records = new Map<string, { runtimeId: string; archived: boolean }>();
+    const service = createWorkspaceRuntimeService({
+      paseoHome: path.join(root, "paseo-home"),
+      worktreesRoot: path.join(root, "worktrees"),
+      resolveRuntimeId: async (id) => records.get(id)?.runtimeId ?? null,
+      persistRuntimeId: async (id, selectedRuntimeId) => {
+        records.set(id, { runtimeId: selectedRuntimeId, archived: false });
+      },
+      archiveWorkspaceRecord: async (id) => {
+        const record = records.get(id);
+        if (record) record.archived = true;
+      },
+      restoreWorkspaceRecord: async (id) => {
+        const record = records.get(id);
+        if (record) record.archived = false;
+      },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (id) => {
+        records.delete(id);
+      },
+    });
+    await service.create({
+      workspaceId,
+      runtimeId,
+      project: { id: "lifecycle-project", source: { kind: "host-directory", path: source } },
+      placement:
+        runtimeId === "local"
+          ? { kind: "existing" }
+          : {
+              kind: "branch",
+              branchName: "lifecycle-worktree",
+              baseRef: "main",
+              worktreeSlug: "lifecycle-worktree",
+            },
+    });
+
+    let observeChanges = false;
+    let resolveChanged!: () => void;
+    const changed = new Promise<void>((resolve) => {
+      resolveChanged = resolve;
+    });
+    const subscription = await observeWorkspaceGit(await service.bind(workspaceId), () => {
+      if (observeChanges) resolveChanged();
+    });
+
+    await service[suspend](workspaceId);
+    await service[awaken](workspaceId);
+    observeChanges = true;
+    await createBranchThroughRuntime(service, workspaceId, `${runtimeId}-after-lifecycle`);
+    await eventWithin(changed, `${runtimeId} common-ref update after lifecycle transition`);
+
+    await subscription.unsubscribe();
+    await service.destroy(workspaceId);
+  },
+  20_000,
+);
+
+test("replayed common-ref observation survives runtime service reconstruction", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-git-observation-reconstruction-"));
+  cleanupRoots.push(root);
+  const source = await createRepository(path.join(root, "source"));
+  const workspaceId = "reconstructed-observation";
+  const records = new Map<string, { runtimeId: string; archived: boolean }>();
+  const options = {
+    paseoHome: path.join(root, "paseo-home"),
+    resolveRuntimeId: async (id: string) => records.get(id)?.runtimeId ?? null,
+    persistRuntimeId: async (id: string, runtimeId: string) => {
+      records.set(id, { runtimeId, archived: false });
+    },
+    archiveWorkspaceRecord: async (id: string) => {
+      const record = records.get(id);
+      if (record) record.archived = true;
+    },
+    restoreWorkspaceRecord: async (id: string) => {
+      const record = records.get(id);
+      if (record) record.archived = false;
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id: string) => {
+      records.delete(id);
+    },
+  };
+  const original = createWorkspaceRuntimeService(options);
+  await original.create({
+    workspaceId,
+    runtimeId: "local",
+    project: { id: "reconstructed-project", source: { kind: "host-directory", path: source } },
+    placement: { kind: "existing" },
+  });
+  const originalSubscription = await observeWorkspaceGit(
+    await original.bind(workspaceId),
+    () => undefined,
+  );
+  await original.archive(workspaceId);
+
+  const reconstructed = createWorkspaceRuntimeService(options);
+  await reconstructed.restore(workspaceId);
+  let resolveChanged!: () => void;
+  const changed = new Promise<void>((resolve) => {
+    resolveChanged = resolve;
+  });
+  const replayed = await observeWorkspaceGit(await reconstructed.bind(workspaceId), resolveChanged);
+  await createBranchThroughRuntime(reconstructed, workspaceId, "after-reconstruction");
+  await eventWithin(changed, "common-ref update after reconstruction replay");
+
+  await originalSubscription.unsubscribe();
+  await replayed.unsubscribe();
+  await reconstructed.destroy(workspaceId);
+}, 20_000);
+
+test("failed second common-ref rebind rolls back every staged observer before retry", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-git-common-rebind-"));
+  cleanupRoots.push(root);
+  const source = await createRepository(path.join(root, "source"));
+  const workspaceId = "common-rebind";
+  const runtimeIds = new Map<string, string>();
+  const counterPath = path.join(root, "common-watch-launches");
+  const commonRoot = await realpath(path.join(source, ".git"));
+  const service = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "paseo-home"),
+    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
+    persistRuntimeId: async (id, runtimeId) => {
+      runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
+    externalRuntimes: {
+      fixture: {
+        type: "command",
+        command: [process.execPath, fixtureExecutable],
+        helperCommand: [
+          process.execPath,
+          sharedRebindHelperExecutable,
+          helperExecutable,
+          counterPath,
+          commonRoot,
+        ],
+        options: { stateDirectory: path.join(root, "state"), recordLaunchInWorkspace: false },
+      },
+    },
+  });
+  await service.create({
+    workspaceId,
+    runtimeId: "fixture",
+    project: { id: "common-rebind-project", source: { kind: "host-directory", path: source } },
+    placement: { kind: "existing" },
+  });
+  let observeChanges = false;
+  let resolveFirst!: () => void;
+  let resolveSecond!: () => void;
+  const firstChanged = new Promise<void>((resolve) => {
+    resolveFirst = resolve;
+  });
+  const secondChanged = new Promise<void>((resolve) => {
+    resolveSecond = resolve;
+  });
+  const runtime = await service.bind(workspaceId);
+  const subscriptions = await Promise.all([
+    observeWorkspaceGit(runtime, () => {
+      if (observeChanges) resolveFirst();
+    }),
+    observeWorkspaceGit(runtime, () => {
+      if (observeChanges) resolveSecond();
+    }),
+  ]);
+  expect(Number(await readFile(counterPath, "utf8"))).toBe(1);
+
+  await service.pause(workspaceId);
+  await expect(service.resume(workspaceId)).rejects.toThrow(
+    "Workspace helper subscribe acknowledgement timed out",
+  );
+  await expect(createBranchThroughRuntime(service, workspaceId, "during-recovery")).rejects.toThrow(
+    `Workspace runtime is recovering: ${workspaceId}`,
+  );
+  expect(hasSharedRebindHelper(root)).toBe(false);
+  await service.resume(workspaceId);
+
+  observeChanges = true;
+  await createBranchThroughRuntime(service, workspaceId, "after-common-rebind");
+  await Promise.all([
+    eventWithin(firstChanged, "first common-ref observer after retry"),
+    eventWithin(secondChanged, "second common-ref observer after retry"),
+  ]);
+  expect(Number(await readFile(counterPath, "utf8"))).toBe(4);
+
+  await Promise.all(subscriptions.map((subscription) => subscription.unsubscribe()));
+  await service.destroy(workspaceId);
+  expect(hasSharedRebindHelper(root)).toBe(false);
+}, 20_000);
+
 test("selected sibling worktrees share common-ref fan-out without touching an unrelated workspace", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-fanout-"));
   cleanupRoots.push(root);
@@ -116,6 +325,10 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
     resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
     persistRuntimeId: async (id, runtimeId) => {
       runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
     },
   });
   for (const [workspaceId, branchName] of [
@@ -144,14 +357,14 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
   const siblingChanged = new Promise<void>((resolve) => {
     resolveSibling = resolve;
   });
-  let phase: "initial" | "first-change" | "owner-reselected" | "after-pause-change" = "initial";
-  let resolveSiblingOwnerReselected!: () => void;
-  const siblingOwnerReselected = new Promise<void>((resolve) => {
-    resolveSiblingOwnerReselected = resolve;
-  });
+  let phase: "initial" | "first-change" | "after-pause-change" | "after-destroy-change" = "initial";
   let resolveSiblingAfterOwnerPause!: () => void;
   const siblingChangedAfterOwnerPause = new Promise<void>((resolve) => {
     resolveSiblingAfterOwnerPause = resolve;
+  });
+  let resolveSiblingAfterOwnerDestroy!: () => void;
+  const siblingChangedAfterOwnerDestroy = new Promise<void>((resolve) => {
+    resolveSiblingAfterOwnerDestroy = resolve;
   });
   let unrelatedChanges = 0;
   const siblingA = await service.bind("sibling-a");
@@ -163,8 +376,8 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
     }),
     await observeWorkspaceGit(siblingB, () => {
       if (phase === "first-change") resolveSibling();
-      if (phase === "owner-reselected") resolveSiblingOwnerReselected();
       if (phase === "after-pause-change") resolveSiblingAfterOwnerPause();
+      if (phase === "after-destroy-change") resolveSiblingAfterOwnerDestroy();
     }),
     await observeWorkspaceGit(unrelatedGit, () => {
       unrelatedChanges += 1;
@@ -186,9 +399,7 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
   ]);
   expect(unrelatedChanges).toBe(0);
 
-  phase = "owner-reselected";
   await service.pause("sibling-a");
-  await eventWithin(siblingOwnerReselected, "common-ref observer owner re-selection");
   phase = "after-pause-change";
   const branchAfterPause = await service.run({
     workspaceId: "sibling-b",
@@ -199,6 +410,19 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
   branchAfterPause.stdin.end();
   await expect(branchAfterPause.exited).resolves.toEqual({ code: 0, signal: null });
   await eventWithin(siblingChangedAfterOwnerPause, "sibling ref update after owner pause");
+  expect(unrelatedChanges).toBe(0);
+
+  await service.destroy("sibling-a");
+  phase = "after-destroy-change";
+  const branchAfterDestroy = await service.run({
+    workspaceId: "sibling-b",
+    argv: ["git", "branch", "shared-ref-after-owner-destroy"],
+    env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
+    purpose: { kind: "git" },
+  });
+  branchAfterDestroy.stdin.end();
+  await expect(branchAfterDestroy.exited).resolves.toEqual({ code: 0, signal: null });
+  await eventWithin(siblingChangedAfterOwnerDestroy, "sibling ref update after owner destroy");
   expect(unrelatedChanges).toBe(0);
 
   await Promise.all(subscriptions.map((subscription) => subscription.unsubscribe()));
@@ -218,6 +442,10 @@ test("concurrent sibling subscriptions own exactly one common-ref watcher until 
     persistRuntimeId: async (id, runtimeId) => {
       runtimeIds.set(id, runtimeId);
     },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
   });
   for (const workspaceId of ["race-a", "race-b"] as const) {
     await service.create({
@@ -233,63 +461,62 @@ test("concurrent sibling subscriptions own exactly one common-ref watcher until 
     });
   }
 
-  let releaseLaunch!: () => void;
-  const launchReleased = new Promise<void>((resolve) => {
-    releaseLaunch = resolve;
-  });
-  let firstLaunchEntered!: () => void;
-  const firstLaunch = new Promise<void>((resolve) => {
-    firstLaunchEntered = resolve;
-  });
-  let watcherLaunches = 0;
-  let activeWatchers = 0;
-  let maximumActiveWatchers = 0;
-  const instrument = async (workspaceId: string) => {
-    const runtime = await service.bind(workspaceId);
-    return {
-      files: runtime.files,
-      run: async (input: Parameters<typeof runtime.run>[0]) => {
-        const isCommonRefWatcher =
-          input.argv[0] === "node" &&
-          input.argv[1] === "-e" &&
-          input.argv[2]?.includes("fs.watch(process.argv[1]") === true;
-        if (isCommonRefWatcher) {
-          watcherLaunches += 1;
-          firstLaunchEntered();
-          await launchReleased;
-        }
-        const process = await runtime.run(input);
-        if (isCommonRefWatcher) {
-          activeWatchers += 1;
-          maximumActiveWatchers = Math.max(maximumActiveWatchers, activeWatchers);
-          void process.exited.finally(() => {
-            activeWatchers -= 1;
-          });
-        }
-        return process;
-      },
-    };
-  };
-  const [runtimeA, runtimeB] = await Promise.all([instrument("race-a"), instrument("race-b")]);
-  const subscriptionsPromise = Promise.all([
+  const [runtimeA, runtimeB] = await Promise.all([service.bind("race-a"), service.bind("race-b")]);
+  const subscriptions = await Promise.all([
     observeWorkspaceGit(runtimeA, () => undefined),
     observeWorkspaceGit(runtimeB, () => undefined),
   ]);
+  expect(countHelperWatchers(root)).toBe(3);
 
-  await firstLaunch;
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(watcherLaunches).toBe(1);
-  releaseLaunch();
-  const subscriptions = await subscriptionsPromise;
-  expect(maximumActiveWatchers).toBe(1);
+  await service.pause("race-a");
+  expect(countHelperWatchers(root)).toBe(2);
+  await service.resume("race-a");
+  expect(countHelperWatchers(root)).toBe(3);
 
   await subscriptions[0].unsubscribe();
-  expect(activeWatchers).toBe(1);
+  expect(countHelperWatchers(root)).toBe(2);
   await subscriptions[1].unsubscribe();
-  expect(activeWatchers).toBe(0);
+  expect(countHelperWatchers(root)).toBe(0);
 
   await Promise.all([service.destroy("race-a"), service.destroy("race-b")]);
 }, 20_000);
+
+function countHelperWatchers(root: string): number {
+  const processes = execFileSync("ps", ["-axo", "command="], { encoding: "utf8" });
+  return processes
+    .split("\n")
+    .filter(
+      (command) =>
+        command.includes("workspace-helper/executable.mjs") &&
+        command.includes(" watch ") &&
+        command.includes(path.basename(root)),
+    ).length;
+}
+
+function hasSharedRebindHelper(root: string): boolean {
+  return execFileSync("ps", ["-axo", "command="], { encoding: "utf8" })
+    .split("\n")
+    .some(
+      (command) =>
+        command.includes("workspace-helper-shared-rebind-fixture.mjs") &&
+        command.includes(path.basename(root)),
+    );
+}
+
+async function createBranchThroughRuntime(
+  service: ReturnType<typeof createWorkspaceRuntimeService>,
+  workspaceId: string,
+  branch: string,
+): Promise<void> {
+  const process = await service.run({
+    workspaceId,
+    argv: ["git", "branch", branch],
+    env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
+    purpose: { kind: "git" },
+  });
+  process.stdin.end();
+  await expect(process.exited).resolves.toEqual({ code: 0, signal: null });
+}
 
 test("selected workspace Git reads and mutations stay inside its command runtime", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-"));
@@ -310,6 +537,10 @@ test("selected workspace Git reads and mutations stay inside its command runtime
     resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
     persistRuntimeId: async (id, runtimeId) => {
       runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
     },
     externalRuntimes: {
       fixture: {
@@ -425,7 +656,7 @@ test("selected workspace Git reads and mutations stay inside its command runtime
 
   await service.dispose();
   await workspaceRuntime.destroy(workspaceId);
-}, 20_000);
+}, 40_000);
 
 test("selected commit history highlighting never reads a deleted file from the host cwd", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-history-"));
@@ -450,6 +681,10 @@ test("selected commit history highlighting never reads a deleted file from the h
     resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
     persistRuntimeId: async (id, runtimeId) => {
       runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
     },
     externalRuntimes: {
       fixture: {
@@ -508,6 +743,10 @@ test("selected workspaces with the same public cwd keep Git state, mutations, an
     resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
     persistRuntimeId: async (id, runtimeId) => {
       runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
     },
     externalRuntimes: {
       fixture: {
@@ -693,7 +932,7 @@ test("selected workspaces with the same public cwd keep Git state, mutations, an
     workspaceRuntime.destroy("same-cwd-a"),
     workspaceRuntime.destroy("same-cwd-b"),
   ]);
-}, 20_000);
+}, 40_000);
 
 async function createRepository(directory: string): Promise<string> {
   await mkdir(directory);

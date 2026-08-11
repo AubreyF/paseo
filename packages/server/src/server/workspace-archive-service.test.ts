@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino, { type Logger } from "pino";
@@ -791,21 +799,38 @@ describe("archiveByScope", () => {
 });
 
 describe("resolveWorkspaceIdAtPath", () => {
-  test("prefers the worktree-kind record on an exact cwd tie", async () => {
-    const targetPath = "/worktrees/repo/feature";
+  test("fails closed when duplicate records alias the same host-visible path", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "workspace-archive-alias-"));
+    cleanupPaths.push(root);
+    const targetPath = path.join(root, "target");
+    const aliasPath = path.join(root, "alias");
+    mkdirSync(targetPath);
+    symlinkSync(targetPath, aliasPath, process.platform === "win32" ? "junction" : "dir");
 
-    const result = await resolveWorkspaceIdAtPath(
-      {
-        listActiveWorkspaces: async () => [
-          { workspaceId: "ws-local", cwd: targetPath, kind: "local_checkout" },
-          { workspaceId: "ws-worktree", cwd: targetPath, kind: "worktree" },
-        ],
-        findWorkspaceIdForCwd: vi.fn(async () => "ws-local"),
-      },
-      targetPath,
-    );
-
-    expect(result).toBe("ws-worktree");
+    await expect(
+      resolveWorkspaceIdAtPath(
+        {
+          listActiveWorkspaces: async () => [
+            {
+              workspaceId: "ws-first",
+              cwd: "/presentation/one",
+              hostVisiblePath: targetPath,
+              runtimeId: "local",
+              kind: "local_checkout",
+            },
+            {
+              workspaceId: "ws-second",
+              cwd: "/presentation/two",
+              hostVisiblePath: aliasPath,
+              runtimeId: "worktree",
+              kind: "worktree",
+            },
+          ],
+          findWorkspaceIdForCwd: async () => "ws-first",
+        },
+        targetPath,
+      ),
+    ).rejects.toThrow("Ambiguous workspace path");
   });
 
   test("falls back to the path resolver when there is no exact match", async () => {

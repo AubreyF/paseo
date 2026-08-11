@@ -111,6 +111,10 @@ describe("WorkspaceFilesSession", () => {
       persistRuntimeId: async (workspaceId, runtimeId) => {
         runtimeIds.set(workspaceId, runtimeId);
       },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (workspaceId) => {
+        runtimeIds.delete(workspaceId);
+      },
     });
     await runtime.create({
       workspaceId: "selected-workspace",
@@ -218,6 +222,72 @@ describe("WorkspaceFilesSession", () => {
       type: "project_icon_response",
       payload: { icon: { mimeType: "image/svg+xml" }, error: null },
     });
+    await subsystem.dispose();
+    await runtime.destroy(record.workspaceId);
+  });
+
+  test("never selects a workspace runtime from compatibility cwd", async () => {
+    const cwd = makeDir("workspace-files-selected-cwd-");
+    writeFileSync(join(cwd, "runtime.txt"), "runtime only\n");
+    const runtimeIds = new Map<string, string>();
+    const runtime = createWorkspaceRuntimeService({
+      paseoHome: makeDir("workspace-files-selected-cwd-home-"),
+      resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
+      persistRuntimeId: async (workspaceId, runtimeId) => {
+        runtimeIds.set(workspaceId, runtimeId);
+      },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (workspaceId) => {
+        runtimeIds.delete(workspaceId);
+      },
+    });
+    await runtime.create({
+      workspaceId: "selected-workspace",
+      runtimeId: "local",
+      project: { id: "project", source: { kind: "host-directory", path: cwd } },
+      placement: { kind: "existing" },
+    });
+    const now = new Date().toISOString();
+    const record: PersistedWorkspaceRecord = {
+      workspaceId: "selected-workspace",
+      projectId: "project",
+      cwd,
+      kind: "directory",
+      displayName: "selected",
+      title: null,
+      branch: null,
+      worktreeRoot: null,
+      baseBranch: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+      runtime: { runtimeId: "local" },
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      autoArchivedChangeRequestUrl: null,
+      pinnedAt: null,
+    };
+    const { subsystem, emitted } = makeSubsystem({
+      selectedWorkspace: { record, runtime },
+    });
+
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd,
+      path: "runtime.txt",
+      mode: "file",
+      requestId: "selected-without-id",
+    });
+
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: "file_explorer_response",
+        payload: expect.objectContaining({
+          requestId: "selected-without-id",
+          error: "workspaceId is required for a selected workspace file operation",
+        }),
+      }),
+    ]);
     await subsystem.dispose();
     await runtime.destroy(record.workspaceId);
   });

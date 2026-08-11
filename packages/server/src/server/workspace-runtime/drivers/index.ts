@@ -16,12 +16,15 @@ export type WorkspacePlacementIntent =
       relativeCwd?: string;
       worktreeSlug?: string;
     }
-  | { kind: "checkout"; ref: string; relativeCwd?: string; worktreeSlug?: string };
+  | { kind: "checkout"; ref: string; relativeCwd?: string; worktreeSlug?: string }
+  | import("../index.js").ResolvedWorktreePlacement;
 
 export interface WorkspaceDriverCreateInput {
   workspaceId: WorkspaceId;
   project: { projectId: string; source: WorkspaceProjectSource };
   placement: WorkspacePlacementIntent;
+  markFirstAgentBranchAutoName?: boolean;
+  seedPaseoConfigFrom?: string;
 }
 
 export interface WorkspaceDriverState {
@@ -30,12 +33,23 @@ export interface WorkspaceDriverState {
   revision: string;
   executionDomainId: string;
   lifecycle: "ready" | "paused";
+  lifecycleEnvironment?: Readonly<Record<string, string>>;
+}
+
+export interface WorkspacePublicPlacement {
+  cwd: string;
+  hostVisiblePath?: string;
+}
+
+export interface WorkspaceDriverReady {
+  state: WorkspaceDriverState;
+  placement: WorkspacePublicPlacement;
 }
 
 export type WorkspaceDriverInspection =
   | { status: "missing" }
-  | { status: "paused"; state: WorkspaceDriverState }
-  | { status: "ready"; state: WorkspaceDriverState }
+  | ({ status: "paused" } & WorkspaceDriverReady)
+  | ({ status: "ready" } & WorkspaceDriverReady)
   | { status: "error"; message: string };
 
 export interface WorkspaceDriverSpawnInput {
@@ -82,12 +96,14 @@ export type WorkspaceDriverProcess = WorkspacePipeProcess | WorkspacePtyProcess;
 
 export interface WorkspaceRuntimeDriver {
   readonly id: WorkspaceRuntimeId;
+  readonly reconciliationDomainId?: string;
   /** Runtime-local command for Paseo's compatible workspace helper. */
   readonly workspaceHelperCommand: readonly [string, ...string[]];
-  create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverState>;
+  create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverReady>;
   inspect(workspaceId: WorkspaceId): Promise<WorkspaceDriverInspection>;
   spawn(input: WorkspaceDriverSpawnInput): Promise<WorkspaceDriverProcess>;
   pause(workspaceId: WorkspaceId): Promise<void>;
-  resume(workspaceId: WorkspaceId): Promise<WorkspaceDriverState>;
+  resume(workspaceId: WorkspaceId): Promise<WorkspaceDriverReady>;
   destroy(workspaceId: WorkspaceId): Promise<void>;
+  reconcile?(workspaceIds: readonly WorkspaceId[]): Promise<void>;
 }

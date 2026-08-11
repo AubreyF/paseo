@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync } from "node:fs";
 
 import { beforeEach, afterEach, describe, expect, test } from "vitest";
 
@@ -417,6 +417,66 @@ describe("workspace registries", () => {
     await workspaceRegistry.remove("/tmp/repo");
     expect(await workspaceRegistry.get("/tmp/repo")).toBeNull();
     expect(await workspaceRegistry.list()).toEqual([]);
+  });
+
+  test("keeps the committed workspace snapshot when a removal cannot be persisted", async () => {
+    const registryPath = path.join(tmpDir, "projects", "workspaces.json");
+    const backupPath = `${registryPath}.backup`;
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "durable-workspace",
+      projectId: "durable-project",
+      cwd: "/tmp/durable",
+      kind: "local_checkout",
+      displayName: "durable",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    await workspaceRegistry.upsert(workspace);
+    renameSync(registryPath, backupPath);
+    mkdirSync(registryPath);
+
+    await expect(workspaceRegistry.remove(workspace.workspaceId)).rejects.toThrow();
+    expect(await workspaceRegistry.get(workspace.workspaceId)).toEqual(workspace);
+
+    rmSync(registryPath, { recursive: true });
+    renameSync(backupPath, registryPath);
+    const reconstructed = new FileBackedWorkspaceRegistry(registryPath, logger);
+    await expect(reconstructed.get(workspace.workspaceId)).resolves.toEqual(workspace);
+    await expect(workspaceRegistry.remove(workspace.workspaceId)).resolves.toBeUndefined();
+    await expect(workspaceRegistry.get(workspace.workspaceId)).resolves.toBeNull();
+  });
+
+  test("does not expose deletion intent until it is durably persisted", async () => {
+    const registryPath = path.join(tmpDir, "projects", "workspaces.json");
+    const backupPath = `${registryPath}.backup`;
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "intent-workspace",
+      projectId: "intent-project",
+      cwd: "/tmp/intent",
+      kind: "local_checkout",
+      displayName: "intent",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    await workspaceRegistry.upsert(workspace);
+    renameSync(registryPath, backupPath);
+    mkdirSync(registryPath);
+
+    await expect(
+      workspaceRegistry.requestDeletion(workspace.workspaceId, "2026-03-02T00:00:00.000Z"),
+    ).rejects.toThrow();
+    expect(await workspaceRegistry.get(workspace.workspaceId)).toEqual(workspace);
+
+    rmSync(registryPath, { recursive: true });
+    renameSync(backupPath, registryPath);
+    const reconstructedBeforeRetry = new FileBackedWorkspaceRegistry(registryPath, logger);
+    await expect(reconstructedBeforeRetry.get(workspace.workspaceId)).resolves.toEqual(workspace);
+
+    await workspaceRegistry.requestDeletion(workspace.workspaceId, "2026-03-02T00:00:00.000Z");
+    const reconstructedAfterRetry = new FileBackedWorkspaceRegistry(registryPath, logger);
+    await expect(reconstructedAfterRetry.get(workspace.workspaceId)).resolves.toMatchObject({
+      deletionRequestedAt: "2026-03-02T00:00:00.000Z",
+    });
   });
 
   test("refreshes workspace archive timestamps when an archive is repeated", async () => {

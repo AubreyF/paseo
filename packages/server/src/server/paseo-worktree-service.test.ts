@@ -24,6 +24,7 @@ import { createWorktree, getPaseoWorktreesRoot } from "../utils/worktree.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../utils/path.js";
 import { deriveProjectKey } from "./project-key.js";
+import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
 const cleanupPaths: string[] = [];
 
@@ -460,7 +461,7 @@ test("an explicit project FK remains unchanged when its worktree comes from anot
 
 // POSIX-only: Windows git worktree paths need separate canonicalization coverage.
 test.skipIf(isPlatform("win32"))(
-  "reuses an existing worktree and still upserts the workspace",
+  "keeps repeated worktree requests isolated by workspace identity",
   async () => {
     const { repoDir, tempDir } = createGitRepo();
     cleanupPaths.push(tempDir);
@@ -492,11 +493,11 @@ test.skipIf(isPlatform("win32"))(
       deps,
     );
 
-    expect(second.created).toBe(false);
-    expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath);
+    expect(second.created).toBe(true);
+    expect(second.worktree.worktreePath).not.toBe(first.worktree.worktreePath);
     expect(events).toContain(`workspace:${second.workspace.workspaceId}`);
-    // Creation never dedupes by directory: the same worktree path yields a
-    // distinct workspace record on the second call.
+    // Compatibility cwd is presentation data; repeated requests get distinct
+    // runtime-owned placement and identity.
     expect(second.workspace.workspaceId).not.toBe(first.workspace.workspaceId);
   },
 );
@@ -1087,6 +1088,28 @@ function createDeps(options?: {
     workspaceGitService,
     logger: createTestLogger(),
   });
+  const runtimeHome = mkdtempSync(path.join(tmpdir(), "paseo-worktree-service-runtime-"));
+  cleanupPaths.push(runtimeHome);
+  const workspaceRuntime = createWorkspaceRuntimeService({
+    paseoHome: runtimeHome,
+    worktreesRoot: path.join(runtimeHome, "worktrees"),
+    resolveRuntimeId: async (workspaceId) =>
+      workspaces.get(workspaceId)?.runtime?.runtimeId ?? null,
+    persistRuntimeId: async (workspaceId, runtimeId, placement) => {
+      const workspace = workspaces.get(workspaceId);
+      if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+      workspaces.set(workspaceId, {
+        ...workspace,
+        cwd: placement.cwd,
+        hostVisiblePath: placement.hostVisiblePath ?? null,
+        runtime: { runtimeId },
+      });
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId) => {
+      workspaces.delete(workspaceId);
+    },
+  });
 
   return {
     github: createGitHubServiceStub(),
@@ -1094,6 +1117,8 @@ function createDeps(options?: {
     workspaces,
     workspaceGitService,
     workspaceProvisioning,
+    workspaceRuntime,
+    workspaceRegistry,
   };
 }
 

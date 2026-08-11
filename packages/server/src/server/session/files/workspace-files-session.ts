@@ -1,4 +1,5 @@
 import type pino from "pino";
+import { areEquivalentPaths } from "../../../utils/path.js";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import {
   encodeFileTransferFrame,
@@ -18,7 +19,6 @@ import type {
 import type { WorkspaceFileKind, WorkspaceFiles } from "../../workspace-helper/index.js";
 import type { WorkspaceRuntimeService } from "../../workspace-runtime/index.js";
 import type { WorkspaceRegistry } from "../../workspace-registry.js";
-import { areEquivalentPaths } from "../../../utils/path.js";
 import { FileUploadStore } from "../../file-upload/index.js";
 import type { DownloadTokenStore } from "../../file-download/token-store.js";
 import {
@@ -534,16 +534,17 @@ export class WorkspaceFilesSession {
       if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
       return workspace.runtime ? this.workspaceRuntime.files(workspaceId) : null;
     }
-    const matches = (await this.workspaceRegistry.list()).filter(
-      (workspace) =>
-        workspace.archivedAt === null &&
-        workspace.runtime &&
-        areEquivalentPaths(workspace.cwd, cwd),
-    );
-    if (matches.length > 1) {
-      throw new Error("workspaceId is required because the workspace path is not unique");
+    if (
+      (await this.workspaceRegistry.list()).some(
+        (workspace) =>
+          workspace.archivedAt === null &&
+          workspace.runtime &&
+          areEquivalentPaths(workspace.cwd, cwd),
+      )
+    ) {
+      throw new Error("workspaceId is required for a selected workspace file operation");
     }
-    return matches[0] ? this.workspaceRuntime.files(matches[0].workspaceId) : null;
+    return null;
   }
 
   private async emitStream(

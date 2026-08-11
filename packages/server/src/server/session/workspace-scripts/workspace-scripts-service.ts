@@ -52,6 +52,40 @@ export interface WorkspaceScriptsService {
   start(request: StartWorkspaceScriptRequest): Promise<void>;
 }
 
+export async function readWorkspacePaseoConfig(input: {
+  workspace: PersistedWorkspaceRecord;
+  workspaceRuntime?: WorkspaceRuntimeService | null;
+  logger: pino.Logger;
+}): Promise<PaseoConfig | null> {
+  const { workspace, workspaceRuntime, logger } = input;
+  if (!workspace.runtime) return readPaseoConfigForProjection(workspace.cwd, logger);
+  if (!workspaceRuntime) {
+    throw new Error(`Workspace runtime is not available: ${workspace.workspaceId}`);
+  }
+  const files = workspaceRuntime.files(workspace.workspaceId);
+  const version = await files.stat("paseo.json");
+  if (version.status === "missing") return null;
+  if (version.status === "error") {
+    logger.warn(
+      { workspaceId: workspace.workspaceId, error: version.error },
+      "Failed to read runtime paseo.json; treating workspace as having no scripts",
+    );
+    return null;
+  }
+  try {
+    const file = await files.read("paseo.json");
+    const chunks: Buffer[] = [];
+    for await (const chunk of file.chunks) chunks.push(Buffer.from(chunk));
+    return PaseoConfigSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+  } catch (error) {
+    logger.warn(
+      { workspaceId: workspace.workspaceId, err: error },
+      "Failed to parse runtime paseo.json; treating workspace as having no scripts",
+    );
+    return null;
+  }
+}
+
 export function createWorkspaceScriptsService(deps: {
   serviceProxy: ServiceProxySubsystem | null;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
@@ -118,7 +152,7 @@ export function createWorkspaceScriptsService(deps: {
     return buildWorkspaceScriptPayloads({
       workspaceId: workspace.workspaceId,
       workspaceDirectory: workspace.cwd,
-      paseoConfig: await readWorkspaceConfig(workspace),
+      paseoConfig: await readWorkspacePaseoConfig({ workspace, workspaceRuntime, logger }),
       serviceProxy,
       runtimeStore: scriptRuntimeStore,
       daemonPort: getDaemonTcpPort?.() ?? null,
@@ -126,37 +160,6 @@ export function createWorkspaceScriptsService(deps: {
       gitMetadata: resolveGitMetadata(workspace, project),
       resolveHealth: resolveScriptHealth ?? undefined,
     });
-  }
-
-  async function readWorkspaceConfig(
-    workspace: PersistedWorkspaceRecord,
-  ): Promise<PaseoConfig | null> {
-    if (!workspace.runtime) return readPaseoConfigForProjection(workspace.cwd, logger);
-    if (!workspaceRuntime) {
-      throw new Error(`Workspace runtime is not available: ${workspace.workspaceId}`);
-    }
-    const files = workspaceRuntime.files(workspace.workspaceId);
-    const version = await files.stat("paseo.json");
-    if (version.status === "missing") return null;
-    if (version.status === "error") {
-      logger.warn(
-        { workspaceId: workspace.workspaceId, error: version.error },
-        "Failed to read runtime paseo.json; treating workspace as having no scripts",
-      );
-      return null;
-    }
-    try {
-      const file = await files.read("paseo.json");
-      const chunks: Buffer[] = [];
-      for await (const chunk of file.chunks) chunks.push(Buffer.from(chunk));
-      return PaseoConfigSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-    } catch (error) {
-      logger.warn(
-        { workspaceId: workspace.workspaceId, err: error },
-        "Failed to parse runtime paseo.json; treating workspace as having no scripts",
-      );
-      return null;
-    }
   }
 
   async function emitStatusUpdate(workspaceId: string, _workspaceDirectory: string): Promise<void> {
@@ -204,8 +207,21 @@ export function createWorkspaceScriptsService(deps: {
     const workspace = await getWorkspace(input.workspaceId);
     const project = await projectRegistry.get(workspace.projectId);
     const gitMetadata = resolveGitMetadata(workspace, project);
+    const paseoConfig = workspace.runtime
+      ? await readWorkspacePaseoConfig({ workspace, workspaceRuntime, logger })
+      : undefined;
+    if (workspace.runtime && !paseoConfig) {
+      throw new Error("Workspace does not contain a valid paseo.json");
+    }
     const result = await spawnWorkspaceScript({
       repoRoot: workspace.cwd,
+      ...(workspace.runtime
+        ? {
+            runtimeCwd: ".",
+            paseoConfig: paseoConfig!,
+            runtime: await workspaceRuntime!.bind(workspace.workspaceId),
+          }
+        : {}),
       workspaceId: workspace.workspaceId,
       projectSlug: gitMetadata.projectSlug,
       branchName: gitMetadata.currentBranch,

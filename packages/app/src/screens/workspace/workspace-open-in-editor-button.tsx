@@ -31,6 +31,7 @@ interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
   workspaceId: string;
   cwd: string;
+  hostVisiblePath?: string | null;
   activeFile?: WorkspaceFileLocation | null;
   hideLabels?: boolean;
 }
@@ -81,6 +82,7 @@ function OpenTargetMenuItem({ target, isPreferred, onOpen }: OpenTargetMenuItemP
 export function WorkspaceOpenInEditorButton({
   serverId,
   cwd,
+  hostVisiblePath,
   activeFile,
   hideLabels,
 }: WorkspaceOpenInEditorButtonProps) {
@@ -95,8 +97,10 @@ export function WorkspaceOpenInEditorButton({
 
   const resolvedFile = useMemo(
     () =>
-      activeFile ? resolveWorkspaceFilePaths({ path: activeFile.path, workspaceRoot: cwd }) : null,
-    [activeFile, cwd],
+      activeFile && hostVisiblePath
+        ? resolveWorkspaceFilePaths({ path: activeFile.path, workspaceRoot: hostVisiblePath })
+        : null,
+    [activeFile, hostVisiblePath],
   );
   const activeFileName = useMemo(
     () => resolvedFile?.absolutePath.split("/").findLast(Boolean) ?? null,
@@ -115,6 +119,7 @@ export function WorkspaceOpenInEditorButton({
     () =>
       planWorkspaceOpenTargets({
         workspaceDirectory: cwd,
+        hostVisiblePath,
         activeFile,
         resolvedActiveFile: resolvedFile,
         desktopTargets: desktopOpenTargets,
@@ -146,6 +151,7 @@ export function WorkspaceOpenInEditorButton({
       checkoutStatus,
       cwd,
       desktopOpenTargets,
+      hostVisiblePath,
       resolvedForge,
       isDesktopOpenAvailable,
       isLocalDaemon,

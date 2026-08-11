@@ -21,6 +21,7 @@ posixDescribe("provider workspace placement capability", () => {
       paseoHome: path.join(root, "paseo-home"),
       resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
       persistRuntimeId: async (workspaceId, runtimeId) => runtimeIds.set(workspaceId, runtimeId),
+      ...lifecycleRecords(runtimeIds),
     });
     await service.create({
       workspaceId: "provider-state",
@@ -77,6 +78,7 @@ posixDescribe("provider workspace placement capability", () => {
       paseoHome: path.join(root, "paseo-home"),
       resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
       persistRuntimeId: async (workspaceId, runtimeId) => runtimeIds.set(workspaceId, runtimeId),
+      ...lifecycleRecords(runtimeIds),
     });
     await service.create({
       workspaceId: "provider-remove",
@@ -134,6 +136,7 @@ posixDescribe("provider workspace placement capability", () => {
       paseoHome: path.join(root, "paseo-home"),
       resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
       persistRuntimeId: async (workspaceId, runtimeId) => runtimeIds.set(workspaceId, runtimeId),
+      ...lifecycleRecords(runtimeIds),
     });
     await service.create({
       workspaceId: "provider-abort",
@@ -192,6 +195,7 @@ posixDescribe("provider workspace placement capability", () => {
       paseoHome: path.join(root, "paseo-home"),
       resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
       persistRuntimeId: async (workspaceId, runtimeId) => runtimeIds.set(workspaceId, runtimeId),
+      ...lifecycleRecords(runtimeIds),
     });
     await service.create({
       workspaceId: "provider-state-error",
@@ -225,3 +229,12 @@ posixDescribe("provider workspace placement capability", () => {
     }
   });
 });
+
+function lifecycleRecords(runtimeIds: Map<string, string>) {
+  return {
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId: string) => {
+      runtimeIds.delete(workspaceId);
+    },
+  };
+}

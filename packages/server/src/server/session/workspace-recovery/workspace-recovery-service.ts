@@ -65,6 +65,7 @@ export function createWorkspaceRecoveryService(deps: {
   getProject: (projectId: string) => Promise<PersistedProjectRecord | null>;
   isDirectory: (path: string) => Promise<boolean>;
   unarchiveWorkspace: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  inspectRuntime?: (workspaceId: string) => Promise<"missing" | "paused" | "ready" | "error">;
 }): WorkspaceRecoveryService {
   async function resolveRecovery(
     workspaceId: string,
@@ -94,6 +95,27 @@ export function createWorkspaceRecoveryService(deps: {
         workspaceId,
         reason: "project_not_found",
         message: "The project for this archived workspace no longer exists.",
+      };
+    }
+
+    if (workspace.runtime) {
+      if (!deps.inspectRuntime) {
+        return {
+          kind: "unavailable",
+          workspaceId,
+          reason: "workspace_directory_missing",
+          message: "The workspace runtime is not available on this host.",
+        };
+      }
+      const runtimeStatus = await deps.inspectRuntime(workspaceId);
+      if (runtimeStatus === "ready" || runtimeStatus === "paused") {
+        return createRecoveryPlan({ action: "unarchive", workspace });
+      }
+      return {
+        kind: "unavailable",
+        workspaceId,
+        reason: "workspace_directory_missing",
+        message: `The archived workspace runtime is ${runtimeStatus}.`,
       };
     }
 

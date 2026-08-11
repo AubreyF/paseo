@@ -742,7 +742,7 @@ function StatusWorkspaceRowInner({
               archiveShortcutKeys={archiveShortcutKeys}
               isPinned={isPinned}
               onTogglePin={onTogglePin}
-              openInFileManagerPath={workspace.workspaceDirectory}
+              openInFileManagerPath={workspace.hostVisiblePath}
               disabled={isArchiving}
               accessibilityRole="button"
               accessibilityState={accessibilityState}

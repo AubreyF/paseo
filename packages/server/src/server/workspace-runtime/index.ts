@@ -20,7 +20,35 @@ export type WorkspacePlacement =
       relativeCwd?: string;
       worktreeSlug?: string;
     }
-  | { kind: "checkout"; ref: string; relativeCwd?: string; worktreeSlug?: string };
+  | { kind: "checkout"; ref: string; relativeCwd?: string; worktreeSlug?: string }
+  | ResolvedWorktreePlacement;
+
+export type ResolvedWorktreeSource =
+  | { kind: "branch-off"; baseBranch: string; branchName: string }
+  | { kind: "checkout-branch"; branchName: string }
+  | {
+      kind: "checkout-change-request" | "checkout-github-pr";
+      forge?: string;
+      changeRequestNumber?: number;
+      githubPrNumber?: number;
+      headRef: string;
+      headRepositoryOwner?: string;
+      baseRefName: string;
+      checkoutRefs?: readonly {
+        remoteName?: string;
+        remoteRef: string;
+      }[];
+      localBranchName?: string;
+      pushRemoteUrl?: string;
+      trackOriginHead?: boolean;
+    };
+
+export interface ResolvedWorktreePlacement {
+  kind: "resolved-worktree";
+  source: ResolvedWorktreeSource;
+  worktreeSlug: string;
+  relativeCwd?: string;
+}
 
 export type WorkspaceProcessPurpose =
   | { kind: "agent"; agentId: string; provider: string }
@@ -44,6 +72,9 @@ export interface CreateWorkspaceInput {
   project: { id: string; source: WorkspaceSource };
   placement: WorkspacePlacement;
   setup?: readonly WorkspaceSetupCommand[];
+  setupFromPaseoConfig?: boolean;
+  markFirstAgentBranchAutoName?: boolean;
+  seedPaseoConfigFrom?: string;
 }
 
 export interface WorkspaceProcessInput extends WorkspaceSetupCommand {
@@ -86,19 +117,47 @@ export interface BoundWorkspaceRuntime {
 }
 
 export interface WorkspaceRuntimeService {
-  create(input: CreateWorkspaceInput): Promise<{ workspaceId: string; runtimeId: string }>;
+  reconcile(): Promise<void>;
+  create(input: CreateWorkspaceInput): Promise<WorkspaceRuntimePlacement>;
   run(input: WorkspaceProcessInput): Promise<WorkspaceProcess>;
   openTerminal(input: WorkspaceTerminalInput): Promise<WorkspaceTerminal>;
   bind(workspaceId: string): Promise<BoundWorkspaceRuntime>;
   files(workspaceId: string): WorkspaceFiles;
+  inspect(workspaceId: string): Promise<WorkspaceRuntimeInspection>;
+  requireHostVisiblePath(workspaceId: string): Promise<string>;
+  runSetup(workspaceId: string, signal?: AbortSignal): Promise<void>;
   pause(workspaceId: string): Promise<void>;
   resume(workspaceId: string): Promise<void>;
+  archive(workspaceId: string): Promise<void>;
+  restore(workspaceId: string): Promise<void>;
   destroy(workspaceId: string): Promise<void>;
 }
 
+export interface WorkspaceRuntimePlacement {
+  workspaceId: string;
+  runtimeId: string;
+  cwd: string;
+  hostVisiblePath?: string;
+}
+
+export type WorkspaceRuntimeInspection =
+  | { status: "missing" | "error" }
+  | ({ status: "paused" | "ready" } & Omit<WorkspaceRuntimePlacement, "workspaceId" | "runtimeId">);
+
 export interface WorkspaceRuntimeRecordStore {
   resolveRuntimeId(workspaceId: string): Promise<string | null>;
-  persistRuntimeId(workspaceId: string, runtimeId: string): Promise<void>;
+  persistRuntimeId(
+    workspaceId: string,
+    runtimeId: string,
+    placement: { cwd: string; hostVisiblePath?: string },
+  ): Promise<void>;
+  archiveWorkspaceRecord?(workspaceId: string): Promise<void>;
+  restoreWorkspaceRecord?(workspaceId: string): Promise<void>;
+  beginWorkspaceDeletion?(workspaceId: string): Promise<void>;
+  removeWorkspaceRecord?(workspaceId: string): Promise<void>;
+  listRuntimeRecords?(): Promise<
+    readonly { workspaceId: string; runtimeId: string; archived: boolean; deleting?: boolean }[]
+  >;
 }
 
 export interface ExternalWorkspaceRuntime {

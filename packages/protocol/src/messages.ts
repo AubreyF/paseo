@@ -3314,6 +3314,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     projectCustomIconRevision: z.string().nullable().optional(),
     projectRootPath: z.string(),
     workspaceDirectory: z.string().optional(),
+    // Explicit capability for host editor/file-manager integrations. Runtime-local cwd is not enough.
+    // COMPAT(host-visible-path): added in v0.3.1; older daemons omit this capability.
+    hostVisiblePath: z.string().optional(),
     // COMPAT(worktreeSlug): added in v0.2.6, remove optional after 2027-01-31.
     // Present only for Paseo-owned worktrees; this is the basename of their root directory.
     worktreeSlug: z.string().optional(),

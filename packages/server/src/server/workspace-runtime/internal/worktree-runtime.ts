@@ -5,6 +5,7 @@ import {
   createWorktree,
   deletePaseoWorktree,
   getGitCommonDir,
+  seedPaseoConfigFile,
   type WorktreeSource,
 } from "../../../utils/worktree.js";
 import type {
@@ -17,6 +18,7 @@ import type {
 import { resolveRuntimeCwd, spawnHostProcess, spawnHostPty } from "./host-process.js";
 import { hostWorkspaceHelperCommand } from "./host-helper.js";
 import { createRuntimeStateStore } from "./runtime-state.js";
+import { writePaseoWorktreeFirstAgentBranchAutoNameMetadata } from "../../../utils/worktree-metadata.js";
 
 interface WorktreeRuntimeState extends WorkspaceDriverState {
   sourceRoot: string;
@@ -34,7 +36,7 @@ export function createWorktreeRuntime(options: {
     if (!state) return { status: "missing" };
     try {
       if (!(await stat(state.root)).isDirectory()) return { status: "missing" };
-      return { status: state.lifecycle, state };
+      return { status: state.lifecycle, state, placement: hostPlacement(state.root) };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing" };
       return { status: "error", message: String(error) };
@@ -54,7 +56,7 @@ export function createWorktreeRuntime(options: {
     workspaceHelperCommand: hostWorkspaceHelperCommand,
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);
-      if (existing.status === "ready" || existing.status === "paused") return existing.state;
+      if (existing.status === "ready" || existing.status === "paused") return existing;
       if (input.project.source.kind !== "host-directory") {
         throw new Error("The worktree runtime requires a host Git checkout");
       }
@@ -62,16 +64,42 @@ export function createWorktreeRuntime(options: {
         throw new Error("The worktree runtime creates and owns its worktree");
       }
       const sourceRoot = path.resolve(input.project.source.path);
+      const worktreeSlug =
+        input.placement.kind === "resolved-worktree"
+          ? input.placement.worktreeSlug
+          : (input.placement.worktreeSlug ?? input.workspaceId);
       const worktree = await createWorktree({
         cwd: sourceRoot,
         source: toWorktreeSource(input.placement),
-        worktreeSlug: input.placement.worktreeSlug ?? input.workspaceId,
+        worktreeSlug,
         runSetup: false,
         paseoHome: options.paseoHome,
         worktreesRoot: options.worktreesRoot,
       });
       try {
-        const root = await resolveRuntimeCwd(worktree.worktreePath, input.placement.relativeCwd);
+        if (
+          input.markFirstAgentBranchAutoName &&
+          input.placement.kind === "resolved-worktree" &&
+          input.placement.source.kind === "branch-off"
+        ) {
+          writePaseoWorktreeFirstAgentBranchAutoNameMetadata(worktree.worktreePath, {
+            placeholderBranchName: worktree.branchName,
+          });
+        }
+        const root = await resolveRuntimeCwd(
+          worktree.worktreePath,
+          input.placement.relativeCwd,
+        ).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            throw new Error("Selected project directory is missing from the worktree", {
+              cause: error,
+            });
+          }
+          throw error;
+        });
+        if (input.seedPaseoConfigFrom) {
+          await seedPaseoConfigFile({ sourceCwd: input.seedPaseoConfigFrom, targetCwd: root });
+        }
         if (!(await stat(root)).isDirectory()) {
           throw new Error(`Selected project directory is missing from the worktree: ${root}`);
         }
@@ -83,9 +111,15 @@ export function createWorktreeRuntime(options: {
           revision: `worktree:${Date.now()}`,
           executionDomainId: "host",
           lifecycle: "ready",
+          lifecycleEnvironment: {
+            PASEO_SOURCE_CHECKOUT_PATH: sourceRoot,
+            PASEO_ROOT_PATH: sourceRoot,
+            PASEO_WORKTREE_PATH: worktree.worktreePath,
+            PASEO_BRANCH_NAME: worktree.branchName,
+          },
         };
         await states.write(state);
-        return state;
+        return { state, placement: hostPlacement(root) };
       } catch (error) {
         await deletePaseoWorktree({
           cwd: sourceRoot,
@@ -117,7 +151,7 @@ export function createWorktreeRuntime(options: {
       }
       const state = { ...inspection.state, lifecycle: "ready" as const };
       await states.write(state);
-      return state;
+      return { state, placement: hostPlacement(state.root) };
     },
     async destroy(workspaceId) {
       const state = (await states.read(workspaceId)) as WorktreeRuntimeState | null;
@@ -139,9 +173,14 @@ export function createWorktreeRuntime(options: {
   };
 }
 
+function hostPlacement(root: string) {
+  return { cwd: root, hostVisiblePath: root };
+}
+
 function toWorktreeSource(
   placement: Exclude<WorkspaceDriverCreateInput["placement"], { kind: "existing" }>,
 ): WorktreeSource {
+  if (placement.kind === "resolved-worktree") return placement.source as WorktreeSource;
   if (placement.kind === "branch") {
     return {
       kind: "branch-off",

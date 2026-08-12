@@ -73,6 +73,7 @@ export interface CreateWorkspaceInput {
   runtimeId: string;
   project: { id: string; source: WorkspaceSource };
   placement: WorkspacePlacement;
+  purpose?: "provider-probe";
   setup?: readonly WorkspaceSetupCommand[];
   setupFromPaseoConfig?: boolean;
   markFirstAgentBranchAutoName?: boolean;

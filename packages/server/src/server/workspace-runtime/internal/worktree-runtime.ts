@@ -27,6 +27,7 @@ interface WorktreeRuntimeState {
   worktreeRoot: string;
   lifecycle: "ready" | "paused";
   lifecycleEnvironment: Readonly<Record<string, string>>;
+  ownsWorktree?: boolean;
 }
 
 export function createWorktreeRuntime(options: {
@@ -68,9 +69,34 @@ export function createWorktreeRuntime(options: {
     workspaceHelperCommand: hostWorkspaceHelperCommand,
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);
-      if (existing.status === "ready" || existing.status === "paused") return existing;
+      if (existing.status === "ready" || existing.status === "paused") {
+        return { ...existing, materializedFreshContent: false };
+      }
       if (input.project.source.kind !== "host-directory") {
         throw new Error("The worktree runtime requires a host Git checkout");
+      }
+      if (input.purpose === "provider-probe") {
+        if (input.placement.kind !== "existing") {
+          throw new Error("A worktree provider probe adopts an existing Git checkout");
+        }
+        const sourceRoot = path.resolve(input.project.source.path);
+        const root = await resolveRuntimeCwd(sourceRoot, input.placement.relativeCwd);
+        if (!(await stat(root)).isDirectory()) throw new Error(`Directory not found: ${root}`);
+        const state: WorktreeRuntimeState = {
+          workspaceId: input.workspaceId,
+          root,
+          worktreeRoot: sourceRoot,
+          sourceRoot,
+          lifecycle: "ready",
+          lifecycleEnvironment: {},
+          ownsWorktree: false,
+        };
+        await states.write(state);
+        return {
+          state: publicState(state),
+          placement: hostPlacement(root),
+          materializedFreshContent: false,
+        };
       }
       if (input.placement.kind === "existing") {
         throw new Error("The worktree runtime creates and owns its worktree");
@@ -127,9 +153,14 @@ export function createWorktreeRuntime(options: {
             PASEO_WORKTREE_PATH: ".",
             PASEO_BRANCH_NAME: worktree.branchName,
           },
+          ownsWorktree: true,
         };
         await states.write(state);
-        return { state: publicState(state), placement: hostPlacement(root) };
+        return {
+          state: publicState(state),
+          placement: hostPlacement(root),
+          materializedFreshContent: true,
+        };
       } catch (error) {
         await deletePaseoWorktree({
           cwd: sourceRoot,
@@ -165,13 +196,15 @@ export function createWorktreeRuntime(options: {
     async destroy(workspaceId) {
       const state = await states.read(workspaceId);
       if (!state) return;
-      await deletePaseoWorktree({
-        cwd: state.sourceRoot,
-        worktreePath: state.worktreeRoot,
-        teardownCwds: [],
-        paseoHome: options.paseoHome,
-        worktreesBaseRoot: options.worktreesRoot,
-      });
+      if (state.ownsWorktree !== false) {
+        await deletePaseoWorktree({
+          cwd: state.sourceRoot,
+          worktreePath: state.worktreeRoot,
+          teardownCwds: [],
+          paseoHome: options.paseoHome,
+          worktreesBaseRoot: options.worktreesRoot,
+        });
+      }
       await states.remove(workspaceId);
     },
   };
@@ -198,7 +231,8 @@ function isWorktreeRuntimeState(
     typeof state.worktreeRoot === "string" &&
     (state.lifecycle === "ready" || state.lifecycle === "paused") &&
     !!state.lifecycleEnvironment &&
-    typeof state.lifecycleEnvironment === "object"
+    typeof state.lifecycleEnvironment === "object" &&
+    (state.ownsWorktree === undefined || typeof state.ownsWorktree === "boolean")
   );
 }
 

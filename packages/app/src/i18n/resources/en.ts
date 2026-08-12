@@ -1053,6 +1053,7 @@ export const en = {
     title: "New workspace",
     create: "Create",
     runtime: { local: "Local", worktree: "Worktree", docker: "Docker", label: "Runtime" },
+    runtimeProbe: { preparing: "Preparing environment" },
     isolation: {
       local: "Local",
       worktree: "New worktree",

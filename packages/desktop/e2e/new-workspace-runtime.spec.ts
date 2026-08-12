@@ -1,14 +1,20 @@
 import { test as base } from "../../app/e2e/support/fixtures";
 import {
   createWorkspaceInSelectedRuntime,
+  expectNoProbeInWorkspaceProjection,
+  expectProbeFailureWithRetry,
+  expectProbeSkippedProjectSetup,
+  expectProviderAvailable,
+  expectFixtureProviderUnavailable,
   expectRuntimeChoices,
-  expectNewWorkspaceProviderSnapshotUsesProjectCwd,
   expectRuntimeSelected,
+  expectUserWorkspaceRanProjectSetup,
   expectWorkspaceOpenInRuntime,
   gotoNewWorkspaceForRuntime,
   seedGitProjectForRuntime,
   seedNonGitProjectForRuntime,
   selectRuntime,
+  retryFailedProbe,
   type SeededRuntimeProject,
 } from "../../app/e2e/support/helpers/new-workspace-runtime";
 import { getServerId } from "../../app/e2e/support/helpers/server-id";
@@ -40,28 +46,51 @@ const test = base.extend<{
   },
 });
 
-test("creates a workspace in a selected runtime", async ({ page, runtimeProject }) => {
+test("probes and creates a workspace in a selected runtime", async ({ page, runtimeProject }) => {
   await test.step("choose the project and runtime", async () => {
-    const cwdSnapshotRequest = expectNewWorkspaceProviderSnapshotUsesProjectCwd(
-      page,
-      runtimeProject.sourceDirectory,
-    );
     await installDesktopRuntime(page, { serverId: getServerId(), manageBuiltInDaemon: false });
     await gotoNewWorkspaceForRuntime(page, runtimeProject);
-    await cwdSnapshotRequest;
-    await expectRuntimeChoices(page, ["Local", "Worktree", "Docker", "Fixture"]);
+    await expectRuntimeChoices(page, ["Local", "Worktree", "Docker", "Fixture", "Fixture Failure"]);
     await selectRuntime(page, "Fixture");
+  });
+
+  await test.step("show the selected runtime's provider truth", async () => {
+    await expectProviderAvailable(page, "Fixture Agent");
+    await expectProbeSkippedProjectSetup(runtimeProject);
+    await selectRuntime(page, "Local");
+    await expectFixtureProviderUnavailable(page);
+    await selectRuntime(page, "Fixture");
+    await expectProviderAvailable(page, "Fixture Agent");
   });
 
   await test.step("create and open the workspace", async () => {
     await createWorkspaceInSelectedRuntime(page);
     await expectWorkspaceOpenInRuntime(page, runtimeProject, "fixture");
+    await expectUserWorkspaceRanProjectSetup(runtimeProject);
+    await expectNoProbeInWorkspaceProjection(page, runtimeProject);
   });
 
   await test.step("remember the selected runtime", async () => {
     await openGlobalNewWorkspaceComposer(page);
     await selectNewWorkspaceProject(page, runtimeProject);
     await expectRuntimeSelected(page, "Fixture");
+  });
+});
+
+test("shows probe failure with retry without host providers", async ({ page, runtimeProject }) => {
+  await test.step("choose the failing runtime", async () => {
+    await installDesktopRuntime(page, { serverId: getServerId(), manageBuiltInDaemon: false });
+    await gotoNewWorkspaceForRuntime(page, runtimeProject);
+    await selectRuntime(page, "Fixture Failure");
+  });
+
+  await test.step("show the runtime error without provider fallback", async () => {
+    await expectProbeFailureWithRetry(page, "Fixture probe creation failed");
+  });
+
+  await test.step("retry the failed probe", async () => {
+    await retryFailedProbe(page);
+    await expectProbeFailureWithRetry(page, "Fixture probe creation failed");
   });
 });
 

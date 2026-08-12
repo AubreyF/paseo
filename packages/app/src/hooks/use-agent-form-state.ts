@@ -42,6 +42,7 @@ export type { FormInitialValues } from "@/provider-selection/resolve-agent-form"
 
 export interface UseAgentFormStateOptions {
   workspaceId?: string | null;
+  providerSnapshotCwd?: string | null;
   initialServerId?: string | null;
   initialValues?: FormInitialValues;
   isVisible?: boolean;
@@ -206,7 +207,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     initialValues,
     isVisible = true,
     isCreateFlow = true,
-    isTargetDaemonReady: _isTargetDaemonReady = true,
+    isTargetDaemonReady = true,
     onlineServerIds = [],
   } = options;
 
@@ -274,7 +275,11 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     refresh: refreshSnapshot,
     refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(formState.serverId, {
-    cwd: formState.workingDir,
+    enabled: isTargetDaemonReady,
+    cwd:
+      options.providerSnapshotCwd === undefined
+        ? formState.workingDir
+        : options.providerSnapshotCwd,
     workspaceId: options.workspaceId,
   });
 

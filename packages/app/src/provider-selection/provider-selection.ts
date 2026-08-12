@@ -88,9 +88,6 @@ function buildEntryModelSelection(
   entry: ProviderSnapshotEntry,
   label: string,
 ): ProviderModelSelection {
-  if ((entry.models?.length ?? 0) > 0) {
-    return buildModelSelection(entry.provider, label, entry.models ?? null);
-  }
   if (entry.status === "ready") {
     return buildModelSelection(entry.provider, label, entry.models ?? null);
   }

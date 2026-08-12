@@ -1073,6 +1073,7 @@ export const fr: TranslationResources = {
     title: "Nouvel espace de travail",
     create: "Créer",
     runtime: { local: "Local", worktree: "Worktree", docker: "Docker", label: "Environnement" },
+    runtimeProbe: { preparing: "Préparation de l’environnement" },
     isolation: {
       local: "Local",
       worktree: "Nouveau worktree",

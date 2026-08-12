@@ -96,7 +96,53 @@ test("omits the built-in Docker runtime when its registration is disabled", asyn
   ).rejects.toThrow("Workspace runtime is not registered: docker");
 });
 
+posixDescribe("setup eligibility", () => {
+  test("adopting an existing Local directory never executes its paseo.json setup", async () => {
+    const fixture = await createFixture("local");
+    const marker = path.join(fixture.repo, "local-adoption-setup-ran.txt");
+    await writeFile(
+      path.join(fixture.repo, "paseo.json"),
+      JSON.stringify({
+        worktree: { setup: ["printf setup > local-adoption-setup-ran.txt"] },
+      }),
+    );
+
+    await expect(
+      fixture.service.create({
+        ...fixture.createInput,
+        setupFromPaseoConfig: true,
+      }),
+    ).resolves.toMatchObject({ runtimeId: "local", cwd: fixture.repo });
+
+    expect(existsSync(marker)).toBe(false);
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+});
+
 posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId) => {
+  test("creates a provider probe by adopting the project root without setup", async () => {
+    const fixture = await createFixture(runtimeId);
+    const setupMarker = path.join(fixture.repo, "probe-setup-ran.txt");
+
+    const created = await fixture.service.create({
+      ...fixture.createInput,
+      placement: { kind: "existing" },
+      purpose: "provider-probe",
+      setup: [{ argv: ["/bin/sh", "-c", "printf setup > probe-setup-ran.txt"], env: {} }],
+      setupFromPaseoConfig: false,
+    });
+
+    expect(await realpath(created.cwd)).toBe(await realpath(fixture.repo));
+    expect(existsSync(setupMarker)).toBe(false);
+    if (runtimeId === "worktree") {
+      await expect(
+        Promise.all(listLinkedWorktrees(fixture.repo).map((cwd) => realpath(cwd))),
+      ).resolves.toEqual([await realpath(fixture.repo)]);
+    }
+    await fixture.service.destroy(fixture.workspaceId);
+    expect(existsSync(fixture.repo)).toBe(true);
+  });
+
   test("bound runtime exposes only process, file, and command-resolution primitives", async () => {
     const fixture = await createFixture(runtimeId);
     await fixture.service.create(fixture.createInput);
@@ -306,7 +352,7 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
     ).rejects.toThrow(`Workspace runtime is not selected: ${fixture.workspaceId}`);
   });
 
-  test("repeated create does not rerun setup or change paused state", async () => {
+  test("repeated create preserves setup eligibility and paused state", async () => {
     const fixture = await createFixture(runtimeId);
     const setupMarker = "idempotent-setup.txt";
     const input = {
@@ -321,7 +367,11 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
     await fixture.service.create(input);
     await fixture.service.pause(fixture.workspaceId);
     await fixture.service.create(input);
-    expect(await readFile(path.join(fixture.runtimeRoot(), setupMarker), "utf8")).toBe("setup\n");
+    if (runtimeId === "local") {
+      expect(existsSync(path.join(fixture.runtimeRoot(), setupMarker))).toBe(false);
+    } else {
+      expect(await readFile(path.join(fixture.runtimeRoot(), setupMarker), "utf8")).toBe("setup\n");
+    }
     await expect(
       fixture.service.run({
         workspaceId: fixture.workspaceId,

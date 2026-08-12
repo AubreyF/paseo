@@ -1050,6 +1050,7 @@ export const ko: TranslationResources = {
     title: "새 워크스페이스",
     create: "생성",
     runtime: { local: "로컬", worktree: "워크트리", docker: "Docker", label: "런타임" },
+    runtimeProbe: { preparing: "환경 준비 중" },
     isolation: {
       local: "로컬",
       worktree: "새 워크트리",

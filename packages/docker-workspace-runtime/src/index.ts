@@ -70,12 +70,13 @@ try {
     switch (operation) {
       case "create":
         {
-          const state = await create(requestedWorkspaceId, request);
+          const result = await create(requestedWorkspaceId, request);
           writeJson(CommandRuntimeLifecycleResponseSchema, {
             protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
             type: "state",
-            state: publicState(state),
-            placement: runtimePlacement(state),
+            state: publicState(result.state),
+            placement: runtimePlacement(result.state),
+            materializedFreshContent: result.materializedFreshContent,
           });
         }
         break;
@@ -123,9 +124,11 @@ try {
 async function create(
   workspaceId: string,
   request: LifecycleRequest,
-): Promise<PrivateRuntimeState> {
+): Promise<{ state: PrivateRuntimeState; materializedFreshContent: boolean }> {
   const existing = await inspectPrivate(workspaceId);
-  if (existing.status === "ready" || existing.status === "paused") return existing.state;
+  if (existing.status === "ready" || existing.status === "paused") {
+    return { state: existing.state, materializedFreshContent: false };
+  }
   const input = request.input;
   if (!input) throw new Error("create input is required");
   const image = requireImage(request.options);
@@ -223,7 +226,10 @@ async function create(
     ]);
     await docker(["start", names.container]);
     await waitUntilReady(names.container);
-    return stateFor(workspaceId, root, commit, names.container);
+    return {
+      state: stateFor(workspaceId, root, commit, names.container),
+      materializedFreshContent: true,
+    };
   } catch (error) {
     await docker(["rm", "-f", names.container], true);
     await docker(["volume", "rm", "-f", names.volume], true);

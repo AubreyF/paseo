@@ -126,11 +126,15 @@ import {
 } from "./new-workspace-initial-context";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
 import {
+  resolveWorkspaceProviderProbeTarget,
+  resolveWorkspaceProviderSnapshotScope,
   resolveWorkspaceRuntimeSelection,
   runtimeLabel,
+  type WorkspaceProviderProbeState,
   type WorkspaceRuntimeCatalogState,
   type WorkspaceRuntimeVocabulary,
 } from "@/new-workspace-runtime/model";
+import { useWorkspaceProviderProbe } from "@/new-workspace-runtime/use-provider-probe";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -172,12 +176,41 @@ function isNewWorkspacePending(input: {
 function isWorkspaceCreationBlocked(input: {
   isPending: boolean;
   canCreateWorkspace: boolean;
+  isProviderProbeReady: boolean;
 }): boolean {
-  return input.isPending || !input.canCreateWorkspace;
+  return input.isPending || !input.canCreateWorkspace || !input.isProviderProbeReady;
 }
 
 function WorkspaceCreationError({ error }: { error: string | null }): ReactElement | null {
   return error ? <Text style={styles.errorText}>{error}</Text> : null;
+}
+
+function WorkspaceProviderProbeFeedback({
+  probe,
+  onRetry,
+}: {
+  probe: WorkspaceProviderProbeState;
+  onRetry: () => void;
+}): ReactElement | null {
+  const { t } = useTranslation();
+  if (probe.status === "legacy" || probe.status === "ready") return null;
+  if (probe.status === "loading") {
+    return (
+      <Text accessibilityLiveRegion="polite" style={styles.probeStatusText}>
+        {t("newWorkspace.runtimeProbe.preparing")}
+      </Text>
+    );
+  }
+  return (
+    <View style={styles.probeErrorRow}>
+      <Text accessibilityRole="alert" style={styles.errorText}>
+        {probe.error}
+      </Text>
+      <Pressable accessibilityRole="button" onPress={onRetry}>
+        <Text style={styles.probeRetryText}>{t("common.actions.retry")}</Text>
+      </Pressable>
+    </View>
+  );
 }
 
 function resolveWorkspaceCreationError(
@@ -864,6 +897,14 @@ async function createMultiplicityWorkspace(input: {
   return normalizedWorkspace;
 }
 
+function resolveSelectedHostProjectId(
+  project: HostProjectListItem | null,
+  serverId: string,
+): string | null {
+  if (!project) return null;
+  return getHostProjectId(project, serverId) ?? null;
+}
+
 interface CreateChatAgentInput {
   payload: MessagePayload;
   composerState: ReturnType<typeof useAgentInputDraft>["composerState"];
@@ -988,13 +1029,28 @@ function buildComposerConfig(input: {
   workspaceDirectory: string | null;
   sourceDirectory: string | null;
   initialSetup?: WorkspaceDraftTabSetup | null;
+  providerSnapshotTarget: ReturnType<typeof resolveWorkspaceProviderProbeTarget>;
 }): Parameters<typeof useAgentInputDraft>[0]["composer"] {
-  const { serverId, isConnected, workspaceDirectory, sourceDirectory, initialSetup } = input;
+  const {
+    serverId,
+    isConnected,
+    workspaceDirectory,
+    sourceDirectory,
+    initialSetup,
+    providerSnapshotTarget,
+  } = input;
   const workingDir = workspaceDirectory || sourceDirectory || undefined;
+  const providerSnapshotScope = resolveWorkspaceProviderSnapshotScope(
+    providerSnapshotTarget,
+    workingDir ?? null,
+  );
   return {
     initialServerId: serverId || null,
     initialValues: buildComposerInitialValues({ workingDir, initialSetup }),
     initialFeatureValues: initialSetup?.featureValues,
+    workspaceId: providerSnapshotScope.workspaceId,
+    providerSnapshotCwd: providerSnapshotScope.cwd,
+    isTargetDaemonReady: providerSnapshotScope.enabled,
     isVisible: true,
     onlineServerIds: isConnected && serverId ? [serverId] : [],
     lockedWorkingDir: workingDir,
@@ -1753,6 +1809,36 @@ export function NewWorkspaceScreen({
   const projectIconDataByProjectViewKey = useProjectIcons({
     projects: projectIconTargets,
   });
+  const worktreeSupport = selectedProject
+    ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
+    : "unsupported";
+  const {
+    runtimeId,
+    setRuntimeId,
+    availableRuntimes,
+    showRuntimeControl,
+    showRefPicker,
+    canCreateWorkspace,
+    catalogError,
+    vocabulary: runtimeVocabulary,
+  } = useWorkspaceRuntime({
+    supportsMultiplicity: supportsWorkspaceMultiplicity,
+    worktreeSupport,
+    catalog: runtimeCatalog,
+  });
+  const selectedHostProjectId = resolveSelectedHostProjectId(selectedProject, selectedServerId);
+  const providerProbe = useWorkspaceProviderProbe({
+    serverId: selectedServerId,
+    projectId: selectedHostProjectId,
+    runtimeId,
+    supportsWorkspaceRuntimes,
+    isConnected,
+    client,
+  });
+  const providerProbeTarget = resolveWorkspaceProviderProbeTarget({
+    supportsWorkspaceRuntimes,
+    probe: providerProbe,
+  });
   const draftKey = buildNewWorkspaceDraftKey(draftId);
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
@@ -1768,6 +1854,7 @@ export function NewWorkspaceScreen({
       workspaceDirectory: workspace?.workspaceDirectory ?? null,
       sourceDirectory: selectedSourceDirectory,
       initialSetup: forkDraftSetup?.setup,
+      providerSnapshotTarget: providerProbeTarget,
     }),
   });
   const composerState = chatDraft.composerState;
@@ -1804,25 +1891,12 @@ export function NewWorkspaceScreen({
     cwd: selectedSourceDirectory ?? "",
   });
 
-  const worktreeSupport = selectedProject
-    ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
-    : "unsupported";
   const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
-  const {
-    runtimeId,
-    setRuntimeId,
-    availableRuntimes,
-    showRuntimeControl,
-    showRefPicker,
+  const isCreationBlocked = isWorkspaceCreationBlocked({
+    isPending,
     canCreateWorkspace,
-    catalogError,
-    vocabulary: runtimeVocabulary,
-  } = useWorkspaceRuntime({
-    supportsMultiplicity: supportsWorkspaceMultiplicity,
-    worktreeSupport,
-    catalog: runtimeCatalog,
+    isProviderProbeReady: providerProbeTarget.kind !== "unavailable",
   });
-  const isCreationBlocked = isWorkspaceCreationBlocked({ isPending, canCreateWorkspace });
 
   const branchSuggestionsQuery = useQuery({
     queryKey: [
@@ -2311,10 +2385,10 @@ export function NewWorkspaceScreen({
       composerState
         ? {
             ...composerState.agentControls,
-            disabled: isPending,
+            disabled: isCreationBlocked,
           }
         : undefined,
-    [composerState, isPending],
+    [composerState, isCreationBlocked],
   );
 
   const pickerEmptyText =
@@ -2458,6 +2532,7 @@ export function NewWorkspaceScreen({
             <WorkspaceCreationError
               error={resolveWorkspaceCreationError(errorMessage, catalogError)}
             />
+            <WorkspaceProviderProbeFeedback probe={providerProbe} onRetry={providerProbe.retry} />
           </ReanimatedAnimated.View>
         </View>
       </FileDropZone>
@@ -2503,6 +2578,21 @@ const styles = StyleSheet.create((theme) => ({
   errorText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.destructive,
+    lineHeight: 20,
+  },
+  probeStatusText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    lineHeight: 20,
+  },
+  probeErrorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  probeRetryText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.accent,
     lineHeight: 20,
   },
   formStack: {

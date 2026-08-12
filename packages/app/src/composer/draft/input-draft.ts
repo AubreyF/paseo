@@ -5,6 +5,7 @@ import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import {
   useAgentFormState,
   type CreateAgentInitialValues,
+  type UseAgentFormStateOptions,
   type UseAgentFormStateResult,
 } from "@/hooks/use-agent-form-state";
 import { useDraftAgentFeatures } from "@/hooks/use-draft-agent-features";
@@ -29,6 +30,8 @@ type AttachmentUpdater =
 
 interface AgentInputDraftComposerOptions {
   workspaceId?: string | null;
+  providerSnapshotCwd?: string | null;
+  isTargetDaemonReady?: boolean;
   initialServerId: string | null;
   initialValues?: CreateAgentInitialValues;
   initialFeatureValues?: Record<string, unknown>;
@@ -62,16 +65,24 @@ export interface AgentInputDraft {
   composerState: DraftComposerState | null;
 }
 
-export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDraft {
-  const composerOptions = input.composer ?? null;
-  const formState = useAgentFormState({
+function buildAgentFormStateOptions(
+  composerOptions: AgentInputDraftComposerOptions | null,
+): UseAgentFormStateOptions {
+  return {
     initialServerId: composerOptions?.initialServerId ?? null,
     initialValues: composerOptions?.initialValues,
     isVisible: composerOptions?.isVisible ?? false,
     isCreateFlow: true,
     onlineServerIds: composerOptions?.onlineServerIds ?? [],
     workspaceId: composerOptions?.workspaceId,
-  });
+    providerSnapshotCwd: composerOptions?.providerSnapshotCwd,
+    isTargetDaemonReady: composerOptions?.isTargetDaemonReady,
+  };
+}
+
+export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDraft {
+  const composerOptions = input.composer ?? null;
+  const formState = useAgentFormState(buildAgentFormStateOptions(composerOptions));
   const draftKey = useMemo(
     () =>
       resolveDraftKey({

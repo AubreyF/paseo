@@ -7,6 +7,8 @@ import {
   WorkspaceCreateRequestSchema,
   WorkspaceRuntimeListRequestSchema,
   WorkspaceRuntimeListResponseSchema,
+  WorkspaceRuntimeEnsureProbeRequestSchema,
+  WorkspaceRuntimeEnsureProbeResponseSchema,
   WorkspaceDescriptorPayloadSchema,
   WorkspaceScriptPayloadSchema,
 } from "./messages.js";
@@ -1160,5 +1162,48 @@ describe("workspace message schemas", () => {
         runtimeId: "fixture",
       }).runtimeId,
     ).toBe("fixture");
+  });
+
+  test("workspace runtime probe ensure has explicit ready and error responses", () => {
+    expect(
+      WorkspaceRuntimeEnsureProbeRequestSchema.parse({
+        type: "workspace.runtime.ensure_probe.request",
+        projectId: "project-1",
+        runtimeId: "fixture",
+        requestId: "probe-1",
+      }),
+    ).toEqual({
+      type: "workspace.runtime.ensure_probe.request",
+      projectId: "project-1",
+      runtimeId: "fixture",
+      requestId: "probe-1",
+    });
+    expect(
+      WorkspaceRuntimeEnsureProbeResponseSchema.parse({
+        type: "workspace.runtime.ensure_probe.response",
+        payload: {
+          workspaceId: "probe-123",
+          status: "ready",
+          error: null,
+          requestId: "probe-1",
+        },
+      }).payload,
+    ).toEqual({
+      workspaceId: "probe-123",
+      status: "ready",
+      error: null,
+      requestId: "probe-1",
+    });
+    expect(
+      WorkspaceRuntimeEnsureProbeResponseSchema.parse({
+        type: "workspace.runtime.ensure_probe.response",
+        payload: {
+          workspaceId: null,
+          status: "error",
+          error: "fixture failed",
+          requestId: "probe-2",
+        },
+      }).payload,
+    ).toMatchObject({ status: "error", error: "fixture failed" });
   });
 });

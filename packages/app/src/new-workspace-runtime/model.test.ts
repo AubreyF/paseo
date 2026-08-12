@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { WorkspaceRuntimeCatalogEntry } from "@getpaseo/protocol/messages";
 
-import { resolveWorkspaceRuntimeSelection, runtimeLabel } from "./model";
+import {
+  resolveWorkspaceProviderProbeTarget,
+  resolveWorkspaceProviderSnapshotScope,
+  resolveWorkspaceRuntimeSelection,
+  runtimeLabel,
+} from "./model";
 
 const LOCAL: WorkspaceRuntimeCatalogEntry = {
   runtimeId: "local",
@@ -89,5 +94,59 @@ describe("new workspace runtime selection", () => {
         key === "newWorkspace.runtime.worktree" ? "Worktree" : key,
       ),
     ).toBe("Worktree");
+  });
+});
+
+describe("new workspace provider probe target", () => {
+  test("retains the tagged cwd snapshot only below the runtime feature gate", () => {
+    expect(
+      resolveWorkspaceProviderProbeTarget({
+        supportsWorkspaceRuntimes: false,
+        probe: { status: "legacy" },
+      }),
+    ).toEqual({ kind: "legacy-cwd" });
+  });
+
+  test("disables provider snapshots until the selected runtime probe is ready", () => {
+    expect(
+      resolveWorkspaceProviderProbeTarget({
+        supportsWorkspaceRuntimes: true,
+        probe: { status: "loading" },
+      }),
+    ).toEqual({ kind: "unavailable" });
+    expect(
+      resolveWorkspaceProviderProbeTarget({
+        supportsWorkspaceRuntimes: true,
+        probe: { status: "error", error: "fixture failed" },
+      }),
+    ).toEqual({ kind: "unavailable" });
+  });
+
+  test("keys the existing provider snapshot pipeline by the ensured probe workspace", () => {
+    expect(
+      resolveWorkspaceProviderProbeTarget({
+        supportsWorkspaceRuntimes: true,
+        probe: { status: "ready", workspaceId: "probe-fixture" },
+      }),
+    ).toEqual({ kind: "workspace", workspaceId: "probe-fixture" });
+  });
+
+  test("makes a project cwd unreachable while a feature-gated probe is unavailable", () => {
+    expect(resolveWorkspaceProviderSnapshotScope({ kind: "unavailable" }, "/host/repo")).toEqual({
+      enabled: false,
+      cwd: null,
+      workspaceId: null,
+    });
+    expect(
+      resolveWorkspaceProviderSnapshotScope(
+        { kind: "workspace", workspaceId: "probe-fixture" },
+        "/host/repo",
+      ),
+    ).toEqual({ enabled: true, cwd: null, workspaceId: "probe-fixture" });
+    expect(resolveWorkspaceProviderSnapshotScope({ kind: "legacy-cwd" }, "/host/repo")).toEqual({
+      enabled: true,
+      cwd: "/host/repo",
+      workspaceId: null,
+    });
   });
 });

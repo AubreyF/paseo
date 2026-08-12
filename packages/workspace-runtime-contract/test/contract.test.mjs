@@ -54,10 +54,12 @@ test("documented lifecycle, fd3, control, and fd4 examples are exact newline-ter
 });
 
 test("lifecycle uses one exact stdin request and one exact stdout response", async () => {
+  assert.equal(examples.lifecycleRequest.input.purpose, "provider-probe");
   assert.deepEqual(examples.lifecycleResponse.state, {
     workspaceId: "workspace-01",
     lifecycle: "ready",
   });
+  assert.equal(examples.lifecycleResponse.materializedFreshContent, true);
   assert.doesNotMatch(examples.bytes.lifecycleResponse, /root|revision|executionDomainId/);
   const child = spawn(
     process.execPath,

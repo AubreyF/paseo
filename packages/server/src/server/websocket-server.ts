@@ -47,6 +47,7 @@ import type { GitCommandRuntimeMetricsSnapshot } from "../utils/git-command-runt
 import { snapshotGitCommandRuntimeMetrics } from "../utils/run-git-command.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 import type { WorkspaceRuntimeService } from "./workspace-runtime/index.js";
+import type { ProviderProbeService } from "./provider-probe/index.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import { PushTokenStore } from "./push/token-store.js";
 import { createPushNotificationSender, type PushNotificationSender } from "./push/notifications.js";
@@ -559,6 +560,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly workspaceRuntime: WorkspaceRuntimeService | undefined;
+  private readonly providerProbe: ProviderProbeService | undefined;
   private readonly chatService: FileBackedChatService;
   private readonly loopService: LoopService;
   private readonly scheduleService: ScheduleService;
@@ -657,6 +659,7 @@ export class VoiceAssistantWebSocketServer {
     hubRelationships?: HubRelationshipManagement | null,
     workspaceSetupRuntime: WorkspaceSetupRuntime = new WorkspaceSetupRuntime(),
     workspaceRuntime?: WorkspaceRuntimeService,
+    providerProbe?: ProviderProbeService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -675,6 +678,7 @@ export class VoiceAssistantWebSocketServer {
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
     this.workspaceRuntime = workspaceRuntime;
+    this.providerProbe = providerProbe;
     const requiredServices = requireWebSocketServices({
       chatService,
       loopService,
@@ -1387,6 +1391,7 @@ export class VoiceAssistantWebSocketServer {
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       workspaceRuntime: this.workspaceRuntime,
+      providerProbe: this.providerProbe,
       chatService: this.chatService,
       loopService: this.loopService,
       scheduleService: this.scheduleService,

@@ -2184,6 +2184,13 @@ export const WorkspaceRuntimeListRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceRuntimeEnsureProbeRequestSchema = z.object({
+  type: z.literal("workspace.runtime.ensure_probe.request"),
+  projectId: z.string(),
+  runtimeId: z.string(),
+  requestId: z.string(),
+});
+
 // Create a new workspace record. Unlike open_project, this never deduplicates by
 // directory: it always produces a fresh workspace. The source discriminates
 // between an existing local directory and a newly created paseo worktree.
@@ -2747,6 +2754,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveWorkspaceRequestSchema,
   WorkspaceCreateRequestSchema,
   WorkspaceRuntimeListRequestSchema,
+  WorkspaceRuntimeEnsureProbeRequestSchema,
   WorkspaceClearAttentionRequestSchema,
   FileExplorerRequestSchema,
   FileSubscribeRequestSchema,
@@ -3983,6 +3991,16 @@ export const WorkspaceRuntimeListResponseSchema = z.object({
   type: z.literal("workspace.runtime.list.response"),
   payload: z.object({
     runtimes: z.array(WorkspaceRuntimeCatalogEntrySchema),
+    requestId: z.string(),
+  }),
+});
+
+export const WorkspaceRuntimeEnsureProbeResponseSchema = z.object({
+  type: z.literal("workspace.runtime.ensure_probe.response"),
+  payload: z.object({
+    workspaceId: z.string().nullable(),
+    status: z.enum(["ready", "error"]),
+    error: z.string().nullable(),
     requestId: z.string(),
   }),
 });
@@ -5576,6 +5594,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
   WorkspaceRuntimeListResponseSchema,
+  WorkspaceRuntimeEnsureProbeResponseSchema,
   WorkspaceClearAttentionResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
@@ -5806,6 +5825,9 @@ export type WorkspaceCreateResponse = z.infer<typeof WorkspaceCreateResponseSche
 export type WorkspaceRuntimeCatalogEntry = z.infer<typeof WorkspaceRuntimeCatalogEntrySchema>;
 export type WorkspaceRuntimeListPayload = z.infer<
   typeof WorkspaceRuntimeListResponseSchema
+>["payload"];
+export type WorkspaceRuntimeEnsureProbePayload = z.infer<
+  typeof WorkspaceRuntimeEnsureProbeResponseSchema
 >["payload"];
 export type ProjectRenameResponsePayload = z.infer<typeof ProjectRenameResponsePayloadSchema>;
 export type ProjectRemoveResponsePayload = z.infer<typeof ProjectRemoveResponsePayloadSchema>;

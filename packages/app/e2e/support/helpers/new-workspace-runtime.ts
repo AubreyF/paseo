@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { expect, type Page, type WebSocket } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { getE2EDaemonPort } from "./daemon-port";
 import { waitForConnectedHost } from "./hosts";
@@ -23,11 +23,139 @@ export interface SeededRuntimeProject {
   cleanup(): Promise<void>;
 }
 
+const SETUP_MARKER = "runtime-user-setup-ran.txt";
+
 export async function seedGitProjectForRuntime(
   options?: Parameters<typeof createTempGitRepo>[1],
 ): Promise<SeededRuntimeProject> {
-  const repo = await createTempGitRepo("runtime-selector-", options);
+  const repo = await createTempGitRepo("runtime-selector-", {
+    ...options,
+    paseoConfig: options?.paseoConfig ?? {
+      worktree: { setup: [`printf setup > ${SETUP_MARKER}`] },
+    },
+  });
   return seedRuntimeProject(repo);
+}
+
+async function readProbeRecords(projectId: string): Promise<Array<{ workspaceId: string }>> {
+  const paseoHome = process.env.E2E_PASEO_HOME;
+  if (!paseoHome) throw new Error("E2E_PASEO_HOME is not set");
+  const records = JSON.parse(
+    await readFile(path.join(paseoHome, "projects", "provider-probes.json"), "utf8"),
+  ) as Array<{ workspaceId: string; projectId: string }>;
+  return records.filter((record) => record.projectId === projectId);
+}
+
+async function markerExists(root: string): Promise<boolean> {
+  return access(path.join(root, SETUP_MARKER)).then(
+    () => true,
+    () => false,
+  );
+}
+
+export async function expectProbeSkippedProjectSetup(project: SeededRuntimeProject): Promise<void> {
+  expect(await markerExists(project.sourceDirectory)).toBe(false);
+  const paseoHome = process.env.E2E_PASEO_HOME;
+  if (!paseoHome) throw new Error("E2E_PASEO_HOME is not set");
+  const probeIds = new Set(
+    (await readProbeRecords(project.projectId)).map((record) => record.workspaceId),
+  );
+  const stateDirectory = path.join(paseoHome, "fixture-runtime");
+  const stateFiles = await readdir(stateDirectory);
+  const states = await Promise.all(
+    stateFiles.map(
+      async (file) =>
+        JSON.parse(await readFile(path.join(stateDirectory, file), "utf8")) as {
+          workspaceId: string;
+          root: string;
+        },
+    ),
+  );
+  const probe = states.find((state) => probeIds.has(state.workspaceId));
+  expect(probe, "fixture probe runtime state").toBeDefined();
+  expect(await markerExists(probe!.root)).toBe(false);
+}
+
+export async function expectUserWorkspaceRanProjectSetup(
+  project: SeededRuntimeProject,
+): Promise<void> {
+  const paseoHome = process.env.E2E_PASEO_HOME;
+  if (!paseoHome) throw new Error("E2E_PASEO_HOME is not set");
+  const records = JSON.parse(
+    await readFile(path.join(paseoHome, "projects", "workspaces.json"), "utf8"),
+  ) as Array<{ projectId: string; workspaceId: string; runtime?: { runtimeId: string } }>;
+  const workspace = records.find(
+    (record) => record.projectId === project.projectId && record.runtime?.runtimeId === "fixture",
+  );
+  expect(workspace, "fixture user workspace record").toBeDefined();
+  const stateFiles = await readdir(path.join(paseoHome, "fixture-runtime"));
+  const states = await Promise.all(
+    stateFiles.map(
+      async (file) =>
+        JSON.parse(await readFile(path.join(paseoHome, "fixture-runtime", file), "utf8")) as {
+          workspaceId: string;
+          root: string;
+        },
+    ),
+  );
+  const state = states.find((candidate) => candidate.workspaceId === workspace!.workspaceId);
+  expect(state, "fixture user runtime state").toBeDefined();
+  expect(await markerExists(state!.root)).toBe(true);
+}
+
+export async function expectProviderAvailable(page: Page, providerLabel: string): Promise<void> {
+  const trigger = page.getByRole("button", { name: /Select model/ });
+  await expect(trigger).toBeEnabled({ timeout: 30_000 });
+  await trigger.click();
+  await page.getByRole("dialog").last().getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByText(providerLabel, { exact: true }).click();
+  await expect(page.getByRole("button", { name: `Open ${providerLabel} settings` })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+}
+
+export async function expectFixtureProviderUnavailable(page: Page): Promise<void> {
+  const providerLabel = "Fixture Agent";
+  const trigger = page.getByRole("button", { name: /Select model/ });
+  await expect(trigger).toBeEnabled({ timeout: 30_000 });
+  await trigger.click();
+  await page.getByRole("dialog").last().getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByText(providerLabel, { exact: true }).click();
+  await expect(page.getByRole("button", { name: `Open ${providerLabel} settings` })).toBeVisible();
+  await expect(page.getByText(/^Fixture Model/u)).not.toBeVisible();
+  await page.keyboard.press("Escape");
+}
+
+export async function expectProbeFailureWithRetry(page: Page, message: string): Promise<void> {
+  await expect(page.getByRole("alert")).toContainText(message, { timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Select model/ })).toBeDisabled();
+  await expect(page.getByText("Fixture Agent", { exact: true })).not.toBeVisible();
+}
+
+export async function retryFailedProbe(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+}
+
+export async function expectNoProbeInWorkspaceProjection(
+  page: Page,
+  project: SeededRuntimeProject,
+): Promise<void> {
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  try {
+    const probeIds = new Set(
+      (await readProbeRecords(project.projectId)).map((record) => record.workspaceId),
+    );
+    const workspaces = await client.fetchWorkspaces({ filter: { projectId: project.projectId } });
+    expect(workspaces.entries.some((workspace) => probeIds.has(workspace.id))).toBe(false);
+    for (const probeId of probeIds) {
+      await expect(page.getByTestId(`sidebar-workspace-${probeId}`)).toHaveCount(0);
+    }
+  } finally {
+    await client.close();
+  }
 }
 
 export async function seedNonGitProjectForRuntime(): Promise<SeededRuntimeProject> {
@@ -66,55 +194,6 @@ async function seedRuntimeProject(resource: {
       await resource.cleanup();
     },
   };
-}
-
-export function expectNewWorkspaceProviderSnapshotUsesProjectCwd(
-  page: Page,
-  sourceDirectory: string,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const frameListeners = new Map<WebSocket, (event: { payload: string | Buffer }) => void>();
-    const cleanup = () => {
-      clearTimeout(timeout);
-      page.off("websocket", handleWebSocket);
-      for (const [socket, listener] of frameListeners) socket.off("framesent", listener);
-      frameListeners.clear();
-    };
-    const finish = (error?: Error) => {
-      cleanup();
-      if (error) reject(error);
-      else resolve();
-    };
-    const handleWebSocket = (socket: WebSocket) => {
-      const handleFrame = ({ payload }: { payload: string | Buffer }) => {
-        if (typeof payload !== "string") return;
-        let frame: unknown;
-        try {
-          frame = JSON.parse(payload);
-        } catch {
-          return;
-        }
-        if (!frame || typeof frame !== "object" || !("message" in frame)) return;
-        const message = frame.message;
-        if (!message || typeof message !== "object") return;
-        if (
-          "type" in message &&
-          message.type === "get_providers_snapshot_request" &&
-          "cwd" in message &&
-          message.cwd === sourceDirectory
-        ) {
-          finish();
-        }
-      };
-      frameListeners.set(socket, handleFrame);
-      socket.on("framesent", handleFrame);
-    };
-    const timeout = setTimeout(
-      () => finish(new Error(`No provider snapshot request used cwd ${sourceDirectory}`)),
-      30_000,
-    );
-    page.on("websocket", handleWebSocket);
-  });
 }
 
 export async function gotoNewWorkspaceForRuntime(

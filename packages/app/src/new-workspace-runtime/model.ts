@@ -6,6 +6,42 @@ export type WorkspaceRuntimeCatalogState =
   | { status: "ready"; runtimes: readonly WorkspaceRuntimeCatalogEntry[] }
   | { status: "error"; error: string };
 
+export type WorkspaceProviderProbeState =
+  | { status: "legacy" }
+  | { status: "loading" }
+  | { status: "ready"; workspaceId: string }
+  | { status: "error"; error: string };
+
+export type WorkspaceProviderSnapshotTarget =
+  | { kind: "legacy-cwd" }
+  | { kind: "workspace"; workspaceId: string }
+  | { kind: "unavailable" };
+
+export function resolveWorkspaceProviderProbeTarget(input: {
+  supportsWorkspaceRuntimes: boolean;
+  probe: WorkspaceProviderProbeState;
+}): WorkspaceProviderSnapshotTarget {
+  if (!input.supportsWorkspaceRuntimes) {
+    // COMPAT(newWorkspaceCwdProbe): added in v0.3.2, remove after 2027-02-12.
+    return { kind: "legacy-cwd" };
+  }
+  if (input.probe.status !== "ready") return { kind: "unavailable" };
+  return { kind: "workspace", workspaceId: input.probe.workspaceId };
+}
+
+export function resolveWorkspaceProviderSnapshotScope(
+  target: WorkspaceProviderSnapshotTarget,
+  projectCwd: string | null,
+): { enabled: boolean; cwd: string | null; workspaceId: string | null } {
+  if (target.kind === "legacy-cwd") {
+    return { enabled: true, cwd: projectCwd, workspaceId: null };
+  }
+  if (target.kind === "workspace") {
+    return { enabled: true, cwd: null, workspaceId: target.workspaceId };
+  }
+  return { enabled: false, cwd: null, workspaceId: null };
+}
+
 export type WorkspaceRuntimeVocabulary = "isolation" | "runtime";
 
 export interface WorkspaceRuntimeSelection {

@@ -58,7 +58,9 @@ export function createLocalRuntime(
     workspaceHelperCommand: hostWorkspaceHelperCommand,
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);
-      if (existing.status === "ready" || existing.status === "paused") return existing;
+      if (existing.status === "ready" || existing.status === "paused") {
+        return { ...existing, materializedFreshContent: false };
+      }
       if (input.project.source.kind !== "host-directory" || input.placement.kind !== "existing") {
         throw new Error("The local runtime adopts an existing host directory");
       }
@@ -73,7 +75,11 @@ export function createLocalRuntime(
         compatibilityCwd,
       };
       await states.write(state);
-      return { state: publicState(state), placement: hostPlacement(compatibilityCwd) };
+      return {
+        state: publicState(state),
+        placement: hostPlacement(compatibilityCwd),
+        materializedFreshContent: false,
+      };
     },
     inspect,
     async spawn(input: WorkspaceDriverSpawnInput) {

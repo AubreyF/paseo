@@ -192,7 +192,7 @@ export function createService(
               await helper.close();
             }
           }
-          if (ownsNewResource) {
+          if (ready.materializedFreshContent && input.purpose !== "provider-probe") {
             const setupCommands = input.setupFromPaseoConfig
               ? await readConfiguredSetupCommands(input.workspaceId)
               : (input.setup ?? []);
@@ -741,6 +741,7 @@ function toDriverCreateInput(input: CreateWorkspaceInput): WorkspaceDriverCreate
       source: input.project.source,
     },
     placement: input.placement,
+    ...(input.purpose ? { purpose: input.purpose } : {}),
     ...(input.markFirstAgentBranchAutoName ? { markFirstAgentBranchAutoName: true } : {}),
     ...(input.seedPaseoConfigFrom ? { seedPaseoConfigFrom: input.seedPaseoConfigFrom } : {}),
   };

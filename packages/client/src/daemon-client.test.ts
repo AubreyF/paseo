@@ -2746,6 +2746,32 @@ test("lists workspace runtimes and sends an explicit creation runtime", async ()
     runtimes: [{ runtimeId: "fixture", builtin: false, requiresGitProject: true }],
   });
 
+  const probePromise = client.ensureWorkspaceRuntimeProbe(
+    { projectId: "project-1", runtimeId: "fixture" },
+    "req-runtime-probe",
+  );
+  expect(parseSentFrame(mock.sent.at(-1)!)).toEqual({
+    type: "workspace.runtime.ensure_probe.request",
+    projectId: "project-1",
+    runtimeId: "fixture",
+    requestId: "req-runtime-probe",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.runtime.ensure_probe.response",
+      payload: {
+        requestId: "req-runtime-probe",
+        workspaceId: "probe-fixture",
+        status: "ready",
+        error: null,
+      },
+    }),
+  );
+  await expect(probePromise).resolves.toMatchObject({
+    workspaceId: "probe-fixture",
+    status: "ready",
+  });
+
   const createPromise = client.createWorkspace(
     {
       source: { kind: "directory", path: "/tmp/project" },

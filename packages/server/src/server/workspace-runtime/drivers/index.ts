@@ -23,6 +23,7 @@ export interface WorkspaceDriverCreateInput {
   workspaceId: WorkspaceId;
   project: { projectId: string; source: WorkspaceProjectSource };
   placement: WorkspacePlacementIntent;
+  purpose?: "provider-probe";
   markFirstAgentBranchAutoName?: boolean;
   seedPaseoConfigFrom?: string;
 }
@@ -41,6 +42,11 @@ export interface WorkspacePublicPlacement {
 export interface WorkspaceDriverReady {
   state: WorkspaceDriverState;
   placement: WorkspacePublicPlacement;
+}
+
+export interface WorkspaceDriverCreation extends WorkspaceDriverReady {
+  /** This create materialized fresh workspace content/resources, so user setup may run. */
+  materializedFreshContent: boolean;
 }
 
 export type WorkspaceDriverInspection =
@@ -97,7 +103,7 @@ export interface WorkspaceRuntimeDriver {
   readonly reconciliationDomainId?: string;
   /** Runtime-local command for Paseo's compatible workspace helper. */
   readonly workspaceHelperCommand: readonly [string, ...string[]];
-  create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverReady>;
+  create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverCreation>;
   inspect(workspaceId: WorkspaceId): Promise<WorkspaceDriverInspection>;
   spawn(input: WorkspaceDriverSpawnInput): Promise<WorkspaceDriverProcess>;
   observeGit?(

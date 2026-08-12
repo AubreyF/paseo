@@ -153,9 +153,12 @@ import {
 } from "./workspace-registry.js";
 import {
   createWorkspaceRuntimeService,
+  type BoundWorkspaceRuntime,
   type WorkspaceRuntimeConfig,
+  type WorkspaceRuntimeRecordStore,
   type WorkspaceRuntimeService,
 } from "./workspace-runtime/index.js";
+import { createProviderProbeService, type ProviderProbeService } from "./provider-probe/index.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
@@ -611,6 +614,7 @@ export async function createPaseoDaemon(
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
   let workspaceRuntime: WorkspaceRuntimeService | null = null;
+  let providerProbe: ProviderProbeService | null = null;
   const terminalManager = createConfiguredTerminalManager({
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
     launchPty: async (input) => {
@@ -863,51 +867,72 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
-  workspaceRuntime = createWorkspaceRuntimeService({
-    paseoHome: config.paseoHome,
-    worktreesRoot: config.worktreesRoot,
-    externalRuntimes: config.workspaceRuntimes,
-    resolveRuntimeId: async (workspaceId) => {
-      const workspace = await workspaceRegistry?.get(workspaceId);
-      return workspace ? resolveSelectedWorkspaceRuntimeId(workspace) : null;
+  const providerWorkspaceBindings = new Map<
+    string,
+    { runtime: BoundWorkspaceRuntime; workspace: ReturnType<typeof bindProviderWorkspace> }
+  >();
+  // Record removal evicts bindings below. Until Phase 4 adds probe invalidation/TTL destruction,
+  // live probe entries remain bounded to one deterministic workspace per project/runtime pair.
+  const bindWorkspaceProviderCapability = async (workspaceId: string, runtimeId: string) => {
+    if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+    const runtime = await workspaceRuntime.bind(workspaceId);
+    const cached = providerWorkspaceBindings.get(workspaceId);
+    if (cached?.runtime === runtime) return cached.workspace;
+    const workspace = bindProviderWorkspace({
+      runtime,
+      cwd: ".",
+      policy: resolveProviderPlacementPolicy({
+        runtimeId,
+        hostEnvironment: process.env,
+        isolatedEnvironment: config.workspaceRuntimes?.[runtimeId]?.providerEnvironment,
+      }),
+    });
+    providerWorkspaceBindings.set(workspaceId, { runtime, workspace });
+    return workspace;
+  };
+  providerProbe = createProviderProbeService({
+    filePath: path.join(config.paseoHome, "projects", "provider-probes.json"),
+    logger,
+    projects: projectRegistry,
+    runtime: {
+      create: (input) => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.create(input);
+      },
+      inspect: (workspaceId) => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.inspect(workspaceId);
+      },
+      resume: (workspaceId) => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.resume(workspaceId);
+      },
     },
+    runtimeConfiguration: config.workspaceRuntimes,
+    bindWorkspaceProviderCapability,
+  });
+  const workspaceRecords: WorkspaceRuntimeRecordStore = {
+    resolveRuntimeId: async (workspaceId) =>
+      (await providerProbe?.records.resolveRuntimeId(workspaceId)) ??
+      resolveRegistryRuntimeId(workspaceId),
     persistRuntimeId: async (workspaceId, runtimeId, placement) => {
-      const existing = await workspaceRegistry?.get(workspaceId);
-      if (
-        existing?.runtime?.runtimeId === runtimeId &&
-        existing.cwd === placement.cwd &&
-        existing.hostVisiblePath === (placement.hostVisiblePath ?? null)
-      ) {
+      if (await providerProbe?.records.resolveRuntimeId(workspaceId)) {
+        await providerProbe.records.persistRuntimeId(workspaceId, runtimeId, placement);
         return;
       }
-      const updated = await workspaceRegistry?.update(workspaceId, (workspace) => ({
-        ...workspace,
-        cwd: placement.cwd,
-        hostVisiblePath: placement.hostVisiblePath ?? null,
-        runtime: { runtimeId },
-      }));
-      if (!updated) throw new Error(`Workspace not found: ${workspaceId}`);
+      await persistRegistryRuntimeId(workspaceId, runtimeId, placement);
     },
-    archiveWorkspaceRecord: async (workspaceId) => {
-      await workspaceRegistry?.archive(workspaceId, new Date().toISOString());
-    },
-    restoreWorkspaceRecord: async (workspaceId) => {
-      const restoredAt = new Date().toISOString();
-      const updated = await workspaceRegistry?.update(workspaceId, (workspace) => ({
-        ...workspace,
-        archivedAt: null,
-        updatedAt: restoredAt,
-      }));
-      if (!updated) throw new Error(`Workspace not found: ${workspaceId}`);
-    },
-    beginWorkspaceDeletion: async (workspaceId) => {
-      await workspaceRegistry?.requestDeletion(workspaceId, new Date().toISOString());
-    },
-    removeWorkspaceRecord: async (workspaceId) => {
-      await workspaceRegistry?.remove(workspaceId);
-    },
-    listRuntimeRecords: async () =>
-      ((await workspaceRegistry?.list()) ?? []).flatMap((workspace) =>
+    archiveWorkspaceRecord: (workspaceId) =>
+      routeRuntimeRecord(workspaceId, "archiveWorkspaceRecord"),
+    restoreWorkspaceRecord: (workspaceId) =>
+      routeRuntimeRecord(workspaceId, "restoreWorkspaceRecord"),
+    beginWorkspaceDeletion: (workspaceId) =>
+      routeRuntimeRecord(workspaceId, "beginWorkspaceDeletion"),
+    removeWorkspaceRecord: (workspaceId) =>
+      routeRuntimeRecord(workspaceId, "removeWorkspaceRecord"),
+    listRuntimeRecords: async () => [
+      ...((await providerProbe?.records.listRuntimeRecords?.()) ?? []),
+      ...((await workspaceRegistry?.list()) ?? []).flatMap((workspace) =>
         workspace.runtime
           ? [
               {
@@ -919,7 +944,79 @@ export async function createPaseoDaemon(
             ]
           : [],
       ),
+    ],
+  };
+  workspaceRuntime = createWorkspaceRuntimeService({
+    paseoHome: config.paseoHome,
+    worktreesRoot: config.worktreesRoot,
+    externalRuntimes: config.workspaceRuntimes,
+    ...workspaceRecords,
   });
+
+  async function resolveRegistryRuntimeId(workspaceId: string): Promise<string | null> {
+    const workspace = await workspaceRegistry?.get(workspaceId);
+    return workspace ? resolveSelectedWorkspaceRuntimeId(workspace) : null;
+  }
+
+  async function persistRegistryRuntimeId(
+    workspaceId: string,
+    runtimeId: string,
+    placement: { cwd: string; hostVisiblePath?: string },
+  ): Promise<void> {
+    const existing = await workspaceRegistry?.get(workspaceId);
+    if (
+      existing?.runtime?.runtimeId === runtimeId &&
+      existing.cwd === placement.cwd &&
+      existing.hostVisiblePath === (placement.hostVisiblePath ?? null)
+    ) {
+      return;
+    }
+    const updated = await workspaceRegistry?.update(workspaceId, (workspace) => ({
+      ...workspace,
+      cwd: placement.cwd,
+      hostVisiblePath: placement.hostVisiblePath ?? null,
+      runtime: { runtimeId },
+    }));
+    if (!updated) throw new Error(`Workspace not found: ${workspaceId}`);
+  }
+
+  async function routeRuntimeRecord(
+    workspaceId: string,
+    operation:
+      | "archiveWorkspaceRecord"
+      | "restoreWorkspaceRecord"
+      | "beginWorkspaceDeletion"
+      | "removeWorkspaceRecord",
+  ): Promise<void> {
+    const probeRecords = providerProbe?.records;
+    if (probeRecords && (await probeRecords.resolveRuntimeId(workspaceId))) {
+      await probeRecords[operation]?.(workspaceId);
+      if (operation === "removeWorkspaceRecord") {
+        providerWorkspaceBindings.delete(workspaceId);
+      }
+      return;
+    }
+    if (operation === "archiveWorkspaceRecord") {
+      await workspaceRegistry?.archive(workspaceId, new Date().toISOString());
+      return;
+    }
+    if (operation === "restoreWorkspaceRecord") {
+      const restoredAt = new Date().toISOString();
+      const updated = await workspaceRegistry?.update(workspaceId, (workspace) => ({
+        ...workspace,
+        archivedAt: null,
+        updatedAt: restoredAt,
+      }));
+      if (!updated) throw new Error(`Workspace not found: ${workspaceId}`);
+      return;
+    }
+    if (operation === "beginWorkspaceDeletion") {
+      await workspaceRegistry?.requestDeletion(workspaceId, new Date().toISOString());
+      return;
+    }
+    await workspaceRegistry?.remove(workspaceId);
+    providerWorkspaceBindings.delete(workspaceId);
+  }
   const chatService = new FileBackedChatService({
     paseoHome: config.paseoHome,
     logger,
@@ -947,20 +1044,13 @@ export async function createPaseoDaemon(
   });
   const providerSnapshotLogger = logger.child({ module: "provider-snapshot-manager" });
   const resolveProviderWorkspace = async (workspaceId: string) => {
+    const probeWorkspace = await providerProbe?.resolveProviderWorkspace(workspaceId);
+    if (probeWorkspace) return probeWorkspace;
     const workspace = await workspaceRegistry?.get(workspaceId);
     if (!workspace) return undefined;
     const runtimeId = resolveSelectedWorkspaceRuntimeId(workspace);
     if (!runtimeId) return null;
-    if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
-    return bindProviderWorkspace({
-      runtime: await workspaceRuntime.bind(workspaceId),
-      cwd: ".",
-      policy: resolveProviderPlacementPolicy({
-        runtimeId,
-        hostEnvironment: process.env,
-        isolatedEnvironment: config.workspaceRuntimes?.[runtimeId]?.providerEnvironment,
-      }),
-    });
+    return bindWorkspaceProviderCapability(workspaceId, runtimeId);
   };
   const providerSnapshotManager = new ProviderSnapshotManager({
     logger: providerSnapshotLogger,
@@ -1741,6 +1831,7 @@ export async function createPaseoDaemon(
               hubRelationships,
               workspaceSetupRuntime,
               workspaceRuntime,
+              providerProbe,
             );
             relayRuntime = createRelayRuntime({
               config: {

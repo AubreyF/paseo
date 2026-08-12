@@ -156,7 +156,8 @@ export function useProvidersSnapshot(
   const retainedPanelActive = useRetainedPanelActive();
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId ?? "");
-  const enabled = (options.enabled ?? true) && retainedPanelActive;
+  const targetEnabled = options.enabled ?? true;
+  const enabled = targetEnabled && retainedPanelActive;
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const cwd = normalizeProvidersSnapshotCwd(options.cwd);
   const supportsSnapshot = useSessionStore(
@@ -225,11 +226,12 @@ export function useProvidersSnapshot(
   );
 
   return {
-    entries: snapshotQuery.data?.entries ?? undefined,
-    isLoading: snapshotQuery.isLoading,
-    isFetching: snapshotQuery.isFetching,
-    isRefreshing,
-    error: snapshotQuery.error instanceof Error ? snapshotQuery.error.message : null,
+    entries: targetEnabled ? (snapshotQuery.data?.entries ?? undefined) : undefined,
+    isLoading: targetEnabled && snapshotQuery.isLoading,
+    isFetching: targetEnabled && snapshotQuery.isFetching,
+    isRefreshing: targetEnabled && isRefreshing,
+    error:
+      targetEnabled && snapshotQuery.error instanceof Error ? snapshotQuery.error.message : null,
     supportsSnapshot,
     refresh,
     refetchIfStale,

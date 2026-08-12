@@ -537,7 +537,7 @@ function ControlledAgentControls({
     }
   }, [updateDensityForWidth]);
 
-  const modelDisabled = disabled;
+  const modelDisabled = disabled || isModelLoading;
 
   const comboboxProviderOptions = useMemo<ComboboxOption[]>(
     () => toComboboxOptions(providerOptions),

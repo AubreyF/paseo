@@ -80,7 +80,15 @@ export function createCommandRuntime(
     async create(input) {
       const response = await lifecycle("create", input.workspaceId, input);
       if (response.type !== "state") throw new Error(`Invalid create response from ${runtimeId}`);
-      return commandReady(response.state, response.placement);
+      if (response.materializedFreshContent === undefined) {
+        throw new Error(
+          `Workspace runtime ${runtimeId} create response is missing materializedFreshContent`,
+        );
+      }
+      return {
+        ...commandReady(response.state, response.placement),
+        materializedFreshContent: response.materializedFreshContent,
+      };
     },
     async inspect(workspaceId): Promise<WorkspaceDriverInspection> {
       const response = await lifecycle("inspect", workspaceId);

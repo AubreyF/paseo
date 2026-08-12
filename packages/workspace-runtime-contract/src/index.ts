@@ -83,6 +83,7 @@ export const CommandRuntimeCreateInputSchema = z
       .object({ projectId: z.string(), source: CommandRuntimeProjectSourceSchema })
       .strict(),
     placement: CommandRuntimePlacementIntentSchema,
+    purpose: z.literal("provider-probe").optional(),
     markFirstAgentBranchAutoName: z.boolean().optional(),
     seedPaseoConfigFrom: z.string().optional(),
   })
@@ -138,6 +139,7 @@ export const CommandRuntimeLifecycleResponseSchema = z.discriminatedUnion("type"
       protocolVersion: ProtocolVersionSchema,
       state: CommandRuntimeStateSchema,
       placement: CommandRuntimePlacementSchema,
+      materializedFreshContent: z.boolean().optional(),
     })
     .strict(),
   z

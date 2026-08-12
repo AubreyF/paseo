@@ -147,6 +147,7 @@ import {
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
 import type { WorkspaceRuntimeService } from "./workspace-runtime/index.js";
+import type { ProviderProbeService } from "./provider-probe/index.js";
 import { wrapSpokenInput } from "./voice-config.js";
 import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
 import {
@@ -454,6 +455,7 @@ export interface SessionOptions {
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   workspaceRuntime?: WorkspaceRuntimeService;
+  providerProbe?: ProviderProbeService;
   filesystem?: SessionFileSystem;
   chatService: FileBackedChatService;
   scheduleService: ScheduleService;
@@ -626,6 +628,7 @@ export class Session {
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly workspaceRuntime: WorkspaceRuntimeService | undefined;
+  private readonly providerProbe: ProviderProbeService | undefined;
   private readonly filesystem: SessionFileSystem;
   private readonly github: ForgeService;
   private readonly workspaceGitService: WorkspaceGitService;
@@ -708,6 +711,7 @@ export class Session {
       projectRegistry,
       workspaceRegistry,
       workspaceRuntime,
+      providerProbe,
       filesystem,
       chatService,
       scheduleService,
@@ -777,6 +781,7 @@ export class Session {
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.workspaceRuntime = workspaceRuntime;
+    this.providerProbe = providerProbe;
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService;
@@ -2213,6 +2218,8 @@ export class Session {
     switch (msg.type) {
       case "workspace.runtime.list.request":
         return this.handleWorkspaceRuntimeListRequest(msg.requestId);
+      case "workspace.runtime.ensure_probe.request":
+        return this.handleWorkspaceRuntimeEnsureProbeRequest(msg);
       default:
         return undefined;
     }
@@ -5442,6 +5449,34 @@ export class Session {
     });
   }
 
+  private async handleWorkspaceRuntimeEnsureProbeRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.runtime.ensure_probe.request" }>,
+  ): Promise<void> {
+    try {
+      if (!this.providerProbe) throw new Error("Provider probe service was not composed");
+      const ensured = await this.providerProbe.ensure(request);
+      this.emit({
+        type: "workspace.runtime.ensure_probe.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: ensured.workspaceId,
+          status: "ready",
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.runtime.ensure_probe.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: null,
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
   private async handleWorkspaceCreateLocal(
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
   ): Promise<void> {
@@ -5494,13 +5529,18 @@ export class Session {
           source: { kind: "host-directory", path: cwd },
         },
         placement: { kind: "existing" },
+        setupFromPaseoConfig: true,
       });
     } catch (error) {
       await this.workspaceRegistry.remove(workspace.workspaceId);
       throw error;
     }
-    await this.syncWorkspaceGitObserverForWorkspace(workspace);
-    const descriptor = await this.describeWorkspaceRecord(workspace);
+    const materializedWorkspace = await this.workspaceRegistry.get(workspace.workspaceId);
+    if (!materializedWorkspace) {
+      throw new Error(`Workspace not found after runtime creation: ${workspace.workspaceId}`);
+    }
+    await this.syncWorkspaceGitObserverForWorkspace(materializedWorkspace);
+    const descriptor = await this.describeWorkspaceRecord(materializedWorkspace);
     this.emit({
       type: "workspace.create.response",
       payload: {

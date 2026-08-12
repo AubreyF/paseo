@@ -102,6 +102,7 @@ import type {
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
   WorkspaceRuntimeListPayload,
+  WorkspaceRuntimeEnsureProbePayload,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -2201,6 +2202,17 @@ export class DaemonClient {
       requestId,
       message: { type: "workspace.runtime.list.request" },
       responseType: "workspace.runtime.list.response",
+    });
+  }
+
+  async ensureWorkspaceRuntimeProbe(
+    input: { projectId: string; runtimeId: string },
+    requestId?: string,
+  ): Promise<WorkspaceRuntimeEnsureProbePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.runtime.ensure_probe.request", ...input },
+      responseType: "workspace.runtime.ensure_probe.response",
     });
   }
 

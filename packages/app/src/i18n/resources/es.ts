@@ -1074,6 +1074,7 @@ export const es: TranslationResources = {
     title: "Nuevo espacio de trabajo",
     create: "Crear",
     runtime: { local: "Local", worktree: "Worktree", docker: "Docker", label: "Entorno" },
+    runtimeProbe: { preparing: "Preparando el entorno" },
     isolation: {
       local: "Local",
       worktree: "Nuevo worktree",

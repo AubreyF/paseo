@@ -69,6 +69,29 @@ test("a trusted registered command is selected and receives secret launch data o
   await fixture.service.destroy(fixture.workspaceId);
 });
 
+test("the fixture executable receives provider probe purpose through the strict lifecycle contract", async () => {
+  const fixture = await createFixture("provider-probe-purpose");
+  await fixture.service.create({
+    ...fixture.createInput,
+    purpose: "provider-probe",
+    setupFromPaseoConfig: false,
+  });
+  const [stateFile] = await readdir(fixture.stateDirectory);
+  const state = JSON.parse(
+    await readFile(path.join(fixture.stateDirectory, stateFile), "utf8"),
+  ) as { createInput: unknown };
+  expect(state.createInput).toEqual({
+    workspaceId: fixture.workspaceId,
+    project: {
+      projectId: fixture.createInput.project.id,
+      source: fixture.createInput.project.source,
+    },
+    placement: fixture.createInput.placement,
+    purpose: "provider-probe",
+  });
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
 test("equal display cwd values never share external runtime execution, files, Git, or caches", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-command-runtime-equal-display-"));
   cleanupRoots.push(root);

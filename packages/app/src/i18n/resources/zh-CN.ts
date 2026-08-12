@@ -1032,6 +1032,7 @@ export const zhCN: TranslationResources = {
     title: "新建 workspace",
     create: "创建",
     runtime: { local: "本地", worktree: "Worktree", docker: "Docker", label: "运行环境" },
+    runtimeProbe: { preparing: "正在准备环境" },
     isolation: {
       local: "本地",
       worktree: "新建 worktree",

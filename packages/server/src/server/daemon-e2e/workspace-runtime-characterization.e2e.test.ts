@@ -334,6 +334,7 @@ describe("current workspace runtime journeys", () => {
       expect(records.find((record) => record.workspaceId === workspace.id)?.runtime).toEqual({
         runtimeId: "local",
       });
+      expect(existsSync(path.join(workspace.cwd, "setup-output.txt"))).toBe(false);
       await expectFileEditAndWatch(workspace);
       await expectGitObservation(workspace);
       await expectTerminalCommand(workspace);
@@ -489,6 +490,102 @@ test("catalog selection creates through a configured runtime while omission rema
     await selectedDaemon.close();
   }
 });
+
+test("provider probes match user workspace snapshots for every host-backed runtime", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workspace-runtime-provider-probes-"));
+  cleanupRoots.push(root);
+  const stateDirectory = path.join(root, "fixture-state");
+  const materializeRoot = path.join(root, "fixture-workspaces");
+  mkdirSync(stateDirectory, { recursive: true });
+  const probeDaemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    providerOverrides: {
+      claude: { enabled: false },
+      codex: { enabled: false },
+      copilot: { enabled: false },
+      opencode: { enabled: false },
+      pi: { enabled: false },
+      [FIXTURE_PROVIDER]: {
+        extends: "acp",
+        label: "Workspace Runtime Fixture",
+        command: [process.execPath, fixtureAgentPath],
+        models: [{ id: FIXTURE_MODEL, label: "Fixture Model", isDefault: true }],
+        params: { supportsMcpServers: false },
+        enabled: true,
+      },
+    },
+    workspaceRuntimes: {
+      fixture: {
+        type: "command",
+        label: "Fixture",
+        command: [process.execPath, fixtureRuntimePath],
+        helperCommand: [process.execPath, workspaceHelperPath],
+        options: { stateDirectory, materializeRoot },
+      },
+    },
+  });
+  const probeClient = new DaemonClient({
+    url: `ws://127.0.0.1:${probeDaemon.port}/ws`,
+    appVersion: "0.3.1",
+    reconnect: { enabled: false },
+  });
+  try {
+    await probeClient.connect();
+    for (const runtimeId of ["local", "worktree", "fixture"] as const) {
+      const repo = path.join(root, `repo-${runtimeId}`);
+      execFileSync("git", ["init", "-b", "main", repo], { stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@getpaseo.local"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repo });
+      copyFileSync(fixtureAgentPath, path.join(repo, "fixture-agent.mjs"));
+      chmodSync(path.join(repo, "fixture-agent.mjs"), 0o755);
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-m", "fixture"], { cwd: repo });
+      const added = await probeClient.addProject(repo);
+      if (!added.project) throw new Error(added.error ?? `Failed to add ${runtimeId} project`);
+
+      const ensured = await probeClient.ensureWorkspaceRuntimeProbe({
+        projectId: added.project.projectId,
+        runtimeId,
+      });
+      expect(ensured).toMatchObject({ status: "ready", error: null });
+      const probeSnapshot = await probeClient.getProvidersSnapshot({
+        workspaceId: ensured.workspaceId!,
+      });
+      const created = await probeClient.createWorkspace({
+        source:
+          runtimeId === "worktree"
+            ? {
+                kind: "worktree",
+                projectId: added.project.projectId,
+                action: "branch-off",
+                branchName: `probe-${runtimeId}`,
+                worktreeSlug: `probe-${runtimeId}`,
+                baseBranch: "main",
+              }
+            : { kind: "directory", path: repo, projectId: added.project.projectId },
+        runtimeId,
+      });
+      if (!created.workspace) throw new Error(created.error ?? `Failed to create ${runtimeId}`);
+      const workspaceSnapshot = await probeClient.getProvidersSnapshot({
+        workspaceId: created.workspace.id,
+      });
+      expect(probeSnapshot.entries.map(({ fetchedAt: _fetchedAt, ...entry }) => entry)).toEqual(
+        workspaceSnapshot.entries.map(({ fetchedAt: _fetchedAt, ...entry }) => entry),
+      );
+      expect(probeSnapshot.entries).toContainEqual(
+        expect.objectContaining({ provider: FIXTURE_PROVIDER, status: "ready" }),
+      );
+      const listed = await probeClient.fetchWorkspaces({
+        filter: { projectId: added.project.projectId },
+      });
+      expect(listed.entries.map((entry) => entry.id)).toEqual([created.workspace.id]);
+      await probeClient.removeProject(added.project.projectId);
+    }
+  } finally {
+    await probeClient.close().catch(() => undefined);
+    await probeDaemon.close();
+  }
+}, 120_000);
 
 test("selected worktree provider journey stays behind the public daemon and client boundary", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workspace-runtime-selected-worktree-"));

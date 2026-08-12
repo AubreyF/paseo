@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { watch } from "node:fs";
-import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, copyFile, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Socket } from "node:net";
 import { createInterface } from "node:readline";
@@ -67,12 +67,13 @@ try {
     switch (operation) {
       case "create":
         {
-          const state = await create(workspaceId, request);
+          const result = await create(workspaceId, request);
           writeJson(CommandRuntimeLifecycleResponseSchema, {
             protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
             type: "state",
-            state: publicState(state),
-            placement: publicPlacement(state),
+            state: publicState(result.state),
+            placement: publicPlacement(result.state),
+            materializedFreshContent: result.materializedFreshContent,
           });
         }
         break;
@@ -102,7 +103,7 @@ try {
         }
         break;
       case "destroy":
-        await rm(stateFile(workspaceId, request.options), { force: true });
+        await destroy(workspaceId, request.options);
         writeJson(CommandRuntimeLifecycleResponseSchema, {
           protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
           type: "ok",
@@ -119,18 +120,45 @@ try {
 
 async function create(id, request) {
   const existing = await readState(id, request.options);
-  if (existing) return existing;
-  const root = request.input.project.source.path;
+  if (existing) return { state: existing, materializedFreshContent: false };
+  if (request.options.failCreate === true) {
+    throw new Error(String(request.options.createError ?? "Fixture workspace creation failed"));
+  }
+  const sourceRoot = request.input.project.source.path;
+  const ownedRoot = request.options.materializeRoot
+    ? path.join(request.options.materializeRoot, id)
+    : null;
+  const root = ownedRoot ?? sourceRoot;
+  if (ownedRoot) {
+    await rm(ownedRoot, { recursive: true, force: true });
+    await mkdir(path.dirname(ownedRoot), { recursive: true });
+    await cp(sourceRoot, ownedRoot, { recursive: true });
+  }
+  if (request.options.fixtureProviderSource) {
+    const providerPath = path.join(root, ".paseo-fixture-agent.mjs");
+    await copyFile(request.options.fixtureProviderSource, providerPath);
+    await chmod(providerPath, 0o755);
+  }
   const state = {
     workspaceId: id,
     root,
-    displayCwd: request.options.displayCwd ?? root,
+    displayCwd: request.options.preserveSourceDisplayCwd
+      ? sourceRoot
+      : (request.options.displayCwd ?? root),
     hostVisiblePath: request.options.exposeHostVisiblePath === false ? undefined : root,
     lifecycle: "ready",
+    ownedRoot,
+    createInput: request.input,
   };
   await mkdir(request.options.stateDirectory, { recursive: true });
   await writeFile(stateFile(id, request.options), JSON.stringify(state));
-  return state;
+  return { state, materializedFreshContent: true };
+}
+
+async function destroy(id, options) {
+  const state = await readState(id, options);
+  if (state?.ownedRoot) await rm(state.ownedRoot, { recursive: true, force: true });
+  await rm(stateFile(id, options), { force: true });
 }
 
 async function inspect(id, options) {

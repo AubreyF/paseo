@@ -1054,6 +1054,7 @@ export const ja: TranslationResources = {
     title: "新しいワークスペース",
     create: "作成",
     runtime: { local: "ローカル", worktree: "ワークツリー", docker: "Docker", label: "ランタイム" },
+    runtimeProbe: { preparing: "環境を準備しています" },
     isolation: {
       local: "ローカル",
       worktree: "新しいワークツリー",

@@ -145,12 +145,34 @@ async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> 
   const configPath = path.join(paseoHome, "config.json");
   const existing = existsSync(configPath) ? JSON.parse(await readFile(configPath, "utf8")) : {};
   const stateDirectory = path.join(paseoHome, "fixture-runtime");
+  const materializeRoot = path.join(paseoHome, "fixture-workspaces");
+  const fixtureProviderSource = path.resolve(
+    __dirname,
+    "../../../../server/src/server/test-utils/fixtures/workspace-runtime-acp-agent.mjs",
+  );
   await mkdir(stateDirectory, { recursive: true });
   await writeFile(
     configPath,
     `${JSON.stringify({
       ...existing,
       version: 1,
+      agents: {
+        ...existing.agents,
+        providers: {
+          ...existing.agents?.providers,
+          claude: { ...existing.agents?.providers?.claude, enabled: false },
+          codex: { ...existing.agents?.providers?.codex, enabled: false },
+          copilot: { ...existing.agents?.providers?.copilot, enabled: false },
+          opencode: { ...existing.agents?.providers?.opencode, enabled: false },
+          pi: { ...existing.agents?.providers?.pi, enabled: false },
+          "fixture-agent": {
+            extends: "acp",
+            label: "Fixture Agent",
+            command: [process.execPath, "./.paseo-fixture-agent.mjs"],
+            models: [{ id: "fixture-model", label: "Fixture Model", isDefault: true }],
+          },
+        },
+      },
       workspaceRuntimes: {
         ...existing.workspaceRuntimes,
         fixture: {
@@ -167,7 +189,32 @@ async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> 
               "../../../../server/src/server/workspace-helper/executable.mjs",
             ),
           ],
-          options: { stateDirectory },
+          options: {
+            stateDirectory,
+            materializeRoot,
+            fixtureProviderSource,
+            preserveSourceDisplayCwd: true,
+          },
+        },
+        "fixture-failure": {
+          type: "command",
+          label: "Fixture Failure",
+          command: [
+            process.execPath,
+            path.resolve(__dirname, "../../../../fixture-workspace-runtime/src/index.mjs"),
+          ],
+          helperCommand: [
+            process.execPath,
+            path.resolve(
+              __dirname,
+              "../../../../server/src/server/workspace-helper/executable.mjs",
+            ),
+          ],
+          options: {
+            stateDirectory: path.join(paseoHome, "fixture-failure-runtime"),
+            failCreate: true,
+            createError: "Fixture probe creation failed",
+          },
         },
       },
     })}\n`,

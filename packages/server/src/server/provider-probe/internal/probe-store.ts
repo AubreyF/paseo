@@ -12,9 +12,9 @@ const ProbeRecordSchema = z
     projectId: z.string(),
     runtimeId: z.string(),
     fingerprint: z.string(),
-    status: z.enum(["materializing", "ready", "paused"]),
-    lastUsedAt: z.string(),
-    createdAt: z.string(),
+    status: z.enum(["materializing", "ready", "paused", "destroying"]),
+    lastUsedAt: z.iso.datetime(),
+    createdAt: z.iso.datetime(),
   })
   .strict();
 
@@ -23,6 +23,7 @@ export type ProviderProbeRecord = z.infer<typeof ProbeRecordSchema>;
 export interface ProbeStore {
   readonly records: WorkspaceRuntimeRecordStore;
   get(workspaceId: string): Promise<ProviderProbeRecord | null>;
+  list(): Promise<readonly ProviderProbeRecord[]>;
   put(record: ProviderProbeRecord): Promise<void>;
   update(
     workspaceId: string,
@@ -45,9 +46,12 @@ export function createProbeStore(filePath: string, logger: pino.Logger): ProbeSt
         .parse(JSON.parse(await fs.readFile(filePath, "utf8")));
       for (const record of records) cache.set(record.workspaceId, record);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        log.error({ err: error, filePath }, "Failed to load provider probes");
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        loaded = true;
+        return;
       }
+      log.error({ err: error, filePath }, "Failed to load provider probes");
+      throw error;
     }
     loaded = true;
   }
@@ -84,7 +88,6 @@ export function createProbeStore(filePath: string, logger: pino.Logger): ProbeSt
           ...record,
           runtimeId,
           status: "ready",
-          lastUsedAt: new Date().toISOString(),
         }));
         if (!updated) throw new Error(`Provider probe record not found: ${workspaceId}`);
       },
@@ -94,7 +97,9 @@ export function createProbeStore(filePath: string, logger: pino.Logger): ProbeSt
       async restoreWorkspaceRecord(workspaceId) {
         await store.update(workspaceId, (record) => ({ ...record, status: "ready" }));
       },
-      async beginWorkspaceDeletion() {},
+      async beginWorkspaceDeletion(workspaceId) {
+        await store.update(workspaceId, (record) => ({ ...record, status: "destroying" }));
+      },
       async removeWorkspaceRecord(workspaceId) {
         await store.remove(workspaceId);
       },
@@ -104,12 +109,17 @@ export function createProbeStore(filePath: string, logger: pino.Logger): ProbeSt
           workspaceId: record.workspaceId,
           runtimeId: record.runtimeId,
           archived: record.status === "paused",
+          deleting: record.status === "destroying",
         }));
       },
     },
     async get(workspaceId) {
       await load();
       return cache.get(workspaceId) ?? null;
+    },
+    async list() {
+      await load();
+      return [...cache.values()];
     },
     async put(record) {
       const parsed = ProbeRecordSchema.parse(record);

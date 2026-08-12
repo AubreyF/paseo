@@ -13,7 +13,20 @@ import { createService } from "./internal/service.js";
 export interface ProviderProbeService {
   ensure(input: { projectId: string; runtimeId: string }): Promise<{ workspaceId: string }>;
   resolveProviderWorkspace(workspaceId: string): Promise<ProviderWorkspace | null>;
+  invalidateProject(projectId: string): Promise<void>;
+  reconcile(): Promise<void>;
+  close(): Promise<void>;
   readonly records: WorkspaceRuntimeRecordStore;
+}
+
+export interface ProviderProbeTimer {
+  unref?(): void;
+}
+
+export interface ProviderProbeClock {
+  now(): Date;
+  setTimeout(callback: () => void | Promise<void>, delayMs: number): ProviderProbeTimer;
+  clearTimeout(timer: ProviderProbeTimer): void;
 }
 
 export interface ProviderProbeServiceOptions {
@@ -30,8 +43,12 @@ export interface ProviderProbeServiceOptions {
   runtime: {
     create(input: CreateWorkspaceInput): Promise<WorkspaceRuntimePlacement>;
     inspect(workspaceId: string): Promise<WorkspaceRuntimeInspection>;
+    pause(workspaceId: string): Promise<void>;
     resume(workspaceId: string): Promise<void>;
+    destroy(workspaceId: string): Promise<void>;
+    listRuntimes(): readonly { runtimeId: string }[];
   };
+  clock?: ProviderProbeClock;
   runtimeConfiguration?: Readonly<Record<string, unknown>>;
   bindWorkspaceProviderCapability(
     workspaceId: string,

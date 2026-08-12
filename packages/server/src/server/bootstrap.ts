@@ -153,7 +153,7 @@ import {
 } from "./workspace-registry.js";
 import {
   createWorkspaceRuntimeService,
-  type BoundWorkspaceRuntime,
+  DEFAULT_DOCKER_WORKSPACE_IMAGE,
   type WorkspaceRuntimeConfig,
   type WorkspaceRuntimeRecordStore,
   type WorkspaceRuntimeService,
@@ -867,17 +867,12 @@ export async function createPaseoDaemon(
     path.join(config.paseoHome, "projects", "workspaces.json"),
     logger,
   );
-  const providerWorkspaceBindings = new Map<
-    string,
-    { runtime: BoundWorkspaceRuntime; workspace: ReturnType<typeof bindProviderWorkspace> }
-  >();
-  // Record removal evicts bindings below. Until Phase 4 adds probe invalidation/TTL destruction,
-  // live probe entries remain bounded to one deterministic workspace per project/runtime pair.
+  const providerWorkspaceBindings = new Map<string, ReturnType<typeof bindProviderWorkspace>>();
   const bindWorkspaceProviderCapability = async (workspaceId: string, runtimeId: string) => {
     if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
-    const runtime = await workspaceRuntime.bind(workspaceId);
     const cached = providerWorkspaceBindings.get(workspaceId);
-    if (cached?.runtime === runtime) return cached.workspace;
+    if (cached) return cached;
+    const runtime = await workspaceRuntime.bind(workspaceId);
     const workspace = bindProviderWorkspace({
       runtime,
       cwd: ".",
@@ -887,7 +882,7 @@ export async function createPaseoDaemon(
         isolatedEnvironment: config.workspaceRuntimes?.[runtimeId]?.providerEnvironment,
       }),
     });
-    providerWorkspaceBindings.set(workspaceId, { runtime, workspace });
+    providerWorkspaceBindings.set(workspaceId, workspace);
     return workspace;
   };
   providerProbe = createProviderProbeService({
@@ -907,8 +902,20 @@ export async function createPaseoDaemon(
         if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
         return workspaceRuntime.resume(workspaceId);
       },
+      pause: (workspaceId) => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.pause(workspaceId);
+      },
+      destroy: (workspaceId) => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.destroy(workspaceId);
+      },
+      listRuntimes: () => {
+        if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
+        return workspaceRuntime.listRuntimes();
+      },
     },
-    runtimeConfiguration: config.workspaceRuntimes,
+    runtimeConfiguration: resolveProviderProbeRuntimeConfiguration(config.workspaceRuntimes),
     bindWorkspaceProviderCapability,
   });
   const workspaceRecords: WorkspaceRuntimeRecordStore = {
@@ -951,6 +958,11 @@ export async function createPaseoDaemon(
     worktreesRoot: config.worktreesRoot,
     externalRuntimes: config.workspaceRuntimes,
     ...workspaceRecords,
+  });
+  const detachProviderProbeInvalidation = projectRegistry.subscribeToMutations(async (mutation) => {
+    if (mutation.kind === "archive" || mutation.kind === "remove") {
+      await providerProbe?.invalidateProject(mutation.projectId);
+    }
   });
 
   async function resolveRegistryRuntimeId(workspaceId: string): Promise<string | null> {
@@ -1076,6 +1088,12 @@ export async function createPaseoDaemon(
   await agentStorage.initialize();
   logger.info({ elapsed: elapsed() }, "Agent storage initialized");
   await Promise.all([projectRegistry.initialize(), workspaceRegistry.initialize()]);
+  try {
+    await providerProbe.reconcile();
+    logger.info({ elapsed: elapsed() }, "Provider probes reconciled");
+  } catch (error) {
+    logger.warn({ err: error }, "Provider probe reconciliation failed");
+  }
   try {
     await workspaceRuntime.reconcile();
     logger.info({ elapsed: elapsed() }, "Workspace runtimes reconciled");
@@ -1879,6 +1897,7 @@ export async function createPaseoDaemon(
   const stop = async () => {
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
+    detachProviderProbeInvalidation();
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
@@ -1888,6 +1907,9 @@ export async function createPaseoDaemon(
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await providerSnapshotManager.shutdown();
+    await providerProbe?.close().catch((error) => {
+      logger.warn({ err: error }, "Failed to pause provider probes during shutdown");
+    });
     await terminalManager.killAll();
     speechService.stop();
     await scheduleService.stop().catch(() => undefined);
@@ -1924,6 +1946,23 @@ export async function createPaseoDaemon(
     start,
     stop,
     getListenTarget: () => boundListenTarget,
+  };
+}
+
+function resolveProviderProbeRuntimeConfiguration(
+  configured: Readonly<Record<string, WorkspaceRuntimeConfig>> | undefined,
+): Readonly<Record<string, unknown>> {
+  const docker = configured?.docker;
+  return {
+    ...configured,
+    docker: {
+      type: "docker",
+      ...(docker?.type === "docker" ? docker : {}),
+      image:
+        docker?.type === "docker"
+          ? (docker.image ?? DEFAULT_DOCKER_WORKSPACE_IMAGE)
+          : DEFAULT_DOCKER_WORKSPACE_IMAGE,
+    },
   };
 }
 

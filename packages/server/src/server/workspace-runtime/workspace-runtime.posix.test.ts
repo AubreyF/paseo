@@ -149,7 +149,12 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
 
     const runtime = await fixture.service.bind(fixture.workspaceId);
 
-    expect(Object.keys(runtime).sort()).toEqual(["files", "resolveCommand", "run"]);
+    expect(Object.keys(runtime).sort()).toEqual([
+      "files",
+      "resolveCommand",
+      "run",
+      "scriptTerminal",
+    ]);
     await expect(runtime.resolveCommand("git")).resolves.toMatch(/^\//u);
     await expect(runtime.resolveCommand("paseo-command-that-does-not-exist")).resolves.toBeNull();
     await fixture.service.destroy(fixture.workspaceId);

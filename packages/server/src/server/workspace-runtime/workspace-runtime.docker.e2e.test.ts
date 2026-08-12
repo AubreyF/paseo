@@ -756,7 +756,120 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
   }
 }, 180_000);
 
-test.todo("Phase 4: Docker destroy/recreate rotates the provider snapshot to fixture-model-v2");
+test("Docker probe pause survives restart and source invalidation rotates the provider snapshot", async () => {
+  const fixture = await dockerTestFixture("paseo-runtime-docker-probe-lifecycle-");
+  const root = fixture.root;
+  const repo = await createRepository(root);
+  await writeFile(path.join(repo, "provider-model.txt"), "fixture-model-v1\n");
+  execFileSync("git", ["add", "provider-model.txt"], { cwd: repo });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "provider v1"], {
+    cwd: repo,
+  });
+  const paseoHomeRoot = path.join(root, "daemon-home");
+  const paseoHome = path.join(paseoHomeRoot, ".paseo");
+  await mkdir(paseoHome, { recursive: true });
+  const projectId = "docker-probe-lifecycle-project";
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(paseoHome, "projects", "projects.json"),
+    createTestLogger(),
+  );
+  await projectRegistry.initialize();
+  const createdAt = new Date().toISOString();
+  await projectRegistry.upsert(
+    createPersistedProjectRecord({
+      projectId,
+      rootPath: repo,
+      kind: "git",
+      displayName: projectId,
+      createdAt,
+      updatedAt: createdAt,
+    }),
+  );
+  const daemonOptions = {
+    paseoHomeRoot,
+    cleanup: false,
+    mcpEnabled: false,
+    agentClients: {},
+    workspaceRuntimes: { docker: { type: "docker" as const, image } },
+    providerOverrides: {
+      "docker-fixture": {
+        extends: "acp" as const,
+        label: "Docker Fixture",
+        command: ["node", "./fixture-agent.mjs"],
+        params: { supportsMcpServers: false },
+        enabled: true,
+      },
+    },
+  };
+  let daemon = await createTestPaseoDaemon(daemonOptions);
+  let client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.3.0-beta.2",
+    reconnect: { enabled: false },
+  });
+  let workspaceId = "";
+
+  try {
+    await client.connect();
+    const firstProbe = await client.ensureWorkspaceRuntimeProbe({ projectId, runtimeId: "docker" });
+    expect(firstProbe).toMatchObject({ status: "ready", error: null });
+    workspaceId = firstProbe.workspaceId!;
+    fixture.workspace(workspaceId);
+    const firstSnapshot = await client.getProvidersSnapshot({ cwd: "/workspace", workspaceId });
+    expect(firstSnapshot.entries).toContainEqual(
+      expect.objectContaining({
+        provider: "docker-fixture",
+        status: "ready",
+        models: [expect.objectContaining({ id: "fixture-model-v1" })],
+      }),
+    );
+
+    await client.close();
+    await daemon.close();
+    expect(dockerRunningContainerCount(workspaceId)).toBe(0);
+    expect(dockerResourceCount("ps", workspaceId)).toBe(1);
+    expect(dockerResourceCount("volume", workspaceId)).toBe(1);
+
+    await writeFile(path.join(repo, "provider-model.txt"), "fixture-model-v2\n");
+    execFileSync("git", ["add", "provider-model.txt"], { cwd: repo });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "provider v2"], {
+      cwd: repo,
+    });
+
+    daemon = await createTestPaseoDaemon(daemonOptions);
+    client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.3.0-beta.2",
+      reconnect: { enabled: false },
+    });
+    await client.connect();
+    const recreatedProbe = await client.ensureWorkspaceRuntimeProbe({
+      projectId,
+      runtimeId: "docker",
+    });
+    expect(recreatedProbe).toEqual({
+      requestId: recreatedProbe.requestId,
+      workspaceId,
+      status: "ready",
+      error: null,
+    });
+    const rotatedSnapshot = await client.getProvidersSnapshot({ cwd: "/workspace", workspaceId });
+    expect(rotatedSnapshot.entries).toContainEqual(
+      expect.objectContaining({
+        provider: "docker-fixture",
+        status: "ready",
+        models: [expect.objectContaining({ id: "fixture-model-v2" })],
+      }),
+    );
+
+    await expect(client.removeProject(projectId)).resolves.toEqual({ removedWorkspaceIds: [] });
+    expect(dockerResourceCount("ps", workspaceId)).toBe(0);
+    expect(dockerResourceCount("volume", workspaceId)).toBe(0);
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close().catch(() => undefined);
+  }
+}, 180_000);
 
 test("Docker creation validates roots and rolls back when runtime selection cannot persist", async () => {
   const fixture = await dockerTestFixture("paseo-runtime-docker-rollback-");
@@ -1632,6 +1745,16 @@ function dockerResourceCount(kind: "ps" | "volume", workspaceId: string): number
       ? ["ps", "-aq", "--filter", `label=sh.paseo.workspace-id=${workspaceId}`]
       : ["volume", "ls", "-q", "--filter", `label=sh.paseo.workspace-id=${workspaceId}`];
   return execFileSync("docker", args, { encoding: "utf8" }).trim() ? 1 : 0;
+}
+
+function dockerRunningContainerCount(workspaceId: string): number {
+  return execFileSync(
+    "docker",
+    ["ps", "-q", "--filter", `label=sh.paseo.workspace-id=${workspaceId}`],
+    { encoding: "utf8" },
+  ).trim()
+    ? 1
+    : 0;
 }
 
 function nextFile(directory: string, expectedName: string): Promise<void> {

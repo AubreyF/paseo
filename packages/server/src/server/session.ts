@@ -366,6 +366,10 @@ type FetchAgentsResponsePageInfo = FetchAgentsResponsePayload["pageInfo"];
 type AgentUpdatesFilter = FetchAgentsRequestFilter;
 type CreateAgentRequestMessage = Extract<SessionInboundMessage, { type: "create_agent_request" }>;
 
+interface CreatedAgentRequest {
+  agent: AgentSnapshotPayload;
+}
+
 interface ResolvedSessionCreateAgentIntent {
   config: AgentSessionConfig;
   intent: CreateAgentIntent;
@@ -676,6 +680,10 @@ export class Session {
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
+  private readonly inFlightAgentCreationsByClientMessageId = new Map<
+    string,
+    Promise<CreatedAgentRequest>
+  >();
 
   constructor(options: SessionOptions) {
     const {
@@ -3102,10 +3110,86 @@ export class Session {
    * Handle create agent request
    */
   private async handleCreateAgentRequest(msg: CreateAgentRequestMessage): Promise<void> {
+    const clientMessageId = msg.clientMessageId?.trim();
+    const existingCreation = clientMessageId
+      ? this.inFlightAgentCreationsByClientMessageId.get(clientMessageId)
+      : undefined;
+    if (existingCreation) {
+      try {
+        const created = await existingCreation;
+        this.emitCreatedAgentResponse(msg.requestId, created.agent);
+      } catch (error) {
+        this.emitFailedAgentCreateResponse(msg.requestId, error);
+      }
+      return;
+    }
+
+    const creation = this.createAgentForRequest(msg);
+    if (clientMessageId) {
+      this.inFlightAgentCreationsByClientMessageId.set(clientMessageId, creation);
+    }
+    try {
+      const created = await creation;
+      this.emitCreatedAgentResponse(msg.requestId, created.agent);
+    } catch (error) {
+      const wireError = toWorktreeWireError(error);
+      this.sessionLogger.error({ err: error }, "Failed to create agent");
+      this.emitFailedAgentCreateResponse(msg.requestId, wireError);
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to create agent: ${wireError.message}`,
+        },
+      });
+    } finally {
+      if (
+        clientMessageId &&
+        this.inFlightAgentCreationsByClientMessageId.get(clientMessageId) === creation
+      ) {
+        this.inFlightAgentCreationsByClientMessageId.delete(clientMessageId);
+      }
+    }
+  }
+
+  private emitCreatedAgentResponse(
+    requestId: string | undefined,
+    agent: AgentSnapshotPayload,
+  ): void {
+    if (!requestId) return;
+    this.emit({
+      type: "status",
+      payload: {
+        status: "agent_created",
+        agentId: agent.id,
+        requestId,
+        agent,
+      },
+    });
+  }
+
+  private emitFailedAgentCreateResponse(requestId: string | undefined, error: unknown): void {
+    if (!requestId) return;
+    const wireError = toWorktreeWireError(error);
+    this.emit({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId,
+        error: wireError.message,
+        errorCode: wireError.code,
+      },
+    });
+  }
+
+  private async createAgentForRequest(
+    msg: CreateAgentRequestMessage,
+  ): Promise<CreatedAgentRequest> {
     const {
       config,
       worktreeName,
-      requestId,
       initialPrompt,
       clientMessageId,
       outputSchema,
@@ -3205,50 +3289,19 @@ export class Session {
         agentId: snapshot.id,
         createdWorktree,
       });
-      if (requestId) {
-        const agentPayload = await this.buildAgentPayload(liveSnapshot);
-        this.emit({
-          type: "status",
-          payload: {
-            status: "agent_created",
-            agentId: liveSnapshot.id,
-            requestId,
-            agent: agentPayload,
-          },
-        });
-      }
+      const agentPayload = await this.buildAgentPayload(liveSnapshot);
 
       this.sessionLogger.info(
         { agentId: snapshot.id, provider: snapshot.provider },
         `Created agent ${snapshot.id} (${snapshot.provider})`,
       );
+      return { agent: agentPayload };
     } catch (error) {
       await this.createAgentLifecycleDispatch.cleanupCreatedWorktreeAfterFailedAgentCreate({
         createdWorktree: createdWorktreeForCleanup,
         createdAgentId,
       });
-      const wireError = toWorktreeWireError(error);
-      this.sessionLogger.error({ err: error }, "Failed to create agent");
-      if (requestId) {
-        this.emit({
-          type: "status",
-          payload: {
-            status: "agent_create_failed",
-            requestId,
-            error: wireError.message,
-            errorCode: wireError.code,
-          },
-        });
-      }
-      this.emit({
-        type: "activity_log",
-        payload: {
-          id: uuidv4(),
-          timestamp: new Date(),
-          type: "error",
-          content: `Failed to create agent: ${wireError.message}`,
-        },
-      });
+      throw error;
     }
   }
 

@@ -872,7 +872,7 @@ test("client heartbeat clears attention for the focused terminal", async () => {
   });
 });
 
-test("create_agent_request keeps requested child cwd when grouped under an existing parent workspace", async () => {
+test("create_agent_request deduplicates concurrent draft submission retries", async () => {
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-cwd-"));
   try {
     const parent = path.join(workdir, "parent");
@@ -981,14 +981,26 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
         terminalManager: null,
       }),
     );
-    await session.handleMessage({
-      type: "create_agent_request",
-      requestId: "req-create-child",
-      config: { provider: "codex", cwd: child },
-      attachments: [],
-    });
+    await Promise.all([
+      session.handleMessage({
+        type: "create_agent_request",
+        requestId: "req-create-child-1",
+        clientMessageId: "draft-submission-1",
+        config: { provider: "codex", cwd: child },
+        attachments: [],
+      }),
+      session.handleMessage({
+        type: "create_agent_request",
+        requestId: "req-create-child-2",
+        clientMessageId: "draft-submission-1",
+        config: { provider: "codex", cwd: child },
+        attachments: [],
+      }),
+    ]);
 
-    const [createdAgent] = agentManager.listAgents();
+    const createdAgents = agentManager.listAgents();
+    expect(createdAgents).toHaveLength(1);
+    const [createdAgent] = createdAgents;
     expect(createdAgent?.cwd).toBe(child);
     const createdWorkspace = await workspaceRegistry.get(createdAgent!.workspaceId!);
     expect(createdWorkspace).not.toBeNull();
@@ -1007,10 +1019,22 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
       projectKey: createdWorkspace!.projectId,
       checkout: { cwd: child },
     });
-    expect(findByType(emitted, "status")?.payload).toMatchObject({
-      status: "agent_created",
-      agent: { cwd: child },
-    });
+    expect(
+      emitted.filter((message) => message.type === "status").map((message) => message.payload),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "agent_created",
+          requestId: "req-create-child-1",
+          agent: expect.objectContaining({ cwd: child }),
+        }),
+        expect.objectContaining({
+          status: "agent_created",
+          requestId: "req-create-child-2",
+          agent: expect.objectContaining({ cwd: child }),
+        }),
+      ]),
+    );
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }

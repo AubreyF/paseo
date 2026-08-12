@@ -225,7 +225,10 @@ export function createWorkspaceProvisioningService(deps: {
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    await workspaceRegistry.upsert(workspace, context);
+    await workspaceRegistry.upsert(workspace, {
+      ...context,
+      provisional: context?.runtimeId !== undefined,
+    });
     return workspace;
   }
 

@@ -67,6 +67,7 @@ export function createWorktreeRuntime(options: {
     id: "worktree",
     requiresGitProject: true,
     workspaceHelperCommand: hostWorkspaceHelperCommand,
+    scriptTerminal: { kind: "persistent-shell" },
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);
       if (existing.status === "ready" || existing.status === "paused") {

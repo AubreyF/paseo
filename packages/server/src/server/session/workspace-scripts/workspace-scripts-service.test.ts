@@ -220,7 +220,7 @@ describe("buildSnapshot", () => {
     await service.launch({ workspaceId: workspace.workspaceId, scriptName: "app" });
     expect(spawnCalls[0]).toMatchObject({
       workspaceId: workspace.workspaceId,
-      runtimeCwd: ".",
+      runtimeCwd: dir,
       paseoConfig: { scripts: { app: { command: "npm run app" } } },
     });
     expect(spawnCalls[0]?.runtime).toBeDefined();

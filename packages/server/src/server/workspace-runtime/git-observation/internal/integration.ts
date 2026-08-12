@@ -100,12 +100,44 @@ export function createGitCommonObservationCoordinator(): GitCommonObservationCoo
     if (observation.driver.observeGit) {
       return observation.driver.observeGit(observation.workspaceId, observation.listener);
     }
+    const ignoredPaths = await readGitIgnoredPaths(observation.runtime);
     const subscription: WorkspaceFilesSubscription = await observation.runtime.files.subscribe(
-      { paths: ["."], recursive: true },
+      { paths: ["."], recursive: true, ignoredPaths },
       (event) => {
         if (event.type !== "error") observation.listener();
       },
     );
     return subscription;
   }
+}
+
+async function readGitIgnoredPaths(runtime: BoundWorkspaceRuntime): Promise<string[]> {
+  const process = await runtime.run({
+    argv: ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+    env: { GIT_OPTIONAL_LOCKS: "0", PATH: "/usr/local/bin:/usr/bin:/bin" },
+    purpose: { kind: "git" },
+  });
+  process.stdin.end();
+  const [stdout, , exit] = await Promise.all([
+    collect(process.stdout),
+    collect(process.stderr),
+    process.exited,
+  ]);
+  if (exit.code !== 0 || exit.signal !== null) return [];
+  return [
+    ...new Set(
+      stdout
+        .split("\0")
+        .map((entry) => entry.replace(/\/+$/, ""))
+        .filter(Boolean),
+    ),
+  ];
+}
+
+async function collect(stream: NodeJS.ReadableStream): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }

@@ -6,8 +6,10 @@ import {
   expectProbeSkippedProjectSetup,
   expectProviderAvailable,
   expectFixtureProviderUnavailable,
+  expectHostWorkspaceAffordances,
   expectRuntimeChoices,
   expectRuntimeSelected,
+  expectSelectedHostRuntimePlacement,
   expectUserWorkspaceRanProjectSetup,
   expectWorkspaceOpenInRuntime,
   gotoNewWorkspaceForRuntime,
@@ -23,6 +25,21 @@ import {
   selectNewWorkspaceProject,
 } from "../../app/e2e/support/helpers/new-workspace";
 import { installDesktopRuntime } from "./support/runtime";
+
+const hostOpenTargets = [
+  {
+    id: "vscode",
+    label: "VS Code",
+    kind: "editor" as const,
+    icon: { kind: "symbol" as const, name: "terminal" as const },
+  },
+  {
+    id: "finder",
+    label: "Finder",
+    kind: "file-manager" as const,
+    icon: { kind: "symbol" as const, name: "folder" as const },
+  },
+];
 
 const test = base.extend<{
   runtimeProject: SeededRuntimeProject;
@@ -48,7 +65,11 @@ const test = base.extend<{
 
 test("probes and creates a workspace in a selected runtime", async ({ page, runtimeProject }) => {
   await test.step("choose the project and runtime", async () => {
-    await installDesktopRuntime(page, { serverId: getServerId(), manageBuiltInDaemon: false });
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      manageBuiltInDaemon: false,
+      editorTargets: hostOpenTargets,
+    });
     await gotoNewWorkspaceForRuntime(page, runtimeProject);
     await expectRuntimeChoices(page, ["Local", "Worktree", "Docker", "Fixture", "Fixture Failure"]);
     await selectRuntime(page, "Fixture");
@@ -91,6 +112,35 @@ test("shows probe failure with retry without host providers", async ({ page, run
   await test.step("retry the failed probe", async () => {
     await retryFailedProbe(page);
     await expectProbeFailureWithRetry(page, "Fixture probe creation failed");
+  });
+});
+
+test("creates Local and Worktree through explicit runtime selection", async ({
+  page,
+  runtimeProject,
+}) => {
+  await test.step("create the selected Local workspace without project setup", async () => {
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      manageBuiltInDaemon: false,
+      editorTargets: hostOpenTargets,
+    });
+    await gotoNewWorkspaceForRuntime(page, runtimeProject);
+    await selectRuntime(page, "Local");
+    await createWorkspaceInSelectedRuntime(page);
+    await expectWorkspaceOpenInRuntime(page, runtimeProject, "local");
+    await expectSelectedHostRuntimePlacement(runtimeProject, "local", false);
+    await expectHostWorkspaceAffordances(page);
+  });
+
+  await test.step("create the selected Worktree workspace with project setup", async () => {
+    await openGlobalNewWorkspaceComposer(page);
+    await selectNewWorkspaceProject(page, runtimeProject);
+    await selectRuntime(page, "Worktree");
+    await createWorkspaceInSelectedRuntime(page);
+    await expectWorkspaceOpenInRuntime(page, runtimeProject, "worktree");
+    await expectSelectedHostRuntimePlacement(runtimeProject, "worktree", true);
+    await expectHostWorkspaceAffordances(page);
   });
 });
 

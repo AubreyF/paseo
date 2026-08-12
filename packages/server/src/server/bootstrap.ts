@@ -963,14 +963,6 @@ export async function createPaseoDaemon(
     runtimeId: string,
     placement: { cwd: string; hostVisiblePath?: string },
   ): Promise<void> {
-    const existing = await workspaceRegistry?.get(workspaceId);
-    if (
-      existing?.runtime?.runtimeId === runtimeId &&
-      existing.cwd === placement.cwd &&
-      existing.hostVisiblePath === (placement.hostVisiblePath ?? null)
-    ) {
-      return;
-    }
     const updated = await workspaceRegistry?.update(workspaceId, (workspace) => ({
       ...workspace,
       cwd: placement.cwd,

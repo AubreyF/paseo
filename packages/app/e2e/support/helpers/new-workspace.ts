@@ -501,6 +501,7 @@ export async function assertNewWorkspaceSidebarAndHeader(
     projectDisplayName: string;
     assertSidebarRow?: boolean;
     assertHeader?: boolean;
+    timeoutMs?: number;
   },
 ): Promise<{ workspaceId: string; workspaceName: string; workspaceDirectory: string }> {
   // URL is the source of truth so concurrent sidebar rows cannot satisfy this.
@@ -510,7 +511,7 @@ export async function assertNewWorkspaceSidebarAndHeader(
         const workspaceId = parseWorkspaceIdFromPageUrl(page, input.serverId);
         return workspaceId && workspaceId !== input.previousWorkspaceId ? workspaceId : null;
       },
-      { timeout: 60_000 },
+      { timeout: input.timeoutMs ?? 60_000 },
     )
     .not.toBeNull();
 

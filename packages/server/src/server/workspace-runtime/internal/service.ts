@@ -260,6 +260,7 @@ export function createService(
         run: (input) => runWithDriver(driver, { workspaceId, ...input }),
         resolveCommand: async (command) =>
           (await requireFilesOwner(workspaceId)).resolveCommand(command),
+        scriptTerminal: driver.scriptTerminal,
         files: bindFiles(workspaceId),
       };
       gitCommonObservations.bind(runtime, workspaceId, driver);

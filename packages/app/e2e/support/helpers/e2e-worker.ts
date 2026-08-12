@@ -150,6 +150,11 @@ async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> 
     __dirname,
     "../../../../server/src/server/test-utils/fixtures/workspace-runtime-acp-agent.mjs",
   );
+  const dockerAcceptance = process.env.E2E_DOCKER_ACCEPTANCE === "1";
+  const dockerImage = process.env.E2E_DOCKER_WORKSPACE_IMAGE;
+  if (dockerAcceptance && !dockerImage) {
+    throw new Error("E2E_DOCKER_WORKSPACE_IMAGE is required for Docker acceptance");
+  }
   await mkdir(stateDirectory, { recursive: true });
   await writeFile(
     configPath,
@@ -163,18 +168,39 @@ async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> 
           claude: { ...existing.agents?.providers?.claude, enabled: false },
           codex: { ...existing.agents?.providers?.codex, enabled: false },
           copilot: { ...existing.agents?.providers?.copilot, enabled: false },
-          opencode: { ...existing.agents?.providers?.opencode, enabled: false },
+          opencode: {
+            ...existing.agents?.providers?.opencode,
+            enabled: dockerAcceptance,
+          },
           pi: { ...existing.agents?.providers?.pi, enabled: false },
           "fixture-agent": {
             extends: "acp",
             label: "Fixture Agent",
             command: [process.execPath, "./.paseo-fixture-agent.mjs"],
             models: [{ id: "fixture-model", label: "Fixture Model", isDefault: true }],
+            enabled: !dockerAcceptance,
           },
+          ...(dockerAcceptance
+            ? {
+                "docker-fixture": {
+                  extends: "acp",
+                  label: "Docker Fixture",
+                  command: ["node", "/usr/local/bin/paseo-fixture-agent.mjs"],
+                },
+              }
+            : {}),
         },
       },
       workspaceRuntimes: {
         ...existing.workspaceRuntimes,
+        ...(dockerAcceptance
+          ? {
+              docker: {
+                type: "docker",
+                image: dockerImage,
+              },
+            }
+          : {}),
         fixture: {
           type: "command",
           label: "Fixture",

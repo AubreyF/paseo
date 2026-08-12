@@ -436,7 +436,10 @@ describe("workspace registries", () => {
 
     await workspaceRegistry.upsert(reserved, { provisional: true });
 
-    expect(await workspaceRegistry.get(reserved.workspaceId)).toEqual(reserved);
+    expect(await workspaceRegistry.get(reserved.workspaceId)).toEqual({
+      ...reserved,
+      materializingAt: reserved.updatedAt,
+    });
     expect(await workspaceRegistry.list()).toEqual([]);
     expect(mutations).toEqual([
       expect.objectContaining({ workspaceId: reserved.workspaceId, provisional: true }),
@@ -456,6 +459,34 @@ describe("workspace registries", () => {
         workspace: expect.objectContaining({ cwd: "/tmp/worktree" }),
       }),
     );
+  });
+
+  test("keeps a runtime reservation hidden after restart until final placement is published", async () => {
+    await workspaceRegistry.initialize();
+    const reserved = createPersistedWorkspaceRecord({
+      workspaceId: "interrupted-runtime-workspace",
+      projectId: "runtime-project",
+      cwd: "/tmp/source-must-stay-private",
+      kind: "worktree",
+      displayName: "interrupted runtime",
+      runtime: { runtimeId: "docker" },
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+
+    await workspaceRegistry.upsert(reserved, { provisional: true });
+
+    const restarted = new FileBackedWorkspaceRegistry(
+      path.join(tmpDir, "projects", "workspaces.json"),
+      logger,
+    );
+    await restarted.initialize();
+
+    expect(await restarted.get(reserved.workspaceId)).toMatchObject({
+      workspaceId: reserved.workspaceId,
+      cwd: "/tmp/source-must-stay-private",
+    });
+    expect(await restarted.list()).toEqual([]);
   });
 
   test("keeps the committed workspace snapshot when a removal cannot be persisted", async () => {

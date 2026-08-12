@@ -217,7 +217,7 @@ export function createWorkspaceScriptsService(deps: {
       repoRoot: workspace.cwd,
       ...(workspace.runtime
         ? {
-            runtimeCwd: ".",
+            runtimeCwd: workspace.cwd,
             paseoConfig: paseoConfig!,
             runtime: await workspaceRuntime!.bind(workspace.workspaceId),
           }

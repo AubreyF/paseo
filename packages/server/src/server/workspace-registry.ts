@@ -83,6 +83,7 @@ const PersistedWorkspaceRecordSchema = z.object({
   isPaseoOwnedWorktree: z.boolean().default(false),
   mainRepoRoot: z.string().nullable().default(null),
   runtime: z.object({ runtimeId: z.string().min(1) }).optional(),
+  materializingAt: z.string().optional(),
   // COMPAT(workspaceDeletionIntent): added in v0.2.7 on 2026-08-11; remove optional after 2027-02-11.
   deletionRequestedAt: z
     .string()
@@ -484,7 +485,6 @@ export class FileBackedWorkspaceRegistry
   extends FileBackedRegistry<PersistedWorkspaceRecord>
   implements WorkspaceRegistry
 {
-  private readonly provisionalWorkspaceIds = new Set<string>();
   private readonly mutationListeners = new Set<
     (mutation: WorkspaceMutation) => void | Promise<void>
   >();
@@ -508,18 +508,19 @@ export class FileBackedWorkspaceRegistry
 
   override async list(): Promise<PersistedWorkspaceRecord[]> {
     const workspaces = await super.list();
-    return workspaces.filter(
-      (workspace) => !this.provisionalWorkspaceIds.has(workspace.workspaceId),
-    );
+    return workspaces.filter((workspace) => workspace.materializingAt === undefined);
   }
 
   override async update(
     workspaceId: string,
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null> {
-    const workspace = await super.update(workspaceId, updater);
+    const workspace = await super.update(workspaceId, (record) => {
+      const updated = updater(record);
+      const { materializingAt: _materializingAt, ...published } = updated;
+      return published;
+    });
     if (workspace) {
-      this.provisionalWorkspaceIds.delete(workspaceId);
       await this.notifyMutation({ kind: "upsert", workspaceId, workspace });
     }
     return workspace;
@@ -529,16 +530,15 @@ export class FileBackedWorkspaceRegistry
     record: PersistedWorkspaceRecord,
     context?: WorkspaceMutationContext,
   ): Promise<void> {
-    await super.upsert(record);
-    if (context?.provisional) {
-      this.provisionalWorkspaceIds.add(record.workspaceId);
-    } else {
-      this.provisionalWorkspaceIds.delete(record.workspaceId);
-    }
+    const { materializingAt: _materializingAt, ...withoutMaterializingState } = record;
+    const persisted = context?.provisional
+      ? { ...withoutMaterializingState, materializingAt: record.updatedAt }
+      : withoutMaterializingState;
+    await super.upsert(persisted);
     await this.notifyMutation({
       kind: "upsert",
       workspaceId: record.workspaceId,
-      workspace: record,
+      workspace: persisted,
       ...(context?.expectsInitialAgent ? { expectsInitialAgent: true } : {}),
       ...(context?.provisional ? { provisional: true } : {}),
     });
@@ -549,7 +549,6 @@ export class FileBackedWorkspaceRegistry
     archivedAt: string,
     context?: WorkspaceArchiveContext,
   ): Promise<void> {
-    this.provisionalWorkspaceIds.delete(workspaceId);
     const workspace = await super.update(workspaceId, (existing) => ({
       ...existing,
       updatedAt: archivedAt,
@@ -563,7 +562,6 @@ export class FileBackedWorkspaceRegistry
   }
 
   override async remove(workspaceId: string): Promise<void> {
-    this.provisionalWorkspaceIds.delete(workspaceId);
     const workspace = await this.removeIfPresent(workspaceId);
     if (!workspace) return;
     await this.notifyMutation({ kind: "remove", workspaceId, workspace: null });

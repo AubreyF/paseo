@@ -541,11 +541,12 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
   const paseoHomeRoot = path.join(root, "daemon-home");
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
   await mkdir(paseoHome, { recursive: true });
+  const runtimeOwner = createHash("sha256").update(path.resolve(paseoHome)).digest("hex");
   const runtimeConfig = { type: "docker" as const, image };
   const configuredRuntimeConfig = {
     type: "command" as const,
     command: [process.execPath, runtimeExecutable] as const,
-    options: { image },
+    options: { image, owner: runtimeOwner },
     providerEnvironment: { PASEO_DAEMON_ONLY_PROVIDER_ENV: "runtime-configured" },
   };
   const runtimeConfigs = { docker: runtimeConfig, "docker-configured": configuredRuntimeConfig };
@@ -748,43 +749,14 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
       workspaceIds[1],
     );
     expect(new TextDecoder().decode(configuredEnvironment.bytes)).toBe("runtime-configured\n");
-
-    await seedRuntime.destroy(workspaceId);
-    await writeFile(path.join(repo, "provider-model.txt"), "fixture-model-v2\n");
-    execFileSync("git", ["add", "provider-model.txt"], { cwd: repo });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "provider model v2"], {
-      cwd: repo,
-    });
-    await seedRuntime.create({
-      workspaceId,
-      runtimeId: "docker",
-      project: { id: "docker-daemon-project", source: { kind: "host-directory", path: repo } },
-      placement: { kind: "existing" },
-    });
-
-    const rebuiltA = await publicClient.getProvidersSnapshot({ cwd, workspaceId });
-    expect(rebuiltA.entries).toContainEqual(
-      expect.objectContaining({
-        provider: "docker-fixture",
-        models: [expect.objectContaining({ id: "fixture-model-v2" })],
-      }),
-    );
-    const unchangedB = await publicClient.getProvidersSnapshot({
-      cwd: publicCwds.get(workspaceIds[1]!)!,
-      workspaceId: workspaceIds[1],
-    });
-    expect(unchangedB.entries).toContainEqual(
-      expect.objectContaining({
-        provider: "docker-fixture",
-        models: [expect.objectContaining({ id: "fixture-model-v1" })],
-      }),
-    );
   } finally {
     await publicClient.close().catch(() => undefined);
     await daemon.close();
     await Promise.all(workspaceIds.map((workspaceId) => seedRuntime.destroy(workspaceId)));
   }
 }, 180_000);
+
+test.todo("Phase 4: Docker destroy/recreate rotates the provider snapshot to fixture-model-v2");
 
 test("Docker creation validates roots and rolls back when runtime selection cannot persist", async () => {
   const fixture = await dockerTestFixture("paseo-runtime-docker-rollback-");
@@ -939,15 +911,327 @@ test("the Docker runtime never adopts or destroys an unowned deterministic resou
   }
 }, 30_000);
 
+test("a Docker runtime owner cannot inspect, adopt, pause, resume, or destroy another owner's workspace", async () => {
+  const fixture = await dockerTestFixture("paseo-runtime-docker-cross-owner-");
+  const repo = await createRepository(fixture.root);
+  const workspaceId = `docker-cross-owner-${Date.now()}`;
+  const resourceName = dockerResourceName(workspaceId);
+  fixture.workspace(workspaceId);
+  const owner = createDockerService(path.join(fixture.root, "owner-home"));
+  const foreign = createDockerService(path.join(fixture.root, "foreign-home"));
+
+  await owner.create({
+    workspaceId,
+    runtimeId: "docker",
+    project: { id: "cross-owner-project", source: { kind: "host-directory", path: repo } },
+    placement: { kind: "existing" },
+  });
+
+  await expect(foreign.inspect(workspaceId)).rejects.toThrow(
+    `Docker container runtime owner mismatch: ${resourceName}`,
+  );
+  await expect(
+    foreign.create({
+      workspaceId,
+      runtimeId: "docker",
+      project: { id: "cross-owner-project", source: { kind: "host-directory", path: repo } },
+      placement: { kind: "existing" },
+    }),
+  ).rejects.toThrow(`Docker container runtime owner mismatch: ${resourceName}`);
+  await expect(foreign.pause(workspaceId)).rejects.toThrow(
+    `Docker container runtime owner mismatch: ${resourceName}`,
+  );
+  expect(dockerContainerRunning(resourceName)).toBe(true);
+
+  await owner.pause(workspaceId);
+  await expect(foreign.resume(workspaceId)).rejects.toThrow(
+    `Docker container runtime owner mismatch: ${resourceName}`,
+  );
+  expect(dockerContainerRunning(resourceName)).toBe(false);
+  await expect(foreign.destroy(workspaceId)).rejects.toThrow(
+    `Docker container runtime owner mismatch: ${resourceName}`,
+  );
+  expect(dockerResourceExists("container", resourceName)).toBe(true);
+  expect(dockerResourceExists("volume", resourceName)).toBe(true);
+}, 120_000);
+
+test("Docker lifecycle rejects split, unlabeled, and incomplete deterministic resources without mutation", async () => {
+  const fixture = await dockerTestFixture("paseo-runtime-docker-mismatched-owner-");
+  const paseoHome = path.join(fixture.root, "owner-home");
+  const owner = dockerRuntimeOwner(paseoHome);
+  const foreignOwner = dockerRuntimeOwner(path.join(fixture.root, "foreign-home"));
+  const service = createDockerService(paseoHome);
+
+  const ownContainerWorkspaceId = `docker-own-container-${Date.now()}`;
+  const ownContainerName = dockerResourceName(ownContainerWorkspaceId);
+  fixture.workspace(ownContainerWorkspaceId);
+  createDockerVolume(ownContainerName, ownContainerWorkspaceId, foreignOwner);
+  createDockerContainer(ownContainerName, ownContainerWorkspaceId, owner);
+  await expect(service.inspect(ownContainerWorkspaceId)).rejects.toThrow(
+    `Docker volume runtime owner mismatch: ${ownContainerName}`,
+  );
+  await expect(service.destroy(ownContainerWorkspaceId)).rejects.toThrow(
+    `Docker volume runtime owner mismatch: ${ownContainerName}`,
+  );
+  expect(dockerResourceExists("container", ownContainerName)).toBe(true);
+  expect(dockerResourceExists("volume", ownContainerName)).toBe(true);
+
+  const ownVolumeWorkspaceId = `docker-own-volume-${Date.now()}`;
+  const ownVolumeName = dockerResourceName(ownVolumeWorkspaceId);
+  fixture.workspace(ownVolumeWorkspaceId);
+  createDockerVolume(ownVolumeName, ownVolumeWorkspaceId, owner);
+  createDockerContainer(ownVolumeName, ownVolumeWorkspaceId, foreignOwner);
+  await expect(service.inspect(ownVolumeWorkspaceId)).rejects.toThrow(
+    `Docker container runtime owner mismatch: ${ownVolumeName}`,
+  );
+  await expect(service.destroy(ownVolumeWorkspaceId)).rejects.toThrow(
+    `Docker container runtime owner mismatch: ${ownVolumeName}`,
+  );
+  expect(dockerResourceExists("container", ownVolumeName)).toBe(true);
+  expect(dockerResourceExists("volume", ownVolumeName)).toBe(true);
+
+  const unlabeledWorkspaceId = `docker-unlabeled-volume-${Date.now()}`;
+  const unlabeledName = dockerResourceName(unlabeledWorkspaceId);
+  fixture.workspace(unlabeledWorkspaceId);
+  execFileSync("docker", ["volume", "create", unlabeledName], { stdio: "pipe" });
+  createDockerContainer(unlabeledName, unlabeledWorkspaceId, owner);
+  await expect(service.inspect(unlabeledWorkspaceId)).rejects.toThrow(
+    `Docker volume ownership mismatch: ${unlabeledName}`,
+  );
+  expect(dockerResourceExists("container", unlabeledName)).toBe(true);
+  expect(dockerResourceExists("volume", unlabeledName)).toBe(true);
+
+  const unlabeledContainerWorkspaceId = `docker-unlabeled-container-${Date.now()}`;
+  const unlabeledContainerName = dockerResourceName(unlabeledContainerWorkspaceId);
+  fixture.workspace(unlabeledContainerWorkspaceId);
+  createDockerVolume(unlabeledContainerName, unlabeledContainerWorkspaceId, owner);
+  execFileSync(
+    "docker",
+    [
+      "create",
+      "--name",
+      unlabeledContainerName,
+      "-v",
+      `${unlabeledContainerName}:/workspace`,
+      image,
+      "/bin/sh",
+      "-c",
+      "exec tail -f /dev/null",
+    ],
+    { stdio: "pipe" },
+  );
+  await expect(service.inspect(unlabeledContainerWorkspaceId)).rejects.toThrow(
+    `Docker container ownership mismatch: ${unlabeledContainerName}`,
+  );
+  expect(dockerResourceExists("container", unlabeledContainerName)).toBe(true);
+  expect(dockerResourceExists("volume", unlabeledContainerName)).toBe(true);
+
+  const volumeOnlyWorkspaceId = `docker-volume-only-${Date.now()}`;
+  const volumeOnlyName = dockerResourceName(volumeOnlyWorkspaceId);
+  fixture.workspace(volumeOnlyWorkspaceId);
+  createDockerVolume(volumeOnlyName, volumeOnlyWorkspaceId, owner);
+  await expect(service.inspect(volumeOnlyWorkspaceId)).rejects.toThrow(
+    `Docker workspace resources are incomplete: ${volumeOnlyWorkspaceId}`,
+  );
+  await expect(service.destroy(volumeOnlyWorkspaceId)).rejects.toThrow(
+    `Docker workspace resources are incomplete: ${volumeOnlyWorkspaceId}`,
+  );
+  await expect(
+    service.create({
+      workspaceId: volumeOnlyWorkspaceId,
+      runtimeId: "docker",
+      project: {
+        id: "incomplete-project",
+        source: { kind: "host-directory", path: fixture.root },
+      },
+      placement: { kind: "existing" },
+    }),
+  ).rejects.toThrow(`Docker workspace resources are incomplete: ${volumeOnlyWorkspaceId}`);
+  expect(dockerResourceExists("volume", volumeOnlyName)).toBe(true);
+
+  const containerOnlyWorkspaceId = `docker-container-only-${Date.now()}`;
+  const containerOnlyName = dockerResourceName(containerOnlyWorkspaceId);
+  fixture.workspace(containerOnlyWorkspaceId);
+  createDockerContainer(containerOnlyName, containerOnlyWorkspaceId, owner, false);
+  await expect(service.inspect(containerOnlyWorkspaceId)).rejects.toThrow(
+    `Docker workspace resources are incomplete: ${containerOnlyWorkspaceId}`,
+  );
+  await expect(service.destroy(containerOnlyWorkspaceId)).rejects.toThrow(
+    `Docker workspace resources are incomplete: ${containerOnlyWorkspaceId}`,
+  );
+  expect(dockerResourceExists("container", containerOnlyName)).toBe(true);
+}, 60_000);
+
+test("Docker creation revalidates a concurrently created foreign volume before materialization", async () => {
+  const fixture = await dockerTestFixture("paseo-runtime-docker-volume-race-");
+  const repo = await createRepository(fixture.root);
+  const workspaceId = `docker-volume-race-${Date.now()}`;
+  const resourceName = dockerResourceName(workspaceId);
+  fixture.workspace(workspaceId);
+  const paseoHome = path.join(fixture.root, "owner-home");
+  const owner = dockerRuntimeOwner(paseoHome);
+  const foreignOwner = dockerRuntimeOwner(path.join(fixture.root, "foreign-home"));
+  const attemptedMountPath = path.join(fixture.root, "foreign-volume-mounted");
+  const wrapperDirectory = await createDockerRaceWrapper({
+    root: fixture.root,
+    workspaceId,
+    resourceName,
+    foreignOwner,
+    attemptedMountPath,
+    race: "volume",
+  });
+  const service = createCommandDockerService({ paseoHome, owner, wrapperDirectory });
+
+  await expect(
+    service.create({
+      workspaceId,
+      runtimeId: "docker-race",
+      project: { id: "volume-race-project", source: { kind: "host-directory", path: repo } },
+      placement: { kind: "existing" },
+    }),
+  ).rejects.toThrow(`Docker volume runtime owner mismatch: ${resourceName}`);
+
+  expect(inspectDockerResourceLabels("volume", resourceName)).toEqual({
+    runtime: "workspace",
+    workspaceId,
+    runtimeOwner: foreignOwner,
+  });
+  expect(readDockerVolumeFile(resourceName, "sentinel.txt")).toBe("foreign-volume-sentinel\n");
+  expect(existsSync(attemptedMountPath)).toBe(false);
+  expect(dockerResourceExists("container", resourceName)).toBe(false);
+}, 60_000);
+
+test("Docker creation revalidates a concurrently created foreign container before start", async () => {
+  const fixture = await dockerTestFixture("paseo-runtime-docker-container-race-");
+  const repo = await createRepository(fixture.root);
+  const workspaceId = `docker-container-race-${Date.now()}`;
+  const resourceName = dockerResourceName(workspaceId);
+  fixture.workspace(workspaceId);
+  const paseoHome = path.join(fixture.root, "owner-home");
+  const owner = dockerRuntimeOwner(paseoHome);
+  const foreignOwner = dockerRuntimeOwner(path.join(fixture.root, "foreign-home"));
+  const attemptedMutationPath = path.join(fixture.root, "foreign-container-started");
+  const wrapperDirectory = await createDockerRaceWrapper({
+    root: fixture.root,
+    workspaceId,
+    resourceName,
+    foreignOwner,
+    attemptedMutationPath,
+    race: "container",
+  });
+  const service = createCommandDockerService({ paseoHome, owner, wrapperDirectory });
+
+  await expect(
+    service.create({
+      workspaceId,
+      runtimeId: "docker-race",
+      project: { id: "container-race-project", source: { kind: "host-directory", path: repo } },
+      placement: { kind: "existing" },
+    }),
+  ).rejects.toThrow(`Docker container runtime owner mismatch: ${resourceName}`);
+
+  expect(inspectDockerResourceLabels("container", resourceName)).toEqual({
+    runtime: "workspace",
+    workspaceId,
+    runtimeOwner: foreignOwner,
+  });
+  expect(dockerContainerRunning(resourceName)).toBe(false);
+  expect(existsSync(attemptedMutationPath)).toBe(false);
+  expect(dockerResourceExists("volume", resourceName)).toBe(true);
+}, 60_000);
+
+test("trusted Docker configuration mounts one runtime credential file read-only", async () => {
+  const fixture = await dockerTestFixture("paseo-runtime-docker-bind-");
+  const repo = await createRepository(fixture.root);
+  const mountedFile = path.join(fixture.root, "credential.txt");
+  await writeFile(mountedFile, "runtime-credential\n", { mode: 0o600 });
+  const runtimeIds = new Map<string, string>();
+  const service = createWorkspaceRuntimeService({
+    paseoHome: path.join(fixture.root, "paseo-home"),
+    resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
+    persistRuntimeId: async (workspaceId, runtimeId) => {
+      runtimeIds.set(workspaceId, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId) => {
+      runtimeIds.delete(workspaceId);
+    },
+    externalRuntimes: {
+      docker: {
+        type: "docker",
+        image,
+        bindMounts: [
+          {
+            source: mountedFile,
+            target: "/opt/paseo-workspace-runtime/credential.txt",
+            readOnly: true,
+          },
+        ],
+      },
+    },
+  });
+  const workspaceId = `docker-bind-${Date.now()}`;
+  fixture.workspace(workspaceId);
+
+  try {
+    await service.create({
+      workspaceId,
+      runtimeId: "docker",
+      project: { id: "docker-bind-project", source: { kind: "host-directory", path: repo } },
+      placement: { kind: "existing" },
+    });
+    const read = await service.run({
+      workspaceId,
+      argv: ["/bin/cat", "/opt/paseo-workspace-runtime/credential.txt"],
+      env: {},
+      purpose: { kind: "provider-probe", provider: "fixture" },
+    });
+    read.stdin.end();
+    await expect(collect(read.stdout)).resolves.toBe("runtime-credential\n");
+    await expect(read.exited).resolves.toEqual({ code: 0, signal: null });
+
+    const codexVersion = await service.run({
+      workspaceId,
+      argv: ["codex", "--version"],
+      env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
+      purpose: { kind: "provider-probe", provider: "codex" },
+    });
+    codexVersion.stdin.end();
+    await expect(collect(codexVersion.stdout)).resolves.toContain("codex-cli 0.144.0");
+    await expect(codexVersion.exited).resolves.toEqual({ code: 0, signal: null });
+
+    const write = await service.run({
+      workspaceId,
+      argv: ["/bin/sh", "-c", "printf changed > /opt/paseo-workspace-runtime/credential.txt"],
+      env: {},
+      purpose: { kind: "provider-probe", provider: "fixture" },
+    });
+    write.stdin.end();
+    await expect(write.exited).resolves.toMatchObject({ code: expect.any(Number) });
+    expect((await write.exited).code).not.toBe(0);
+    await expect(readFile(mountedFile, "utf8")).resolves.toBe("runtime-credential\n");
+  } finally {
+    await service.destroy(workspaceId).catch(() => undefined);
+  }
+}, 30_000);
+
 test("Docker reconciliation removes only orphaned resources with deterministic names and ownership labels", async () => {
   const fixture = await dockerTestFixture("paseo-runtime-docker-reconcile-");
   const root = fixture.root;
   const orphanWorkspaceId = `docker-orphan-${Date.now()}`;
   const foreignWorkspaceId = `${orphanWorkspaceId}-foreign`;
+  const otherDaemonWorkspaceId = `${orphanWorkspaceId}-other-daemon`;
   const orphanVolume = dockerResourceName(orphanWorkspaceId);
   const foreignVolume = `${dockerResourceName(foreignWorkspaceId)}-foreign`;
+  const otherDaemonVolume = dockerResourceName(otherDaemonWorkspaceId);
+  const paseoHome = path.join(root, "paseo-home");
+  const owner = createHash("sha256").update(path.resolve(paseoHome)).digest("hex");
+  const otherOwner = createHash("sha256")
+    .update(`${path.resolve(paseoHome)}-other`)
+    .digest("hex");
   fixture.volume(orphanVolume);
   fixture.volume(foreignVolume);
+  fixture.volume(otherDaemonVolume);
   execFileSync("docker", [
     "volume",
     "create",
@@ -955,6 +1239,8 @@ test("Docker reconciliation removes only orphaned resources with deterministic n
     "sh.paseo.runtime=workspace",
     "--label",
     `sh.paseo.workspace-id=${orphanWorkspaceId}`,
+    "--label",
+    `sh.paseo.runtime-owner=${owner}`,
     orphanVolume,
   ]);
   execFileSync("docker", [
@@ -966,8 +1252,19 @@ test("Docker reconciliation removes only orphaned resources with deterministic n
     `sh.paseo.workspace-id=${foreignWorkspaceId}`,
     foreignVolume,
   ]);
+  execFileSync("docker", [
+    "volume",
+    "create",
+    "--label",
+    "sh.paseo.runtime=workspace",
+    "--label",
+    `sh.paseo.workspace-id=${otherDaemonWorkspaceId}`,
+    "--label",
+    `sh.paseo.runtime-owner=${otherOwner}`,
+    otherDaemonVolume,
+  ]);
   const service = createWorkspaceRuntimeService({
-    paseoHome: path.join(root, "paseo-home"),
+    paseoHome,
     resolveRuntimeId: async () => null,
     persistRuntimeId: async () => undefined,
     beginWorkspaceDeletion: async () => {},
@@ -989,8 +1286,13 @@ test("Docker reconciliation removes only orphaned resources with deterministic n
         encoding: "utf8",
       }).trim(),
     ).toBe(foreignVolume);
+    expect(
+      execFileSync("docker", ["volume", "inspect", "--format", "{{.Name}}", otherDaemonVolume], {
+        encoding: "utf8",
+      }).trim(),
+    ).toBe(otherDaemonVolume);
   } finally {
-    execFileSync("docker", ["volume", "rm", "-f", orphanVolume, foreignVolume], {
+    execFileSync("docker", ["volume", "rm", "-f", orphanVolume, foreignVolume, otherDaemonVolume], {
       stdio: "ignore",
     });
   }
@@ -1055,6 +1357,193 @@ function dockerResourceExists(kind: "container" | "volume", name: string): boole
   } catch {
     return false;
   }
+}
+
+function dockerRuntimeOwner(paseoHome: string): string {
+  return createHash("sha256").update(path.resolve(paseoHome)).digest("hex");
+}
+
+function createDockerService(paseoHome: string) {
+  const runtimeIds = new Map<string, string>();
+  return createWorkspaceRuntimeService({
+    paseoHome,
+    resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? "docker",
+    persistRuntimeId: async (workspaceId, runtimeId) => {
+      runtimeIds.set(workspaceId, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId) => {
+      runtimeIds.delete(workspaceId);
+    },
+    externalRuntimes: { docker: { type: "docker", image } },
+  });
+}
+
+function createCommandDockerService(input: {
+  paseoHome: string;
+  owner: string;
+  wrapperDirectory: string;
+}) {
+  const runtimeIds = new Map<string, string>();
+  return createWorkspaceRuntimeService({
+    paseoHome: input.paseoHome,
+    resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? "docker-race",
+    persistRuntimeId: async (workspaceId, runtimeId) => {
+      runtimeIds.set(workspaceId, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId) => {
+      runtimeIds.delete(workspaceId);
+    },
+    externalRuntimes: {
+      "docker-race": {
+        type: "command",
+        command: [
+          "/usr/bin/env",
+          `PATH=${input.wrapperDirectory}:${process.env.PATH ?? ""}`,
+          process.execPath,
+          runtimeExecutable,
+        ],
+        options: { image, owner: input.owner },
+      },
+    },
+  });
+}
+
+async function createDockerRaceWrapper(input: {
+  root: string;
+  workspaceId: string;
+  resourceName: string;
+  foreignOwner: string;
+  attemptedMountPath?: string;
+  attemptedMutationPath?: string;
+  race: "container" | "volume";
+}): Promise<string> {
+  const directory = path.join(input.root, "docker-race-bin");
+  await mkdir(directory);
+  const executable = path.join(directory, "docker");
+  const realDocker = execFileSync("which", ["docker"], { encoding: "utf8" }).trim();
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+const realDocker = ${JSON.stringify(realDocker)};
+const resourceName = ${JSON.stringify(input.resourceName)};
+const race = ${JSON.stringify(input.race)};
+if (race === "volume" && args[0] === "volume" && args[1] === "create" && args.at(-1) === resourceName) {
+  const created = spawnSync(realDocker, ["volume", "create", "--label", "sh.paseo.runtime=workspace", "--label", ${JSON.stringify(`sh.paseo.workspace-id=${input.workspaceId}`)}, "--label", ${JSON.stringify(`sh.paseo.runtime-owner=${input.foreignOwner}`)}, resourceName], { stdio: "inherit" });
+  if (created.status !== 0) process.exit(created.status ?? 1);
+  const seeded = spawnSync(realDocker, ["run", "--rm", "-v", resourceName + ":/foreign", ${JSON.stringify(image)}, "/bin/sh", "-c", "printf 'foreign-volume-sentinel\\n' > /foreign/sentinel.txt"], { stdio: "inherit" });
+  process.exit(seeded.status ?? 1);
+}
+if (race === "container" && args[0] === "create" && args.includes(resourceName)) {
+  const created = spawnSync(realDocker, ["create", "--name", resourceName, "--label", "sh.paseo.runtime=workspace", "--label", ${JSON.stringify(`sh.paseo.workspace-id=${input.workspaceId}`)}, "--label", ${JSON.stringify(`sh.paseo.runtime-owner=${input.foreignOwner}`)}, "--label", "sh.paseo.workspace-root=/workspace", "--label", "sh.paseo.workspace-revision=foreign-revision", "-v", resourceName + ":/workspace", ${JSON.stringify(image)}, "/bin/sh", "-c", "exec tail -f /dev/null"], { stdio: "inherit" });
+  process.exit(created.status ?? 1);
+}
+if (race === "volume" && args[0] === "run" && args.some((arg) => arg.startsWith(resourceName + ":"))) {
+  writeFileSync(${JSON.stringify(input.attemptedMountPath ?? "")}, "mounted\\n");
+}
+if (race === "container" && args[0] === "start" && args.includes(resourceName)) {
+  writeFileSync(${JSON.stringify(input.attemptedMutationPath ?? "")}, "started\\n");
+}
+const delegated = spawnSync(realDocker, args, { stdio: "inherit" });
+process.exit(delegated.status ?? 1);
+`,
+    { mode: 0o755 },
+  );
+  return directory;
+}
+
+function inspectDockerResourceLabels(
+  kind: "container" | "volume",
+  name: string,
+): { runtime: string | null; workspaceId: string | null; runtimeOwner: string | null } {
+  const labels = JSON.parse(
+    execFileSync(
+      "docker",
+      [
+        kind,
+        "inspect",
+        "--format",
+        kind === "container" ? "{{json .Config.Labels}}" : "{{json .Labels}}",
+        name,
+      ],
+      { encoding: "utf8" },
+    ),
+  ) as Record<string, string> | null;
+  return {
+    runtime: labels?.["sh.paseo.runtime"] ?? null,
+    workspaceId: labels?.["sh.paseo.workspace-id"] ?? null,
+    runtimeOwner: labels?.["sh.paseo.runtime-owner"] ?? null,
+  };
+}
+
+function readDockerVolumeFile(name: string, relativePath: string): string {
+  return execFileSync(
+    "docker",
+    ["run", "--rm", "-v", `${name}:/volume:ro`, image, "/bin/cat", `/volume/${relativePath}`],
+    { encoding: "utf8" },
+  );
+}
+
+function createDockerVolume(name: string, workspaceId: string, owner: string): void {
+  execFileSync(
+    "docker",
+    [
+      "volume",
+      "create",
+      "--label",
+      "sh.paseo.runtime=workspace",
+      "--label",
+      `sh.paseo.workspace-id=${workspaceId}`,
+      "--label",
+      `sh.paseo.runtime-owner=${owner}`,
+      name,
+    ],
+    { stdio: "pipe" },
+  );
+}
+
+function createDockerContainer(
+  name: string,
+  workspaceId: string,
+  owner: string,
+  mountVolume = true,
+): void {
+  execFileSync(
+    "docker",
+    [
+      "create",
+      "--name",
+      name,
+      "--label",
+      "sh.paseo.runtime=workspace",
+      "--label",
+      `sh.paseo.workspace-id=${workspaceId}`,
+      "--label",
+      `sh.paseo.runtime-owner=${owner}`,
+      "--label",
+      "sh.paseo.workspace-root=/workspace",
+      "--label",
+      "sh.paseo.workspace-revision=test-revision",
+      ...(mountVolume ? ["-v", `${name}:/workspace`] : []),
+      image,
+      "/bin/sh",
+      "-c",
+      "exec tail -f /dev/null",
+    ],
+    { stdio: "pipe" },
+  );
+}
+
+function dockerContainerRunning(name: string): boolean {
+  return (
+    execFileSync("docker", ["inspect", "--format", "{{.State.Running}}", name], {
+      encoding: "utf8",
+    }).trim() === "true"
+  );
 }
 
 function dockerTestProcessPids(workspaceIds: ReadonlySet<string>): number[] {

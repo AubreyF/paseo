@@ -56,6 +56,7 @@ export function createLocalRuntime(
     id: "local",
     requiresGitProject: false,
     workspaceHelperCommand: hostWorkspaceHelperCommand,
+    scriptTerminal: { kind: "persistent-shell" },
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);
       if (existing.status === "ready" || existing.status === "paused") {

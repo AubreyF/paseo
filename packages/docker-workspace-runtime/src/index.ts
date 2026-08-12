@@ -33,6 +33,11 @@ type PrivateRuntimeState = RuntimeState & {
 type LifecycleRequest = CommandRuntimeLifecycleRequest;
 type ExecRequest = CommandRuntimeSpawnEnvelope;
 type PtyControl = CommandRuntimeControl;
+interface DockerBindMount {
+  source: string;
+  target: string;
+  readOnly: boolean;
+}
 
 const PTY_CLEANUP_TIMEOUT_MS = 1_000;
 const EXEC_READY_TIMEOUT_MS = 5_000;
@@ -49,7 +54,7 @@ try {
     });
   } else if (operation === "reconcile") {
     const request = CommandRuntimeLifecycleRequestSchema.parse(JSON.parse(await readStdin()));
-    await reconcile(request.workspaceIds ?? []);
+    await reconcile(request.workspaceIds ?? [], requireOwner(request.options));
     writeJson(CommandRuntimeLifecycleResponseSchema, {
       protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
       type: "ok",
@@ -59,11 +64,12 @@ try {
   } else if (operation === "exec") {
     await execute(requestedWorkspaceId);
   } else if (operation === "signal") {
-    await readStdin();
+    const request = CommandRuntimeLifecycleRequestSchema.parse(JSON.parse(await readStdin()));
     await signalExec(
       requestedWorkspaceId,
       requireArgument("--exec-id"),
       requireSignal(requireArgument("--signal")),
+      requireOwner(request.options),
     );
   } else {
     const request = CommandRuntimeLifecycleRequestSchema.parse(JSON.parse(await readStdin()));
@@ -84,11 +90,11 @@ try {
         writeJson(CommandRuntimeLifecycleResponseSchema, {
           protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
           type: "inspection",
-          inspection: await inspect(requestedWorkspaceId),
+          inspection: await inspect(requestedWorkspaceId, requireOwner(request.options)),
         });
         break;
       case "pause":
-        await pause(requestedWorkspaceId);
+        await pause(requestedWorkspaceId, requireOwner(request.options));
         writeJson(CommandRuntimeLifecycleResponseSchema, {
           protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
           type: "ok",
@@ -96,7 +102,7 @@ try {
         break;
       case "resume":
         {
-          const state = await resume(requestedWorkspaceId);
+          const state = await resume(requestedWorkspaceId, requireOwner(request.options));
           writeJson(CommandRuntimeLifecycleResponseSchema, {
             protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
             type: "state",
@@ -106,7 +112,7 @@ try {
         }
         break;
       case "destroy":
-        await destroy(requestedWorkspaceId);
+        await destroy(requestedWorkspaceId, requireOwner(request.options));
         writeJson(CommandRuntimeLifecycleResponseSchema, {
           protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
           type: "ok",
@@ -125,26 +131,21 @@ async function create(
   workspaceId: string,
   request: LifecycleRequest,
 ): Promise<{ state: PrivateRuntimeState; materializedFreshContent: boolean }> {
-  const existing = await inspectPrivate(workspaceId);
+  const owner = requireOwner(request.options);
+  const existing = await inspectPrivate(workspaceId, owner);
   if (existing.status === "ready" || existing.status === "paused") {
     return { state: existing.state, materializedFreshContent: false };
   }
   const input = request.input;
   if (!input) throw new Error("create input is required");
   const image = requireImage(request.options);
+  const bindMounts = requireBindMounts(request.options);
   const relativeRoot =
     input.project.source.kind === "git"
       ? input.project.source.subdirectory
       : input.placement.relativeCwd;
   const requestedRoot = resolveWorkspaceCwd("/workspace", relativeRoot);
   const names = resourceNames(workspaceId);
-  const existingVolume = await inspectVolume(names.volume);
-  if (existingVolume) {
-    if (existingVolume.runtime !== "workspace" || existingVolume.owner !== workspaceId) {
-      throw new Error(`Docker volume ownership mismatch: ${names.volume}`);
-    }
-    throw new Error(`Docker workspace has an incomplete owned volume: ${workspaceId}`);
-  }
   await docker([
     "volume",
     "create",
@@ -152,8 +153,13 @@ async function create(
     "sh.paseo.runtime=workspace",
     "--label",
     `sh.paseo.workspace-id=${workspaceId}`,
+    "--label",
+    `sh.paseo.runtime-owner=${owner}`,
     names.volume,
   ]);
+  const createdVolume = await inspectVolume(names.volume);
+  if (!createdVolume) throw new Error(`Docker volume disappeared after creation: ${names.volume}`);
+  assertOwnedResource("volume", names.volume, createdVolume, workspaceId, owner);
 
   try {
     const source = input.project.source;
@@ -214,16 +220,20 @@ async function create(
       "--label",
       `sh.paseo.workspace-id=${workspaceId}`,
       "--label",
+      `sh.paseo.runtime-owner=${owner}`,
+      "--label",
       `sh.paseo.workspace-root=${root}`,
       "--label",
       `sh.paseo.workspace-revision=${commit}`,
       "-v",
       `${names.volume}:/workspace`,
+      ...dockerBindMountArguments(bindMounts),
       image,
       "/bin/sh",
       "-c",
       "exec tail -f /dev/null",
     ]);
+    await assertOwnedWorkspaceResources(workspaceId, owner);
     await docker(["start", names.container]);
     await waitUntilReady(names.container);
     return {
@@ -231,13 +241,49 @@ async function create(
       materializedFreshContent: true,
     };
   } catch (error) {
-    await docker(["rm", "-f", names.container], true);
-    await docker(["volume", "rm", "-f", names.volume], true);
+    const cleanupErrors = await cleanupOwnedCreation(workspaceId, owner);
+    if (cleanupErrors.length > 0) {
+      throw new Error(
+        `Docker creation rollback failed: ${cleanupErrors.map((cleanupError) => cleanupError.message).join("; ")}`,
+        { cause: error },
+      );
+    }
     throw error;
   }
 }
 
-async function inspectPrivate(workspaceId: string): Promise<
+interface DockerResourceLabels {
+  runtime: string | null;
+  workspaceId: string | null;
+  runtimeOwner: string | null;
+}
+
+interface DockerContainerInspection extends DockerResourceLabels {
+  running: boolean;
+  root: string | null;
+  revision: string | null;
+}
+
+async function assertOwnedWorkspaceResources(
+  workspaceId: string,
+  expectedOwner: string,
+): Promise<void> {
+  const names = resourceNames(workspaceId);
+  const [container, volume] = await Promise.all([
+    inspectContainer(names.container),
+    inspectVolume(names.volume),
+  ]);
+  if (!container || !volume) {
+    throw new Error(`Docker workspace resources are incomplete: ${workspaceId}`);
+  }
+  assertOwnedResource("container", names.container, container, workspaceId, expectedOwner);
+  assertOwnedResource("volume", names.volume, volume, workspaceId, expectedOwner);
+}
+
+async function inspectPrivate(
+  workspaceId: string,
+  expectedOwner: string,
+): Promise<
   | { status: "missing" }
   | {
       status: "ready" | "paused";
@@ -246,85 +292,106 @@ async function inspectPrivate(workspaceId: string): Promise<
     }
 > {
   const names = resourceNames(workspaceId);
-  const inspection = await docker(
-    [
-      "inspect",
-      "--format",
-      '{{.State.Running}}|{{index .Config.Labels "sh.paseo.runtime"}}|{{index .Config.Labels "sh.paseo.workspace-id"}}|{{index .Config.Labels "sh.paseo.workspace-root"}}|{{index .Config.Labels "sh.paseo.workspace-revision"}}',
-      names.container,
-    ],
-    true,
-  );
-  if (!inspection) return { status: "missing" };
-  const [running, owner, inspectedWorkspaceId, root, revision] = inspection.trim().split("|");
-  if (owner !== "workspace" || inspectedWorkspaceId !== workspaceId || !root || !revision) {
-    throw new Error(`Docker resource ownership mismatch: ${names.container}`);
+  const [container, volume] = await Promise.all([
+    inspectContainer(names.container),
+    inspectVolume(names.volume),
+  ]);
+  if (container)
+    assertOwnedResource("container", names.container, container, workspaceId, expectedOwner);
+  if (volume) assertOwnedResource("volume", names.volume, volume, workspaceId, expectedOwner);
+  if (!container && !volume) return { status: "missing" };
+  if (!container || !volume) {
+    throw new Error(`Docker workspace resources are incomplete: ${workspaceId}`);
+  }
+  if (!container.root || !container.revision) {
+    throw new Error(`Docker container placement is incomplete: ${names.container}`);
   }
   const state = stateFor(
     workspaceId,
-    root,
-    revision,
+    container.root,
+    container.revision,
     names.container,
-    running === "true" ? "ready" : "paused",
+    container.running ? "ready" : "paused",
   );
   return {
-    status: running === "true" ? "ready" : "paused",
+    status: container.running ? "ready" : "paused",
     state,
     placement: runtimePlacement(state),
   };
 }
 
-async function inspect(workspaceId: string) {
-  const inspection = await inspectPrivate(workspaceId);
+async function inspectContainer(name: string): Promise<DockerContainerInspection | null> {
+  const output = await docker(
+    [
+      "inspect",
+      "--format",
+      '{{json .State.Running}}|{{json (index .Config.Labels "sh.paseo.runtime")}}|{{json (index .Config.Labels "sh.paseo.workspace-id")}}|{{json (index .Config.Labels "sh.paseo.runtime-owner")}}|{{json (index .Config.Labels "sh.paseo.workspace-root")}}|{{json (index .Config.Labels "sh.paseo.workspace-revision")}}',
+      name,
+    ],
+    true,
+  );
+  if (!output) return null;
+  const [running, runtime, workspaceId, runtimeOwner, root, revision] = output
+    .trim()
+    .split("|")
+    .map(parseDockerJsonValue);
+  return {
+    running: running === true,
+    runtime: typeof runtime === "string" ? runtime : null,
+    workspaceId: typeof workspaceId === "string" ? workspaceId : null,
+    runtimeOwner: typeof runtimeOwner === "string" ? runtimeOwner : null,
+    root: typeof root === "string" ? root : null,
+    revision: typeof revision === "string" ? revision : null,
+  };
+}
+
+async function inspect(workspaceId: string, expectedOwner: string) {
+  const inspection = await inspectPrivate(workspaceId, expectedOwner);
   if (inspection.status === "ready" || inspection.status === "paused") {
     return { ...inspection, state: publicState(inspection.state) };
   }
   return inspection;
 }
 
-async function pause(workspaceId: string): Promise<void> {
-  const current = await inspectPrivate(workspaceId);
+async function pause(workspaceId: string, expectedOwner: string): Promise<void> {
+  const current = await inspectPrivate(workspaceId, expectedOwner);
   if (current.status === "missing" || current.status === "paused") return;
   await docker(["stop", "--time", "5", resourceNames(workspaceId).container]);
 }
 
-async function resume(workspaceId: string): Promise<PrivateRuntimeState> {
-  const current = await inspectPrivate(workspaceId);
+async function resume(workspaceId: string, expectedOwner: string): Promise<PrivateRuntimeState> {
+  const current = await inspectPrivate(workspaceId, expectedOwner);
   if (current.status === "missing") throw new Error(`Docker workspace is missing: ${workspaceId}`);
   if (current.status === "paused") await docker(["start", resourceNames(workspaceId).container]);
   await waitUntilReady(resourceNames(workspaceId).container);
-  const ready = await inspectPrivate(workspaceId);
+  const ready = await inspectPrivate(workspaceId, expectedOwner);
   if (ready.status !== "ready") throw new Error(`Docker workspace did not resume: ${workspaceId}`);
   return ready.state;
 }
 
-async function destroy(workspaceId: string): Promise<void> {
+async function destroy(workspaceId: string, expectedOwner: string): Promise<void> {
   const names = resourceNames(workspaceId);
-  const current = await inspectPrivate(workspaceId);
-  const volume = await inspectVolume(names.volume);
-  if (volume && (volume.runtime !== "workspace" || volume.owner !== workspaceId)) {
-    throw new Error(`Docker volume ownership mismatch: ${names.volume}`);
-  }
-  if (current.status !== "missing") await docker(["rm", "-f", names.container]);
-  if (volume) await docker(["volume", "rm", names.volume]);
+  const current = await inspectPrivate(workspaceId, expectedOwner);
+  if (current.status === "missing") return;
+  await docker(["rm", "-f", names.container]);
+  await docker(["volume", "rm", names.volume]);
 }
 
-async function inspectVolume(
-  name: string,
-): Promise<{ owner: string | null; runtime: string | null } | null> {
+async function inspectVolume(name: string): Promise<DockerResourceLabels | null> {
   const output = await docker(["volume", "inspect", name], true);
   if (!output) return null;
   const inspection = JSON.parse(output) as Array<{ Labels?: Record<string, string> | null }>;
   return {
-    owner: inspection[0]?.Labels?.["sh.paseo.workspace-id"] ?? null,
+    workspaceId: inspection[0]?.Labels?.["sh.paseo.workspace-id"] ?? null,
     runtime: inspection[0]?.Labels?.["sh.paseo.runtime"] ?? null,
+    runtimeOwner: inspection[0]?.Labels?.["sh.paseo.runtime-owner"] ?? null,
   };
 }
 
-async function reconcile(workspaceIds: readonly string[]): Promise<void> {
+async function reconcile(workspaceIds: readonly string[], owner: string): Promise<void> {
   const known = new Set(workspaceIds);
-  const containers = await labeledResources("ps");
-  const volumes = await labeledResources("volume");
+  const containers = await labeledResources("ps", owner);
+  const volumes = await labeledResources("volume", owner);
   const candidateWorkspaceIds = new Set([...containers.values(), ...volumes.values()]);
   for (const workspaceId of candidateWorkspaceIds) {
     if (!workspaceId || known.has(workspaceId)) continue;
@@ -332,18 +399,19 @@ async function reconcile(workspaceIds: readonly string[]): Promise<void> {
     const containerProven = containers.get(names.container) === workspaceId;
     const volumeProven = volumes.get(names.volume) === workspaceId;
     if (!containerProven && !volumeProven) continue;
-    if (containerProven) {
-      const inspection = await inspect(workspaceId);
-      if (inspection.status === "missing") continue;
-    }
+    const container = await inspectContainer(names.container);
     const volume = await inspectVolume(names.volume);
-    if (volume && (volume.runtime !== "workspace" || volume.owner !== workspaceId)) continue;
-    if (containerProven) await docker(["rm", "-f", names.container]);
+    if (container) assertOwnedResource("container", names.container, container, workspaceId, owner);
+    if (volume) assertOwnedResource("volume", names.volume, volume, workspaceId, owner);
+    if (containerProven && container) await docker(["rm", "-f", names.container]);
     if (volumeProven && volume) await docker(["volume", "rm", names.volume]);
   }
 }
 
-async function labeledResources(kind: "ps" | "volume"): Promise<Map<string, string>> {
+async function labeledResources(
+  kind: "ps" | "volume",
+  owner: string,
+): Promise<Map<string, string>> {
   const output =
     kind === "ps"
       ? await docker([
@@ -351,6 +419,8 @@ async function labeledResources(kind: "ps" | "volume"): Promise<Map<string, stri
           "-a",
           "--filter",
           "label=sh.paseo.runtime=workspace",
+          "--filter",
+          `label=sh.paseo.runtime-owner=${owner}`,
           "--format",
           '{{.Names}}|{{.Label "sh.paseo.workspace-id"}}',
         ])
@@ -359,6 +429,8 @@ async function labeledResources(kind: "ps" | "volume"): Promise<Map<string, stri
           "ls",
           "--filter",
           "label=sh.paseo.runtime=workspace",
+          "--filter",
+          `label=sh.paseo.runtime-owner=${owner}`,
           "--format",
           '{{.Name}}|{{.Label "sh.paseo.workspace-id"}}',
         ]);
@@ -383,7 +455,8 @@ async function execute(workspaceId: string): Promise<void> {
   const request = CommandRuntimeControlSchema.parse(JSON.parse(first.value));
   if (request.type !== "spawn") throw new Error("Runtime exec spawn control is required");
   if (!/^[a-f0-9]{32}$/.test(request.execId)) throw new Error("Invalid exec id");
-  const current = await inspectPrivate(workspaceId);
+  const expectedOwner = requireOwner(request.options);
+  const current = await inspectPrivate(workspaceId, expectedOwner);
   if (current.status !== "ready") throw new Error(`Docker workspace is ${current.status}`);
   const requestedCwd = resolveWorkspaceCwd(current.state.root, request.cwd);
   const cwd = (
@@ -449,7 +522,7 @@ async function execute(workspaceId: string): Promise<void> {
     forwardedSignal = signal;
     try {
       await withTimeout(
-        signalExec(workspaceId, execId, signal),
+        signalExec(workspaceId, execId, signal, expectedOwner),
         PTY_CLEANUP_TIMEOUT_MS,
         "Docker signal helper timed out",
       );
@@ -457,7 +530,7 @@ async function execute(workspaceId: string): Promise<void> {
       if (signal === "SIGKILL") throw error;
       try {
         await withTimeout(
-          signalExec(workspaceId, execId, "SIGKILL"),
+          signalExec(workspaceId, execId, "SIGKILL", expectedOwner),
           PTY_CLEANUP_TIMEOUT_MS,
           "Docker forced signal helper timed out",
         );
@@ -572,6 +645,7 @@ async function executeDockerPty(input: {
     input.request.execId,
     created.Id,
     input.controls,
+    requireOwner(input.request.options),
     (signal) => {
       requestedSignal = signal;
     },
@@ -591,7 +665,12 @@ async function executeDockerPty(input: {
       let cleanupError: Error | null = null;
       try {
         await withTimeout(
-          signalExec(input.workspaceId, input.request.execId, "SIGKILL"),
+          signalExec(
+            input.workspaceId,
+            input.request.execId,
+            "SIGKILL",
+            requireOwner(input.request.options),
+          ),
           PTY_CLEANUP_TIMEOUT_MS,
           "Docker PTY signal helper timed out",
         );
@@ -736,6 +815,7 @@ async function handlePtyControls(
   execId: string,
   dockerExecId: string,
   controls: AsyncIterator<string>,
+  expectedOwner: string,
   onSignal: (signal: NodeJS.Signals) => void,
   onResize: (id: number) => void,
 ): Promise<void> {
@@ -749,7 +829,7 @@ async function handlePtyControls(
     } else if (control.type === "signal") {
       const signal = requireSignal(control.signal);
       onSignal(signal);
-      await signalExec(workspaceId, execId, signal);
+      await signalExec(workspaceId, execId, signal, expectedOwner);
     } else {
       throw new Error(`Unexpected PTY control: ${control.type}`);
     }
@@ -829,9 +909,10 @@ async function signalExec(
   workspaceId: string,
   execId: string,
   signal: NodeJS.Signals,
+  expectedOwner: string,
 ): Promise<void> {
   if (!/^[a-f0-9]{32}$/.test(execId)) throw new Error("Invalid exec id");
-  const current = await inspectPrivate(workspaceId);
+  const current = await inspectPrivate(workspaceId, expectedOwner);
   if (current.status === "missing") throw new Error(`Docker workspace is missing: ${workspaceId}`);
   const files = executionFiles(execId);
   await docker([
@@ -880,6 +961,95 @@ function requireImage(options: LifecycleRequest["options"]): string {
     throw new Error("Docker runtime option image is required");
   }
   return options.image;
+}
+
+function requireOwner(options: LifecycleRequest["options"]): string {
+  if (typeof options.owner !== "string" || !/^[a-f0-9]{64}$/.test(options.owner)) {
+    throw new Error("Docker runtime option owner must be a SHA-256 identity");
+  }
+  return options.owner;
+}
+
+function parseDockerJsonValue(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function assertOwnedResource(
+  kind: "container" | "volume",
+  name: string,
+  resource: DockerResourceLabels,
+  workspaceId: string,
+  expectedOwner: string,
+): void {
+  if (resource.runtime !== "workspace" || resource.workspaceId !== workspaceId) {
+    throw new Error(`Docker ${kind} ownership mismatch: ${name}`);
+  }
+  if (resource.runtimeOwner !== expectedOwner) {
+    throw new Error(`Docker ${kind} runtime owner mismatch: ${name}`);
+  }
+}
+
+async function cleanupOwnedCreation(workspaceId: string, expectedOwner: string): Promise<Error[]> {
+  const names = resourceNames(workspaceId);
+  const errors: Error[] = [];
+  const [container, volume] = await Promise.all([
+    inspectContainer(names.container),
+    inspectVolume(names.volume),
+  ]);
+  const remove = async (
+    kind: "container" | "volume",
+    resource: DockerResourceLabels | null,
+    args: string[],
+  ): Promise<void> => {
+    if (!resource) return;
+    try {
+      assertOwnedResource(kind, names[kind], resource, workspaceId, expectedOwner);
+      await docker(args);
+    } catch (error) {
+      errors.push(error instanceof Error ? error : new Error(String(error)));
+    }
+  };
+  await remove("container", container, ["rm", "-f", names.container]);
+  await remove("volume", volume, ["volume", "rm", "-f", names.volume]);
+  return errors;
+}
+
+function requireBindMounts(options: LifecycleRequest["options"]): readonly DockerBindMount[] {
+  const value = options.bindMounts;
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error("Docker runtime option bindMounts must be an array");
+  return value.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`Docker bind mount ${index} must be an object`);
+    }
+    const { source, target, readOnly } = entry as Record<string, unknown>;
+    if (typeof source !== "string" || !path.isAbsolute(source)) {
+      throw new Error(`Docker bind mount ${index} source must be absolute`);
+    }
+    if (typeof target !== "string" || !path.posix.isAbsolute(target)) {
+      throw new Error(`Docker bind mount ${index} target must be an absolute container path`);
+    }
+    const normalizedTarget = path.posix.normalize(target);
+    const workspaceRelative = path.posix.relative("/workspace", normalizedTarget);
+    if (workspaceRelative === "" || !workspaceRelative.startsWith("../")) {
+      throw new Error(`Docker bind mount ${index} target must be outside /workspace`);
+    }
+    if (typeof readOnly !== "boolean") {
+      throw new Error(`Docker bind mount ${index} readOnly must be boolean`);
+    }
+    return { source, target: normalizedTarget, readOnly };
+  });
+}
+
+function dockerBindMountArguments(bindMounts: readonly DockerBindMount[]): string[] {
+  return bindMounts.flatMap(({ source, target, readOnly }) => [
+    "--mount",
+    `type=bind,source=${source},target=${target}${readOnly ? ",readonly" : ""}`,
+  ]);
 }
 
 function resourceNames(workspaceId: string): { container: string; volume: string } {

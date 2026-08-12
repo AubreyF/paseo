@@ -1,5 +1,7 @@
 import type { Readable, Writable } from "node:stream";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { resolve } from "node:path";
 
 import type { WorkspaceFiles } from "../workspace-helper/index.js";
 
@@ -104,6 +106,14 @@ export interface WorkspaceProcess {
   kill(signal?: NodeJS.Signals): void;
 }
 
+export type WorkspaceScriptTerminal =
+  | { readonly kind: "persistent-shell" }
+  | {
+      readonly kind: "direct-command";
+      readonly command: string;
+      readonly argsPrefix: readonly string[];
+    };
+
 export interface WorkspaceTerminal {
   onData(listener: (data: string) => void): () => void;
   write(data: string): void;
@@ -115,6 +125,7 @@ export interface WorkspaceTerminal {
 export interface BoundWorkspaceRuntime {
   run(input: Omit<WorkspaceProcessInput, "workspaceId">): Promise<WorkspaceProcess>;
   resolveCommand(command: string): Promise<string | null>;
+  readonly scriptTerminal: WorkspaceScriptTerminal;
   readonly files: WorkspaceFiles;
 }
 
@@ -183,8 +194,15 @@ export interface ExternalWorkspaceRuntime {
 export interface DockerWorkspaceRuntime {
   type: "docker";
   image?: string;
+  bindMounts?: readonly DockerBindMount[];
   providerEnvironment?: Readonly<Record<string, string>>;
   enabled?: boolean;
+}
+
+export interface DockerBindMount {
+  source: string;
+  target: string;
+  readOnly: boolean;
 }
 
 export type WorkspaceRuntimeConfig = ExternalWorkspaceRuntime | DockerWorkspaceRuntime;
@@ -235,7 +253,11 @@ export function createWorkspaceRuntimeService(
   const dockerDriver = dockerEnabled
     ? createCommandRuntimeAdapter("docker", {
         command: resolveDockerRuntimeCommand(),
-        options: { image: dockerConfig?.image ?? DEFAULT_DOCKER_WORKSPACE_IMAGE },
+        options: {
+          image: dockerConfig?.image ?? DEFAULT_DOCKER_WORKSPACE_IMAGE,
+          owner: createHash("sha256").update(resolve(options.paseoHome)).digest("hex"),
+          ...(dockerConfig?.bindMounts ? { bindMounts: dockerConfig.bindMounts } : {}),
+        },
       })
     : null;
   const drivers = [

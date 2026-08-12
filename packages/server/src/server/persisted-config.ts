@@ -100,10 +100,26 @@ const CommandWorkspaceRuntimeConfigSchema = z
   })
   .strict();
 
+const DockerBindMountSchema = z
+  .object({
+    source: z.string().min(1).refine(path.isAbsolute, "Bind mount source must be absolute"),
+    target: z
+      .string()
+      .min(1)
+      .refine(path.posix.isAbsolute, "Bind mount target must be an absolute container path")
+      .refine((target) => {
+        const relative = path.posix.relative("/workspace", path.posix.normalize(target));
+        return relative === ".." || relative.startsWith("../");
+      }, "Bind mount target must be outside /workspace"),
+    readOnly: z.boolean(),
+  })
+  .strict();
+
 const DockerWorkspaceRuntimeConfigSchema = z
   .object({
     type: z.literal("docker"),
     image: z.string().min(1).optional(),
+    bindMounts: z.array(DockerBindMountSchema).optional(),
     providerEnvironment: z.record(z.string(), z.string()).optional(),
     enabled: z.boolean().optional(),
   })

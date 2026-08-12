@@ -101,6 +101,12 @@ function createRepository(): string {
           `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync('setup-output.txt', 'setup complete\\n')"`,
         ],
       },
+      scripts: {
+        characterize: {
+          command:
+            "sleep 1; printf workspace-script > workspace-script-output.txt; printf runtime-script-ok",
+        },
+      },
     }),
   );
   execFileSync("git", ["add", "."], { cwd: repo, stdio: "pipe" });
@@ -114,6 +120,7 @@ function createRepository(): string {
 async function createCharacterizedWorkspace(kind: "local" | "worktree") {
   const repo = createRepository();
   const result = await client.createWorkspace({
+    runtimeId: kind,
     source:
       kind === "local"
         ? { kind: "directory", path: repo }
@@ -130,6 +137,8 @@ async function createCharacterizedWorkspace(kind: "local" | "worktree") {
   if (!workspace?.workspaceDirectory) {
     throw new Error(result.error ?? `Failed to create ${kind} workspace`);
   }
+  const projection = await client.fetchWorkspaces();
+  expect(projection.entries.map((candidate) => candidate.id)).toContain(workspace.id);
   return {
     cwd: workspace.workspaceDirectory,
     id: workspace.id,
@@ -275,6 +284,30 @@ async function expectTerminalCommand(workspace: CharacterizedWorkspace): Promise
   }
 }
 
+async function expectWorkspaceScript(workspace: CharacterizedWorkspace): Promise<void> {
+  const listed = await client.listWorkspaceScripts(workspace.id);
+  expect(listed.scripts).toContainEqual(
+    expect.objectContaining({ scriptName: "characterize", lifecycle: "stopped" }),
+  );
+  const started = await client.startWorkspaceScriptWithStatus(workspace.id, "characterize");
+  expect(started.error).toBeNull();
+  const terminalId = started.script?.terminalId;
+  if (!terminalId) throw new Error("Workspace script did not expose its terminal");
+  await client.subscribeTerminal(terminalId);
+  await expect(waitForTerminalOutput(terminalId, "runtime-script-ok")).resolves.toContain(
+    "runtime-script-ok",
+  );
+  await expect
+    .poll(
+      () =>
+        readWorkspaceTextFile(workspace.id, workspace.cwd, "workspace-script-output.txt").catch(
+          () => "missing",
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe("workspace-script");
+}
+
 async function expectProviderDiscoveryAndAgentExecution(
   workspace: CharacterizedWorkspace,
 ): Promise<void> {
@@ -338,6 +371,7 @@ describe("current workspace runtime journeys", () => {
       await expectFileEditAndWatch(workspace);
       await expectGitObservation(workspace);
       await expectTerminalCommand(workspace);
+      await expectWorkspaceScript(workspace);
       await expectProviderDiscoveryAndAgentExecution(workspace);
       const archive = await client.archiveWorkspace(workspace.id);
       expect(archive.error).toBeNull();
@@ -371,6 +405,7 @@ describe("current workspace runtime journeys", () => {
       await expectFileEditAndWatch(workspace);
       await expectGitObservation(workspace);
       await expectTerminalCommand(workspace);
+      await expectWorkspaceScript(workspace);
       await expectProviderDiscoveryAndAgentExecution(workspace);
 
       let resolveRestoredObservation!: () => void;

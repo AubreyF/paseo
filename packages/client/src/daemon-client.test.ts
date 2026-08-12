@@ -2799,6 +2799,62 @@ test("lists workspace runtimes and sends an explicit creation runtime", async ()
   await expect(createPromise).resolves.toMatchObject({ error: "fixture sentinel" });
 });
 
+test("keeps a selected-runtime workspace create request alive while runtime setup completes", async () => {
+  useHeartbeatClock();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_runtime_setup_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createWorkspace(
+    {
+      runtimeId: "docker",
+      source: {
+        kind: "directory",
+        path: "/tmp/project",
+        projectId: "local:/tmp/project",
+      },
+    },
+    "req-runtime-setup",
+  );
+  let settled = false;
+  void createPromise.then(
+    () => {
+      settled = true;
+      return undefined;
+    },
+    () => {
+      settled = true;
+      return undefined;
+    },
+  );
+
+  await vi.advanceTimersByTimeAsync(65_000);
+  expect(settled).toBe(false);
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.create.response",
+      payload: {
+        requestId: "req-runtime-setup",
+        workspace: null,
+        error: "late setup sentinel",
+        setupTerminalId: null,
+      },
+    }),
+  );
+
+  await expect(createPromise).resolves.toMatchObject({ error: "late setup sentinel" });
+});
+
 test("sends project.remove.request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

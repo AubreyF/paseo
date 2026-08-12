@@ -198,6 +198,46 @@ describe("PersistedConfigSchema workspace runtime config", () => {
       }),
     ).toThrow("Workspace runtime id is reserved: docker");
   });
+
+  test("accepts trusted Docker bind mounts and rejects unsafe workspace targets", () => {
+    expect(
+      PersistedConfigSchema.parse({
+        workspaceRuntimes: {
+          docker: {
+            type: "docker",
+            bindMounts: [
+              {
+                source: "/host/credentials.json",
+                target: "/root/.agent/credentials.json",
+                readOnly: true,
+              },
+            ],
+          },
+        },
+      }).workspaceRuntimes?.docker,
+    ).toMatchObject({
+      bindMounts: [
+        {
+          source: "/host/credentials.json",
+          target: "/root/.agent/credentials.json",
+          readOnly: true,
+        },
+      ],
+    });
+
+    for (const bindMounts of [
+      [{ source: "relative", target: "/root/config", readOnly: true }],
+      [{ source: "/host/config", target: "relative", readOnly: true }],
+      [{ source: "/host/repo", target: "/workspace", readOnly: true }],
+      [{ source: "/host/repo", target: "/workspace/nested", readOnly: true }],
+    ]) {
+      expect(() =>
+        PersistedConfigSchema.parse({
+          workspaceRuntimes: { docker: { type: "docker", bindMounts } },
+        }),
+      ).toThrow();
+    }
+  });
 });
 
 describe("PersistedConfigSchema provider credentials", () => {

@@ -17,6 +17,7 @@ on:
       - "packages/cli/**"
       - "packages/client/**"
       - "packages/docker-workspace-runtime/**"
+      - "packages/desktop/**"
       - "packages/fixture-workspace-runtime/**"
       - "packages/workspace-runtime-contract/**"
       - "packages/expo-two-way-audio/**"
@@ -175,11 +176,23 @@ jobs:
       - name: Install dependencies
         run: node scripts/npm-retry.mjs ci
 
-      - name: Build server dependencies
-        run: npm run build:server-deps
+      - name: Build server stack
+        run: npm run build:server
+
+      - name: Build Docker acceptance image
+        run: docker build --file packages/docker-workspace-runtime/Dockerfile --tag paseo-workspace-runtime-e2e:test .
 
       - name: Test workspace runtime contract
         run: npm run test:workspace-runtime:docker --workspace=@getpaseo/server
+
+      - name: Install Playwright browser
+        run: npx playwright install chromium
+
+      - name: Test Docker Desktop acceptance journey
+        run: npm run test:e2e:renderer --workspace=@getpaseo/desktop -- e2e/new-workspace-docker.spec.ts --workers=1
+        env:
+          E2E_DOCKER_ACCEPTANCE: "1"
+          E2E_DOCKER_WORKSPACE_IMAGE: paseo-workspace-runtime-e2e:test
 
   publish:
     needs: setup

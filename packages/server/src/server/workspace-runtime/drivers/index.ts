@@ -103,6 +103,7 @@ export interface WorkspaceRuntimeDriver {
   readonly reconciliationDomainId?: string;
   /** Runtime-local command for Paseo's compatible workspace helper. */
   readonly workspaceHelperCommand: readonly [string, ...string[]];
+  readonly scriptTerminal: import("../index.js").WorkspaceScriptTerminal;
   create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverCreation>;
   inspect(workspaceId: WorkspaceId): Promise<WorkspaceDriverInspection>;
   spawn(input: WorkspaceDriverSpawnInput): Promise<WorkspaceDriverProcess>;

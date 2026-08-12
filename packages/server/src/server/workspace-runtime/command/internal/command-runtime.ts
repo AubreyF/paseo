@@ -77,6 +77,7 @@ export function createCommandRuntime(
     requiresGitProject: true,
     reconciliationDomainId: JSON.stringify({ command: config.command, options: config.options }),
     workspaceHelperCommand: config.helperCommand ?? ["paseo-workspace-helper"],
+    scriptTerminal: { kind: "direct-command", command: "/bin/sh", argsPrefix: ["-lc"] },
     async create(input) {
       const response = await lifecycle("create", input.workspaceId, input);
       if (response.type !== "state") throw new Error(`Invalid create response from ${runtimeId}`);

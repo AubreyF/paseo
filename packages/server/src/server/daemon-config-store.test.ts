@@ -179,6 +179,19 @@ describe("DaemonConfigStore", () => {
       JSON.stringify(
         {
           ...initial,
+          workspaceRuntimes: {
+            docker: {
+              type: "docker",
+              image: "paseo-workspace:test",
+              bindMounts: [
+                {
+                  source: "/host/agent/auth.json",
+                  target: "/root/.agent/auth.json",
+                  readOnly: true,
+                },
+              ],
+            },
+          },
           agents: {
             providers: {
               gemini: {
@@ -220,6 +233,17 @@ describe("DaemonConfigStore", () => {
       label: "Gemini",
       command: ["gemini", "--acp"],
       enabled: false,
+    });
+    expect(persisted.workspaceRuntimes?.docker).toEqual({
+      type: "docker",
+      image: "paseo-workspace:test",
+      bindMounts: [
+        {
+          source: "/host/agent/auth.json",
+          target: "/root/.agent/auth.json",
+          readOnly: true,
+        },
+      ],
     });
   });
 

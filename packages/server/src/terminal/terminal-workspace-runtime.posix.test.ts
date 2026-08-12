@@ -32,6 +32,10 @@ posixDescribe("workspace-bound terminal manager", () => {
       persistRuntimeId: async (workspaceId, runtimeId) => {
         runtimeIds.set(workspaceId, runtimeId);
       },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (workspaceId) => {
+        runtimeIds.delete(workspaceId);
+      },
     });
     await runtime.create({
       workspaceId: "selected-workspace",
@@ -145,6 +149,10 @@ posixDescribe("workspace-bound terminal manager", () => {
       persistRuntimeId: async (workspaceId, runtimeId) => {
         runtimeIds.set(workspaceId, runtimeId);
       },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (workspaceId) => {
+        runtimeIds.delete(workspaceId);
+      },
     });
     await runtime.create({
       workspaceId: "selected-workspace",
@@ -212,6 +220,10 @@ posixDescribe("workspace-bound terminal manager", () => {
       persistRuntimeId: async (workspaceId, runtimeId) => {
         runtimeIds.set(workspaceId, runtimeId);
       },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (workspaceId) => {
+        runtimeIds.delete(workspaceId);
+      },
     });
     await runtime.create({
       workspaceId: "selected-workspace",
@@ -266,6 +278,10 @@ posixDescribe("workspace-bound terminal manager", () => {
       resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
       persistRuntimeId: async (workspaceId, runtimeId) => {
         runtimeIds.set(workspaceId, runtimeId);
+      },
+      beginWorkspaceDeletion: async () => {},
+      removeWorkspaceRecord: async (workspaceId) => {
+        runtimeIds.delete(workspaceId);
       },
     });
     await runtime.create({

@@ -18,7 +18,11 @@ import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
-import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
+import {
+  createWorkspaceRuntimeService,
+  type CreateWorkspaceInput,
+  type WorkspaceRuntimeService,
+} from "./workspace-runtime/index.js";
 import {
   bindProviderWorkspace,
   resolveProviderPlacementPolicy,
@@ -119,6 +123,7 @@ afterEach(async () => {
 });
 
 interface SessionTestAccess {
+  workspaceRuntime: WorkspaceRuntimeService;
   projectRegistry: {
     list(...args: unknown[]): Promise<unknown[]>;
     archive(projectId: string, archivedAt: string): Promise<void>;
@@ -651,6 +656,7 @@ function createSessionForWorkspaceTests(
     ? createNoopWorkspaceGitService({ renameBranch: options.renameCurrentBranch })
     : (options.workspaceGitService ?? createNoopWorkspaceGitService());
   const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
+  const defaultProjects = new Map<string, PersistedProjectRecord>();
 
   const session = asTestSession(
     new Session({
@@ -696,16 +702,19 @@ function createSessionForWorkspaceTests(
         initialize: async () => {},
         existsOnDisk: async () => true,
         list: async () => [],
-        get: async () => null,
-        getOrCreateActiveByRoot: async (input) =>
-          createPersistedProjectRecord({
+        get: async (projectId) => defaultProjects.get(projectId) ?? null,
+        getOrCreateActiveByRoot: async (input) => {
+          const project = createPersistedProjectRecord({
             projectId: "prj_0000000000000000",
             rootPath: input.rootPath,
             kind: input.kind,
             displayName: input.displayName,
             createdAt: input.timestamp,
             updatedAt: input.timestamp,
-          }),
+          });
+          defaultProjects.set(project.projectId, project);
+          return project;
+        },
         upsert: async () => {},
         archive: async () => {},
         remove: async () => {},
@@ -9476,13 +9485,15 @@ test("workspace create stays out of a non-matching workspace subscription", asyn
 
 test("workspace.create.request attaches a directory workspace to its explicit active project", async () => {
   const runtimeCwd = createRuntimeDirectory();
+  const projectRoot = path.join(runtimeCwd, "unrelated");
+  mkdirSync(projectRoot);
   const emitted: SessionOutboundMessage[] = [];
   const projects = new Map([
     [
       "prj_explicit",
       createPersistedProjectRecord({
         projectId: "prj_explicit",
-        rootPath: path.join(runtimeCwd, "unrelated"),
+        rootPath: projectRoot,
         kind: "non_git",
         displayName: "unrelated",
         createdAt: "2026-03-01T00:00:00.000Z",
@@ -9515,9 +9526,65 @@ test("workspace.create.request attaches a directory workspace to its explicit ac
   const workspaceId = response?.payload.workspace?.id;
   expect(workspaceId).toEqual(expect.any(String));
   expect(workspaces.get(workspaceId as string)).toMatchObject({
-    cwd: runtimeCwd,
+    cwd: projectRoot,
     projectId: "prj_explicit",
   });
+});
+
+test("workspace.create.request materializes an explicit project's git source instead of its cwd", async () => {
+  const runtimeCwd = createRuntimeDirectory();
+  const emitted: SessionOutboundMessage[] = [];
+  const project = createPersistedProjectRecord({
+    projectId: "prj_git_source",
+    rootPath: path.join(runtimeCwd, "host-decoy"),
+    source: {
+      kind: "git",
+      url: "https://example.test/acme/project.git",
+      revision: "release",
+      subdirectory: "packages/app",
+    },
+    kind: "git",
+    displayName: "project",
+    createdAt: "2026-08-12T00:00:00.000Z",
+    updatedAt: "2026-08-12T00:00:00.000Z",
+  });
+  const workspaces = new Map<string, PersistedWorkspaceRecord>();
+  const creates: CreateWorkspaceInput[] = [];
+  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
+  session.projectRegistry.get = async (projectId: string) =>
+    projectId === project.projectId ? project : null;
+  session.workspaceRegistry.upsert = async (record: unknown) => {
+    const workspace = record as PersistedWorkspaceRecord;
+    workspaces.set(workspace.workspaceId, workspace);
+  };
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaces.get(workspaceId) ?? null;
+  session.workspaceRuntime.create = async (input) => {
+    creates.push(input);
+    const workspace = workspaces.get(input.workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${input.workspaceId}`);
+    await session.workspaceRegistry.upsert({
+      ...workspace,
+      runtime: { runtimeId: input.runtimeId },
+    });
+    return { workspaceId: input.workspaceId, runtimeId: input.runtimeId, cwd: runtimeCwd };
+  };
+
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-git-source-project",
+    source: { kind: "directory", path: runtimeCwd, projectId: project.projectId },
+  });
+
+  expect(findByType(emitted, "workspace.create.response")?.payload.error).toBeNull();
+  expect(creates).toHaveLength(1);
+  expect(creates[0]?.project.source).toEqual({
+    kind: "git",
+    url: "https://example.test/acme/project.git",
+    revision: "release",
+    subdirectory: "packages/app",
+  });
+  expect(JSON.stringify(creates[0]?.project.source)).not.toContain(runtimeCwd);
 });
 
 test("workspace.create.request reports an unknown explicit project", async () => {

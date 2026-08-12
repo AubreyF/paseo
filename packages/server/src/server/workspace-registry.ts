@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 
 import type { Logger } from "pino";
 import { z } from "zod";
+import type { WorkspaceProjectSource } from "./workspace-runtime/index.js";
 
 import { writeJsonFileAtomic } from "./atomic-file.js";
 import { areEquivalentPaths } from "../utils/path.js";
@@ -11,34 +12,53 @@ import {
   type PersistedWorkspaceKind,
 } from "./workspace-registry-model.js";
 
-const PersistedProjectRecordSchema = z.object({
-  projectId: z.string(),
-  rootPath: z.string(),
-  kind: z.enum(["git", "non_git"]),
-  displayName: z.string(),
-  // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
-  projectKey: z
-    .string()
-    .nullable()
-    .optional()
-    .transform((value) => value ?? null),
-  // User-set override layered over the derived displayName. Reconciliation
-  // never touches this. Null means "use the derived name". Added for #987.
-  customName: z
-    .string()
-    .nullable()
-    .optional()
-    .transform((value) => value ?? null),
-  // Identifies the project's stored custom icon; null means automatic.
-  customIconRevision: z
-    .string()
-    .nullable()
-    .optional()
-    .transform((value) => value ?? null),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  archivedAt: z.string().nullable(),
-});
+const PersistedProjectRecordSchema = z
+  .object({
+    projectId: z.string(),
+    rootPath: z.string(),
+    kind: z.enum(["git", "non_git"]),
+    displayName: z.string(),
+    source: z
+      .object({
+        kind: z.literal("git"),
+        url: z.string().min(1),
+        revision: z.string().min(1).optional(),
+        subdirectory: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    // COMPAT(projectKey): added in v0.2.4 on 2026-07-28; remove optional after 2027-01-28.
+    projectKey: z
+      .string()
+      .nullable()
+      .optional()
+      .transform((value) => value ?? null),
+    // User-set override layered over the derived displayName. Reconciliation
+    // never touches this. Null means "use the derived name". Added for #987.
+    customName: z
+      .string()
+      .nullable()
+      .optional()
+      .transform((value) => value ?? null),
+    // Identifies the project's stored custom icon; null means automatic.
+    customIconRevision: z
+      .string()
+      .nullable()
+      .optional()
+      .transform((value) => value ?? null),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+    archivedAt: z.string().nullable(),
+  })
+  .superRefine((project, context) => {
+    if (project.source && project.kind !== "git") {
+      context.addIssue({
+        code: "custom",
+        path: ["source"],
+        message: "A persisted Git source requires project kind git",
+      });
+    }
+  });
 
 const PersistedWorkspaceRecordSchema = z.object({
   workspaceId: z.string(),
@@ -402,11 +422,11 @@ export class FileBackedProjectRegistry
             left.projectId.localeCompare(right.projectId),
         )[0];
       if (active) {
-        if (active.kind === input.kind && active.projectKey === (input.projectKey ?? null))
-          return active;
+        const kind = active.source ? "git" : input.kind;
+        if (active.kind === kind && active.projectKey === (input.projectKey ?? null)) return active;
         const refreshed = {
           ...active,
-          kind: input.kind,
+          kind,
           projectKey: input.projectKey ?? null,
           updatedAt: input.timestamp,
         };
@@ -587,6 +607,7 @@ export function createPersistedProjectRecord(input: {
   rootPath: string;
   kind: PersistedProjectKind;
   displayName: string;
+  source?: PersistedProjectRecord["source"];
   customName?: string | null;
   projectKey?: string | null;
   customIconRevision?: string | null;
@@ -601,6 +622,17 @@ export function createPersistedProjectRecord(input: {
     customIconRevision: input.customIconRevision ?? null,
     archivedAt: input.archivedAt ?? null,
   });
+}
+
+/** The only conversion from host project persistence to runtime materialization authority. */
+export function projectRuntimeSource(
+  project: Pick<PersistedProjectRecord, "rootPath" | "source">,
+): WorkspaceProjectSource {
+  if (!project.source) return { kind: "host-directory", path: project.rootPath };
+  return {
+    ...project.source,
+    revision: project.source.revision ?? "",
+  };
 }
 
 export function resolveProjectDisplayName(record: PersistedProjectRecord): string {

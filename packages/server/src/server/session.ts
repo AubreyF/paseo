@@ -136,6 +136,7 @@ import {
 } from "./workspace-registry-model.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
 import {
+  projectRuntimeSource,
   resolveProjectDisplayName,
   resolveWorkspaceDisplayName,
   resolveWorkspaceName,
@@ -5520,13 +5521,18 @@ export class Session {
       await this.workspaceRegistry.remove(workspace.workspaceId);
       throw new Error("Workspace runtime service was not composed");
     }
+    const project = await this.projectRegistry.get(workspace.projectId);
+    if (!project) {
+      await this.workspaceRegistry.remove(workspace.workspaceId);
+      throw new Error(`Project not found after workspace creation: ${workspace.projectId}`);
+    }
     try {
       await workspaceRuntime.create({
         workspaceId: workspace.workspaceId,
         runtimeId,
         project: {
           id: workspace.projectId,
-          source: { kind: "host-directory", path: cwd },
+          source: projectRuntimeSource(project),
         },
         placement: { kind: "existing" },
         setupFromPaseoConfig: true,

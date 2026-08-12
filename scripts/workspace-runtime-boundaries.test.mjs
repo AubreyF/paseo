@@ -88,11 +88,41 @@ test("the AST guard rejects computed loading and dynamic host/internal bypasses"
       "module-entrypoint",
       "nonliteral-module-load",
       "nonliteral-module-load",
-      "nonliteral-module-load",
+      "workspace-host-access",
       "workspace-host-access",
       "workspace-host-access",
       "workspace-host-access",
     ].sort(),
+  );
+});
+
+test("the AST guard rejects every statically resolvable provider probe internal import", async (t) => {
+  const root = await fixtureRoot(t);
+  await source(
+    root,
+    "packages/server/src/server/session/computed.ts",
+    'import { createService as direct } from "../provider-probe/internal/service.js";\n' +
+      'import { createService as alias } from "@getpaseo/server/provider-probe/internal/service.js";\n' +
+      'export { createService } from "../provider-probe/internal/service.js";\n' +
+      'const internal = "../provider-probe/" + "internal/service.js";\n' +
+      "const load = require;\n" +
+      'void require("../provider-probe/internal/service.js");\n' +
+      'void import("../provider-probe/" + "internal/service.js");\n' +
+      'void import(`../provider-probe/${"internal"}/service.js`);\n' +
+      "void import(internal);\n" +
+      "void load(internal);\n" +
+      "void direct; void alias;\n",
+  );
+
+  const violations = await findWorkspaceBoundaryViolations(root);
+  assert.equal(violations.length, 8);
+  assert.deepEqual(new Set(violations.map(({ rule }) => rule)), new Set(["module-entrypoint"]));
+  assert.deepEqual(
+    new Set(violations.map((violation) => violation.import)),
+    new Set([
+      "../provider-probe/internal/service.js",
+      "@getpaseo/server/provider-probe/internal/service.js",
+    ]),
   );
 });
 
@@ -103,6 +133,13 @@ test("owned integrations, explicit legacy code, and fixture contract imports pas
     root,
     "packages/server/src/server/workspace-runtime/index.ts",
     'import { service } from "./internal/service.js"; void service;\n',
+  );
+  await source(
+    root,
+    "packages/server/src/server/provider-probe/index.ts",
+    'import { createService } from "./internal/service.js";\n' +
+      'export { createProbeStore } from "./internal/probe-store.js";\n' +
+      "void createService;\n",
   );
   await source(
     root,

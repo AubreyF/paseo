@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 
 import { beforeEach, afterEach, describe, expect, test } from "vitest";
 
@@ -65,6 +65,50 @@ describe("workspace runtime selection compatibility", () => {
   );
 });
 
+describe("persisted project source validation", () => {
+  const input = {
+    projectId: "project-source",
+    rootPath: "/host/project",
+    kind: "git" as const,
+    displayName: "project",
+    createdAt: "2026-08-12T00:00:00.000Z",
+    updatedAt: "2026-08-12T00:00:00.000Z",
+  };
+
+  test("accepts optional git revision and subdirectory", () => {
+    expect(
+      createPersistedProjectRecord({
+        ...input,
+        source: {
+          kind: "git",
+          url: "https://example.test/acme/project.git",
+          revision: "main",
+          subdirectory: "packages/server",
+        },
+      }),
+    ).toMatchObject({ source: { kind: "git", revision: "main", subdirectory: "packages/server" } });
+  });
+
+  test("rejects a Git source on a non-Git project", () => {
+    expect(() =>
+      createPersistedProjectRecord({
+        ...input,
+        kind: "non_git",
+        source: { kind: "git", url: "https://example.test/acme/project.git" },
+      }),
+    ).toThrow("A persisted Git source requires project kind git");
+  });
+
+  test.each([
+    { kind: "git", url: "" },
+    { kind: "git", url: "https://example.test/acme/project.git", revision: "" },
+    { kind: "git", url: "https://example.test/acme/project.git", subdirectory: "" },
+    { kind: "git", url: "https://example.test/acme/project.git", privateRoot: "/escape" },
+  ])("rejects malformed source at the persistence edge: %j", (source) => {
+    expect(() => createPersistedProjectRecord({ ...input, source })).toThrow();
+  });
+});
+
 describe("workspace registries", () => {
   let tmpDir: string;
   let projectRegistry: FileBackedProjectRegistry;
@@ -85,6 +129,32 @@ describe("workspace registries", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("rejects a contradictory project source while loading persisted records", async () => {
+    mkdirSync(path.join(tmpDir, "projects"), { recursive: true });
+    writeFileSync(
+      path.join(tmpDir, "projects", "projects.json"),
+      JSON.stringify([
+        {
+          projectId: "contradictory-project",
+          rootPath: "/host/project",
+          kind: "non_git",
+          displayName: "project",
+          source: { kind: "git", url: "https://example.test/acme/project.git" },
+          projectKey: null,
+          customName: null,
+          customIconRevision: null,
+          createdAt: "2026-08-12T00:00:00.000Z",
+          updatedAt: "2026-08-12T00:00:00.000Z",
+          archivedAt: null,
+        },
+      ]),
+    );
+
+    await projectRegistry.initialize();
+
+    expect(await projectRegistry.list()).toEqual([]);
   });
 
   test("creates, updates, archives, deletes, and lists project records", async () => {
@@ -204,6 +274,31 @@ describe("workspace registries", () => {
       "/tmp/legacy",
     );
     expect(opaque.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
+  });
+
+  test("does not downgrade a sourced Git project when its convenience root is non-Git", async () => {
+    await projectRegistry.initialize();
+    const rootPath = path.join(tmpDir, "decoy-root");
+    const project = createPersistedProjectRecord({
+      projectId: "prj_sourced_git",
+      rootPath,
+      kind: "git",
+      source: { kind: "git", url: "https://example.com/source.git" },
+      displayName: "source",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    await projectRegistry.upsert(project);
+
+    const resolved = await projectRegistry.getOrCreateActiveByRoot({
+      rootPath,
+      kind: "non_git",
+      displayName: "decoy-root",
+      timestamp: "2026-03-02T00:00:00.000Z",
+    });
+
+    expect(resolved.kind).toBe("git");
+    expect(resolved.source).toEqual(project.source);
   });
 
   test("allocates a fresh opaque ID when only an archived exact root exists", async () => {

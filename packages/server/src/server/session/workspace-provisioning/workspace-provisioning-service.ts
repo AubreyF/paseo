@@ -428,7 +428,7 @@ export function createWorkspaceProvisioningService(deps: {
       const projectCheckout = areEquivalentPaths(project.rootPath, workspace.cwd)
         ? checkout
         : await workspaceGitService.getCheckout(project.rootPath);
-      const kind = projectCheckout.isGit ? "git" : "non_git";
+      const kind = project.source || projectCheckout.isGit ? "git" : "non_git";
       const projectKey = deriveProjectKey({
         rootPath: project.rootPath,
         remoteUrl: projectCheckout.remoteUrl,
@@ -478,7 +478,8 @@ export function createWorkspaceProvisioningService(deps: {
       workspaceCwd && workspaceCheckout && areEquivalentPaths(project.rootPath, workspaceCwd)
         ? workspaceCheckout
         : await workspaceGitService.getCheckout(project.rootPath);
-    const kind: PersistedProjectRecord["kind"] = projectCheckout.isGit ? "git" : "non_git";
+    const kind: PersistedProjectRecord["kind"] =
+      project.source || projectCheckout.isGit ? "git" : "non_git";
     const projectKey = deriveProjectKey({
       rootPath: project.rootPath,
       remoteUrl: projectCheckout.remoteUrl,

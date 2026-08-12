@@ -74,6 +74,8 @@ not retain non-Git directories.
 | `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation |
 | `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK       |
 | `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                               |
+| `server/workspace-runtime/`     | Runtime-neutral workspace lifecycle, execution, files, Git observation        |
+| `server/provider-probe/`        | Invisible runtime-bound workspaces for pre-creation provider discovery        |
 | `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                 |
 | `server/schedule/`              | Cron-based scheduled agents                                                   |
 | `server/loop-service.ts`        | Looping agent runs that retry until an exit condition                         |

@@ -41,6 +41,11 @@ export async function findWorkspaceBoundaryViolations(repoRoot) {
     const governed =
       external ||
       (!isTestFile(importer) && (ownsMigratedSurface(importer) || publicOwners.has(importer)));
+    for (const specifier of staticSpecifiers(sourceFile)) {
+      if (!isTestFile(importer) && isForbiddenInternal(importer, specifier)) {
+        violations.push(violation(importer, specifier, "module-entrypoint"));
+      }
+    }
     for (const load of moduleLoads(sourceFile)) {
       if (load.specifier === null) {
         if (governed) violations.push(violation(importer, "<computed>", "nonliteral-module-load"));
@@ -91,6 +96,8 @@ function staticSpecifiers(sourceFile) {
 
 function moduleLoads(sourceFile) {
   const loads = [];
+  const constants = constantBindings(sourceFile);
+  const loaderAliases = moduleLoaderAliases(sourceFile);
   visit(sourceFile);
   return loads;
 
@@ -98,13 +105,86 @@ function moduleLoads(sourceFile) {
     if (
       ts.isCallExpression(node) &&
       (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+        (ts.isIdentifier(node.expression) && loaderAliases.has(node.expression.text)))
     ) {
       const argument = node.arguments.length === 1 ? node.arguments[0] : undefined;
-      loads.push({ specifier: argument && ts.isStringLiteral(argument) ? argument.text : null });
+      loads.push({ specifier: argument ? constantString(argument, constants) : null });
     }
     ts.forEachChild(node, visit);
   }
+}
+
+function constantBindings(sourceFile) {
+  const constants = new Map();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const statement of sourceFile.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      if (!(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+        const value = constantString(declaration.initializer, constants);
+        if (value === null || constants.get(declaration.name.text) === value) continue;
+        constants.set(declaration.name.text, value);
+        changed = true;
+      }
+    }
+  }
+  return constants;
+}
+
+function moduleLoaderAliases(sourceFile) {
+  const aliases = new Set(["require"]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const statement of sourceFile.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (
+          !ts.isIdentifier(declaration.name) ||
+          !declaration.initializer ||
+          !ts.isIdentifier(declaration.initializer) ||
+          !aliases.has(declaration.initializer.text) ||
+          aliases.has(declaration.name.text)
+        ) {
+          continue;
+        }
+        aliases.add(declaration.name.text);
+        changed = true;
+      }
+    }
+  }
+  return aliases;
+}
+
+function constantString(expression, constants) {
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+    return expression.text;
+  }
+  if (ts.isIdentifier(expression)) return constants.get(expression.text) ?? null;
+  if (ts.isParenthesizedExpression(expression)) {
+    return constantString(expression.expression, constants);
+  }
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    const left = constantString(expression.left, constants);
+    const right = constantString(expression.right, constants);
+    return left === null || right === null ? null : left + right;
+  }
+  if (ts.isTemplateExpression(expression)) {
+    let value = expression.head.text;
+    for (const span of expression.templateSpans) {
+      const substitution = constantString(span.expression, constants);
+      if (substitution === null) return null;
+      value += substitution + span.literal.text;
+    }
+    return value;
+  }
+  return null;
 }
 
 function isPublicEntryPoint(specifier) {
@@ -125,6 +205,12 @@ function isHostCapability(specifier) {
 function isForbiddenInternal(importer, specifier) {
   const target = resolveSpecifier(importer, specifier);
   if (!target || !target.includes("/internal/")) return false;
+  if (target.includes("/provider-probe/internal/")) {
+    return !(
+      importer.endsWith("/provider-probe/index.ts") ||
+      importer.includes("/provider-probe/internal/")
+    );
+  }
   if (target.includes("/workspace-runtime/command/internal/")) {
     return !(
       importer.endsWith("/workspace-runtime/command/index.ts") ||

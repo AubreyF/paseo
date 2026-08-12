@@ -11,7 +11,7 @@ import { createLocalRuntime } from "./internal/local-runtime.js";
 import { createService } from "./internal/service.js";
 import { createWorktreeRuntime } from "./internal/worktree-runtime.js";
 
-export type WorkspaceSource =
+export type WorkspaceProjectSource =
   | { kind: "host-directory"; path: string }
   | { kind: "git"; url: string; revision: string; subdirectory?: string };
 
@@ -73,7 +73,7 @@ export interface WorkspaceSetupCommand {
 export interface CreateWorkspaceInput {
   workspaceId: string;
   runtimeId: string;
-  project: { id: string; source: WorkspaceSource };
+  project: { id: string; source: WorkspaceProjectSource };
   placement: WorkspacePlacement;
   purpose?: "provider-probe";
   setup?: readonly WorkspaceSetupCommand[];

@@ -62,6 +62,27 @@ posixDescribe("provider probe service", () => {
     );
   });
 
+  test("materializes a persisted git source without granting authority to rootPath", async () => {
+    const fixture = await createFixture({
+      projectSource: {
+        kind: "git",
+        url: "https://example.test/acme/project.git",
+        revision: "release",
+        subdirectory: "packages/app",
+      },
+    });
+
+    await fixture.service.ensure({ projectId: "project-1", runtimeId: "fixture" });
+
+    expect(fixture.creates[0]?.project.source).toEqual({
+      kind: "git",
+      url: "https://example.test/acme/project.git",
+      revision: "release",
+      subdirectory: "packages/app",
+    });
+    expect(JSON.stringify(fixture.creates[0]?.project.source)).not.toContain(fixture.projectRoot);
+  });
+
   test("reuses persisted ready identity and resolves only probe provider workspaces", async () => {
     const first = await createFixture();
     const ensured = await first.service.ensure({ projectId: "project-1", runtimeId: "fixture" });
@@ -319,7 +340,17 @@ posixDescribe("provider probe service", () => {
   });
 });
 
-async function createFixture(options: { gitProject?: boolean } = {}) {
+async function createFixture(
+  options: {
+    gitProject?: boolean;
+    projectSource?: {
+      kind: "git";
+      url: string;
+      revision?: string;
+      subdirectory?: string;
+    };
+  } = {},
+) {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-provider-probe-"));
   roots.push(root);
   const projectRoot = path.join(root, "project");
@@ -383,6 +414,7 @@ async function createFixture(options: { gitProject?: boolean } = {}) {
     providerWorkspaces,
     clock,
     runtime,
+    projectSource: options.projectSource,
     get inspection() {
       return inspection;
     },
@@ -419,6 +451,12 @@ function createService(
         requiresGitProject: boolean;
       }[];
     };
+    projectSource?: {
+      kind: "git";
+      url: string;
+      revision?: string;
+      subdirectory?: string;
+    };
   },
   runtimeConfiguration: Readonly<Record<string, unknown>> = {
     fixture: { type: "command", options: { sentinel: true } },
@@ -430,7 +468,13 @@ function createService(
     projects: {
       get: async (projectId: string) =>
         projectId === "project-1"
-          ? { projectId, rootPath: fixture.projectRoot, updatedAt: "2026-08-12T00:00:00.000Z" }
+          ? {
+              projectId,
+              rootPath: fixture.projectRoot,
+              source: fixture.projectSource,
+              updatedAt: "2026-08-12T00:00:00.000Z",
+              archivedAt: null,
+            }
           : null,
     },
     runtime: fixture.runtime,

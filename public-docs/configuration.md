@@ -69,6 +69,34 @@ New worktrees are created under `$PASEO_HOME/worktrees` by default. To place new
 
 Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain where they are; changing this setting only changes where Paseo creates and discovers Paseo-managed worktrees going forward.
 
+## Workspace runtimes
+
+New Workspace offers the built-in Local, Worktree, and Docker runtimes. The current Docker POC requires a locally built workspace-runtime image. Its configured default, `ghcr.io/getpaseo/workspace-runtime:latest`, is not published and does not currently work.
+
+From the Paseo repository root, build the image:
+
+```bash
+docker build -f packages/docker-workspace-runtime/Dockerfile -t paseo-workspace-runtime:local .
+```
+
+Then override `workspaceRuntimes.docker.image` in daemon configuration:
+
+```json
+{
+  "workspaceRuntimes": {
+    "docker": {
+      "type": "docker",
+      "image": "paseo-workspace-runtime:local",
+      "enabled": true
+    }
+  }
+}
+```
+
+Optional `providerEnvironment` values set the provider process environment. Optional bind mounts are available during Git materialization and in the running workspace. Their sources and targets must be absolute, targets must stay outside `/workspace`, and every mount must set `readOnly`. Set `enabled: false` to remove Docker from the runtime catalog.
+
+Trusted external runtimes use `type: "command"`. `command` and optional `helperCommand` are argv arrays, not shell strings. Optional `label` names the runtime in New Workspace, `providerEnvironment` sets the isolated provider environment, and `options` passes runtime-owned configuration to the adapter. Runtime implementations follow the [`@getpaseo/workspace-runtime-contract`](https://github.com/getpaseo/paseo/tree/main/packages/workspace-runtime-contract).
+
 ## Voice
 
 Voice is configured through `features.dictation` and `features.voiceMode`, with provider credentials under `providers`.

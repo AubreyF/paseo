@@ -3,9 +3,7 @@ import type { Readable, Writable } from "node:stream";
 export type WorkspaceRuntimeId = string;
 export type WorkspaceId = string;
 
-export type WorkspaceProjectSource =
-  | { kind: "host-directory"; path: string }
-  | { kind: "git"; url: string; revision: string; subdirectory?: string };
+export type WorkspaceProjectSource = import("../index.js").WorkspaceProjectSource;
 
 export type WorkspacePlacementIntent =
   | { kind: "existing"; relativeCwd?: string }

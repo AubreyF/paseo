@@ -871,6 +871,184 @@ test("Docker probe pause survives restart and source invalidation rotates the pr
   }
 }, 180_000);
 
+test("persisted Git sources materialize default and pinned revisions through Docker", async () => {
+  const fixture = await dockerTestFixture("paseo-runtime-docker-git-source-");
+  const root = fixture.root;
+  const sourceRepository = path.join(root, "source-repository");
+  const bareRepository = path.join(root, "source.git");
+  const decoyDefault = path.join(root, "decoy-default");
+  const decoyPinned = path.join(root, "decoy-pinned");
+  await mkdir(path.join(sourceRepository, "packages", "app"), { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: sourceRepository, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+    cwd: sourceRepository,
+  });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: sourceRepository });
+  await copyFile(fixtureAgent, path.join(sourceRepository, "packages", "app", "fixture-agent.mjs"));
+  await chmod(path.join(sourceRepository, "packages", "app", "fixture-agent.mjs"), 0o755);
+  await writeFile(path.join(sourceRepository, "packages", "app", "source-state.txt"), "pinned\n");
+  await writeFile(
+    path.join(sourceRepository, "packages", "app", "provider-model.txt"),
+    "fixture-model-pinned\n",
+  );
+  execFileSync("git", ["add", "."], { cwd: sourceRepository });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "pinned state"], {
+    cwd: sourceRepository,
+  });
+  const pinnedRevision = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: sourceRepository,
+    encoding: "utf8",
+  }).trim();
+  await writeFile(path.join(sourceRepository, "packages", "app", "source-state.txt"), "default\n");
+  await writeFile(
+    path.join(sourceRepository, "packages", "app", "provider-model.txt"),
+    "fixture-model-default\n",
+  );
+  execFileSync("git", ["add", "."], { cwd: sourceRepository });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "default state"], {
+    cwd: sourceRepository,
+  });
+  execFileSync("git", ["clone", "--bare", sourceRepository, bareRepository], { stdio: "pipe" });
+  await mkdir(path.join(decoyDefault, "packages", "app"), { recursive: true });
+  await mkdir(path.join(decoyPinned, "packages", "app"), { recursive: true });
+  await writeFile(path.join(decoyDefault, "packages", "app", "source-state.txt"), "decoy\n");
+  await writeFile(path.join(decoyPinned, "packages", "app", "source-state.txt"), "decoy\n");
+
+  const paseoHomeRoot = path.join(root, "daemon-home");
+  const paseoHome = path.join(paseoHomeRoot, ".paseo");
+  await mkdir(paseoHome, { recursive: true });
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(paseoHome, "projects", "projects.json"),
+    createTestLogger(),
+  );
+  await projectRegistry.initialize();
+  const now = new Date().toISOString();
+  const sourceUrl = "file:///git/source.git";
+  for (const project of [
+    {
+      projectId: "docker-git-default",
+      rootPath: decoyDefault,
+      source: { kind: "git" as const, url: sourceUrl, subdirectory: "packages/app" },
+    },
+    {
+      projectId: "docker-git-pinned",
+      rootPath: decoyPinned,
+      source: {
+        kind: "git" as const,
+        url: sourceUrl,
+        revision: pinnedRevision,
+        subdirectory: "packages/app",
+      },
+    },
+  ]) {
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        ...project,
+        kind: "git",
+        displayName: project.projectId,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot,
+    cleanup: false,
+    mcpEnabled: false,
+    agentClients: {},
+    providerOverrides: {
+      "docker-fixture": {
+        extends: "acp",
+        label: "Docker Fixture",
+        command: ["node", "./fixture-agent.mjs"],
+        params: { supportsMcpServers: false },
+        enabled: true,
+      },
+    },
+    workspaceRuntimes: {
+      docker: {
+        type: "docker",
+        image,
+        bindMounts: [{ source: bareRepository, target: "/git/source.git", readOnly: true }],
+      },
+    },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.3.1",
+    reconnect: { enabled: false },
+  });
+  const projectIds = ["docker-git-default", "docker-git-pinned"] as const;
+
+  try {
+    await client.connect();
+    const defaultProbe = await client.ensureWorkspaceRuntimeProbe({
+      projectId: projectIds[0],
+      runtimeId: "docker",
+    });
+    expect(defaultProbe).toMatchObject({ status: "ready", error: null });
+    fixture.workspace(defaultProbe.workspaceId!);
+    const workspaceRoot = "/workspace/packages/app";
+    const probeSnapshot = await client.getProvidersSnapshot({
+      workspaceId: defaultProbe.workspaceId!,
+      cwd: workspaceRoot,
+    });
+    expect(probeSnapshot.entries).toContainEqual(
+      expect.objectContaining({
+        provider: "docker-fixture",
+        status: "ready",
+        models: [expect.objectContaining({ id: "fixture-model-default" })],
+      }),
+    );
+
+    const defaultWorkspace = await client.createWorkspace({
+      source: { kind: "directory", path: decoyDefault, projectId: projectIds[0] },
+      runtimeId: "docker",
+    });
+    if (!defaultWorkspace.workspace) {
+      throw new Error(defaultWorkspace.error ?? "Default Git-source workspace creation failed");
+    }
+    fixture.workspace(defaultWorkspace.workspace.id);
+    const defaultFile = await client.readFile(
+      workspaceRoot,
+      "source-state.txt",
+      undefined,
+      defaultWorkspace.workspace.id,
+    );
+    expect(new TextDecoder().decode(defaultFile.bytes)).toBe("default\n");
+
+    const pinnedWorkspace = await client.createWorkspace({
+      source: { kind: "directory", path: decoyPinned, projectId: projectIds[1] },
+      runtimeId: "docker",
+    });
+    if (!pinnedWorkspace.workspace) {
+      throw new Error(pinnedWorkspace.error ?? "Pinned Git-source workspace creation failed");
+    }
+    fixture.workspace(pinnedWorkspace.workspace.id);
+    const pinnedFile = await client.readFile(
+      workspaceRoot,
+      "source-state.txt",
+      undefined,
+      pinnedWorkspace.workspace.id,
+    );
+    expect(new TextDecoder().decode(pinnedFile.bytes)).toBe("pinned\n");
+
+    for (const projectId of projectIds) await client.removeProject(projectId);
+    for (const workspaceId of [
+      defaultProbe.workspaceId,
+      defaultWorkspace.workspace.id,
+      pinnedWorkspace.workspace.id,
+    ]) {
+      expect(dockerResourceCount("ps", workspaceId!)).toBe(0);
+      expect(dockerResourceCount("volume", workspaceId!)).toBe(0);
+    }
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close().catch(() => undefined);
+  }
+}, 180_000);
+
 test("Docker creation validates roots and rolls back when runtime selection cannot persist", async () => {
   const fixture = await dockerTestFixture("paseo-runtime-docker-rollback-");
   const root = fixture.root;

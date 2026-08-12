@@ -1,4 +1,5 @@
 import type pino from "pino";
+import type { PersistedProjectRecord } from "../workspace-registry.js";
 
 import type { ProviderWorkspace } from "../agent/providers/workspace/index.js";
 import type {
@@ -33,12 +34,12 @@ export interface ProviderProbeServiceOptions {
   filePath: string;
   logger: pino.Logger;
   projects: {
-    get(projectId: string): Promise<{
-      projectId: string;
-      rootPath: string;
-      updatedAt: string;
-      archivedAt?: string | null;
-    } | null>;
+    get(
+      projectId: string,
+    ): Promise<Pick<
+      PersistedProjectRecord,
+      "projectId" | "rootPath" | "source" | "updatedAt" | "archivedAt"
+    > | null>;
   };
   runtime: {
     create(input: CreateWorkspaceInput): Promise<WorkspaceRuntimePlacement>;

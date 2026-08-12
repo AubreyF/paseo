@@ -22,6 +22,10 @@ reconcile
 
 Paseo sends options from trusted daemon configuration. Secrets never belong in argv or temporary request files. The runtime must reject any `protocolVersion` other than `1` with a clear stderr diagnostic and non-zero exit. Every public v1 object schema is strict at every nested object boundary, so unknown keys—including private authority—fail instead of being stripped. Extensibility belongs only in the explicit `options`, workload `env`, and lifecycle-environment maps. The optional create `purpose: "provider-probe"` field and create-only response field `materializedFreshContent` were added before external v1 adoption. Runtimes that optimize probe placement may use `purpose`; omission retains ordinary workspace creation. Every `create` response must set `materializedFreshContent`: `true` only when that call created fresh workspace content/resources on which repo setup is permitted, and `false` when it adopted or reused existing content. `resume` state responses omit it.
 
+`project.source` is either a host directory or a Git URL plus a required revision string and optional subdirectory. An empty Git revision selects the remote's default state. Paseo derives this source before invoking the runtime; `placement.cwd` and `hostVisiblePath` never override it. A `provider-probe` create must expose the same runtime environment as a user workspace but must not execute repository setup. The checked-in JSON example uses this purpose so wrappers can lock its exact bytes.
+
+The built-in Docker adapter owns image selection, project volumes, and configured bind mounts. Bind mounts are daemon configuration, not contract fields: a wrapper receives only its trusted `options`. Keep runtime-specific mount, container, VM, or supervisor authority out of lifecycle state and placement.
+
 ## Exec file descriptors
 
 The workload owns fd 0, 1, and 2. Preserve their normal stdin, stdout, stderr, EOF, exit-code, and signal behavior.
@@ -43,3 +47,5 @@ The configured runtime environment must provide the compatible `paseo-workspace-
 ## Compatibility
 
 Version 1 targets macOS/Linux hosts and POSIX runtime environments. Unknown v1 fields are rejected; future fields require a new protocol version. A semantic change to framing, fd ownership, lifecycle, or cleanup also increments the protocol version. Paseo fails closed on a version mismatch; it never falls back to host execution.
+
+The private `@getpaseo/fixture-workspace-runtime` package is the executable contract fixture. It records the validated create input, can copy a host-directory source into an owned root, exposes deterministic failure and placement options, and runs workloads through both pipe and PTY framing. It is test infrastructure, not a production runtime or a second schema owner; all validation comes from this package's exported schemas.

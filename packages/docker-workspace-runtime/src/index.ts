@@ -173,6 +173,7 @@ async function create(
       "run",
       "--rm",
       ...mounts,
+      ...dockerBindMountArguments(bindMounts),
       image,
       "/bin/sh",
       "-c",

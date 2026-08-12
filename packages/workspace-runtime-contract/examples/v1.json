@@ -10,7 +10,12 @@
       "workspaceId": "workspace-01",
       "project": {
         "projectId": "project-01",
-        "source": { "kind": "host-directory", "path": "/source/project" }
+        "source": {
+          "kind": "git",
+          "url": "https://example.test/acme/project.git",
+          "revision": "main",
+          "subdirectory": "packages/app"
+        }
       },
       "placement": { "kind": "existing" },
       "purpose": "provider-probe"
@@ -77,7 +82,7 @@
   },
   "bytes": {
     "describeResponse": "{\"protocolVersion\":1,\"modes\":[\"pipes\",\"pty\"],\"reconcile\":true}\n",
-    "lifecycleRequest": "{\"protocolVersion\":1,\"input\":{\"workspaceId\":\"workspace-01\",\"project\":{\"projectId\":\"project-01\",\"source\":{\"kind\":\"host-directory\",\"path\":\"/source/project\"}},\"placement\":{\"kind\":\"existing\"},\"purpose\":\"provider-probe\"},\"options\":{}}\n",
+    "lifecycleRequest": "{\"protocolVersion\":1,\"input\":{\"workspaceId\":\"workspace-01\",\"project\":{\"projectId\":\"project-01\",\"source\":{\"kind\":\"git\",\"url\":\"https://example.test/acme/project.git\",\"revision\":\"main\",\"subdirectory\":\"packages/app\"}},\"placement\":{\"kind\":\"existing\"},\"purpose\":\"provider-probe\"},\"options\":{}}\n",
     "lifecycleResponse": "{\"type\":\"state\",\"protocolVersion\":1,\"state\":{\"workspaceId\":\"workspace-01\",\"lifecycle\":\"ready\"},\"placement\":{\"cwd\":\"/workspace\"},\"materializedFreshContent\":true}\n",
     "pipeSpawnControl": "{\"type\":\"spawn\",\"protocolVersion\":1,\"argv\":[\"/bin/sh\",\"-c\",\"printf hello\"],\"cwd\":\"packages/app\",\"env\":{\"PATH\":\"/usr/bin:/bin\"},\"purpose\":{\"kind\":\"workspace-script\",\"script\":\"verify\"},\"options\":{},\"execId\":\"exec-pipe-01\",\"stdio\":{\"kind\":\"pipes\"}}\n",
     "ptySpawnControl": "{\"type\":\"spawn\",\"protocolVersion\":1,\"argv\":[\"/bin/sh\",\"-c\",\"printf hello\"],\"cwd\":\"packages/app\",\"env\":{\"PATH\":\"/usr/bin:/bin\"},\"purpose\":{\"kind\":\"workspace-script\",\"script\":\"verify\"},\"options\":{},\"execId\":\"exec-pty-01\",\"stdio\":{\"kind\":\"pty\",\"rows\":24,\"cols\":80,\"term\":\"xterm-256color\"}}\n",

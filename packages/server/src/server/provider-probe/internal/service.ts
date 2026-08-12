@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { runGitCommand } from "../../../utils/run-git-command.js";
+import { projectRuntimeSource } from "../../workspace-registry.js";
 import type {
   ProviderProbeClock,
   ProviderProbeService,
@@ -122,7 +123,7 @@ export function createService(options: ServiceOptions): ProviderProbeService {
     const timestamp = clock.now().toISOString();
     const fingerprint = await probeFingerprint({
       projectId: project.projectId,
-      rootPath: project.rootPath,
+      source: projectRuntimeSource(project),
       runtimeId: input.runtimeId,
       runtimeConfiguration: options.runtimeConfiguration?.[input.runtimeId],
     });
@@ -166,7 +167,7 @@ export function createService(options: ServiceOptions): ProviderProbeService {
         runtimeId: input.runtimeId,
         project: {
           id: project.projectId,
-          source: { kind: "host-directory", path: project.rootPath },
+          source: projectRuntimeSource(project),
         },
         placement: { kind: "existing" },
         purpose: "provider-probe",
@@ -210,7 +211,7 @@ export function createService(options: ServiceOptions): ProviderProbeService {
     }
     const fingerprint = await probeFingerprint({
       projectId: project.projectId,
-      rootPath: project.rootPath,
+      source: projectRuntimeSource(project),
       runtimeId: record.runtimeId,
       runtimeConfiguration: options.runtimeConfiguration?.[record.runtimeId],
     });
@@ -327,11 +328,15 @@ function probeWorkspaceId(projectId: string, runtimeId: string): string {
 
 async function probeFingerprint(input: {
   projectId: string;
-  rootPath: string;
+  source: ReturnType<typeof projectRuntimeSource>;
   runtimeId: string;
   runtimeConfiguration: unknown;
 }): Promise<string> {
-  return hash({ ...input, sourceRevision: await resolveSourceRevision(input.rootPath) });
+  const sourceRevision =
+    input.source.kind === "host-directory"
+      ? await resolveSourceRevision(input.source.path)
+      : input.source.revision || null;
+  return hash({ ...input, sourceRevision });
 }
 
 async function resolveSourceRevision(rootPath: string): Promise<string | null> {

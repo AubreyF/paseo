@@ -448,7 +448,19 @@ async function signal(id, execId, signalName) {
   await waitForProcessExit(pid);
   await rm(execFile(id, execId, options), { force: true });
   if (options.signalHelperFailure === "error") throw new Error("fixture signal helper failed");
-  if (options.signalHelperFailure === "hang") await new Promise(() => {});
+  if (options.signalHelperFailure === "hang") {
+    if (options.signalHelperDescendantPidFileName) {
+      const state = await readState(id, options);
+      const descendant = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
+        stdio: "ignore",
+      });
+      await writeFile(
+        path.join(state.root, options.signalHelperDescendantPidFileName),
+        String(descendant.pid),
+      );
+    }
+    await new Promise(() => setInterval(() => {}, 1_000));
+  }
 }
 
 async function waitForProcessExit(pid) {

@@ -183,7 +183,7 @@ export function createService(
           ownsNewResource = before.status === "missing";
           if (ready.state.lifecycle === "ready") {
             const helper = bindWorkspaceHelper({
-              command: driver.workspaceHelperCommand,
+              command: driver.workspaceHelper.command,
               launch: (argv) => launchHelper(driver, input.workspaceId, argv),
             });
             try {
@@ -544,7 +544,7 @@ export function createService(
     }
     if (cached) await cached.client.close();
     const client = bindWorkspaceHelper({
-      command: driver.workspaceHelperCommand,
+      command: driver.workspaceHelper.command,
       launch: async (argv) => {
         return launchHelper(driver, workspaceId, argv);
       },
@@ -626,7 +626,7 @@ export function createService(
     const runtimeProcess = await driver.spawn({
       workspaceId,
       argv,
-      env: {},
+      env: driver.workspaceHelper.env,
       purpose: { kind: "workspace-helper" },
       stdio: { kind: "pipes" },
     });

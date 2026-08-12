@@ -9,7 +9,7 @@ import type {
   WorkspaceRuntimeDriver,
 } from "../drivers/index.js";
 import { resolveRuntimeCwd, spawnHostProcess, spawnHostPty } from "./host-process.js";
-import { hostWorkspaceHelperCommand } from "./host-helper.js";
+import { hostWorkspaceHelper } from "./host-helper.js";
 import type { HostGitObservationOwner } from "./host-git-observation.js";
 import { createRuntimeStateStore } from "./runtime-state.js";
 
@@ -55,7 +55,7 @@ export function createLocalRuntime(
   return {
     id: "local",
     requiresGitProject: false,
-    workspaceHelperCommand: hostWorkspaceHelperCommand,
+    workspaceHelper: hostWorkspaceHelper,
     scriptTerminal: { kind: "persistent-shell" },
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);

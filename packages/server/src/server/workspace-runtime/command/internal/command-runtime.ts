@@ -24,7 +24,7 @@ import type {
   WorkspacePtyProcess,
   WorkspaceRuntimeDriver,
 } from "../../drivers/index.js";
-const COMMAND_RUNTIME_CLEANUP_TIMEOUT_MS = 1_000;
+const COMMAND_RUNTIME_CLEANUP_TIMEOUT_MS = 750;
 
 export interface CommandRuntimeConfig {
   command: readonly [string, ...string[]];
@@ -76,7 +76,10 @@ export function createCommandRuntime(
     id: runtimeId,
     requiresGitProject: true,
     reconciliationDomainId: JSON.stringify({ command: config.command, options: config.options }),
-    workspaceHelperCommand: config.helperCommand ?? ["paseo-workspace-helper"],
+    workspaceHelper: {
+      command: config.helperCommand ?? ["paseo-workspace-helper"],
+      env: {},
+    },
     scriptTerminal: { kind: "direct-command", command: "/bin/sh", argsPrefix: ["-lc"] },
     async create(input) {
       const response = await lifecycle("create", input.workspaceId, input);
@@ -204,6 +207,7 @@ function spawnCommandPty(
     [...command.slice(1), "exec", "--workspace-id", input.workspaceId],
     {
       env: commandEnvironment(),
+      detached: process.platform !== "win32",
       shell: false,
       stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
     },
@@ -421,7 +425,7 @@ async function forceKillCommandRuntime(
   workspaceId: string,
   execId: string,
   options: Readonly<Record<string, unknown>>,
-  wrapper: { kill(signal?: NodeJS.Signals): boolean },
+  wrapper: { pid?: number; kill(signal?: NodeJS.Signals): boolean },
   wrapperClosed: Promise<void>,
 ): Promise<void> {
   const signalCommand = spawn(
@@ -436,7 +440,12 @@ async function forceKillCommandRuntime(
       "--signal",
       "SIGKILL",
     ],
-    { env: commandEnvironment(), shell: false, stdio: ["pipe", "ignore", "pipe"] },
+    {
+      env: commandEnvironment(),
+      detached: process.platform !== "win32",
+      shell: false,
+      stdio: ["pipe", "ignore", "pipe"],
+    },
   );
   let signalStderr = "";
   signalCommand.stderr.on("data", (chunk: Buffer | string) => {
@@ -471,12 +480,12 @@ async function forceKillCommandRuntime(
   let cleanupError: Error | null = null;
   if (helper.timedOut) {
     cleanupError = new Error("signal helper timed out");
-    signalCommand.kill("SIGKILL");
+    killOwnedProcessGroup(signalCommand, "SIGKILL");
   } else {
     cleanupError = helper.value;
-    if (cleanupError) signalCommand.kill("SIGKILL");
+    if (cleanupError) killOwnedProcessGroup(signalCommand, "SIGKILL");
   }
-  wrapper.kill("SIGKILL");
+  killOwnedProcessGroup(wrapper, "SIGKILL");
   const wrapperResult = await waitBounded(wrapperClosed, COMMAND_RUNTIME_CLEANUP_TIMEOUT_MS);
   if (wrapperResult.timedOut) {
     const wrapperError = new Error("wrapper remained alive after SIGKILL");
@@ -538,6 +547,7 @@ function spawnCommandProcess(
     [...command.slice(1), "exec", "--workspace-id", input.workspaceId],
     {
       env: commandEnvironment(),
+      detached: process.platform !== "win32",
       shell: false,
       stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
     },
@@ -699,6 +709,18 @@ function spawnCommandProcess(
         ),
       );
     })();
+  }
+}
+
+function killOwnedProcessGroup(
+  child: { pid?: number; kill(signal?: NodeJS.Signals): boolean },
+  signal: NodeJS.Signals,
+): void {
+  try {
+    if (process.platform === "win32" || !child.pid) child.kill(signal);
+    else process.kill(-child.pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
   }
 }
 

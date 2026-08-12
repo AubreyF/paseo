@@ -367,6 +367,82 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
   }
 }, 180_000);
 
+test("production archive and deletion reap Docker runtime processes and owned resources", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-docker-lifecycle-cleanup-"));
+  const repo = await createRepository(root);
+  const paseoHome = path.join(root, "paseo-home");
+  const workspaceId = `docker-lifecycle-cleanup-${Date.now()}`;
+  const runtimeIds = new Map<string, string>();
+  const archivedWorkspaceIds = new Set<string>();
+  const service = createWorkspaceRuntimeService({
+    paseoHome,
+    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
+    persistRuntimeId: async (id, runtimeId) => void runtimeIds.set(id, runtimeId),
+    beginWorkspaceDeletion: async () => {},
+    archiveWorkspaceRecord: async (id) => void archivedWorkspaceIds.add(id),
+    restoreWorkspaceRecord: async (id) => void archivedWorkspaceIds.delete(id),
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+      archivedWorkspaceIds.delete(id);
+    },
+    externalRuntimes: { docker: { type: "docker", image } },
+  });
+
+  onTestFinished(async () => {
+    await service.destroy(workspaceId).catch(() => undefined);
+    const leakedContainers = dockerResourceCount("ps", workspaceId);
+    const leakedVolumes = dockerResourceCount("volume", workspaceId);
+    const leakedProcesses = dockerTestProcessPids(new Set([workspaceId]));
+    await rm(root, { recursive: true, force: true });
+    if (leakedContainers || leakedVolumes || leakedProcesses.length) {
+      throw new Error(
+        `Production lifecycle leaked containers=${leakedContainers} volumes=${leakedVolumes} processes=${leakedProcesses.join(",")}`,
+      );
+    }
+  }, 30_000);
+
+  await service.create({
+    workspaceId,
+    runtimeId: "docker",
+    project: {
+      id: "docker-lifecycle-cleanup-project",
+      source: { kind: "host-directory", path: repo },
+    },
+    placement: { kind: "existing" },
+    purpose: "provider-probe",
+  });
+  const runtimeProcess = await service.run({
+    workspaceId,
+    argv: [
+      "/usr/local/bin/node",
+      "-e",
+      "process.on('SIGTERM',()=>{});console.log('owned-ready');setInterval(()=>{},1000)",
+    ],
+    env: {},
+    purpose: { kind: "provider-probe", provider: "codex" },
+  });
+  runtimeProcess.stdin.end();
+  await expect(waitForOutput(runtimeProcess.stdout, "owned-ready")).resolves.toContain(
+    "owned-ready",
+  );
+
+  await service.archive(workspaceId);
+  expect(archivedWorkspaceIds).toContain(workspaceId);
+  await expect(runtimeProcess.exited).resolves.toEqual({ code: null, signal: "SIGKILL" });
+  expect(dockerRunningContainerCount(workspaceId)).toBe(0);
+  expect(dockerResourceCount("ps", workspaceId)).toBe(1);
+  expect(dockerResourceCount("volume", workspaceId)).toBe(1);
+  expect(dockerTestProcessPids(new Set([workspaceId]))).toEqual([]);
+
+  await service.destroy(workspaceId);
+  await service.destroy(workspaceId);
+  expect(runtimeIds.has(workspaceId)).toBe(false);
+  expect(archivedWorkspaceIds.has(workspaceId)).toBe(false);
+  expect(dockerResourceCount("ps", workspaceId)).toBe(0);
+  expect(dockerResourceCount("volume", workspaceId)).toBe(0);
+  expect(dockerTestProcessPids(new Set([workspaceId]))).toEqual([]);
+}, 60_000);
+
 test("Docker buffers immediate pipe signals until the workload identity is authoritative", async () => {
   const fixture = await dockerTestFixture("paseo-runtime-docker-started-");
   const root = fixture.root;

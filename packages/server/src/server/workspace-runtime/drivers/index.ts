@@ -99,8 +99,11 @@ export interface WorkspaceRuntimeDriver {
   readonly id: WorkspaceRuntimeId;
   readonly requiresGitProject: boolean;
   readonly reconciliationDomainId?: string;
-  /** Runtime-local command for Paseo's compatible workspace helper. */
-  readonly workspaceHelperCommand: readonly [string, ...string[]];
+  /** Runtime-local launch specification for Paseo's compatible workspace helper. */
+  readonly workspaceHelper: {
+    command: readonly [string, ...string[]];
+    env: Readonly<Record<string, string>>;
+  };
   readonly scriptTerminal: import("../index.js").WorkspaceScriptTerminal;
   create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverCreation>;
   inspect(workspaceId: WorkspaceId): Promise<WorkspaceDriverInspection>;

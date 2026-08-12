@@ -655,6 +655,60 @@ test.each(["error", "hang"] as const)(
   5_000,
 );
 
+test("archive and permanent deletion reap runtime-owned processes when forced cleanup hangs", async () => {
+  const descendantPidFileName = "signal-helper-descendant.pid";
+  const fixture = await createFixture("lifecycle-hanging-cleanup", false, "pty", {
+    signalHelperFailure: "hang",
+    signalHelperDescendantPidFileName: descendantPidFileName,
+  });
+  const pidFile = path.join(fixture.source, "lifecycle-workload.pid");
+  const descendantPidFile = path.join(fixture.source, descendantPidFileName);
+  await fixture.service.create(fixture.createInput);
+  const workload = await fixture.service.run({
+    workspaceId: fixture.workspaceId,
+    argv: [
+      processExecPath(),
+      "-e",
+      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`,
+    ],
+    env: {},
+    purpose: { kind: "provider-probe", provider: "codex" },
+  });
+  workload.stdin.end();
+  const workloadPid = await vi.waitFor(async () => {
+    const pid = Number(await readFile(pidFile, "utf8"));
+    expect(processExists(pid)).toBe(true);
+    return pid;
+  });
+  let descendantPid: number | undefined;
+
+  try {
+    await fixture.service.archive(fixture.workspaceId);
+    descendantPid = Number(await readFile(descendantPidFile, "utf8"));
+    expect(fixture.archivedWorkspaceIds).toContain(fixture.workspaceId);
+    await expect(workload.exited).rejects.toThrow("forced process cleanup failed");
+    expect(processExists(workloadPid)).toBe(false);
+    expect(processExists(descendantPid)).toBe(false);
+    expect(runtimeAdapterProcesses(fixture.workspaceId)).toEqual([]);
+
+    await fixture.service.destroy(fixture.workspaceId);
+    await fixture.service.destroy(fixture.workspaceId);
+    expect(fixture.archivedWorkspaceIds).not.toContain(fixture.workspaceId);
+    expect(await readdir(fixture.stateDirectory)).toEqual([]);
+    expect(runtimeAdapterProcesses(fixture.workspaceId)).toEqual([]);
+  } finally {
+    if (processExists(workloadPid)) {
+      try {
+        process.kill(-workloadPid, "SIGKILL");
+      } catch {
+        // Failure-only containment for the process ownership assertion above.
+      }
+    }
+    if (descendantPid && processExists(descendantPid)) process.kill(descendantPid, "SIGKILL");
+    await fixture.service.destroy(fixture.workspaceId).catch(() => undefined);
+  }
+}, 10_000);
+
 test("run admission racing pause cannot leave an unregistered workload running", async () => {
   const fixture = await createFixture("race", true);
   await fixture.service.create(fixture.createInput);
@@ -714,6 +768,7 @@ async function createFixture(
   const barrierDirectory = path.join(root, "barrier");
   await Promise.all([mkdir(source), mkdir(stateDirectory), mkdir(barrierDirectory)]);
   const runtimeIds = new Map<string, string>();
+  const archivedWorkspaceIds = new Set<string>();
   const workspaceId = `${name}-workspace`;
   const service = createWorkspaceRuntimeService({
     paseoHome: path.join(root, "paseo-home"),
@@ -722,8 +777,11 @@ async function createFixture(
       runtimeIds.set(id, runtimeId);
     },
     beginWorkspaceDeletion: async () => {},
+    archiveWorkspaceRecord: async (id) => void archivedWorkspaceIds.add(id),
+    restoreWorkspaceRecord: async (id) => void archivedWorkspaceIds.delete(id),
     removeWorkspaceRecord: async (id) => {
       runtimeIds.delete(id);
+      archivedWorkspaceIds.delete(id);
     },
     externalRuntimes: {
       fixture: {
@@ -751,6 +809,7 @@ async function createFixture(
     stateDirectory,
     barrierDirectory,
     workspaceId,
+    archivedWorkspaceIds,
     service,
     createInput: {
       workspaceId,
@@ -778,6 +837,12 @@ function processExists(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
+}
+
+function runtimeAdapterProcesses(workspaceId: string): string[] {
+  return execFileSync("ps", ["-axo", "command="], { encoding: "utf8" })
+    .split("\n")
+    .filter((command) => command.includes(fixtureExecutable) && command.includes(workspaceId));
 }
 
 function nextFile(directory: string, expectedName: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./paseo-home-fork";
@@ -139,6 +140,40 @@ async function applyMetadataFork(targetHome: string, providerIds: string[]): Pro
   );
 }
 
+async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> {
+  if (process.env.E2E_DESKTOP_RUNTIME !== "1") return;
+  const configPath = path.join(paseoHome, "config.json");
+  const existing = existsSync(configPath) ? JSON.parse(await readFile(configPath, "utf8")) : {};
+  const stateDirectory = path.join(paseoHome, "fixture-runtime");
+  await mkdir(stateDirectory, { recursive: true });
+  await writeFile(
+    configPath,
+    `${JSON.stringify({
+      ...existing,
+      version: 1,
+      workspaceRuntimes: {
+        ...existing.workspaceRuntimes,
+        fixture: {
+          type: "command",
+          label: "Fixture",
+          command: [
+            process.execPath,
+            path.resolve(__dirname, "../../../../fixture-workspace-runtime/src/index.mjs"),
+          ],
+          helperCommand: [
+            process.execPath,
+            path.resolve(
+              __dirname,
+              "../../../../server/src/server/workspace-helper/executable.mjs",
+            ),
+          ],
+          options: { stateDirectory },
+        },
+      },
+    })}\n`,
+  );
+}
+
 export async function startE2EWorker(
   workerIndex: number,
   options: { forkProviders?: string[] } = {},
@@ -154,6 +189,7 @@ export async function startE2EWorker(
 
   try {
     await applyMetadataFork(paseoHome, options.forkProviders ?? []);
+    await configureDesktopFixtureRuntime(paseoHome);
     const daemon = await startIsolatedHostDaemon(serverId, {
       paseoHome,
       preserveHome,

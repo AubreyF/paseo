@@ -2714,6 +2714,65 @@ test("sends first-agent prompt context with workspace.create.request", async () 
   });
 });
 
+test("lists workspace runtimes and sends an explicit creation runtime", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_runtime_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const listPromise = client.listWorkspaceRuntimes("req-runtime-list");
+  expect(parseSentFrame(mock.sent.at(-1)!)).toEqual({
+    type: "workspace.runtime.list.request",
+    requestId: "req-runtime-list",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.runtime.list.response",
+      payload: {
+        requestId: "req-runtime-list",
+        runtimes: [{ runtimeId: "fixture", builtin: false, requiresGitProject: true }],
+      },
+    }),
+  );
+  await expect(listPromise).resolves.toMatchObject({
+    runtimes: [{ runtimeId: "fixture", builtin: false, requiresGitProject: true }],
+  });
+
+  const createPromise = client.createWorkspace(
+    {
+      source: { kind: "directory", path: "/tmp/project" },
+      runtimeId: "fixture",
+    },
+    "req-runtime-create",
+  );
+  expect(parseSentFrame(mock.sent.at(-1)!)).toEqual({
+    type: "workspace.create.request",
+    requestId: "req-runtime-create",
+    runtimeId: "fixture",
+    source: { kind: "directory", path: "/tmp/project" },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.create.response",
+      payload: {
+        requestId: "req-runtime-create",
+        workspace: null,
+        setupTerminalId: null,
+        error: "fixture sentinel",
+      },
+    }),
+  );
+  await expect(createPromise).resolves.toMatchObject({ error: "fixture sentinel" });
+});
+
 test("sends project.remove.request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

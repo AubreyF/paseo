@@ -1042,6 +1042,7 @@ export const ar: TranslationResources = {
   newWorkspace: {
     title: "مساحة عمل جديدة",
     create: "يخلق",
+    runtime: { local: "محلي", worktree: "شجرة العمل", docker: "Docker", label: "بيئة التشغيل" },
     isolation: {
       local: "محلي",
       worktree: "شجرة عمل جديدة",
@@ -1063,6 +1064,7 @@ export const ar: TranslationResources = {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
+      runtime: "Choose where the workspace runs",
       startingRef: "اختر من أين تبدأ",
       launch: "Choose what to launch",
     },

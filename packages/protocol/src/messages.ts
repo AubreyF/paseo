@@ -2172,12 +2172,25 @@ export const ArchiveWorkspaceRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceRuntimeCatalogEntrySchema = z.object({
+  runtimeId: z.string(),
+  builtin: z.boolean(),
+  label: z.string().optional(),
+  requiresGitProject: z.boolean(),
+});
+
+export const WorkspaceRuntimeListRequestSchema = z.object({
+  type: z.literal("workspace.runtime.list.request"),
+  requestId: z.string(),
+});
+
 // Create a new workspace record. Unlike open_project, this never deduplicates by
 // directory: it always produces a fresh workspace. The source discriminates
 // between an existing local directory and a newly created paseo worktree.
 export const WorkspaceCreateRequestSchema = z.object({
   type: z.literal("workspace.create.request"),
   requestId: z.string(),
+  runtimeId: z.string().optional(),
   // Optional user-set title applied to the created workspace.
   title: z.string().optional(),
   // Optional prompt context for workspace-level name/branch generation.
@@ -2733,6 +2746,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectGithubCloneRequestSchema,
   ArchiveWorkspaceRequestSchema,
   WorkspaceCreateRequestSchema,
+  WorkspaceRuntimeListRequestSchema,
   WorkspaceClearAttentionRequestSchema,
   FileExplorerRequestSchema,
   FileSubscribeRequestSchema,
@@ -2981,6 +2995,8 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
+        // COMPAT(workspaceRuntimes): added in v0.3.2, remove gate after 2027-02-11.
+        workspaceRuntimes: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -3959,6 +3975,14 @@ export const WorkspaceCreateResponseSchema = z.object({
     setupTerminalId: z.string().nullable(),
     error: z.string().nullable(),
     errorCode: z.string().optional(),
+    requestId: z.string(),
+  }),
+});
+
+export const WorkspaceRuntimeListResponseSchema = z.object({
+  type: z.literal("workspace.runtime.list.response"),
+  payload: z.object({
+    runtimes: z.array(WorkspaceRuntimeCatalogEntrySchema),
     requestId: z.string(),
   }),
 });
@@ -5551,6 +5575,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
+  WorkspaceRuntimeListResponseSchema,
   WorkspaceClearAttentionResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
@@ -5778,6 +5803,10 @@ export type WorkspaceRecoveryRestoreResponse = z.infer<
 >;
 export type WorkspaceCreateRequest = z.infer<typeof WorkspaceCreateRequestSchema>;
 export type WorkspaceCreateResponse = z.infer<typeof WorkspaceCreateResponseSchema>;
+export type WorkspaceRuntimeCatalogEntry = z.infer<typeof WorkspaceRuntimeCatalogEntrySchema>;
+export type WorkspaceRuntimeListPayload = z.infer<
+  typeof WorkspaceRuntimeListResponseSchema
+>["payload"];
 export type ProjectRenameResponsePayload = z.infer<typeof ProjectRenameResponsePayloadSchema>;
 export type ProjectRemoveResponsePayload = z.infer<typeof ProjectRemoveResponsePayloadSchema>;
 export type WaitForFinishResponseMessage = z.infer<typeof WaitForFinishResponseMessageSchema>;

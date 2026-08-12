@@ -9,6 +9,7 @@ test("selected Git addresses cannot become legacy through empty or omitted ident
   const record = {
     workspaceId: "workspace-selected",
     cwd,
+    hostVisiblePath: null,
     runtime: { runtimeId: "command" },
   };
   const get = vi.fn(async (workspaceId: string) =>
@@ -51,6 +52,25 @@ test.each(["", "   "])(
     expect(get).not.toHaveBeenCalled();
   },
 );
+
+test("legacy Git addresses remain available for host-visible runtime placements", async () => {
+  const cwd = "/shared";
+  const legacy = { cwd } as WorkspaceGitWorkspace;
+  const record = {
+    workspaceId: "workspace-local",
+    cwd,
+    hostVisiblePath: cwd,
+    runtime: { runtimeId: "local" },
+  };
+  const bindLegacy = vi.fn(() => legacy);
+  const directory = createWorkspaceGitDirectory({
+    workspaceRegistry: { get: vi.fn(), list: async () => [record] },
+    workspaceGitService: { bindWorkspace: vi.fn(), bindLegacy },
+  });
+
+  await expect(directory.resolve({ kind: "legacy", cwd })).resolves.toBe(legacy);
+  expect(bindLegacy).toHaveBeenCalledWith(cwd);
+});
 
 test("selected Git addresses normalize both fields before registry lookup", async () => {
   const record = {

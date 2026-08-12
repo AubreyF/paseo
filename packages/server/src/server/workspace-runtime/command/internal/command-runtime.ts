@@ -74,6 +74,7 @@ export function createCommandRuntime(
 
   return {
     id: runtimeId,
+    requiresGitProject: true,
     reconciliationDomainId: JSON.stringify({ command: config.command, options: config.options }),
     workspaceHelperCommand: config.helperCommand ?? ["paseo-workspace-helper"],
     async create(input) {
@@ -426,8 +427,12 @@ async function forceKillCommandRuntime(
       "--signal",
       "SIGKILL",
     ],
-    { env: commandEnvironment(), shell: false, stdio: ["pipe", "ignore", "ignore"] },
+    { env: commandEnvironment(), shell: false, stdio: ["pipe", "ignore", "pipe"] },
   );
+  let signalStderr = "";
+  signalCommand.stderr.on("data", (chunk: Buffer | string) => {
+    signalStderr += chunk.toString();
+  });
   const signalResult = new Promise<Error | null>((resolve) => {
     let finished = false;
     const finish = (error: Error | null) => {
@@ -439,7 +444,11 @@ async function forceKillCommandRuntime(
     signalCommand.stdin.once("error", (error) => finish(error));
     signalCommand.once("close", (code, signal) =>
       finish(
-        code === 0 ? null : new Error(`signal helper failed (${code ?? signal ?? "unknown"})`),
+        code === 0
+          ? null
+          : new Error(
+              `signal helper failed (${code ?? signal ?? "unknown"})${signalStderr.trim() ? `: ${signalStderr.trim()}` : ""}`,
+            ),
       ),
     );
   });
@@ -615,18 +624,29 @@ function spawnCommandProcess(
   function deliverSignal(signal: NodeJS.Signals): void {
     pendingSignal = null;
     if (signal === "SIGKILL") {
-      void forceKillCommandRuntime(
-        command,
-        input.workspaceId,
-        execId,
-        options,
-        child,
-        exited.then(
-          () => undefined,
-          () => undefined,
-        ),
-      ).catch(() => undefined);
-    } else child.kill(signal);
+      cleanup = (async () => {
+        try {
+          await forceKillCommandRuntime(
+            command,
+            input.workspaceId,
+            execId,
+            options,
+            child,
+            wrapperClosedPromise,
+          );
+          settled = true;
+          resolveExit({ code: null, signal });
+        } catch (error) {
+          settled = true;
+          const reason = error instanceof Error ? error.message : String(error);
+          rejectExit(
+            new Error(`Workspace runtime ${runtimeId} forced process cleanup failed: ${reason}`),
+          );
+        }
+      })();
+      return;
+    }
+    child.kill(signal);
   }
 
   function finish(): void {

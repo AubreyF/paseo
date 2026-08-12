@@ -30,6 +30,72 @@ afterEach(async () => {
   );
 });
 
+test("lists built-in and configured runtimes in registration order", async () => {
+  const root = await temporaryRoot("catalog");
+  const service = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "home"),
+    externalRuntimes: {
+      fixture: {
+        type: "command",
+        label: "Fixture",
+        command: [process.execPath, fixtureRuntimeExecutable],
+        helperCommand: [process.execPath, helperExecutable],
+      },
+    },
+    resolveRuntimeId: async () => null,
+    persistRuntimeId: async () => {},
+  });
+
+  expect(service.listRuntimes()).toEqual([
+    { runtimeId: "local", builtin: true, requiresGitProject: false },
+    { runtimeId: "worktree", builtin: true, requiresGitProject: true },
+    { runtimeId: "docker", builtin: true, requiresGitProject: true },
+    {
+      runtimeId: "fixture",
+      builtin: false,
+      label: "Fixture",
+      requiresGitProject: true,
+    },
+  ]);
+});
+
+test("omits the built-in Docker runtime when its registration is disabled", async () => {
+  const root = await temporaryRoot("catalog-docker-disabled");
+  const service = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "home"),
+    externalRuntimes: {
+      docker: { type: "docker", enabled: false },
+      fixture: {
+        type: "command",
+        label: "Fixture",
+        command: [process.execPath, fixtureRuntimeExecutable],
+        helperCommand: [process.execPath, helperExecutable],
+      },
+    },
+    resolveRuntimeId: async () => null,
+    persistRuntimeId: async () => {},
+  });
+
+  expect(service.listRuntimes()).toEqual([
+    { runtimeId: "local", builtin: true, requiresGitProject: false },
+    { runtimeId: "worktree", builtin: true, requiresGitProject: true },
+    {
+      runtimeId: "fixture",
+      builtin: false,
+      label: "Fixture",
+      requiresGitProject: true,
+    },
+  ]);
+  await expect(
+    service.create({
+      workspaceId: "disabled-docker",
+      runtimeId: "docker",
+      project: { id: "disabled-docker", source: { kind: "host-directory", path: root } },
+      placement: { kind: "existing" },
+    }),
+  ).rejects.toThrow("Workspace runtime is not registered: docker");
+});
+
 posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId) => {
   test("bound runtime exposes only process, file, and command-resolution primitives", async () => {
     const fixture = await createFixture(runtimeId);

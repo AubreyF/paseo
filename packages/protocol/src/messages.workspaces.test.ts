@@ -5,6 +5,8 @@ import {
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
   WorkspaceCreateRequestSchema,
+  WorkspaceRuntimeListRequestSchema,
+  WorkspaceRuntimeListResponseSchema,
   WorkspaceDescriptorPayloadSchema,
   WorkspaceScriptPayloadSchema,
 } from "./messages.js";
@@ -1117,5 +1119,46 @@ describe("workspace message schemas", () => {
     });
     expect(newDirectory.type).toBe("workspace.create.request");
     expect(newDirectory.source.kind).toBe("directory");
+  });
+
+  test("workspace runtime catalog and optional create selection stay wire-compatible", () => {
+    expect(
+      WorkspaceRuntimeListRequestSchema.parse({
+        type: "workspace.runtime.list.request",
+        requestId: "runtime-list",
+      }),
+    ).toEqual({ type: "workspace.runtime.list.request", requestId: "runtime-list" });
+    expect(
+      WorkspaceRuntimeListResponseSchema.parse({
+        type: "workspace.runtime.list.response",
+        payload: {
+          requestId: "runtime-list",
+          runtimes: [
+            { runtimeId: "local", builtin: true, requiresGitProject: false },
+            {
+              runtimeId: "fixture",
+              builtin: false,
+              label: "Fixture",
+              requiresGitProject: true,
+            },
+          ],
+        },
+      }).payload.runtimes,
+    ).toHaveLength(2);
+    expect(
+      WorkspaceCreateRequestSchema.parse({
+        type: "workspace.create.request",
+        requestId: "old-client",
+        source: { kind: "directory", path: "/repo" },
+      }),
+    ).not.toHaveProperty("runtimeId");
+    expect(
+      WorkspaceCreateRequestSchema.parse({
+        type: "workspace.create.request",
+        requestId: "new-client",
+        source: { kind: "directory", path: "/repo" },
+        runtimeId: "fixture",
+      }).runtimeId,
+    ).toBe("fixture");
   });
 });

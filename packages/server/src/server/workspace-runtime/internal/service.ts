@@ -34,6 +34,7 @@ const forcedStopMilliseconds = 1_000;
 export function createService(
   drivers: readonly WorkspaceRuntimeDriver[],
   records: WorkspaceRuntimeRecordStore,
+  catalogMetadata: ReadonlyMap<string, { builtin: boolean; label?: string }> = new Map(),
 ): WorkspaceRuntimeService {
   const driversById = new Map(drivers.map((driver) => [driver.id, driver]));
   const processesByWorkspaceId = new Map<string, Set<WorkspaceDriverProcess>>();
@@ -102,6 +103,16 @@ export function createService(
   }
 
   return {
+    listRuntimes() {
+      return drivers.map((driver) => {
+        const metadata = catalogMetadata.get(driver.id) ?? { builtin: false };
+        return {
+          runtimeId: driver.id,
+          ...metadata,
+          requiresGitProject: driver.requiresGitProject,
+        };
+      });
+    },
     async reconcile() {
       const runtimeRecords = (await records.listRuntimeRecords?.()) ?? [];
       const failures: unknown[] = [];

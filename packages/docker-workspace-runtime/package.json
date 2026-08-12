@@ -6,8 +6,11 @@
     "paseo-docker-workspace-runtime": "./dist/index.js"
   },
   "type": "module",
+  "main": "./dist/index.js",
   "scripts": {
+    "clean": "node ../../scripts/clean-package-dist.mjs",
     "build": "tsc -p tsconfig.json",
+    "build:clean": "npm run clean && npm run build",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "dependencies": {

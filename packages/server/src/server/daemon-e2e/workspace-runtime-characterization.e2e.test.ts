@@ -32,6 +32,12 @@ const FIXTURE_MODEL = "fixture-model";
 const fixtureAgentPath = fileURLToPath(
   new URL("../test-utils/fixtures/workspace-runtime-acp-agent.mjs", import.meta.url),
 );
+const fixtureRuntimePath = fileURLToPath(
+  new URL("../../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
+);
+const workspaceHelperPath = fileURLToPath(
+  new URL("../workspace-helper/executable.mjs", import.meta.url),
+);
 
 interface CharacterizedWorkspace {
   cwd: string;
@@ -410,6 +416,78 @@ describe("current workspace runtime journeys", () => {
       }
     }
   }, 120_000);
+});
+
+test("catalog selection creates through a configured runtime while omission remains local", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "workspace-runtime-selection-"));
+  cleanupRoots.push(root);
+  const repo = path.join(root, "repo");
+  const stateDirectory = path.join(root, "fixture-state");
+  mkdirSync(stateDirectory, { recursive: true });
+  execFileSync("git", ["init", "-b", "main", repo], { stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], { cwd: repo });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repo });
+  writeFileSync(path.join(repo, "selection.txt"), "fixture\n");
+  execFileSync("git", ["add", "."], { cwd: repo });
+  execFileSync("git", ["commit", "-m", "fixture"], { cwd: repo });
+  const selectedDaemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    workspaceRuntimes: {
+      fixture: {
+        type: "command",
+        label: "Fixture",
+        command: [process.execPath, fixtureRuntimePath],
+        helperCommand: [process.execPath, workspaceHelperPath],
+        options: { stateDirectory },
+      },
+    },
+  });
+  const selectedClient = new DaemonClient({
+    url: `ws://127.0.0.1:${selectedDaemon.port}/ws`,
+    reconnect: { enabled: false },
+  });
+  try {
+    await selectedClient.connect();
+    await expect(selectedClient.listWorkspaceRuntimes()).resolves.toMatchObject({
+      runtimes: [
+        { runtimeId: "local", builtin: true, requiresGitProject: false },
+        { runtimeId: "worktree", builtin: true, requiresGitProject: true },
+        { runtimeId: "docker", builtin: true, requiresGitProject: true },
+        {
+          runtimeId: "fixture",
+          builtin: false,
+          label: "Fixture",
+          requiresGitProject: true,
+        },
+      ],
+    });
+    const explicit = await selectedClient.createWorkspace({
+      source: { kind: "directory", path: repo },
+      runtimeId: "fixture",
+    });
+    const omitted = await selectedClient.createWorkspace({
+      source: { kind: "directory", path: repo },
+    });
+    if (!explicit.workspace || !omitted.workspace) {
+      throw new Error(explicit.error ?? omitted.error ?? "Workspace creation failed");
+    }
+    const records = JSON.parse(
+      readFileSync(path.join(selectedDaemon.paseoHome, "projects", "workspaces.json"), "utf8"),
+    ) as Array<{ workspaceId: string; runtime?: { runtimeId: string } }>;
+    expect(
+      records.find((record) => record.workspaceId === explicit.workspace?.id)?.runtime,
+    ).toEqual({
+      runtimeId: "fixture",
+    });
+    expect(records.find((record) => record.workspaceId === omitted.workspace?.id)?.runtime).toEqual(
+      {
+        runtimeId: "local",
+      },
+    );
+  } finally {
+    await selectedClient.close().catch(() => undefined);
+    await selectedDaemon.close();
+  }
 });
 
 test("selected worktree provider journey stays behind the public daemon and client boundary", async () => {

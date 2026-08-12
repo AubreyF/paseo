@@ -33,7 +33,7 @@ import {
 
 const repositoryRoot = fileURLToPath(new URL("../../../../..", import.meta.url));
 const dockerRuntimeRoot = path.join(repositoryRoot, "packages/docker-workspace-runtime");
-const runtimeExecutable = path.join(dockerRuntimeRoot, "src/index.ts");
+const runtimeExecutable = path.join(dockerRuntimeRoot, "dist/index.js");
 const image = "paseo-workspace-runtime-slice1:test";
 const fixtureAgent = fileURLToPath(
   new URL("../test-utils/fixtures/workspace-runtime-acp-agent.mjs", import.meta.url),
@@ -74,9 +74,8 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
     },
     externalRuntimes: {
       docker: {
-        type: "command",
-        command: [process.execPath, "--import", "tsx", runtimeExecutable] as const,
-        options: { image },
+        type: "docker",
+        image,
       },
     },
   };
@@ -339,7 +338,7 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
     const pauseStartedAt = Date.now();
     await recovered.pause(workspaceId);
     expect(Date.now() - pauseStartedAt).toBeLessThan(5_000);
-    await expect(stubborn.exited).resolves.toEqual({ code: null, signal: "SIGTERM" });
+    await expect(stubborn.exited).resolves.toEqual({ code: null, signal: "SIGKILL" });
     expect(
       execFileSync(
         "docker",
@@ -387,9 +386,8 @@ test("Docker buffers immediate pipe signals until the workload identity is autho
     },
     externalRuntimes: {
       docker: {
-        type: "command",
-        command: [process.execPath, "--import", "tsx", runtimeExecutable],
-        options: { image },
+        type: "docker",
+        image,
       },
     },
   });
@@ -494,9 +492,8 @@ test("a selected Docker service port script executes in the container and leaves
     },
     externalRuntimes: {
       docker: {
-        type: "command",
-        command: [process.execPath, "--import", "tsx", runtimeExecutable],
-        options: { image },
+        type: "docker",
+        image,
       },
     },
   });
@@ -544,13 +541,11 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
   const paseoHomeRoot = path.join(root, "daemon-home");
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
   await mkdir(paseoHome, { recursive: true });
-  const runtimeConfig = {
-    type: "command" as const,
-    command: [process.execPath, "--import", "tsx", runtimeExecutable] as const,
-    options: { image },
-  };
+  const runtimeConfig = { type: "docker" as const, image };
   const configuredRuntimeConfig = {
-    ...runtimeConfig,
+    type: "command" as const,
+    command: [process.execPath, runtimeExecutable] as const,
+    options: { image },
     providerEnvironment: { PASEO_DAEMON_ONLY_PROVIDER_ENV: "runtime-configured" },
   };
   const runtimeConfigs = { docker: runtimeConfig, "docker-configured": configuredRuntimeConfig };
@@ -806,9 +801,8 @@ test("Docker creation validates roots and rolls back when runtime selection cann
     },
     externalRuntimes: {
       docker: {
-        type: "command",
-        command: [process.execPath, "--import", "tsx", runtimeExecutable],
-        options: { image },
+        type: "docker",
+        image,
       },
     },
   });
@@ -860,9 +854,8 @@ test("Docker rejects a committed symlink cwd that resolves outside the selected 
     },
     externalRuntimes: {
       docker: {
-        type: "command",
-        command: [process.execPath, "--import", "tsx", runtimeExecutable],
-        options: { image },
+        type: "docker",
+        image,
       },
     },
   });
@@ -918,9 +911,8 @@ test("the Docker runtime never adopts or destroys an unowned deterministic resou
     },
     externalRuntimes: {
       docker: {
-        type: "command",
-        command: [process.execPath, "--import", "tsx", runtimeExecutable],
-        options: { image },
+        type: "docker",
+        image,
       },
     },
   });
@@ -983,9 +975,8 @@ test("Docker reconciliation removes only orphaned resources with deterministic n
     listRuntimeRecords: async () => [],
     externalRuntimes: {
       docker: {
-        type: "command",
-        command: [process.execPath, "--import", "tsx", runtimeExecutable],
-        options: { image },
+        type: "docker",
+        image,
       },
     },
   });

@@ -108,7 +108,11 @@ describe("desktop packaging", () => {
     };
     const deps = pkg.dependencies ?? {};
 
-    for (const required of ["@getpaseo/cli", "@getpaseo/server"]) {
+    for (const required of [
+      "@getpaseo/cli",
+      "@getpaseo/docker-workspace-runtime",
+      "@getpaseo/server",
+    ]) {
       expect(deps[required], `${required} must be declared in dependencies`).toBe("*");
     }
   });

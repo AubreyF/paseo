@@ -1049,6 +1049,7 @@ export const ko: TranslationResources = {
   newWorkspace: {
     title: "새 워크스페이스",
     create: "생성",
+    runtime: { local: "로컬", worktree: "워크트리", docker: "Docker", label: "런타임" },
     isolation: {
       local: "로컬",
       worktree: "새 워크트리",
@@ -1070,6 +1071,7 @@ export const ko: TranslationResources = {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
+      runtime: "Choose where the workspace runs",
       startingRef: "시작 위치를 선택하세요",
       launch: "Choose what to launch",
     },

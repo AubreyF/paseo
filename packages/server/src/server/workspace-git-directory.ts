@@ -99,11 +99,13 @@ export function createWorkspaceGitDirectory(options: {
       }
 
       const cwd = resolve(address.cwd);
-      const selectedAtCwd = (await workspaceRegistry.list()).some(
+      const runtimeOnlyAtCwd = (await workspaceRegistry.list()).some(
         (record) =>
-          resolveSelectedWorkspaceRuntimeId(record) !== null && resolve(record.cwd) === cwd,
+          resolveSelectedWorkspaceRuntimeId(record) !== null &&
+          resolve(record.cwd) === cwd &&
+          record.hostVisiblePath === null,
       );
-      if (selectedAtCwd) {
+      if (runtimeOnlyAtCwd) {
         throw new Error("workspaceId is required for a selected workspace Git operation");
       }
       return workspaceGitService.bindLegacy(cwd);

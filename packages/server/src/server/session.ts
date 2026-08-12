@@ -1474,6 +1474,9 @@ export class Session {
         if (mutation.expectsInitialAgent) {
           this.workspacesAwaitingInitialAgent.add(mutation.workspaceId);
         }
+        if (mutation.provisional) {
+          return;
+        }
         await this.syncWorkspaceMutationObserver(mutation);
       }
       if (this.isCleanedUp) {
@@ -1875,6 +1878,7 @@ export class Session {
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceRecoveryMessage(msg) ??
+      this.dispatchWorkspaceRuntimeMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
@@ -2200,6 +2204,15 @@ export class Session {
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchWorkspaceRuntimeMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "workspace.runtime.list.request":
+        return this.handleWorkspaceRuntimeListRequest(msg.requestId);
       default:
         return undefined;
     }
@@ -5421,6 +5434,14 @@ export class Session {
     }
   }
 
+  private async handleWorkspaceRuntimeListRequest(requestId: string): Promise<void> {
+    if (!this.workspaceRuntime) throw new Error("Workspace runtime service was not composed");
+    this.emit({
+      type: "workspace.runtime.list.response",
+      payload: { requestId, runtimes: [...this.workspaceRuntime.listRuntimes()] },
+    });
+  }
+
   private async handleWorkspaceCreateLocal(
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
   ): Promise<void> {
@@ -5446,11 +5467,18 @@ export class Session {
 
     const explicitTitle = request.title?.trim() || null;
     const promptTitle = resolveFirstAgentPromptTitle(request.firstAgentContext);
+    const runtimeId = request.runtimeId ?? "local";
+    if (runtimeId === "worktree") {
+      throw new Error("The worktree runtime requires a worktree source");
+    }
+    if (!this.workspaceRuntime?.listRuntimes().some((runtime) => runtime.runtimeId === runtimeId)) {
+      throw new Error(`Workspace runtime is not registered: ${runtimeId}`);
+    }
     const workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
       cwd,
       explicitTitle ?? promptTitle,
       request.source.projectId,
-      { expectsInitialAgent: Boolean(request.firstAgentContext), runtimeId: "local" },
+      { expectsInitialAgent: Boolean(request.firstAgentContext), runtimeId },
     );
     const workspaceRuntime = this.workspaceRuntime;
     if (!workspaceRuntime) {
@@ -5460,7 +5488,7 @@ export class Session {
     try {
       await workspaceRuntime.create({
         workspaceId: workspace.workspaceId,
-        runtimeId: "local",
+        runtimeId,
         project: {
           id: workspace.projectId,
           source: { kind: "host-directory", path: cwd },
@@ -5512,6 +5540,10 @@ export class Session {
   ): Promise<void> {
     if (request.source.kind !== "worktree") {
       return;
+    }
+
+    if (request.runtimeId !== undefined && request.runtimeId !== "worktree") {
+      throw new Error("A worktree source requires the worktree runtime");
     }
 
     const source = request.source;

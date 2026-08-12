@@ -9,6 +9,7 @@ import {
   savePersistedConfig,
 } from "./persisted-config.js";
 import { PRIVATE_FILE_MODE } from "./private-files.js";
+import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
 const MODE_MASK = 0o777;
 const PERMISSIVE_FILE_MODE = 0o644;
@@ -161,6 +162,41 @@ describe("PersistedConfigSchema workspace runtime config", () => {
         workspaceRuntimes: { invalid: { type: "command", command: [] } },
       }),
     ).toThrow();
+  });
+
+  test("accepts the Docker off switch and rejects command replacement of the reserved id", () => {
+    expect(
+      PersistedConfigSchema.parse({
+        workspaceRuntimes: {
+          docker: {
+            type: "docker",
+            enabled: false,
+            image: "paseo-workspace:test",
+            providerEnvironment: { PATH: "/runtime/bin" },
+          },
+        },
+      }).workspaceRuntimes,
+    ).toEqual({
+      docker: {
+        type: "docker",
+        enabled: false,
+        image: "paseo-workspace:test",
+        providerEnvironment: { PATH: "/runtime/bin" },
+      },
+    });
+    const configured = PersistedConfigSchema.parse({
+      workspaceRuntimes: {
+        docker: { type: "command", command: ["/wrong/runtime"] },
+      },
+    });
+    expect(() =>
+      createWorkspaceRuntimeService({
+        paseoHome: "/tmp/paseo-reserved-runtime-test",
+        externalRuntimes: configured.workspaceRuntimes,
+        resolveRuntimeId: async () => null,
+        persistRuntimeId: async () => {},
+      }),
+    ).toThrow("Workspace runtime id is reserved: docker");
   });
 });
 

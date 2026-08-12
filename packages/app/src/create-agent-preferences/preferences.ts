@@ -38,10 +38,14 @@ const formPreferencesSchema = z.object({
       }),
     )
     .optional(),
-  isolation: z.enum(["local", "worktree"]).optional(),
+  runtimeId: z.string().min(1).optional(),
   // What the New workspace composer submits to: the chat agent (default) or a
   // terminal profile. See `@/new-workspace-launch` for resolution/fallback.
   launchTarget: launchTargetSchema.optional(),
+});
+
+const storedFormPreferencesSchema = formPreferencesSchema.extend({
+  isolation: z.enum(["local", "worktree"]).optional(),
 });
 
 export type ProviderPreferences = z.infer<typeof providerPreferencesSchema>;
@@ -51,8 +55,12 @@ export type LaunchTarget = z.infer<typeof launchTargetSchema>;
 export const DEFAULT_FORM_PREFERENCES: FormPreferences = {};
 
 export function parseFormPreferences(value: unknown): FormPreferences {
-  const result = formPreferencesSchema.safeParse(value);
-  return result.success ? result.data : DEFAULT_FORM_PREFERENCES;
+  const result = storedFormPreferencesSchema.safeParse(value);
+  if (!result.success) return DEFAULT_FORM_PREFERENCES;
+
+  const { isolation, ...preferences } = result.data;
+  if (preferences.runtimeId !== undefined || isolation === undefined) return preferences;
+  return { ...preferences, runtimeId: isolation };
 }
 
 function mergeDefinedRecord<T>(

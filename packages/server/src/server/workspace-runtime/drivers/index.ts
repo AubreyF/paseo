@@ -93,6 +93,7 @@ export type WorkspaceDriverProcess = WorkspacePipeProcess | WorkspacePtyProcess;
 
 export interface WorkspaceRuntimeDriver {
   readonly id: WorkspaceRuntimeId;
+  readonly requiresGitProject: boolean;
   readonly reconciliationDomainId?: string;
   /** Runtime-local command for Paseo's compatible workspace helper. */
   readonly workspaceHelperCommand: readonly [string, ...string[]];

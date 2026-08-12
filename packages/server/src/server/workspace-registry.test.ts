@@ -419,6 +419,45 @@ describe("workspace registries", () => {
     expect(await workspaceRegistry.list()).toEqual([]);
   });
 
+  test("keeps a runtime reservation out of listings until its final placement is published", async () => {
+    await workspaceRegistry.initialize();
+    const reserved = createPersistedWorkspaceRecord({
+      workspaceId: "reserved-worktree",
+      projectId: "runtime-project",
+      cwd: "/tmp/source",
+      kind: "worktree",
+      displayName: "feature/runtime",
+      runtime: { runtimeId: "worktree" },
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    const mutations: unknown[] = [];
+    workspaceRegistry.subscribeToMutations((mutation) => mutations.push(mutation));
+
+    await workspaceRegistry.upsert(reserved, { provisional: true });
+
+    expect(await workspaceRegistry.get(reserved.workspaceId)).toEqual(reserved);
+    expect(await workspaceRegistry.list()).toEqual([]);
+    expect(mutations).toEqual([
+      expect.objectContaining({ workspaceId: reserved.workspaceId, provisional: true }),
+    ]);
+
+    const published = await workspaceRegistry.update(reserved.workspaceId, (workspace) => ({
+      ...workspace,
+      cwd: "/tmp/worktree",
+      updatedAt: "2026-03-02T00:00:00.000Z",
+    }));
+
+    expect(await workspaceRegistry.list()).toEqual([published]);
+    expect(mutations).toHaveLength(2);
+    expect(mutations[1]).toEqual(
+      expect.objectContaining({
+        workspaceId: reserved.workspaceId,
+        workspace: expect.objectContaining({ cwd: "/tmp/worktree" }),
+      }),
+    );
+  });
+
   test("keeps the committed workspace snapshot when a removal cannot be persisted", async () => {
     const registryPath = path.join(tmpDir, "projects", "workspaces.json");
     const backupPath = `${registryPath}.backup`;

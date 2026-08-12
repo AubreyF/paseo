@@ -153,6 +153,7 @@ import {
 } from "./workspace-registry.js";
 import {
   createWorkspaceRuntimeService,
+  type WorkspaceRuntimeConfig,
   type WorkspaceRuntimeService,
 } from "./workspace-runtime/index.js";
 import { FileBackedChatService } from "./chat/chat-service.js";
@@ -399,18 +400,7 @@ export interface PaseoDaemonConfig {
   daemonVersion?: string;
   desktopManaged?: boolean;
   worktreesRoot?: string;
-  workspaceRuntimes?: Readonly<
-    Record<
-      string,
-      {
-        type: "command";
-        command: readonly [string, ...string[]];
-        options?: Readonly<Record<string, unknown>>;
-        helperCommand?: readonly [string, ...string[]];
-        providerEnvironment?: Readonly<Record<string, string>>;
-      }
-    >
-  >;
+  workspaceRuntimes?: Readonly<Record<string, WorkspaceRuntimeConfig>>;
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;

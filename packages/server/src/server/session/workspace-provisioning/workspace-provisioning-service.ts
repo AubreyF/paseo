@@ -291,6 +291,7 @@ export function createWorkspaceProvisioningService(deps: {
     });
     await workspaceRegistry.upsert(workspace, {
       expectsInitialAgent: input.expectsInitialAgent,
+      provisional: true,
     });
     return workspace;
   }

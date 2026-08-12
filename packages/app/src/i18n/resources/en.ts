@@ -1052,6 +1052,7 @@ export const en = {
   newWorkspace: {
     title: "New workspace",
     create: "Create",
+    runtime: { local: "Local", worktree: "Worktree", docker: "Docker", label: "Runtime" },
     isolation: {
       local: "Local",
       worktree: "New worktree",
@@ -1073,6 +1074,7 @@ export const en = {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
+      runtime: "Choose where the workspace runs",
       startingRef: "Choose where to start from",
       launch: "Choose what to launch",
     },

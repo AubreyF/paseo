@@ -219,7 +219,7 @@ export async function expectNewWorkspaceControlsEnabled(page: Page): Promise<voi
 }
 
 export async function openNewWorkspaceProjectPickerWithShortcut(page: Page): Promise<void> {
-  await page.keyboard.press("Control+P");
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+P" : "Control+P");
 
   const searchInput = page.getByPlaceholder("Search projects");
   await expect(searchInput).toBeVisible({ timeout: 30_000 });
@@ -317,35 +317,62 @@ export async function selectNewWorkspaceProject(
   await expectNewWorkspaceProjectSelected(page, input.projectDisplayName);
 }
 
-// The isolation trigger renders the active isolation's label ("Local" / "New
-// worktree"), so asserting its text proves what the screen currently remembers.
-const ISOLATION_TRIGGER_LABEL: Record<"local" | "worktree", string> = {
+type WorkspaceRuntimeChoice = "docker" | "local" | "worktree";
+
+const WORKSPACE_RUNTIME_LABEL: Record<WorkspaceRuntimeChoice, string> = {
+  docker: "Docker",
   local: "Local",
-  worktree: "New worktree",
+  worktree: "Worktree",
 };
 
-export async function expectWorkspaceIsolationSelected(
+export async function expectWorkspaceRuntimeSelected(
   page: Page,
-  isolation: "local" | "worktree",
+  runtime: WorkspaceRuntimeChoice,
 ): Promise<void> {
-  const trigger = page.getByRole("button", { name: "Workspace isolation" });
+  const trigger = page.getByRole("button", { name: "Runtime", exact: true });
   await expect(trigger).toBeVisible({ timeout: 30_000 });
-  await expect(trigger).toContainText(ISOLATION_TRIGGER_LABEL[isolation]);
+  await expect(trigger.getByText(WORKSPACE_RUNTIME_LABEL[runtime], { exact: true })).toBeVisible();
 }
 
-export async function selectWorkspaceIsolation(
+export async function selectWorkspaceRuntime(
   page: Page,
-  isolation: "local" | "worktree",
+  runtime: WorkspaceRuntimeChoice,
 ): Promise<void> {
-  const trigger = page.getByTestId("workspace-create-isolation-trigger");
+  const trigger = page.getByRole("button", { name: "Runtime", exact: true });
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 
-  // Isolation options are derived from project capability. Wait for the option
-  // so this helper also covers route-to-project reconciliation.
-  const option = page.getByTestId(`workspace-create-isolation-${isolation}`);
+  const runtimePicker = page.getByRole("dialog").last();
+  await expect(runtimePicker).toBeVisible({ timeout: 30_000 });
+  const option = runtimePicker.getByRole("button", {
+    name: WORKSPACE_RUNTIME_LABEL[runtime],
+    exact: true,
+  });
   await expect(option).toBeVisible({ timeout: 30_000 });
   await option.click();
+  await expectWorkspaceRuntimeSelected(page, runtime);
+}
+
+export async function expectWorkspaceRuntimeChoices(
+  page: Page,
+  runtimes: readonly WorkspaceRuntimeChoice[],
+): Promise<void> {
+  const trigger = page.getByRole("button", { name: "Runtime", exact: true });
+  await expect(trigger).toBeVisible({ timeout: 30_000 });
+  await trigger.click();
+
+  const runtimePicker = page.getByRole("dialog").last();
+  await expect(runtimePicker).toBeVisible({ timeout: 30_000 });
+  for (const runtime of runtimes) {
+    await expect(
+      runtimePicker.getByRole("button", {
+        name: WORKSPACE_RUNTIME_LABEL[runtime],
+        exact: true,
+      }),
+    ).toBeVisible();
+  }
+  await expect(runtimePicker.getByRole("button")).toHaveCount(runtimes.length);
+  await page.keyboard.press("Escape");
 }
 
 export async function submitNewWorkspaceEmpty(page: Page): Promise<void> {
@@ -462,7 +489,7 @@ export async function pasteGithubPrUrl(
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.evaluate((value) => navigator.clipboard.writeText(value), url);
   await composer.focus();
-  await page.keyboard.press("Control+V");
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+V" : "Control+V");
 }
 
 export async function assertNewWorkspaceSidebarAndHeader(

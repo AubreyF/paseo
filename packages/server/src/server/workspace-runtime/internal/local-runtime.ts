@@ -54,6 +54,7 @@ export function createLocalRuntime(
 
   return {
     id: "local",
+    requiresGitProject: false,
     workspaceHelperCommand: hostWorkspaceHelperCommand,
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);

@@ -64,6 +64,7 @@ export function createWorktreeRuntime(options: {
 
   return {
     id: "worktree",
+    requiresGitProject: true,
     workspaceHelperCommand: hostWorkspaceHelperCommand,
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);

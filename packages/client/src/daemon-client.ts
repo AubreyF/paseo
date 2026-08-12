@@ -101,6 +101,7 @@ import type {
   PaseoConfigRevision,
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
+  WorkspaceRuntimeListPayload,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -2192,6 +2193,14 @@ export class DaemonClient {
         if (msg.payload.requestId !== resolvedRequestId) return null;
         return msg.payload;
       },
+    });
+  }
+
+  async listWorkspaceRuntimes(requestId?: string): Promise<WorkspaceRuntimeListPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.runtime.list.request" },
+      responseType: "workspace.runtime.list.response",
     });
   }
 
@@ -4380,6 +4389,7 @@ export class DaemonClient {
   async createWorkspace(
     input: {
       source: WorkspaceCreateRequest["source"];
+      runtimeId?: string;
       title?: string;
       firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
     },
@@ -4390,6 +4400,7 @@ export class DaemonClient {
       message: {
         type: "workspace.create.request",
         source: input.source,
+        ...(input.runtimeId !== undefined ? { runtimeId: input.runtimeId } : {}),
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }

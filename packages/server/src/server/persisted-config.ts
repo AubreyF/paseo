@@ -82,24 +82,39 @@ const WorktreesConfigSchema = z
   })
   .strict();
 
+const CommandWorkspaceRuntimeConfigSchema = z
+  .object({
+    type: z.literal("command"),
+    label: z.string().min(1).optional(),
+    command: z
+      .array(z.string().min(1))
+      .min(1)
+      .transform((command) => command as [string, ...string[]]),
+    options: z.record(z.string(), z.unknown()).optional(),
+    providerEnvironment: z.record(z.string(), z.string()).optional(),
+    helperCommand: z
+      .array(z.string().min(1))
+      .min(1)
+      .transform((command) => command as [string, ...string[]])
+      .optional(),
+  })
+  .strict();
+
+const DockerWorkspaceRuntimeConfigSchema = z
+  .object({
+    type: z.literal("docker"),
+    image: z.string().min(1).optional(),
+    providerEnvironment: z.record(z.string(), z.string()).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
+
 const WorkspaceRuntimesConfigSchema = z.record(
   z.string().min(1),
-  z
-    .object({
-      type: z.literal("command"),
-      command: z
-        .array(z.string().min(1))
-        .min(1)
-        .transform((command) => command as [string, ...string[]]),
-      options: z.record(z.string(), z.unknown()).optional(),
-      providerEnvironment: z.record(z.string(), z.string()).optional(),
-      helperCommand: z
-        .array(z.string().min(1))
-        .min(1)
-        .transform((command) => command as [string, ...string[]])
-        .optional(),
-    })
-    .strict(),
+  z.discriminatedUnion("type", [
+    CommandWorkspaceRuntimeConfigSchema,
+    DockerWorkspaceRuntimeConfigSchema,
+  ]),
 );
 
 const BcryptHashSchema = z.string().regex(/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/, {

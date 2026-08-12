@@ -86,6 +86,25 @@ function getString(record: Record<string, unknown>, key: string): string | undef
   return typeof value === "string" ? value : undefined;
 }
 
+function getSocketCreatedAt(ws: WebSocket): number {
+  const attachment = deserializeAttachment(ws);
+  if (!isRecord(attachment)) return 0;
+  return typeof attachment.createdAt === "number" ? attachment.createdAt : 0;
+}
+
+function selectNewestSocket(sockets: WebSocket[]): WebSocket | null {
+  let newest: WebSocket | null = null;
+  let newestCreatedAt = Number.NEGATIVE_INFINITY;
+  for (const socket of sockets) {
+    const createdAt = getSocketCreatedAt(socket);
+    if (createdAt >= newestCreatedAt) {
+      newest = socket;
+      newestCreatedAt = createdAt;
+    }
+  }
+  return newest;
+}
+
 function getGlobalWebSocketPair(): (new () => WebSocketPair) | undefined {
   // Access WebSocketPair from global scope (Cloudflare Workers runtime)
   // Use Reflect to access global property without type assertions
@@ -484,12 +503,11 @@ export class RelayDurableObject {
         this.bufferFrame(connectionId, message);
         return;
       }
-      for (const target of servers) {
-        try {
-          target.send(message);
-        } catch (error) {
-          console.error(`[Relay DO] Failed to forward client->server(${connectionId}):`, error);
-        }
+      const target = selectNewestSocket(servers);
+      try {
+        target?.send(message);
+      } catch (error) {
+        console.error(`[Relay DO] Failed to forward client->server(${connectionId}):`, error);
       }
       return;
     }

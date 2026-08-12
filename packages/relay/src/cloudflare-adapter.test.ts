@@ -230,6 +230,39 @@ describe("RelayDurableObject control nudge/reset behavior", () => {
   });
 });
 
+describe("RelayDurableObject data forwarding", () => {
+  it("forwards a client frame only to the newest daemon socket during replacement", () => {
+    const connectionId = "clt_replacing_daemon";
+    const client = createMockSocket({
+      version: "2",
+      role: "client",
+      connectionId,
+      serverId: "srv_test",
+      createdAt: 1,
+    });
+    const daemonSockets = Array.from({ length: 6 }, (_, index) =>
+      createMockSocket({
+        version: "2",
+        role: "server",
+        connectionId,
+        serverId: "srv_test",
+        createdAt: index + 1,
+      }),
+    );
+    const { state, setTagSockets } = createMockState();
+    setTagSockets(`server:${connectionId}`, daemonSockets);
+
+    const relay = new RelayDurableObject(state as unknown as DurableObjectStateArg);
+    relay.webSocketMessage(client as unknown as WebSocket, "create_agent_request");
+
+    for (const staleSocket of daemonSockets.slice(0, -1)) {
+      expect(staleSocket.send).not.toHaveBeenCalled();
+    }
+    expect(daemonSockets.at(-1)?.send).toHaveBeenCalledOnce();
+    expect(daemonSockets.at(-1)?.send).toHaveBeenCalledWith("create_agent_request");
+  });
+});
+
 describe("relay worker endpoint routing", () => {
   it("routes missing v to legacy v1 isolated DO ids", async () => {
     const fetch = vi.fn(

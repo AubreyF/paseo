@@ -86,23 +86,27 @@ function getString(record: Record<string, unknown>, key: string): string | undef
   return typeof value === "string" ? value : undefined;
 }
 
-function getSocketCreatedAt(ws: WebSocket): number {
+function getSocketGeneration(ws: WebSocket): number {
   const attachment = deserializeAttachment(ws);
   if (!isRecord(attachment)) return 0;
-  return typeof attachment.createdAt === "number" ? attachment.createdAt : 0;
+  return typeof attachment.generation === "number" ? attachment.generation : 0;
 }
 
 function selectNewestSocket(sockets: WebSocket[]): WebSocket | null {
   let newest: WebSocket | null = null;
-  let newestCreatedAt = Number.NEGATIVE_INFINITY;
+  let newestGeneration = Number.NEGATIVE_INFINITY;
   for (const socket of sockets) {
-    const createdAt = getSocketCreatedAt(socket);
-    if (createdAt >= newestCreatedAt) {
+    const generation = getSocketGeneration(socket);
+    if (generation > newestGeneration) {
       newest = socket;
-      newestCreatedAt = createdAt;
+      newestGeneration = generation;
     }
   }
   return newest;
+}
+
+function nextSocketGeneration(sockets: WebSocket[]): number {
+  return sockets.reduce((highest, socket) => Math.max(highest, getSocketGeneration(socket)), 0) + 1;
 }
 
 function getGlobalWebSocketPair(): (new () => WebSocketPair) | undefined {
@@ -371,6 +375,9 @@ export class RelayDurableObject {
 
     const isServerControl = role === "server" && !resolvedConnectionId;
     const isServerData = role === "server" && !!resolvedConnectionId;
+    const serverDataGeneration = isServerData
+      ? nextSocketGeneration(this.state.getWebSockets(`server:${resolvedConnectionId}`))
+      : undefined;
 
     // Close any existing server-side connection with the same identity.
     // - server-control: single per serverId
@@ -396,6 +403,7 @@ export class RelayDurableObject {
       role,
       version: CURRENT_RELAY_VERSION,
       connectionId: resolvedConnectionId || null,
+      ...(serverDataGeneration === undefined ? {} : { generation: serverDataGeneration }),
       createdAt: Date.now(),
     };
     serializeAttachment(server, attachment);

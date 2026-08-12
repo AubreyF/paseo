@@ -246,7 +246,8 @@ describe("RelayDurableObject data forwarding", () => {
         role: "server",
         connectionId,
         serverId: "srv_test",
-        createdAt: index + 1,
+        generation: index + 1,
+        createdAt: 1,
       }),
     );
     const { state, setTagSockets } = createMockState();
@@ -260,6 +261,40 @@ describe("RelayDurableObject data forwarding", () => {
     }
     expect(daemonSockets.at(-1)?.send).toHaveBeenCalledOnce();
     expect(daemonSockets.at(-1)?.send).toHaveBeenCalledWith("create_agent_request");
+  });
+
+  it("prefers a generated replacement over rollout sockets without generations", () => {
+    const connectionId = "clt_rollout";
+    const client = createMockSocket({
+      version: "2",
+      role: "client",
+      connectionId,
+      serverId: "srv_test",
+      createdAt: 1,
+    });
+    const staleSocket = createMockSocket({
+      version: "2",
+      role: "server",
+      connectionId,
+      serverId: "srv_test",
+      createdAt: 2,
+    });
+    const replacementSocket = createMockSocket({
+      version: "2",
+      role: "server",
+      connectionId,
+      serverId: "srv_test",
+      generation: 1,
+      createdAt: 2,
+    });
+    const { state, setTagSockets } = createMockState();
+    setTagSockets(`server:${connectionId}`, [staleSocket, replacementSocket]);
+
+    const relay = new RelayDurableObject(state as unknown as DurableObjectStateArg);
+    relay.webSocketMessage(client as unknown as WebSocket, "create_agent_request");
+
+    expect(staleSocket.send).not.toHaveBeenCalled();
+    expect(replacementSocket.send).toHaveBeenCalledWith("create_agent_request");
   });
 });
 

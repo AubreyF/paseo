@@ -24,5 +24,7 @@ export interface RelaySessionAttachment {
    * independent socket + E2EE channel per connected connection.
    */
   connectionId?: string | null;
+  /** Monotonic acceptance order for v2 daemon data sockets sharing a connectionId. */
+  generation?: number;
   createdAt: number;
 }

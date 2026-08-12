@@ -84,6 +84,17 @@ interface CreateRequestContext {
   cwd: string;
 }
 
+function assertCreateAvailable(input: {
+  draftId: string;
+  isSubmitting: boolean;
+  alreadyLoadingMessage: string;
+}): void {
+  const pending = useCreateFlowStore.getState().pendingByDraftId[input.draftId];
+  if (input.isSubmitting || pending?.lifecycle === "active") {
+    throw new Error(input.alreadyLoadingMessage);
+  }
+}
+
 interface UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult> {
   draftId: string;
   getPendingServerId: () => string | null;
@@ -239,9 +250,11 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
 
   const handleCreateFromInput = useCallback(
     async ({ text, attachments, cwd }: SubmitContext) => {
-      if (isSubmitting) {
-        throw new Error(t("composer.errors.alreadyLoading"));
-      }
+      assertCreateAvailable({
+        draftId,
+        isSubmitting,
+        alreadyLoadingMessage: t("composer.errors.alreadyLoading"),
+      });
 
       dispatch({ type: "DRAFT_SET_ERROR", message: "" });
       const trimmedPrompt = text.trim();

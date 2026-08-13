@@ -79,6 +79,32 @@ export function parseListenString(listen: string): ListenTarget {
   throw new Error(`Invalid listen string: ${listen}`);
 }
 
+type ShutdownStep = readonly [name: string, run: () => void | Promise<void>];
+
+export async function runShutdownSequence(
+  steps: readonly ShutdownStep[],
+  onFailure: (name: string, error: unknown) => void,
+): Promise<void> {
+  let failed = false;
+  let firstFailure: unknown;
+
+  for (const [name, run] of steps) {
+    try {
+      await run();
+    } catch (error) {
+      if (!failed) {
+        failed = true;
+        firstFailure = error;
+      }
+      onFailure(name, error);
+    }
+  }
+
+  if (failed) {
+    throw firstFailure;
+  }
+}
+
 function formatListenTarget(listenTarget: ListenTarget | null): string | null {
   if (!listenTarget) {
     return null;
@@ -1637,41 +1663,46 @@ async function createPaseoDaemonWithDatabase(
   };
 
   const stop = async () => {
-    await hubRelationships.stop();
-    workspaceReconciliation.dispose();
-    scriptHealthMonitor.stop();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
-    wsServer?.prepareForShutdown();
-    agentManager.prepareForShutdown();
-    await closeAllAgents(logger, agentManager);
-    await agentManager.flushForShutdown().catch(() => undefined);
-    detachAgentStoragePersistence();
-    await agentStorage.flush().catch(() => undefined);
-    await providerSnapshotManager.shutdown();
-    terminalManager.killAll();
-    speechService.stop();
-    await scheduleService.stop().catch(() => undefined);
-    await relayRuntime?.stop().catch(() => undefined);
-    if (wsServer) {
-      await wsServer.close();
-    }
-    await serviceProxy.stopStandalone();
-    // Force-drop remaining sockets so httpServer.close() resolves promptly.
-    // We've already closed wsServer (which sent ws-layer close frames) and
-    // stopped every other service, so anything still attached is a TCP
-    // socket whose higher-level shutdown hasn't fully released it (e.g.
-    // upgraded WS sockets in the closing handshake, or HTTP keep-alive
-    // sockets in CLOSE_WAIT). closeIdleConnections() does not catch
-    // upgraded sockets, so we use closeAllConnections() here.
-    httpServer.closeAllConnections();
-    await new Promise<void>((resolve) => {
-      httpServer.close(() => resolve());
-    });
-    // Clean up socket files
-    if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
-      unlinkSync(listenTarget.path);
-    }
-    database.close();
+    await runShutdownSequence(
+      [
+        ["hub relationships", () => hubRelationships.stop()],
+        ["workspace reconciliation", () => workspaceReconciliation.dispose()],
+        ["script health monitor", () => scriptHealthMonitor.stop()],
+        // Freeze both ingress and registration before taking the agent closure snapshot.
+        ["WebSocket ingress", () => wsServer?.prepareForShutdown()],
+        ["agent ingress", () => agentManager.prepareForShutdown()],
+        ["agents", () => closeAllAgents(logger, agentManager)],
+        ["agent manager persistence", () => agentManager.flushForShutdown()],
+        ["agent storage persistence hook", () => detachAgentStoragePersistence()],
+        ["agent storage", () => agentStorage.flush()],
+        ["provider snapshots", () => providerSnapshotManager.shutdown()],
+        ["terminals", () => terminalManager.killAll()],
+        ["speech", () => speechService.stop()],
+        ["schedules", () => scheduleService.stop()],
+        ["relay", () => relayRuntime?.stop()],
+        ["WebSocket server", () => wsServer?.close()],
+        ["service proxy", () => serviceProxy.stopStandalone()],
+        // Force-drop remaining sockets so httpServer.close() resolves promptly.
+        // We've already closed wsServer (which sent ws-layer close frames) and
+        // stopped every other service, so anything still attached is a TCP
+        // socket whose higher-level shutdown hasn't fully released it (e.g.
+        // upgraded WS sockets in the closing handshake, or HTTP keep-alive
+        // sockets in CLOSE_WAIT). closeIdleConnections() does not catch
+        // upgraded sockets, so we use closeAllConnections() here.
+        ["HTTP connections", () => httpServer.closeAllConnections()],
+        ["HTTP server", () => new Promise<void>((resolve) => httpServer.close(() => resolve()))],
+        [
+          "socket file",
+          () => {
+            if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
+              unlinkSync(listenTarget.path);
+            }
+          },
+        ],
+        ["database", () => database.close()],
+      ],
+      (name, error) => logger.warn({ err: error, step: name }, "Daemon shutdown step failed"),
+    );
   };
 
   return {

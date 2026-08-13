@@ -1,7 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { WorkspaceFiles } from "../workspace-helper/index.js";
 
@@ -126,7 +126,13 @@ export interface BoundWorkspaceRuntime {
   run(input: Omit<WorkspaceProcessInput, "workspaceId">): Promise<WorkspaceProcess>;
   resolveCommand(command: string): Promise<string | null>;
   readonly scriptTerminal: WorkspaceScriptTerminal;
+  readonly provider: WorkspaceRuntimeProviderCapability;
   readonly files: WorkspaceFiles;
+}
+
+export interface WorkspaceRuntimeProviderCapability {
+  readonly environment: "inherit-sanitized-host" | "isolated";
+  readonly sharedHostProviders: ReadonlySet<string>;
 }
 
 export interface WorkspaceRuntimeService {
@@ -185,47 +191,22 @@ export interface ExternalWorkspaceRuntime {
   type: "command";
   label?: string;
   command: readonly [string, ...string[]];
-  options?: Readonly<Record<string, unknown>>;
-  helperCommand?: readonly [string, ...string[]];
-  /** Explicit provider base environment for an isolated runtime. Host env is never inherited. */
-  providerEnvironment?: Readonly<Record<string, string>>;
+  options?: Readonly<Record<string, WorkspaceRuntimeJsonValue>>;
 }
-
-export interface DockerWorkspaceRuntime {
-  type: "docker";
-  image?: string;
-  bindMounts?: readonly DockerBindMount[];
-  providerEnvironment?: Readonly<Record<string, string>>;
-  enabled?: boolean;
-}
-
-export interface DockerBindMount {
-  source: string;
-  target: string;
-  readOnly: boolean;
-}
-
-export type WorkspaceRuntimeConfig = ExternalWorkspaceRuntime | DockerWorkspaceRuntime;
+export type WorkspaceRuntimeConfig = ExternalWorkspaceRuntime;
+export type WorkspaceRuntimeJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly WorkspaceRuntimeJsonValue[]
+  | { readonly [key: string]: WorkspaceRuntimeJsonValue };
 
 export interface WorkspaceRuntimeOptions extends WorkspaceRuntimeRecordStore {
   paseoHome: string;
   worktreesRoot?: string;
   externalRuntimes?: Readonly<Record<string, WorkspaceRuntimeConfig>>;
-}
-
-export const DEFAULT_DOCKER_WORKSPACE_IMAGE = "ghcr.io/getpaseo/workspace-runtime:latest";
-
-const require = createRequire(import.meta.url);
-
-function resolveDockerRuntimeCommand(): readonly [string, string] {
-  try {
-    return [process.execPath, require.resolve("@getpaseo/docker-workspace-runtime")];
-  } catch (error) {
-    throw new Error(
-      "Built-in Docker workspace runtime is unavailable; rebuild @getpaseo/docker-workspace-runtime before starting the daemon",
-      { cause: error },
-    );
-  }
+  commandResolutionBase?: string;
 }
 
 export function createWorkspaceRuntimeService(
@@ -233,33 +214,20 @@ export function createWorkspaceRuntimeService(
 ): WorkspaceRuntimeService {
   const hostGitObservations = createHostGitObservationOwner();
   const configuredRuntimes = options.externalRuntimes ?? {};
-  const dockerConfig = configuredRuntimes.docker;
-  if (dockerConfig?.type === "command") {
-    throw new Error("Workspace runtime id is reserved: docker");
-  }
-  const dockerEnabled = dockerConfig?.enabled !== false;
-  const externalEntries = Object.entries(configuredRuntimes).filter(
-    ([runtimeId]) => runtimeId !== "docker",
-  );
+  const externalEntries = Object.entries(configuredRuntimes);
+  const runtimeInstanceId = createHash("sha256").update(resolve(options.paseoHome)).digest("hex");
   const externalDrivers = externalEntries.map(([runtimeId, config]) => {
     if (runtimeId === "local" || runtimeId === "worktree") {
       throw new Error(`Workspace runtime id is reserved: ${runtimeId}`);
     }
-    if (config.type !== "command") {
-      throw new Error(`Docker runtime configuration is reserved for docker: ${runtimeId}`);
-    }
-    return createCommandRuntimeAdapter(runtimeId, config);
+    return createCommandRuntimeAdapter(
+      runtimeId,
+      config,
+      runtimeInstanceId,
+      options.commandResolutionBase ?? fileURLToPath(new URL(".", import.meta.url)),
+      options.paseoHome,
+    );
   });
-  const dockerDriver = dockerEnabled
-    ? createCommandRuntimeAdapter("docker", {
-        command: resolveDockerRuntimeCommand(),
-        options: {
-          image: dockerConfig?.image ?? DEFAULT_DOCKER_WORKSPACE_IMAGE,
-          owner: createHash("sha256").update(resolve(options.paseoHome)).digest("hex"),
-          ...(dockerConfig?.bindMounts ? { bindMounts: dockerConfig.bindMounts } : {}),
-        },
-      })
-    : null;
   const drivers = [
     createLocalRuntime(options.paseoHome, hostGitObservations),
     createWorktreeRuntime({
@@ -267,20 +235,18 @@ export function createWorkspaceRuntimeService(
       worktreesRoot: options.worktreesRoot,
       hostGitObservations,
     }),
-    ...(dockerDriver ? [dockerDriver] : []),
     ...externalDrivers,
   ];
   const catalogMetadata = new Map<string, { builtin: boolean; label?: string }>([
     ["local", { builtin: true }],
     ["worktree", { builtin: true }],
-    ...(dockerEnabled ? ([["docker", { builtin: true }]] as const) : []),
     ...externalEntries.map(
       ([runtimeId, config]) =>
         [
           runtimeId,
           {
             builtin: false,
-            ...(config.type === "command" && config.label ? { label: config.label } : {}),
+            ...(config.label ? { label: config.label } : {}),
           },
         ] as const,
     ),

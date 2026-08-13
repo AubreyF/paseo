@@ -1064,7 +1064,7 @@ export const ptBR: TranslationResources = {
   newWorkspace: {
     title: "Novo workspace",
     create: "Criar",
-    runtime: { local: "Local", worktree: "Worktree", docker: "Docker", label: "Ambiente" },
+    runtime: { local: "Local", worktree: "Worktree", label: "Ambiente" },
     runtimeProbe: { preparing: "Preparando o ambiente" },
     isolation: {
       local: "Local",

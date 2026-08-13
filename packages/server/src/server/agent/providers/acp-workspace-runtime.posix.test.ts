@@ -19,9 +19,6 @@ const fixtureAgent = new URL(
 const fixtureRuntime = fileURLToPath(
   new URL("../../../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
 );
-const helperExecutable = fileURLToPath(
-  new URL("../../workspace-helper/executable.mjs", import.meta.url),
-);
 
 const posixDescribe = describe.runIf(process.platform !== "win32");
 
@@ -123,7 +120,6 @@ posixDescribe("ACP workspace terminal execution", () => {
                 fixture: {
                   type: "command",
                   command: [process.execPath, fixtureRuntime],
-                  helperCommand: [process.execPath, helperExecutable],
                   options: { stateDirectory: fixtureStateDirectory },
                 },
               }

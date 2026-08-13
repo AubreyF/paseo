@@ -1064,7 +1064,7 @@ export const ru: TranslationResources = {
   newWorkspace: {
     title: "Новое рабочее пространство",
     create: "Создавать",
-    runtime: { local: "Локально", worktree: "Worktree", docker: "Docker", label: "Среда" },
+    runtime: { local: "Локально", worktree: "Worktree", label: "Среда" },
     runtimeProbe: { preparing: "Подготовка среды" },
     isolation: {
       local: "Локально",

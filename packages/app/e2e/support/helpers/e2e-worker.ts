@@ -196,8 +196,10 @@ async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> 
         ...(dockerAcceptance
           ? {
               docker: {
-                type: "docker",
-                image: dockerImage,
+                type: "command",
+                label: "Docker",
+                command: ["@getpaseo/docker-workspace-runtime"],
+                options: { image: dockerImage, bindMounts: [] },
               },
             }
           : {}),
@@ -207,13 +209,6 @@ async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> 
           command: [
             process.execPath,
             path.resolve(__dirname, "../../../../fixture-workspace-runtime/src/index.mjs"),
-          ],
-          helperCommand: [
-            process.execPath,
-            path.resolve(
-              __dirname,
-              "../../../../server/src/server/workspace-helper/executable.mjs",
-            ),
           ],
           options: {
             stateDirectory,
@@ -228,13 +223,6 @@ async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> 
           command: [
             process.execPath,
             path.resolve(__dirname, "../../../../fixture-workspace-runtime/src/index.mjs"),
-          ],
-          helperCommand: [
-            process.execPath,
-            path.resolve(
-              __dirname,
-              "../../../../server/src/server/workspace-helper/executable.mjs",
-            ),
           ],
           options: {
             stateDirectory: path.join(paseoHome, "fixture-failure-runtime"),

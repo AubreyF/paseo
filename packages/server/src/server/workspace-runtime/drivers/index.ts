@@ -105,6 +105,7 @@ export interface WorkspaceRuntimeDriver {
     env: Readonly<Record<string, string>>;
   };
   readonly scriptTerminal: import("../index.js").WorkspaceScriptTerminal;
+  readonly provider: import("../index.js").WorkspaceRuntimeProviderCapability;
   create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverCreation>;
   inspect(workspaceId: WorkspaceId): Promise<WorkspaceDriverInspection>;
   spawn(input: WorkspaceDriverSpawnInput): Promise<WorkspaceDriverProcess>;

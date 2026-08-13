@@ -10,6 +10,7 @@ import {
   loadPersistedConfig,
   LogFormatSchema,
   LogLevelSchema,
+  PersistedConfigSchema,
   type PersistedConfig,
 } from "./persisted-config.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
@@ -470,6 +471,10 @@ export function loadConfig(
 ): PaseoDaemonConfig {
   const env = options?.env ?? process.env;
   const persisted = loadPersistedConfig(paseoHome);
+  const workspaceRuntimes = resolveWorkspaceRuntimeRegistrations(
+    env.PASEO_DISTRIBUTION_WORKSPACE_RUNTIMES,
+    persisted.workspaceRuntimes,
+  );
 
   const listen = resolveListenAddress(env, options?.cli, persisted);
   const {
@@ -509,7 +514,8 @@ export function loadConfig(
     paseoHome,
     desktopManaged: env.PASEO_DESKTOP_MANAGED === "1",
     worktreesRoot: resolveWorktreesRoot(paseoHome, persisted),
-    workspaceRuntimes: persisted.workspaceRuntimes,
+    workspaceRuntimes,
+    workspaceRuntimeCommandResolutionBase: env.PASEO_DISTRIBUTION_PACKAGE_ROOT,
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,
     trustedProxies,
@@ -546,4 +552,20 @@ export function loadConfig(
     providerOverrides,
     log: resolveLogConfigFromEnv(env, persisted),
   };
+}
+
+function resolveWorkspaceRuntimeRegistrations(
+  distributionJson: string | undefined,
+  configured: PersistedConfig["workspaceRuntimes"],
+): PaseoDaemonConfig["workspaceRuntimes"] {
+  const distribution = distributionJson
+    ? PersistedConfigSchema.parse({ workspaceRuntimes: JSON.parse(distributionJson) })
+        .workspaceRuntimes
+    : undefined;
+  const merged = { ...distribution, ...configured };
+  return Object.fromEntries(
+    Object.entries(merged).filter((entry): entry is [string, NonNullable<(typeof entry)[1]>] =>
+      Boolean(entry[1]),
+    ),
+  );
 }

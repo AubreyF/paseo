@@ -82,7 +82,6 @@ export function runtimeLabelKey(
   }
   if (runtimeId === "local") return "newWorkspace.runtime.local";
   if (runtimeId === "worktree") return "newWorkspace.runtime.worktree";
-  if (runtimeId === "docker") return "newWorkspace.runtime.docker";
   return null;
 }
 

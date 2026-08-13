@@ -179,11 +179,16 @@ jobs:
       - name: Build server stack
         run: npm run build:server
 
+      - name: Build Docker workspace runtime CLI
+        run: npm run build:docker-workspace-runtime
+
       - name: Build Docker acceptance image
         run: docker build --file packages/docker-workspace-runtime/Dockerfile --tag paseo-workspace-runtime-e2e:test .
 
       - name: Test workspace runtime contract
         run: npm run test:workspace-runtime:docker --workspace=@getpaseo/server
+        env:
+          E2E_DOCKER_WORKSPACE_IMAGE: paseo-workspace-runtime-e2e:test
 
       - name: Install Playwright browser
         run: npx playwright install chromium

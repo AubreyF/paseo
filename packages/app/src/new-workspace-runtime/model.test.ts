@@ -74,10 +74,10 @@ describe("new workspace runtime selection", () => {
     },
   );
 
-  test("omits disabled Docker from the selector after authoritative catalog resolution", () => {
+  test("omits an unavailable runtime after authoritative catalog resolution", () => {
     const selection = resolveWorkspaceRuntimeSelection({
       catalog: { status: "ready", runtimes: [LOCAL, WORKTREE, FIXTURE] },
-      selectedRuntimeId: "docker",
+      selectedRuntimeId: "retired-runtime",
       supportsMultiplicity: true,
       worktreeSupport: "supported",
     });
@@ -94,6 +94,15 @@ describe("new workspace runtime selection", () => {
         key === "newWorkspace.runtime.worktree" ? "Worktree" : key,
       ),
     ).toBe("Worktree");
+  });
+
+  test("renders registration labels for arbitrary runtime ids without id vocabulary", () => {
+    expect(
+      runtimeLabel({ runtimeId: "moon-base", label: "Moon Base" }, "runtime", () => "bad"),
+    ).toBe("Moon Base");
+    expect(
+      runtimeLabel({ runtimeId: "shipyard", label: "Container Lab" }, "runtime", () => "bad"),
+    ).toBe("Container Lab");
   });
 });
 

@@ -3,7 +3,7 @@ import { existsSync, watch } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterEach, expect, test, vi } from "vitest";
 
@@ -32,10 +32,10 @@ test("a trusted registered command is selected and receives secret launch data o
     ...fixture.createInput,
     setup: [{ argv: ["/bin/sh", "-c", "printf setup > setup-purpose.txt"], env: {} }],
   });
-  const setupLaunch = JSON.parse(
+  const materializationLaunch = JSON.parse(
     await readFile(path.join(fixture.source, ".runtime-launch.json"), "utf8"),
   ) as { purpose: unknown };
-  expect(setupLaunch.purpose).toEqual({ kind: "setup" });
+  expect(materializationLaunch.purpose).toEqual({ kind: "workspace-helper" });
   const secret = "secret-shaped-workload-value";
   const process = await fixture.service.run({
     workspaceId: fixture.workspaceId,
@@ -74,7 +74,6 @@ test("the fixture executable receives provider probe purpose through the strict 
   await fixture.service.create({
     ...fixture.createInput,
     purpose: "provider-probe",
-    setupFromPaseoConfig: false,
   });
   const [stateFile] = await readdir(fixture.stateDirectory);
   const state = JSON.parse(
@@ -90,6 +89,115 @@ test("the fixture executable receives provider probe purpose through the strict 
     purpose: "provider-probe",
   });
   await fixture.service.destroy(fixture.workspaceId);
+});
+
+test("resolves package, filesystem, and PATH runtime executables without shell parsing", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-command-resolution-"));
+  cleanupRoots.push(root);
+  const source = path.join(root, "source");
+  await mkdir(source);
+  await symlink(fixtureExecutable, path.join(root, "runtime.mjs"));
+  const runtimeIds = new Map<string, string>();
+  const commands = {
+    package: ["@getpaseo/fixture-workspace-runtime"],
+    filesystem: [fixtureExecutable],
+    relative: ["./runtime.mjs"],
+    environment: ["paseo-fixture-workspace-runtime"],
+  } as const;
+  const service = createWorkspaceRuntimeService({
+    paseoHome: root,
+    resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
+    persistRuntimeId: async (workspaceId, runtimeId) => void runtimeIds.set(workspaceId, runtimeId),
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId) => void runtimeIds.delete(workspaceId),
+    externalRuntimes: Object.fromEntries(
+      Object.entries(commands).map(([runtimeId, command]) => [
+        runtimeId,
+        {
+          type: "command" as const,
+          command,
+          options: { stateDirectory: path.join(root, runtimeId) },
+        },
+      ]),
+    ),
+  });
+  await Promise.all(Object.keys(commands).map((runtimeId) => mkdir(path.join(root, runtimeId))));
+
+  for (const runtimeId of Object.keys(commands)) {
+    const workspaceId = `resolution-${runtimeId}`;
+    await expect(
+      service.create({
+        workspaceId,
+        runtimeId,
+        project: { id: runtimeId, source: { kind: "host-directory", path: source } },
+        placement: { kind: "existing" },
+      }),
+    ).resolves.toMatchObject({ workspaceId, runtimeId });
+    await service.destroy(workspaceId);
+  }
+});
+
+test("launches JavaScript package bins with Node and preserves configured argv", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-command-package-bin-"));
+  cleanupRoots.push(root);
+  const source = path.join(root, "source");
+  const packageRoot = path.join(root, "node_modules", "@fixture", "runtime");
+  const argvFile = path.join(root, "package-bin-argv.json");
+  await Promise.all([mkdir(source), mkdir(packageRoot, { recursive: true })]);
+  await writeFile(
+    path.join(packageRoot, "package.json"),
+    JSON.stringify({ name: "@fixture/runtime", type: "module", bin: "runtime.js" }),
+  );
+  await writeFile(
+    path.join(packageRoot, "runtime.js"),
+    [
+      "import { appendFileSync } from 'node:fs';",
+      "appendFileSync(process.argv[2], `${JSON.stringify(process.argv.slice(2))}\\n`);",
+      `await import(${JSON.stringify(pathToFileURL(fixtureExecutable).href)});`,
+    ].join("\n"),
+    { mode: 0o644 },
+  );
+  const runtimeIds = new Map<string, string>();
+  const service = createWorkspaceRuntimeService({
+    paseoHome: root,
+    commandResolutionBase: root,
+    resolveRuntimeId: async (workspaceId) => runtimeIds.get(workspaceId) ?? null,
+    persistRuntimeId: async (workspaceId, runtimeId) => void runtimeIds.set(workspaceId, runtimeId),
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (workspaceId) => void runtimeIds.delete(workspaceId),
+    externalRuntimes: {
+      package: {
+        type: "command",
+        command: ["@fixture/runtime", argvFile, "--modes", "pipes"],
+        options: { stateDirectory: path.join(root, "state") },
+      },
+    },
+  });
+
+  await service.create({
+    workspaceId: "package-bin",
+    runtimeId: "package",
+    project: { id: "package", source: { kind: "host-directory", path: source } },
+    placement: { kind: "existing" },
+  });
+  const launches = (await readFile(argvFile, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as string[]);
+  expect(
+    launches.every(
+      (argv) => argv.slice(0, 3).join("\0") === [argvFile, "--modes", "pipes"].join("\0"),
+    ),
+  ).toBe(true);
+  expect(launches).toContainEqual([
+    argvFile,
+    "--modes",
+    "pipes",
+    "create",
+    "--workspace-id",
+    "package-bin",
+  ]);
+  await service.destroy("package-bin");
 });
 
 test("equal display cwd values never share external runtime execution, files, Git, or caches", async () => {
@@ -120,7 +228,6 @@ test("equal display cwd values never share external runtime execution, files, Gi
         {
           type: "command" as const,
           command: [processExecPath(), fixtureExecutable] as const,
-          helperCommand: [processExecPath(), helperExecutable] as const,
           options: {
             stateDirectory: stateDirectories[index],
             displayCwd: "/workspace",
@@ -759,7 +866,7 @@ async function createFixture(
   withBarrier = false,
   modes: "pipes" | "pty" = "pty",
   runtimeOptions: Readonly<Record<string, unknown>> = {},
-  helperCommand?: (root: string) => readonly [string, ...string[]],
+  fixtureHelperCommand?: (root: string) => readonly [string, ...string[]],
 ) {
   const root = await mkdtemp(path.join(tmpdir(), `paseo-command-runtime-${name}-`));
   cleanupRoots.push(root);
@@ -794,9 +901,9 @@ async function createFixture(
             ? []
             : ["--protocol-version", String(runtimeOptions.describeProtocolVersion)]),
         ],
-        helperCommand: helperCommand?.(root) ?? [processExecPath(), helperExecutable],
         options: {
           stateDirectory,
+          ...(fixtureHelperCommand ? { fixtureHelperCommand: fixtureHelperCommand(root) } : {}),
           ...runtimeOptions,
           ...(withBarrier ? { inspectBarrierDirectory: barrierDirectory } : {}),
         },

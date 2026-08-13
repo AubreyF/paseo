@@ -40,7 +40,6 @@ describe("server config", () => {
             type: "command",
             command: ["/trusted/runtime", "--mode", "fixture"],
             options: { image: "fixture:test" },
-            helperCommand: ["/runtime/bin/workspace-helper"],
           },
         },
       }),
@@ -52,8 +51,39 @@ describe("server config", () => {
         type: "command",
         command: ["/trusted/runtime", "--mode", "fixture"],
         options: { image: "fixture:test" },
-        helperCommand: ["/runtime/bin/workspace-helper"],
       },
+    });
+  });
+
+  test("lets persisted registrations override or remove distribution registrations", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-runtime-merge-"));
+    roots.push(paseoHome);
+    const configPath = path.join(paseoHome, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        workspaceRuntimes: {
+          removed: null,
+          replaced: { type: "command", label: "User", command: ["user-runtime"] },
+        },
+      }),
+    );
+    await chmod(configPath, 0o600);
+
+    expect(
+      loadConfig(paseoHome, {
+        env: {
+          PASEO_DISTRIBUTION_WORKSPACE_RUNTIMES: JSON.stringify({
+            removed: { type: "command", command: ["bundled-removed"] },
+            replaced: { type: "command", command: ["bundled-replaced"] },
+            retained: { type: "command", label: "Retained", command: ["bundled-retained"] },
+          }),
+        },
+      }).workspaceRuntimes,
+    ).toEqual({
+      replaced: { type: "command", label: "User", command: ["user-runtime"] },
+      retained: { type: "command", label: "Retained", command: ["bundled-retained"] },
     });
   });
 
@@ -76,10 +106,6 @@ describe("server config", () => {
             type: "command",
             command: [process.execPath, fixtureExecutable],
             options: { stateDirectory },
-            helperCommand: [
-              process.execPath,
-              fileURLToPath(new URL("./workspace-helper/executable.mjs", import.meta.url)),
-            ],
           },
         },
       }),
@@ -111,6 +137,7 @@ describe("server config", () => {
       runtimeId: "fixture",
       cwd: source,
       hostVisiblePath: source,
+      materializedFreshContent: true,
     });
     await expect(
       service.create({ ...createInput, workspaceId: "unknown-runtime", runtimeId: "unknown" }),

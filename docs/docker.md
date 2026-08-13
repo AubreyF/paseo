@@ -24,9 +24,9 @@ WebSocket requests still require `PASEO_PASSWORD` when one is configured.
 
 ## Docker workspace runtime
 
-The Desktop New Workspace screen includes a built-in **Docker** runtime. It is separate from running the Paseo daemon image described on this page: the daemon stays on the host and materializes each selected project's committed Git content into a runtime-owned Docker volume. Files, watching, terminals, Git, scripts, provider discovery, and agents then use the same workspace-runtime boundary.
+Paseo Desktop registers the Docker workspace runtime as a generic command runtime. It is separate from running the Paseo daemon image described on this page: the daemon stays on the host and the registered runtime materializes each selected project's committed Git content into a runtime-owned Docker volume. Files, watching, terminals, Git, scripts, provider discovery, and agents then use the same workspace-runtime boundary.
 
-The current POC requires a locally built workspace-runtime image. The configured default, `ghcr.io/getpaseo/workspace-runtime:latest`, is not published, so it does not currently work. Build the image from the repository root and override `workspaceRuntimes.docker.image` in daemon configuration:
+The current POC requires the retained `paseo-workspace-runtime:phase3-qa` image. Build another tag from the repository root and replace the opaque `options.image` value when needed:
 
 ```bash
 docker build -f packages/docker-workspace-runtime/Dockerfile -t paseo-workspace-runtime:local .
@@ -36,14 +36,19 @@ docker build -f packages/docker-workspace-runtime/Dockerfile -t paseo-workspace-
 {
   "workspaceRuntimes": {
     "docker": {
-      "type": "docker",
-      "image": "paseo-workspace-runtime:local"
+      "type": "command",
+      "label": "Docker",
+      "command": ["@getpaseo/docker-workspace-runtime"],
+      "options": {
+        "image": "paseo-workspace-runtime:local",
+        "bindMounts": []
+      }
     }
   }
 }
 ```
 
-Optional bind mounts require absolute host and container paths, must target outside `/workspace`, and declare `readOnly` explicitly. They are available during Git materialization and in the running workspace. They cannot replace the runtime-owned project volume. Set `enabled: false` to remove Docker from the runtime catalog.
+Docker owns the meaning and validation of every value under `options`. Set `workspaceRuntimes.docker` to `null` to remove the distribution registration, or replace it with any command registration. The `docker` key is an ordinary runtime ID.
 
 ## Quick Start
 

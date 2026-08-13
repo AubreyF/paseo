@@ -291,7 +291,7 @@
         "minLength": 1
       },
       "additionalProperties": {
-        "oneOf": [
+        "anyOf": [
           {
             "type": "object",
             "properties": {
@@ -316,23 +316,8 @@
                 "propertyNames": {
                   "type": "string"
                 },
-                "additionalProperties": {}
-              },
-              "providerEnvironment": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
                 "additionalProperties": {
-                  "type": "string"
-                }
-              },
-              "helperCommand": {
-                "minItems": 1,
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1
+                  "$ref": "#/definitions/__schema0"
                 }
               }
             },
@@ -340,31 +325,7 @@
             "additionalProperties": false
           },
           {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "const": "docker"
-              },
-              "image": {
-                "type": "string",
-                "minLength": 1
-              },
-              "providerEnvironment": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "type": "string"
-                }
-              },
-              "enabled": {
-                "type": "boolean"
-              }
-            },
-            "required": ["type"],
-            "additionalProperties": false
+            "type": "null"
           }
         ]
       }
@@ -727,5 +688,38 @@
     }
   },
   "additionalProperties": false,
+  "definitions": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/definitions/__schema0"
+          }
+        }
+      ]
+    }
+  },
   "title": "PaseoConfigV1"
 }

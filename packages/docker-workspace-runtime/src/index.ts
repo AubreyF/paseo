@@ -54,7 +54,7 @@ try {
     });
   } else if (operation === "reconcile") {
     const request = CommandRuntimeLifecycleRequestSchema.parse(JSON.parse(await readStdin()));
-    await reconcile(request.workspaceIds ?? [], requireOwner(request.options));
+    await reconcile(request.workspaceIds ?? [], requireOwner(request.runtimeInstanceId));
     writeJson(CommandRuntimeLifecycleResponseSchema, {
       protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
       type: "ok",
@@ -69,7 +69,7 @@ try {
       requestedWorkspaceId,
       requireArgument("--exec-id"),
       requireSignal(requireArgument("--signal")),
-      requireOwner(request.options),
+      requireOwner(request.runtimeInstanceId),
     );
   } else {
     const request = CommandRuntimeLifecycleRequestSchema.parse(JSON.parse(await readStdin()));
@@ -90,11 +90,11 @@ try {
         writeJson(CommandRuntimeLifecycleResponseSchema, {
           protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
           type: "inspection",
-          inspection: await inspect(requestedWorkspaceId, requireOwner(request.options)),
+          inspection: await inspect(requestedWorkspaceId, requireOwner(request.runtimeInstanceId)),
         });
         break;
       case "pause":
-        await pause(requestedWorkspaceId, requireOwner(request.options));
+        await pause(requestedWorkspaceId, requireOwner(request.runtimeInstanceId));
         writeJson(CommandRuntimeLifecycleResponseSchema, {
           protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
           type: "ok",
@@ -102,7 +102,7 @@ try {
         break;
       case "resume":
         {
-          const state = await resume(requestedWorkspaceId, requireOwner(request.options));
+          const state = await resume(requestedWorkspaceId, requireOwner(request.runtimeInstanceId));
           writeJson(CommandRuntimeLifecycleResponseSchema, {
             protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
             type: "state",
@@ -112,7 +112,7 @@ try {
         }
         break;
       case "destroy":
-        await destroy(requestedWorkspaceId, requireOwner(request.options));
+        await destroy(requestedWorkspaceId, requireOwner(request.runtimeInstanceId));
         writeJson(CommandRuntimeLifecycleResponseSchema, {
           protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
           type: "ok",
@@ -131,7 +131,7 @@ async function create(
   workspaceId: string,
   request: LifecycleRequest,
 ): Promise<{ state: PrivateRuntimeState; materializedFreshContent: boolean }> {
-  const owner = requireOwner(request.options);
+  const owner = requireOwner(request.runtimeInstanceId);
   const existing = await inspectPrivate(workspaceId, owner);
   if (existing.status === "ready" || existing.status === "paused") {
     return { state: existing.state, materializedFreshContent: false };
@@ -456,7 +456,7 @@ async function execute(workspaceId: string): Promise<void> {
   const request = CommandRuntimeControlSchema.parse(JSON.parse(first.value));
   if (request.type !== "spawn") throw new Error("Runtime exec spawn control is required");
   if (!/^[a-f0-9]{32}$/.test(request.execId)) throw new Error("Invalid exec id");
-  const expectedOwner = requireOwner(request.options);
+  const expectedOwner = requireOwner(request.runtimeInstanceId);
   const current = await inspectPrivate(workspaceId, expectedOwner);
   if (current.status !== "ready") throw new Error(`Docker workspace is ${current.status}`);
   const requestedCwd = resolveWorkspaceCwd(current.state.root, request.cwd);
@@ -646,7 +646,7 @@ async function executeDockerPty(input: {
     input.request.execId,
     created.Id,
     input.controls,
-    requireOwner(input.request.options),
+    requireOwner(input.request.runtimeInstanceId),
     (signal) => {
       requestedSignal = signal;
     },
@@ -670,7 +670,7 @@ async function executeDockerPty(input: {
             input.workspaceId,
             input.request.execId,
             "SIGKILL",
-            requireOwner(input.request.options),
+            requireOwner(input.request.runtimeInstanceId),
           ),
           PTY_CLEANUP_TIMEOUT_MS,
           "Docker PTY signal helper timed out",
@@ -964,11 +964,11 @@ function requireImage(options: LifecycleRequest["options"]): string {
   return options.image;
 }
 
-function requireOwner(options: LifecycleRequest["options"]): string {
-  if (typeof options.owner !== "string" || !/^[a-f0-9]{64}$/.test(options.owner)) {
-    throw new Error("Docker runtime option owner must be a SHA-256 identity");
+function requireOwner(runtimeInstanceId: string): string {
+  if (!/^[a-f0-9]{64}$/.test(runtimeInstanceId)) {
+    throw new Error("Runtime instance id must be a SHA-256 identity");
   }
-  return options.owner;
+  return runtimeInstanceId;
 }
 
 function parseDockerJsonValue(value: string): unknown {

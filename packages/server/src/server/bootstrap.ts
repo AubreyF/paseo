@@ -153,7 +153,6 @@ import {
 } from "./workspace-registry.js";
 import {
   createWorkspaceRuntimeService,
-  DEFAULT_DOCKER_WORKSPACE_IMAGE,
   type WorkspaceRuntimeConfig,
   type WorkspaceRuntimeRecordStore,
   type WorkspaceRuntimeService,
@@ -404,6 +403,7 @@ export interface PaseoDaemonConfig {
   desktopManaged?: boolean;
   worktreesRoot?: string;
   workspaceRuntimes?: Readonly<Record<string, WorkspaceRuntimeConfig>>;
+  workspaceRuntimeCommandResolutionBase?: string;
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
@@ -868,7 +868,7 @@ export async function createPaseoDaemon(
     logger,
   );
   const providerWorkspaceBindings = new Map<string, ReturnType<typeof bindProviderWorkspace>>();
-  const bindWorkspaceProviderCapability = async (workspaceId: string, runtimeId: string) => {
+  const bindWorkspaceProviderCapability = async (workspaceId: string, _runtimeId: string) => {
     if (!workspaceRuntime) throw new Error("Workspace runtime is not available");
     const cached = providerWorkspaceBindings.get(workspaceId);
     if (cached) return cached;
@@ -877,9 +877,8 @@ export async function createPaseoDaemon(
       runtime,
       cwd: ".",
       policy: resolveProviderPlacementPolicy({
-        runtimeId,
+        capability: runtime.provider,
         hostEnvironment: process.env,
-        isolatedEnvironment: config.workspaceRuntimes?.[runtimeId]?.providerEnvironment,
       }),
     });
     providerWorkspaceBindings.set(workspaceId, workspace);
@@ -915,7 +914,7 @@ export async function createPaseoDaemon(
         return workspaceRuntime.listRuntimes();
       },
     },
-    runtimeConfiguration: resolveProviderProbeRuntimeConfiguration(config.workspaceRuntimes),
+    runtimeConfiguration: config.workspaceRuntimes,
     bindWorkspaceProviderCapability,
   });
   const workspaceRecords: WorkspaceRuntimeRecordStore = {
@@ -957,6 +956,7 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     externalRuntimes: config.workspaceRuntimes,
+    commandResolutionBase: config.workspaceRuntimeCommandResolutionBase,
     ...workspaceRecords,
   });
   const detachProviderProbeInvalidation = projectRegistry.subscribeToMutations(async (mutation) => {
@@ -1946,23 +1946,6 @@ export async function createPaseoDaemon(
     start,
     stop,
     getListenTarget: () => boundListenTarget,
-  };
-}
-
-function resolveProviderProbeRuntimeConfiguration(
-  configured: Readonly<Record<string, WorkspaceRuntimeConfig>> | undefined,
-): Readonly<Record<string, unknown>> {
-  const docker = configured?.docker;
-  return {
-    ...configured,
-    docker: {
-      type: "docker",
-      ...(docker?.type === "docker" ? docker : {}),
-      image:
-        docker?.type === "docker"
-          ? (docker.image ?? DEFAULT_DOCKER_WORKSPACE_IMAGE)
-          : DEFAULT_DOCKER_WORKSPACE_IMAGE,
-    },
   };
 }
 

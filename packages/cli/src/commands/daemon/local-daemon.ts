@@ -98,11 +98,23 @@ const DETACHED_STARTUP_GRACE_MS = 1200;
 const PID_POLL_INTERVAL_MS = 100;
 const DAEMON_LOG_FILENAME = "daemon.log";
 const DAEMON_PID_FILENAME = "paseo.pid";
+const require = createRequire(import.meta.url);
+const DISTRIBUTION_WORKSPACE_RUNTIMES = JSON.stringify({
+  docker: {
+    type: "command",
+    label: "Docker",
+    command: ["@getpaseo/docker-workspace-runtime"],
+    options: { image: "paseo-workspace-runtime:phase3-qa", bindMounts: [] },
+  },
+});
+const DISTRIBUTION_PACKAGE_ROOT = path.resolve(
+  path.dirname(require.resolve("@getpaseo/docker-workspace-runtime/package.json")),
+  "..",
+  "..",
+);
 
 export const DEFAULT_STOP_TIMEOUT_MS = 15_000;
 export const DEFAULT_KILL_TIMEOUT_MS = 3_000;
-
-const require = createRequire(import.meta.url);
 
 const defaultDaemonLaunchRuntime: DaemonLaunchRuntime = {
   resolveRunnerEntry: resolveDaemonRunnerEntry,
@@ -156,6 +168,8 @@ function buildRunnerArgs(options: DaemonStartOptions): string[] {
 
 function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  childEnv.PASEO_DISTRIBUTION_WORKSPACE_RUNTIMES = DISTRIBUTION_WORKSPACE_RUNTIMES;
+  childEnv.PASEO_DISTRIBUTION_PACKAGE_ROOT = DISTRIBUTION_PACKAGE_ROOT;
   if (options.home) {
     childEnv.PASEO_HOME = options.home;
   }

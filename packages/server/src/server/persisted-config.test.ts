@@ -9,7 +9,6 @@ import {
   savePersistedConfig,
 } from "./persisted-config.js";
 import { PRIVATE_FILE_MODE } from "./private-files.js";
-import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
 const MODE_MASK = 0o777;
 const PERMISSIVE_FILE_MODE = 0o644;
@@ -139,22 +138,24 @@ describe("PersistedConfigSchema worktrees config", () => {
 });
 
 describe("PersistedConfigSchema workspace runtime config", () => {
-  test("accepts trusted command registrations and rejects an empty executable", () => {
+  test("accepts generic command registrations and rejects Docker as a public type", () => {
     expect(
       PersistedConfigSchema.parse({
         workspaceRuntimes: {
           fixture: {
             type: "command",
+            label: "Fixture",
             command: ["/trusted/runtime", "--fixture"],
-            options: { image: "fixture:test" },
+            options: { arbitrary: { nested: [true, 3, null] } },
           },
         },
       }).workspaceRuntimes,
     ).toEqual({
       fixture: {
         type: "command",
+        label: "Fixture",
         command: ["/trusted/runtime", "--fixture"],
-        options: { image: "fixture:test" },
+        options: { arbitrary: { nested: [true, 3, null] } },
       },
     });
     expect(() =>
@@ -162,81 +163,22 @@ describe("PersistedConfigSchema workspace runtime config", () => {
         workspaceRuntimes: { invalid: { type: "command", command: [] } },
       }),
     ).toThrow();
-  });
-
-  test("accepts the Docker off switch and rejects command replacement of the reserved id", () => {
-    expect(
-      PersistedConfigSchema.parse({
-        workspaceRuntimes: {
-          docker: {
-            type: "docker",
-            enabled: false,
-            image: "paseo-workspace:test",
-            providerEnvironment: { PATH: "/runtime/bin" },
-          },
-        },
-      }).workspaceRuntimes,
-    ).toEqual({
-      docker: {
-        type: "docker",
-        enabled: false,
-        image: "paseo-workspace:test",
-        providerEnvironment: { PATH: "/runtime/bin" },
-      },
-    });
-    const configured = PersistedConfigSchema.parse({
-      workspaceRuntimes: {
-        docker: { type: "command", command: ["/wrong/runtime"] },
-      },
-    });
     expect(() =>
-      createWorkspaceRuntimeService({
-        paseoHome: "/tmp/paseo-reserved-runtime-test",
-        externalRuntimes: configured.workspaceRuntimes,
-        resolveRuntimeId: async () => null,
-        persistRuntimeId: async () => {},
-      }),
-    ).toThrow("Workspace runtime id is reserved: docker");
-  });
-
-  test("accepts trusted Docker bind mounts and rejects unsafe workspace targets", () => {
-    expect(
       PersistedConfigSchema.parse({
         workspaceRuntimes: {
           docker: {
             type: "docker",
-            bindMounts: [
-              {
-                source: "/host/credentials.json",
-                target: "/root/.agent/credentials.json",
-                readOnly: true,
-              },
-            ],
+            image: "paseo-workspace:test",
           },
         },
-      }).workspaceRuntimes?.docker,
-    ).toMatchObject({
-      bindMounts: [
-        {
-          source: "/host/credentials.json",
-          target: "/root/.agent/credentials.json",
-          readOnly: true,
-        },
-      ],
-    });
+      }),
+    ).toThrow();
+  });
 
-    for (const bindMounts of [
-      [{ source: "relative", target: "/root/config", readOnly: true }],
-      [{ source: "/host/config", target: "relative", readOnly: true }],
-      [{ source: "/host/repo", target: "/workspace", readOnly: true }],
-      [{ source: "/host/repo", target: "/workspace/nested", readOnly: true }],
-    ]) {
-      expect(() =>
-        PersistedConfigSchema.parse({
-          workspaceRuntimes: { docker: { type: "docker", bindMounts } },
-        }),
-      ).toThrow();
-    }
+  test("uses null as the generic removal marker for a distribution registration", () => {
+    expect(
+      PersistedConfigSchema.parse({ workspaceRuntimes: { bundled: null } }).workspaceRuntimes,
+    ).toEqual({ bundled: null });
   });
 });
 

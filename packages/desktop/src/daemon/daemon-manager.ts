@@ -398,6 +398,15 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
       PASEO_DESKTOP_MANAGED: "1",
       PASEO_CLI: getBundledCliShimPath(),
       PASEO_WEB_UI_ENABLED: "false",
+      PASEO_DISTRIBUTION_WORKSPACE_RUNTIMES: JSON.stringify({
+        docker: {
+          type: "command",
+          label: "Docker",
+          command: ["@getpaseo/docker-workspace-runtime"],
+          options: { image: "paseo-workspace-runtime:phase3-qa", bindMounts: [] },
+        },
+      }),
+      PASEO_DISTRIBUTION_PACKAGE_ROOT: __dirname,
     },
     stdio: ["ignore", "ignore", "ignore"],
   });

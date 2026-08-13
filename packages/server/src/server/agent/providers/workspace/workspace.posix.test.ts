@@ -7,11 +7,26 @@ import { describe, expect, test } from "vitest";
 
 import type { BoundWorkspaceRuntime } from "../../../workspace-runtime/index.js";
 import { createWorkspaceRuntimeService } from "../../../workspace-runtime/index.js";
-import { bindProviderWorkspace } from "./index.js";
+import { bindProviderWorkspace, resolveProviderPlacementPolicy } from "./index.js";
 
 const posixDescribe = describe.runIf(process.platform !== "win32");
 
 posixDescribe("provider workspace placement capability", () => {
+  test("derives provider environment and host services from capabilities, not runtime ids", () => {
+    expect(
+      resolveProviderPlacementPolicy({
+        capability: {
+          environment: "isolated",
+          sharedHostProviders: new Set(["fixture-host-service"]),
+        },
+        hostEnvironment: { HOST_ONLY: "secret" },
+      }),
+    ).toEqual({
+      environment: { type: "isolated" },
+      sharedHostProviders: new Set(["fixture-host-service"]),
+    });
+  });
+
   test("streams large binary state without putting content in argv and removes it safely", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "paseo-provider-state-"));
     const cwd = path.join(root, "workspace");
@@ -32,6 +47,7 @@ posixDescribe("provider workspace placement capability", () => {
     const launches: Array<readonly string[]> = [];
     const bound = await service.bind("provider-state");
     const recordingRuntime: BoundWorkspaceRuntime = {
+      provider: { environment: "isolated", sharedHostProviders: new Set() },
       ...bound,
       resolveCommand(command) {
         return command === "node"

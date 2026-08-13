@@ -57,6 +57,10 @@ export function createLocalRuntime(
     requiresGitProject: false,
     workspaceHelper: hostWorkspaceHelper,
     scriptTerminal: { kind: "persistent-shell" },
+    provider: {
+      environment: "inherit-sanitized-host",
+      sharedHostProviders: new Set(["opencode"]),
+    },
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);
       if (existing.status === "ready" || existing.status === "paused") {

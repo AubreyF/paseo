@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { watch } from "node:fs";
 import { chmod, cp, copyFile, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Socket } from "node:net";
 import { createInterface } from "node:readline";
 import * as pty from "node-pty";
@@ -211,7 +212,8 @@ async function execute(id) {
     return;
   }
   const events = new Socket({ fd: 4, readable: false, writable: true });
-  pipeChild = spawn(envelope.argv[0], envelope.argv.slice(1), {
+  const argv = resolveFixtureCommand(envelope);
+  pipeChild = spawn(argv[0], argv.slice(1), {
     cwd: await resolveCwd(state.root, envelope.cwd),
     env: envelope.env,
     detached: true,
@@ -276,6 +278,21 @@ async function execute(id) {
   } else {
     process.exitCode = exit.code ?? 1;
   }
+}
+
+function resolveFixtureCommand(envelope) {
+  if (envelope.purpose.kind !== "workspace-helper") return envelope.argv;
+  const configured = envelope.options.fixtureHelperCommand;
+  if (Array.isArray(configured) && configured.every((value) => typeof value === "string")) {
+    return [...configured, ...envelope.argv.slice(1)];
+  }
+  return [
+    process.execPath,
+    fileURLToPath(
+      new URL("../../server/src/server/workspace-helper/executable.mjs", import.meta.url),
+    ),
+    ...envelope.argv.slice(1),
+  ];
 }
 
 async function executePty(id, envelope, controls, controlStream) {

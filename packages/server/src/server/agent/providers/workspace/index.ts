@@ -10,27 +10,27 @@ import type {
   BoundWorkspaceRuntime,
   WorkspaceProcess,
   WorkspaceProcessPurpose,
+  WorkspaceRuntimeProviderCapability,
 } from "../../../workspace-runtime/index.js";
 import type { WorkspaceDirectory } from "../../../workspace-helper/index.js";
 
 export interface ProviderPlacementPolicy {
   environment:
     | { type: "inherit-sanitized-host"; hostEnvironment: ProcessEnvRecord }
-    | { type: "isolated"; baseEnvironment?: ProcessEnvRecord };
+    | { type: "isolated" };
   sharedHostProviders: ReadonlySet<string>;
 }
 
 export function resolveProviderPlacementPolicy(input: {
-  runtimeId: string;
+  capability: WorkspaceRuntimeProviderCapability;
   hostEnvironment: ProcessEnvRecord;
-  isolatedEnvironment?: ProcessEnvRecord;
 }): ProviderPlacementPolicy {
-  const hostPlaced = input.runtimeId === "local" || input.runtimeId === "worktree";
   return {
-    environment: hostPlaced
-      ? { type: "inherit-sanitized-host", hostEnvironment: input.hostEnvironment }
-      : { type: "isolated", baseEnvironment: input.isolatedEnvironment },
-    sharedHostProviders: hostPlaced ? new Set(["opencode"]) : new Set(),
+    environment:
+      input.capability.environment === "inherit-sanitized-host"
+        ? { type: "inherit-sanitized-host", hostEnvironment: input.hostEnvironment }
+        : { type: "isolated" },
+    sharedHostProviders: input.capability.sharedHostProviders,
   };
 }
 
@@ -110,7 +110,7 @@ export function bindProviderWorkspace(input: {
     const baseEnv =
       input.policy.environment.type === "inherit-sanitized-host"
         ? input.policy.environment.hostEnvironment
-        : (input.policy.environment.baseEnvironment ?? {});
+        : {};
     return createProviderEnv({ baseEnv, overlays: [...overlays] }) as Record<string, string>;
   };
   const run = (launch: ProviderWorkspaceLaunchInput): Promise<WorkspaceProcess> =>

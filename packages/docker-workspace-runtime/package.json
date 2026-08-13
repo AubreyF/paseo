@@ -9,7 +9,7 @@
   "main": "./dist/index.js",
   "scripts": {
     "clean": "node ../../scripts/clean-package-dist.mjs",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/index.js', 0o755)\"",
     "build:clean": "npm run clean && npm run build",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },

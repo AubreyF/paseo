@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:os";
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
@@ -24,18 +27,22 @@ import type {
   WorkspacePtyProcess,
   WorkspaceRuntimeDriver,
 } from "../../drivers/index.js";
+import type { WorkspaceRuntimeJsonValue } from "../../index.js";
 const COMMAND_RUNTIME_CLEANUP_TIMEOUT_MS = 750;
 
 export interface CommandRuntimeConfig {
   command: readonly [string, ...string[]];
-  options?: Readonly<Record<string, unknown>>;
-  helperCommand?: readonly [string, ...string[]];
+  options?: Readonly<Record<string, WorkspaceRuntimeJsonValue>>;
 }
 
 export function createCommandRuntime(
   runtimeId: string,
   config: CommandRuntimeConfig,
+  runtimeInstanceId: string,
+  packageResolutionBase: string,
+  pathResolutionBase: string,
 ): WorkspaceRuntimeDriver {
+  const command = resolveRuntimeCommand(config.command, packageResolutionBase, pathResolutionBase);
   let described: Promise<ReadonlySet<"pipes" | "pty">> | null = null;
   let supportsReconciliation = false;
 
@@ -63,6 +70,7 @@ export function createCommandRuntime(
       [operation, "--workspace-id", workspaceId],
       encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
         protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+        runtimeInstanceId,
         input,
         options: config.options ?? {},
       }),
@@ -75,12 +83,13 @@ export function createCommandRuntime(
   return {
     id: runtimeId,
     requiresGitProject: true,
-    reconciliationDomainId: JSON.stringify({ command: config.command, options: config.options }),
+    reconciliationDomainId: JSON.stringify({ command, options: config.options }),
     workspaceHelper: {
-      command: config.helperCommand ?? ["paseo-workspace-helper"],
+      command: ["paseo-workspace-helper"],
       env: {},
     },
     scriptTerminal: { kind: "direct-command", command: "/bin/sh", argsPrefix: ["-lc"] },
+    provider: { environment: "isolated", sharedHostProviders: new Set() },
     async create(input) {
       const response = await lifecycle("create", input.workspaceId, input);
       if (response.type !== "state") throw new Error(`Invalid create response from ${runtimeId}`);
@@ -113,9 +122,15 @@ export function createCommandRuntime(
         if (!modes.has("pty")) {
           throw new Error(`Workspace runtime ${runtimeId} does not support PTY mode`);
         }
-        return spawnCommandPty(runtimeId, config.command, input, config.options ?? {});
+        return spawnCommandPty(runtimeId, command, input, config.options ?? {}, runtimeInstanceId);
       }
-      return spawnCommandProcess(runtimeId, config.command, input, config.options ?? {});
+      return spawnCommandProcess(
+        runtimeId,
+        command,
+        input,
+        config.options ?? {},
+        runtimeInstanceId,
+      );
     },
     async pause(workspaceId) {
       const response = await lifecycle("pause", workspaceId);
@@ -137,6 +152,7 @@ export function createCommandRuntime(
         ["reconcile"],
         encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
           protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+          runtimeInstanceId,
           workspaceIds,
           options: config.options ?? {},
         }),
@@ -149,7 +165,7 @@ export function createCommandRuntime(
   };
 
   async function runCommand(args: string[], stdin: string | undefined): Promise<string> {
-    const child = spawn(config.command[0], [...config.command.slice(1), ...args], {
+    const child = spawn(command[0], [...command.slice(1), ...args], {
       env: commandEnvironment(),
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
@@ -199,6 +215,7 @@ function spawnCommandPty(
   command: readonly [string, ...string[]],
   input: WorkspaceDriverSpawnInput,
   options: Readonly<Record<string, unknown>>,
+  runtimeInstanceId: string,
 ): WorkspacePtyProcess {
   if (input.stdio.kind !== "pty") throw new Error("PTY spawn requires PTY stdio");
   const execId = randomBytes(16).toString("hex");
@@ -303,6 +320,7 @@ function spawnCommandPty(
       env: input.env,
       purpose: input.purpose,
       options,
+      runtimeInstanceId,
       execId,
       stdio: input.stdio,
     }),
@@ -401,6 +419,7 @@ function spawnCommandPty(
           input.workspaceId,
           execId,
           options,
+          runtimeInstanceId,
           child,
           wrapperClosedPromise,
         );
@@ -425,6 +444,7 @@ async function forceKillCommandRuntime(
   workspaceId: string,
   execId: string,
   options: Readonly<Record<string, unknown>>,
+  runtimeInstanceId: string,
   wrapper: { pid?: number; kill(signal?: NodeJS.Signals): boolean },
   wrapperClosed: Promise<void>,
 ): Promise<void> {
@@ -473,6 +493,7 @@ async function forceKillCommandRuntime(
   signalCommand.stdin.end(
     encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
       protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
+      runtimeInstanceId,
       options,
     }),
   );
@@ -540,6 +561,7 @@ function spawnCommandProcess(
   command: readonly [string, ...string[]],
   input: WorkspaceDriverSpawnInput,
   options: Readonly<Record<string, unknown>>,
+  runtimeInstanceId: string,
 ): WorkspacePipeProcess {
   const execId = randomBytes(16).toString("hex");
   const child = spawn(
@@ -622,6 +644,7 @@ function spawnCommandProcess(
       env: input.env,
       purpose: input.purpose,
       options,
+      runtimeInstanceId,
       execId,
       stdio: input.stdio,
     }),
@@ -650,6 +673,7 @@ function spawnCommandProcess(
             input.workspaceId,
             execId,
             options,
+            runtimeInstanceId,
             child,
             wrapperClosedPromise,
           );
@@ -693,6 +717,7 @@ function spawnCommandProcess(
           input.workspaceId,
           execId,
           options,
+          runtimeInstanceId,
           child,
           wrapperClosedPromise,
         );
@@ -735,4 +760,34 @@ function commandEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   if (env.FORCE_COLOR !== undefined) delete env.NO_COLOR;
   return env;
+}
+
+function resolveRuntimeCommand(
+  command: readonly [string, ...string[]],
+  packageResolutionBase: string,
+  pathResolutionBase: string,
+): readonly [string, ...string[]] {
+  const executable = command[0];
+  const moduleRequire = createRequire(path.join(packageResolutionBase, "package.json"));
+  let resolved = executable;
+  if (executable.startsWith("@")) {
+    const packageJsonPath = moduleRequire.resolve(`${executable}/package.json`);
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+      bin?: string | Record<string, string>;
+    };
+    const bin =
+      typeof packageJson.bin === "string"
+        ? packageJson.bin
+        : packageJson.bin && Object.values(packageJson.bin)[0];
+    if (!bin) throw new Error(`Workspace runtime package has no executable: ${executable}`);
+    resolved = path.resolve(path.dirname(packageJsonPath), bin);
+    if ([".js", ".cjs", ".mjs"].includes(path.extname(resolved))) {
+      return [process.execPath, resolved, ...command.slice(1)];
+    }
+  } else if (path.isAbsolute(executable)) {
+    resolved = path.normalize(executable);
+  } else if (executable.startsWith(".")) {
+    resolved = path.resolve(pathResolutionBase, executable);
+  }
+  return [resolved, ...command.slice(1)];
 }

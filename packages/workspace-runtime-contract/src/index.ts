@@ -4,7 +4,7 @@ export const COMMAND_RUNTIME_PROTOCOL_VERSION = 1 as const;
 
 const ProtocolVersionSchema = z.literal(COMMAND_RUNTIME_PROTOCOL_VERSION);
 const EnvironmentSchema = z.record(z.string(), z.string());
-const OptionsSchema = z.record(z.string(), z.unknown());
+const OptionsSchema = z.record(z.string(), z.json());
 const CommandSchema = z.array(z.string()).min(1);
 
 export const CommandRuntimeProjectSourceSchema = z.discriminatedUnion("kind", [
@@ -92,6 +92,7 @@ export const CommandRuntimeCreateInputSchema = z
 export const CommandRuntimeLifecycleRequestSchema = z
   .object({
     protocolVersion: ProtocolVersionSchema,
+    runtimeInstanceId: z.string().min(1),
     input: CommandRuntimeCreateInputSchema.optional(),
     options: OptionsSchema,
     workspaceIds: z.array(z.string()).optional(),
@@ -187,6 +188,7 @@ export const CommandRuntimeSpawnEnvelopeSchema = z
   .object({
     type: z.literal("spawn"),
     protocolVersion: ProtocolVersionSchema,
+    runtimeInstanceId: z.string().min(1),
     argv: CommandSchema,
     cwd: z.string().optional(),
     env: EnvironmentSchema,

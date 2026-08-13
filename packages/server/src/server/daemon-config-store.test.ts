@@ -181,15 +181,10 @@ describe("DaemonConfigStore", () => {
           ...initial,
           workspaceRuntimes: {
             docker: {
-              type: "docker",
-              image: "paseo-workspace:test",
-              bindMounts: [
-                {
-                  source: "/host/agent/auth.json",
-                  target: "/root/.agent/auth.json",
-                  readOnly: true,
-                },
-              ],
+              type: "command",
+              label: "Container Lab",
+              command: ["runtime-package"],
+              options: { arbitrary: { retained: true } },
             },
           },
           agents: {
@@ -235,15 +230,10 @@ describe("DaemonConfigStore", () => {
       enabled: false,
     });
     expect(persisted.workspaceRuntimes?.docker).toEqual({
-      type: "docker",
-      image: "paseo-workspace:test",
-      bindMounts: [
-        {
-          source: "/host/agent/auth.json",
-          target: "/root/.agent/auth.json",
-          readOnly: true,
-        },
-      ],
+      type: "command",
+      label: "Container Lab",
+      command: ["runtime-package"],
+      options: { arbitrary: { retained: true } },
     });
   });
 

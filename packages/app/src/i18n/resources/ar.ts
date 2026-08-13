@@ -1042,7 +1042,7 @@ export const ar: TranslationResources = {
   newWorkspace: {
     title: "مساحة عمل جديدة",
     create: "يخلق",
-    runtime: { local: "محلي", worktree: "شجرة العمل", docker: "Docker", label: "بيئة التشغيل" },
+    runtime: { local: "محلي", worktree: "شجرة العمل", label: "بيئة التشغيل" },
     runtimeProbe: { preparing: "جارٍ تجهيز البيئة" },
     isolation: {
       local: "محلي",

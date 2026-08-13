@@ -476,6 +476,7 @@ test("v1 extension maps stay explicit and future versions fail by protocol versi
   assert.deepEqual(
     CommandRuntimeLifecycleRequestSchema.parse({
       protocolVersion: 1,
+      runtimeInstanceId: examples.lifecycleRequest.runtimeInstanceId,
       options: { root: "runtime-private-option", vendorExtension: { nested: true } },
     }).options,
     { root: "runtime-private-option", vendorExtension: { nested: true } },

@@ -16,7 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { beforeAll, expect, onTestFinished, test, vi } from "vitest";
+import { expect, onTestFinished, test, vi } from "vitest";
 
 import { createWorkspaceRuntimeService } from "./index.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
@@ -34,19 +34,20 @@ import {
 const repositoryRoot = fileURLToPath(new URL("../../../../..", import.meta.url));
 const dockerRuntimeRoot = path.join(repositoryRoot, "packages/docker-workspace-runtime");
 const runtimeExecutable = path.join(dockerRuntimeRoot, "dist/index.js");
-const image = "paseo-workspace-runtime-slice1:test";
+const image = process.env.E2E_DOCKER_WORKSPACE_IMAGE ?? "paseo-workspace-runtime:phase3-qa";
 const fixtureAgent = fileURLToPath(
   new URL("../test-utils/fixtures/workspace-runtime-acp-agent.mjs", import.meta.url),
 );
 const run = promisify(execFile);
 
-beforeAll(() => {
-  execFileSync(
-    "docker",
-    ["build", "-t", image, "-f", path.join(dockerRuntimeRoot, "Dockerfile"), repositoryRoot],
-    { stdio: "pipe" },
-  );
-}, 120_000);
+function dockerRegistration(options: Readonly<Record<string, unknown>> = {}) {
+  return {
+    type: "command" as const,
+    label: "Docker",
+    command: ["@getpaseo/docker-workspace-runtime"] as const,
+    options: { image, ...options },
+  };
+}
 
 async function collect(stream: NodeJS.ReadableStream): Promise<string> {
   const chunks: Buffer[] = [];
@@ -57,6 +58,8 @@ async function collect(stream: NodeJS.ReadableStream): Promise<string> {
 }
 
 test("the command runtime owns Docker workspace materialization, pipes, and lifecycle", async () => {
+  const originalHostOnlySetup = process.env.PASEO_SETUP_CUSTOM_INHERITED;
+  process.env.PASEO_SETUP_CUSTOM_INHERITED = "must-not-enter-container";
   const fixture = await dockerTestFixture("paseo-runtime-docker-");
   const root = fixture.root;
   const repo = await createRepository(root);
@@ -73,10 +76,7 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
       runtimeIds.delete(workspaceId);
     },
     externalRuntimes: {
-      docker: {
-        type: "docker",
-        image,
-      },
+      docker: dockerRegistration(),
     },
   };
   const service = createWorkspaceRuntimeService(options);
@@ -94,7 +94,12 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
       placement: { kind: "existing" },
     });
 
-    expect(workspace).toEqual({ workspaceId, runtimeId: "docker", cwd: "/workspace" });
+    expect(workspace).toEqual({
+      workspaceId,
+      runtimeId: "docker",
+      cwd: "/workspace",
+      materializedFreshContent: true,
+    });
     await expect(service.inspect(workspaceId)).resolves.toEqual({
       status: "ready",
       cwd: "/workspace",
@@ -102,6 +107,27 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
     await expect(service.requireHostVisiblePath(workspaceId)).rejects.toThrow(
       `Workspace has no host-visible path: ${workspaceId}`,
     );
+
+    const setupEnvironment = await service.run({
+      workspaceId,
+      argv: [
+        "/usr/local/bin/node",
+        "-e",
+        "process.stdout.write(JSON.stringify({source:process.env.PASEO_SOURCE_CHECKOUT_PATH,root:process.env.PASEO_ROOT_PATH,worktree:process.env.PASEO_WORKTREE_PATH,branch:process.env.PASEO_BRANCH_NAME,port:process.env.PASEO_WORKTREE_PORT,path:process.env.PATH,hostOnly:process.env.PASEO_SETUP_CUSTOM_INHERITED}))",
+      ],
+      env: {},
+      purpose: { kind: "setup" },
+    });
+    setupEnvironment.stdin.end();
+    await expect(collect(setupEnvironment.stdout).then(JSON.parse)).resolves.toEqual({
+      source: ".",
+      root: ".",
+      worktree: ".",
+      branch: "",
+      port: expect.stringMatching(/^\d+$/u),
+      path: "/usr/local/bin:/usr/bin:/bin",
+    });
+    await expect(setupEnvironment.exited).resolves.toEqual({ code: 0, signal: null });
 
     for (const [name, value] of [
       ["user.email", "test@example.com"],
@@ -363,6 +389,8 @@ test("the command runtime owns Docker workspace materialization, pipes, and life
       }),
     ).rejects.toThrow(`Workspace runtime is not selected: ${workspaceId}`);
   } finally {
+    if (originalHostOnlySetup === undefined) delete process.env.PASEO_SETUP_CUSTOM_INHERITED;
+    else process.env.PASEO_SETUP_CUSTOM_INHERITED = originalHostOnlySetup;
     await service.destroy(workspaceId).catch(() => undefined);
   }
 }, 180_000);
@@ -385,7 +413,7 @@ test("production archive and deletion reap Docker runtime processes and owned re
       runtimeIds.delete(id);
       archivedWorkspaceIds.delete(id);
     },
-    externalRuntimes: { docker: { type: "docker", image } },
+    externalRuntimes: { docker: dockerRegistration() },
   });
 
   onTestFinished(async () => {
@@ -461,10 +489,7 @@ test("Docker buffers immediate pipe signals until the workload identity is autho
       runtimeIds.delete(id);
     },
     externalRuntimes: {
-      docker: {
-        type: "docker",
-        image,
-      },
+      docker: dockerRegistration(),
     },
   });
   const originalPath = process.env.PATH;
@@ -567,10 +592,7 @@ test("a selected Docker service port script executes in the container and leaves
       runtimeIds.delete(id);
     },
     externalRuntimes: {
-      docker: {
-        type: "docker",
-        image,
-      },
+      docker: dockerRegistration(),
     },
   });
   try {
@@ -617,15 +639,8 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
   const paseoHomeRoot = path.join(root, "daemon-home");
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
   await mkdir(paseoHome, { recursive: true });
-  const runtimeOwner = createHash("sha256").update(path.resolve(paseoHome)).digest("hex");
-  const runtimeConfig = { type: "docker" as const, image };
-  const configuredRuntimeConfig = {
-    type: "command" as const,
-    command: [process.execPath, runtimeExecutable] as const,
-    options: { image, owner: runtimeOwner },
-    providerEnvironment: { PASEO_DAEMON_ONLY_PROVIDER_ENV: "runtime-configured" },
-  };
-  const runtimeConfigs = { docker: runtimeConfig, "docker-configured": configuredRuntimeConfig };
+  const runtimeConfig = dockerRegistration();
+  const runtimeConfigs = { docker: runtimeConfig };
   const workspaceIds = [`docker-daemon-a-${Date.now()}`, `docker-daemon-b-${Date.now()}`];
   for (const workspaceId of workspaceIds) fixture.workspace(workspaceId);
   const hostProbeMarker = path.join(root, "host-provider-probed.txt");
@@ -637,7 +652,7 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
   await chmod(hostOnlyProvider, 0o755);
   const selectedRuntimeIds = new Map([
     [workspaceIds[0]!, "docker"],
-    [workspaceIds[1]!, "docker-configured"],
+    [workspaceIds[1]!, "docker"],
   ]);
   const seedRuntime = createWorkspaceRuntimeService({
     paseoHome,
@@ -674,7 +689,7 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
   );
   for (const workspaceId of workspaceIds) {
     const runtimeId = selectedRuntimeIds.get(workspaceId)!;
-    await seedRuntime.create({
+    const created = await seedRuntime.create({
       workspaceId,
       runtimeId,
       project: { id: "docker-daemon-project", source: { kind: "host-directory", path: repo } },
@@ -684,7 +699,8 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
       createPersistedWorkspaceRecord({
         workspaceId,
         projectId: "docker-daemon-project",
-        cwd: repo,
+        cwd: created.cwd,
+        hostVisiblePath: created.hostVisiblePath ?? null,
         kind: "local_checkout",
         displayName: workspaceId,
         runtime: { runtimeId },
@@ -806,25 +822,6 @@ test("public daemon and client keep Docker provider discovery, launch, files, Gi
       workspaceId,
     );
     expect(new TextDecoder().decode(isolatedEnvironment.bytes)).toBe("<absent>\n");
-
-    const configuredAgent = await publicClient.createAgent({
-      provider: "docker-fixture",
-      model: "fixture-model-v1",
-      cwd: publicCwds.get(workspaceIds[1]!)!,
-      workspaceId: workspaceIds[1],
-      title: "Configured Docker public fake provider",
-    });
-    await publicClient.sendMessage(configuredAgent.id, "configured public docker edit");
-    await expect(publicClient.waitForFinish(configuredAgent.id, 30_000)).resolves.toMatchObject({
-      status: "idle",
-    });
-    const configuredEnvironment = await publicClient.readFile(
-      publicCwds.get(workspaceIds[1]!)!,
-      "stdio-agent-env.txt",
-      undefined,
-      workspaceIds[1],
-    );
-    expect(new TextDecoder().decode(configuredEnvironment.bytes)).toBe("runtime-configured\n");
   } finally {
     await publicClient.close().catch(() => undefined);
     await daemon.close();
@@ -866,7 +863,7 @@ test("Docker probe pause survives restart and source invalidation rotates the pr
     cleanup: false,
     mcpEnabled: false,
     agentClients: {},
-    workspaceRuntimes: { docker: { type: "docker" as const, image } },
+    workspaceRuntimes: { docker: dockerRegistration() },
     providerOverrides: {
       "docker-fixture": {
         extends: "acp" as const,
@@ -967,6 +964,14 @@ test("persisted Git sources materialize default and pinned revisions through Doc
     path.join(sourceRepository, "packages", "app", "provider-model.txt"),
     "fixture-model-pinned\n",
   );
+  await writeFile(
+    path.join(sourceRepository, "packages", "app", "paseo.json"),
+    JSON.stringify({
+      worktree: {
+        setup: ["node -e \"process.stdout.write('docker-setup-cwd:'+process.cwd())\""],
+      },
+    }),
+  );
   execFileSync("git", ["add", "."], { cwd: sourceRepository });
   execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "pinned state"], {
     cwd: sourceRepository,
@@ -1043,11 +1048,9 @@ test("persisted Git sources materialize default and pinned revisions through Doc
       },
     },
     workspaceRuntimes: {
-      docker: {
-        type: "docker",
-        image,
+      docker: dockerRegistration({
         bindMounts: [{ source: bareRepository, target: "/git/source.git", readOnly: true }],
-      },
+      }),
     },
   });
   const client = new DaemonClient({
@@ -1059,6 +1062,11 @@ test("persisted Git sources materialize default and pinned revisions through Doc
 
   try {
     await client.connect();
+    const publicMessages: Parameters<Parameters<typeof client.subscribeRawMessages>[0]>[0][] = [];
+    const unsubscribeMessages = client.subscribeRawMessages((message) =>
+      publicMessages.push(message),
+    );
+    onTestFinished(unsubscribeMessages);
     const defaultProbe = await client.ensureWorkspaceRuntimeProbe({
       projectId: projectIds[0],
       runtimeId: "docker",
@@ -1086,6 +1094,26 @@ test("persisted Git sources materialize default and pinned revisions through Doc
       throw new Error(defaultWorkspace.error ?? "Default Git-source workspace creation failed");
     }
     fixture.workspace(defaultWorkspace.workspace.id);
+    await expect
+      .poll(() => client.fetchWorkspaceSetupStatus(defaultWorkspace.workspace!.id), {
+        timeout: 30_000,
+      })
+      .toMatchObject({ snapshot: { status: "completed", error: null } });
+    const setupProgress = publicMessages.filter(
+      (message) =>
+        message.type === "workspace_setup_progress" &&
+        message.payload.workspaceId === defaultWorkspace.workspace?.id,
+    );
+    expect(setupProgress).not.toHaveLength(0);
+    for (const message of setupProgress) {
+      if (message.type !== "workspace_setup_progress") continue;
+      expect(message.payload.detail.worktreePath).toBe(workspaceRoot);
+      expect(message.payload.detail.worktreePath).not.toContain(decoyDefault);
+      for (const command of message.payload.detail.commands) {
+        expect(command.cwd).toBe(workspaceRoot);
+        expect(command.cwd).not.toContain(decoyDefault);
+      }
+    }
     const defaultFile = await client.readFile(
       workspaceRoot,
       "source-state.txt",
@@ -1139,10 +1167,7 @@ test("Docker creation validates roots and rolls back when runtime selection cann
       throw new Error("persistence failed");
     },
     externalRuntimes: {
-      docker: {
-        type: "docker",
-        image,
-      },
+      docker: dockerRegistration(),
     },
   });
   await expect(
@@ -1192,10 +1217,7 @@ test("Docker rejects a committed symlink cwd that resolves outside the selected 
       runtimeIds.delete(id);
     },
     externalRuntimes: {
-      docker: {
-        type: "docker",
-        image,
-      },
+      docker: dockerRegistration(),
     },
   });
 
@@ -1249,10 +1271,7 @@ test("the Docker runtime never adopts or destroys an unowned deterministic resou
       runtimeIds.delete(id);
     },
     externalRuntimes: {
-      docker: {
-        type: "docker",
-        image,
-      },
+      docker: dockerRegistration(),
     },
   });
 
@@ -1436,7 +1455,6 @@ test("Docker creation revalidates a concurrently created foreign volume before m
   const resourceName = dockerResourceName(workspaceId);
   fixture.workspace(workspaceId);
   const paseoHome = path.join(fixture.root, "owner-home");
-  const owner = dockerRuntimeOwner(paseoHome);
   const foreignOwner = dockerRuntimeOwner(path.join(fixture.root, "foreign-home"));
   const attemptedMountPath = path.join(fixture.root, "foreign-volume-mounted");
   const wrapperDirectory = await createDockerRaceWrapper({
@@ -1447,7 +1465,7 @@ test("Docker creation revalidates a concurrently created foreign volume before m
     attemptedMountPath,
     race: "volume",
   });
-  const service = createCommandDockerService({ paseoHome, owner, wrapperDirectory });
+  const service = createCommandDockerService({ paseoHome, wrapperDirectory });
 
   await expect(
     service.create({
@@ -1475,7 +1493,6 @@ test("Docker creation revalidates a concurrently created foreign container befor
   const resourceName = dockerResourceName(workspaceId);
   fixture.workspace(workspaceId);
   const paseoHome = path.join(fixture.root, "owner-home");
-  const owner = dockerRuntimeOwner(paseoHome);
   const foreignOwner = dockerRuntimeOwner(path.join(fixture.root, "foreign-home"));
   const attemptedMutationPath = path.join(fixture.root, "foreign-container-started");
   const wrapperDirectory = await createDockerRaceWrapper({
@@ -1486,7 +1503,7 @@ test("Docker creation revalidates a concurrently created foreign container befor
     attemptedMutationPath,
     race: "container",
   });
-  const service = createCommandDockerService({ paseoHome, owner, wrapperDirectory });
+  const service = createCommandDockerService({ paseoHome, wrapperDirectory });
 
   await expect(
     service.create({
@@ -1524,9 +1541,7 @@ test("trusted Docker configuration mounts one runtime credential file read-only"
       runtimeIds.delete(workspaceId);
     },
     externalRuntimes: {
-      docker: {
-        type: "docker",
-        image,
+      docker: dockerRegistration({
         bindMounts: [
           {
             source: mountedFile,
@@ -1534,7 +1549,7 @@ test("trusted Docker configuration mounts one runtime credential file read-only"
             readOnly: true,
           },
         ],
-      },
+      }),
     },
   });
   const workspaceId = `docker-bind-${Date.now()}`;
@@ -1638,10 +1653,7 @@ test("Docker reconciliation removes only orphaned resources with deterministic n
     removeWorkspaceRecord: async () => {},
     listRuntimeRecords: async () => [],
     externalRuntimes: {
-      docker: {
-        type: "docker",
-        image,
-      },
+      docker: dockerRegistration(),
     },
   });
 
@@ -1670,7 +1682,7 @@ async function dockerTestFixture(prefix: string): Promise<{
   workspace(workspaceId: string): void;
   volume(name: string): void;
 }> {
-  const root = await mkdtemp(path.join(tmpdir(), prefix));
+  let root: string | null = null;
   const containers = new Set<string>();
   const volumes = new Set<string>();
   const workspaceIds = new Set<string>();
@@ -1696,13 +1708,14 @@ async function dockerTestFixture(prefix: string): Promise<{
       );
     }
     const leakedProcesses = dockerTestProcessPids(workspaceIds);
-    await rm(root, { recursive: true, force: true });
+    if (root) await rm(root, { recursive: true, force: true });
     if (leakedContainers.length || leakedVolumes.length || leakedProcesses.length) {
       throw new Error(
         `Docker test leaked containers=${leakedContainers.join(",")} volumes=${leakedVolumes.join(",")} processes=${leakedProcesses.join(",")}`,
       );
     }
   }, 30_000);
+  root = await mkdtemp(path.join(tmpdir(), prefix));
   return {
     root,
     workspace(workspaceId) {
@@ -1742,15 +1755,11 @@ function createDockerService(paseoHome: string) {
     removeWorkspaceRecord: async (workspaceId) => {
       runtimeIds.delete(workspaceId);
     },
-    externalRuntimes: { docker: { type: "docker", image } },
+    externalRuntimes: { docker: dockerRegistration() },
   });
 }
 
-function createCommandDockerService(input: {
-  paseoHome: string;
-  owner: string;
-  wrapperDirectory: string;
-}) {
+function createCommandDockerService(input: { paseoHome: string; wrapperDirectory: string }) {
   const runtimeIds = new Map<string, string>();
   return createWorkspaceRuntimeService({
     paseoHome: input.paseoHome,
@@ -1771,7 +1780,7 @@ function createCommandDockerService(input: {
           process.execPath,
           runtimeExecutable,
         ],
-        options: { image, owner: input.owner },
+        options: { image },
       },
     },
   });

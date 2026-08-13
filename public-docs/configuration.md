@@ -71,7 +71,7 @@ Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain wher
 
 ## Workspace runtimes
 
-New Workspace offers the built-in Local, Worktree, and Docker runtimes. The current Docker POC requires a locally built workspace-runtime image. Its configured default, `ghcr.io/getpaseo/workspace-runtime:latest`, is not published and does not currently work.
+New Workspace always offers Local and Worktree. Paseo Desktop and CLI distributions also register Docker through the same command-runtime configuration available to users.
 
 From the Paseo repository root, build the image:
 
@@ -79,23 +79,22 @@ From the Paseo repository root, build the image:
 docker build -f packages/docker-workspace-runtime/Dockerfile -t paseo-workspace-runtime:local .
 ```
 
-Then override `workspaceRuntimes.docker.image` in daemon configuration:
+Then replace the distribution registration's opaque image option in daemon configuration:
 
 ```json
 {
   "workspaceRuntimes": {
     "docker": {
-      "type": "docker",
-      "image": "paseo-workspace-runtime:local",
-      "enabled": true
+      "type": "command",
+      "label": "Docker",
+      "command": ["@getpaseo/docker-workspace-runtime"],
+      "options": { "image": "paseo-workspace-runtime:local", "bindMounts": [] }
     }
   }
 }
 ```
 
-Optional `providerEnvironment` values set the provider process environment. Optional bind mounts are available during Git materialization and in the running workspace. Their sources and targets must be absolute, targets must stay outside `/workspace`, and every mount must set `readOnly`. Set `enabled: false` to remove Docker from the runtime catalog.
-
-Trusted external runtimes use `type: "command"`. `command` and optional `helperCommand` are argv arrays, not shell strings. Optional `label` names the runtime in New Workspace, `providerEnvironment` sets the isolated provider environment, and `options` passes runtime-owned configuration to the adapter. Runtime implementations follow the [`@getpaseo/workspace-runtime-contract`](https://github.com/getpaseo/paseo/tree/main/packages/workspace-runtime-contract).
+Every registered runtime uses `type: "command"`. `command` is an argv array, not a shell string. Its first value may be a scoped package executable, filesystem path, or executable on `PATH`. Optional `label` names the runtime in New Workspace, and `options` passes arbitrary JSON to the runtime unchanged. Set a distribution runtime ID to `null` to remove it. Every runtime must provide `paseo-workspace-helper` inside its execution environment. Runtime implementations follow the [`@getpaseo/workspace-runtime-contract`](https://github.com/getpaseo/paseo/tree/main/packages/workspace-runtime-contract).
 
 ## Voice
 

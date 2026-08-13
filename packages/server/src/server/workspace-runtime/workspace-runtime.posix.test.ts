@@ -20,9 +20,6 @@ const runtimeContractIds = ["local", "worktree", "fixture"] as const;
 const fixtureRuntimeExecutable = fileURLToPath(
   new URL("../../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
 );
-const helperExecutable = fileURLToPath(
-  new URL("../workspace-helper/executable.mjs", import.meta.url),
-);
 
 afterEach(async () => {
   await Promise.all(
@@ -39,7 +36,6 @@ test("lists built-in and configured runtimes in registration order", async () =>
         type: "command",
         label: "Fixture",
         command: [process.execPath, fixtureRuntimeExecutable],
-        helperCommand: [process.execPath, helperExecutable],
       },
     },
     resolveRuntimeId: async () => null,
@@ -49,7 +45,6 @@ test("lists built-in and configured runtimes in registration order", async () =>
   expect(service.listRuntimes()).toEqual([
     { runtimeId: "local", builtin: true, requiresGitProject: false },
     { runtimeId: "worktree", builtin: true, requiresGitProject: true },
-    { runtimeId: "docker", builtin: true, requiresGitProject: true },
     {
       runtimeId: "fixture",
       builtin: false,
@@ -59,17 +54,15 @@ test("lists built-in and configured runtimes in registration order", async () =>
   ]);
 });
 
-test("omits the built-in Docker runtime when its registration is disabled", async () => {
-  const root = await temporaryRoot("catalog-docker-disabled");
+test("has no implicit command runtime registration in core", async () => {
+  const root = await temporaryRoot("catalog-no-implicit-runtime");
   const service = createWorkspaceRuntimeService({
     paseoHome: path.join(root, "home"),
     externalRuntimes: {
-      docker: { type: "docker", enabled: false },
       fixture: {
         type: "command",
         label: "Fixture",
         command: [process.execPath, fixtureRuntimeExecutable],
-        helperCommand: [process.execPath, helperExecutable],
       },
     },
     resolveRuntimeId: async () => null,
@@ -88,9 +81,12 @@ test("omits the built-in Docker runtime when its registration is disabled", asyn
   ]);
   await expect(
     service.create({
-      workspaceId: "disabled-docker",
+      workspaceId: "unregistered-command-runtime",
       runtimeId: "docker",
-      project: { id: "disabled-docker", source: { kind: "host-directory", path: root } },
+      project: {
+        id: "unregistered-command-runtime",
+        source: { kind: "host-directory", path: root },
+      },
       placement: { kind: "existing" },
     }),
   ).rejects.toThrow("Workspace runtime is not registered: docker");
@@ -151,6 +147,7 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
 
     expect(Object.keys(runtime).sort()).toEqual([
       "files",
+      "provider",
       "resolveCommand",
       "run",
       "scriptTerminal",
@@ -796,7 +793,6 @@ async function createFixture(
             fixture: {
               type: "command",
               command: [process.execPath, fixtureRuntimeExecutable],
-              helperCommand: [process.execPath, helperExecutable],
               options: { stateDirectory: fixtureStateDirectory },
             },
           }

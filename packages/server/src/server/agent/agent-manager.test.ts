@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import { resolveHostProviderWorkspace } from "../test-utils/provider-workspace-stub.js";
 import {
   AgentManager,
   AgentManagerShuttingDownError,
@@ -1918,7 +1919,7 @@ test("host-placed workspaces require host provider availability before create an
   const manager = new AgentManager({
     clients: { codex: new UnavailableHostClient() },
     logger,
-    resolveProviderWorkspace: async () => null,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
   });
   const handle: AgentPersistenceHandle = {
     provider: "codex",
@@ -6916,6 +6917,7 @@ test("archiveAgent detaches an open same-workspace child instead of cascading", 
     clients: { codex: new TestAgentClient() },
     registry: storage,
     logger,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
   });
   const parent = await manager.createAgent(
     { provider: "codex", cwd: workdir, title: "Parent" },
@@ -6952,6 +6954,7 @@ test("archiveAgent detaches a cross-workspace child even when its tab is closed"
     clients: { codex: new TestAgentClient() },
     registry: storage,
     logger,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
   });
   const parent = await manager.createAgent(
     { provider: "codex", cwd: workdir, title: "Parent" },
@@ -7005,6 +7008,7 @@ test("archiveAgent re-reads a child before deciding whether to cascade", async (
     clients: { codex: new TestAgentClient() },
     registry: storage,
     logger,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
   });
   const parent = await manager.createAgent(
     { provider: "codex", cwd: workdir, title: "Parent" },
@@ -7056,6 +7060,7 @@ test("archiveAgent cannot overtake a received child open-tab update", async () =
     clients: { codex: new TestAgentClient() },
     registry: storage,
     logger,
+    resolveProviderWorkspace: resolveHostProviderWorkspace,
   });
   const parent = await manager.createAgent(
     { provider: "codex", cwd: workdir, title: "Parent" },

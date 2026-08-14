@@ -5625,11 +5625,11 @@ async function readClaudeSidechainHistoryFromWorkspace(
   historyPath: string,
   workspace: ProviderWorkspace,
 ): Promise<ClaudeSidechainHistory> {
-  const sessionDirectory = path.join(
-    path.dirname(historyPath),
-    path.basename(historyPath, ".jsonl"),
+  const sessionDirectory = path.posix.join(
+    path.posix.dirname(historyPath),
+    path.posix.basename(historyPath, ".jsonl"),
   );
-  const sidechainDirectory = path.join(sessionDirectory, "subagents");
+  const sidechainDirectory = path.posix.join(sessionDirectory, "subagents");
   const history: ClaudeSidechainHistory = {
     contents: [],
     workflowContents: [],

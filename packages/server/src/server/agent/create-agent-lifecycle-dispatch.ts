@@ -29,6 +29,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  destroyWorkspace: (workspaceId: string) => Promise<void>;
   emit: (message: SessionOutboundMessage) => void;
   emitAgentRemove: (agentId: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
@@ -196,6 +197,14 @@ export class CreateAgentLifecycleDispatch {
     });
     if (!ownership.allowed) {
       throw new Error("Auto-created worktree is not a Paseo-owned worktree");
+    }
+
+    if (options.agentId === null) {
+      await this.dependencies.destroyWorkspace(createdWorktree.workspace.workspaceId);
+      await this.dependencies.emitWorkspaceUpdatesForWorkspaceIds([
+        createdWorktree.workspace.workspaceId,
+      ]);
+      return;
     }
 
     await archiveByScope(

@@ -4707,15 +4707,7 @@ export class AgentManager {
   }
 
   private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {
-    const client = this.clients.get(options.provider);
-    if (!client) {
-      const configuredProviders = this.getConfiguredProviderIds();
-      throw new Error(
-        `Unknown provider '${options.provider}'. Configured providers: ${formatProviderList(
-          configuredProviders,
-        )}.`,
-      );
-    }
+    const client = this.requireClient(options.provider);
 
     let unavailableReason: string | null = null;
     try {
@@ -4750,7 +4742,12 @@ export class AgentManager {
   private requireClient(provider: AgentProvider): AgentClient {
     const client = this.clients.get(provider);
     if (!client) {
-      throw new Error(`No client registered for provider '${provider}'`);
+      const configuredProviders = this.getConfiguredProviderIds();
+      throw new Error(
+        `Unknown provider '${provider}'. Configured providers: ${formatProviderList(
+          configuredProviders,
+        )}.`,
+      );
     }
     return client;
   }

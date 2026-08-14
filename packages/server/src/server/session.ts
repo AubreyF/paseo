@@ -977,6 +977,12 @@ export class Session {
       findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
       listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
       archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+      destroyWorkspace: async (workspaceId) => {
+        if (!this.workspaceRuntime) {
+          throw new Error(`Workspace runtime is not available: ${workspaceId}`);
+        }
+        await this.workspaceRuntime.destroy(workspaceId);
+      },
       emit: (message) => this.emit(message),
       emitAgentRemove: (agentId) => this.agentUpdates.removeAgent(agentId),
       emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>

@@ -279,6 +279,10 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
     resolveSiblingAfterOwnerDestroy = resolve;
   });
   let unrelatedChanges = 0;
+  let resolveUnrelatedReady!: () => void;
+  const unrelatedReady = new Promise<void>((resolve) => {
+    resolveUnrelatedReady = resolve;
+  });
   const siblingA = await service.bind("sibling-a");
   const siblingB = await service.bind("sibling-b");
   const unrelatedGit = await service.bind("unrelated");
@@ -293,8 +297,11 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
     }),
     await observeWorkspaceGit(unrelatedGit, () => {
       unrelatedChanges += 1;
+      if (phase === "initial") resolveUnrelatedReady();
     }),
   ];
+  await createBranchThroughRuntime(service, "unrelated", "unrelated-readiness");
+  await eventWithin(unrelatedReady, "unrelated observer readiness");
   unrelatedChanges = 0;
   phase = "first-change";
   const branch = await service.run({

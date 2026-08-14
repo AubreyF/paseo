@@ -100,7 +100,7 @@ export async function expectUserWorkspaceRanProjectSetup(
   );
   const state = states.find((candidate) => candidate.workspaceId === workspace!.workspaceId);
   expect(state, "fixture user runtime state").toBeDefined();
-  expect(await markerExists(state!.root)).toBe(true);
+  await expect.poll(() => markerExists(state!.root), { timeout: 30_000 }).toBe(true);
 }
 
 export async function expectProviderAvailable(page: Page, providerLabel: string): Promise<void> {

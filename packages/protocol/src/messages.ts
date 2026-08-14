@@ -2158,7 +2158,7 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   // Explicit workspace record to archive. A directory can back multiple workspaces
   // (Model B), so resolving the target by cwd alone picks the wrong record. When
   // present the daemon archives this exact workspace; when absent it falls back to
-  // resolving by worktreePath, preferring the worktree-kind record on a cwd tie.
+  // resolving by worktreePath only when it identifies one workspace unambiguously.
   workspaceId: z.string().optional(),
   // COMPAT(worktreeArchiveScope): added in v0.1.97, drop the gate when floor >= v0.1.97.
   // Scope of the archive operation. "workspace" archives a single workspace record

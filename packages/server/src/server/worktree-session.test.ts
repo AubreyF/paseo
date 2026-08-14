@@ -2063,6 +2063,7 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         requestId: "req-default-scope-sibling",
         worktreePath: sharedCwd,
         repoRoot: repoDir,
+        workspaceId: workspaceA,
       },
     );
 

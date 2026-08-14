@@ -6,10 +6,11 @@ interface WorkspaceActionsProps {
   serverId: string;
   workspaceId: string;
   cwd: string;
+  isWorkspaceGitBound: boolean;
   hideLabels?: boolean;
 }
 
-export function WorkspaceActions({ serverId, cwd, hideLabels }: WorkspaceActionsProps) {
+function BoundWorkspaceActions({ serverId, cwd, hideLabels }: WorkspaceActionsProps) {
   const { gitActions } = useGitActions({
     serverId,
     cwd,
@@ -17,4 +18,8 @@ export function WorkspaceActions({ serverId, cwd, hideLabels }: WorkspaceActions
   });
 
   return <GitActionsSplitButton gitActions={gitActions} hideLabels={hideLabels} />;
+}
+
+export function WorkspaceActions(props: WorkspaceActionsProps) {
+  return props.isWorkspaceGitBound ? <BoundWorkspaceActions {...props} /> : null;
 }

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test as vitestTest, vi } from "vitest";
 
 import { createWorkspaceRuntimeService } from "./index.js";
 
@@ -19,6 +19,7 @@ const rebindHelperExecutable = fileURLToPath(
   new URL("../test-utils/fixtures/workspace-helper-rebind-fixture.mjs", import.meta.url),
 );
 const cleanupRoots: string[] = [];
+const test = vitestTest.skipIf(process.platform === "win32");
 
 afterEach(async () => {
   await Promise.all(

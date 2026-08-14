@@ -3563,6 +3563,7 @@ function WorkspaceScreenContent({
               serverId={normalizedServerId}
               workspaceId={normalizedWorkspaceId}
               cwd={workspaceDirectory}
+              isWorkspaceGitBound={Boolean(workspaceGit)}
               hideLabels={showCompactButtonLabels}
             />
             {isGitCheckout ? (
@@ -3672,6 +3673,7 @@ function WorkspaceScreenContent({
       handleViewScriptTerminal,
       handleOpenUrlInBrowserTab,
       showCompactButtonLabels,
+      workspaceGit,
       isGitCheckout,
       handleToggleExplorer,
       isExplorerOpen,

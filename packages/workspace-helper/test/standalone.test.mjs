@@ -7,8 +7,20 @@ import assert from "node:assert/strict";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmCommand = process.platform === "win32" ? process.execPath : "npm";
+const npmPrefixArgs =
+  process.platform === "win32" ? [requireEnvironmentVariable("npm_execpath")] : [];
 const packageRoot = path.resolve(import.meta.dirname, "..");
+
+function requireEnvironmentVariable(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required to invoke npm on Windows`);
+  return value;
+}
+
+function runNpm(args, options) {
+  return run(npmCommand, [...npmPrefixArgs, ...args], options);
+}
 
 test("packed helper works from a fresh project without monorepo source fallback", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-helper-standalone-"));
@@ -16,10 +28,10 @@ test("packed helper works from a fresh project without monorepo source fallback"
   const packDirectory = path.join(root, "packs");
   const project = path.join(root, "project");
   await Promise.all([mkdir(packDirectory), mkdir(project)]);
-  await run(npmCommand, ["run", "build"], { cwd: packageRoot });
+  await runNpm(["run", "build"], { cwd: packageRoot });
   const packed = JSON.parse(
     (
-      await run(npmCommand, ["pack", "--json", "--pack-destination", packDirectory], {
+      await runNpm(["pack", "--json", "--pack-destination", packDirectory], {
         cwd: packageRoot,
       })
     ).stdout,
@@ -31,7 +43,7 @@ test("packed helper works from a fresh project without monorepo source fallback"
       dependencies: { "@getpaseo/workspace-helper": `file:${path.join(packDirectory, packed)}` },
     }),
   );
-  await run(npmCommand, ["install", "--ignore-scripts"], { cwd: project });
+  await runNpm(["install", "--ignore-scripts"], { cwd: project });
   await writeFile(path.join(project, "notes.txt"), "before\n");
 
   const imported = JSON.parse(

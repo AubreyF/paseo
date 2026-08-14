@@ -19,8 +19,16 @@ import { describe, expect, test } from "vitest";
 const desktopDir = path.resolve(import.meta.dirname, "..");
 const repoRoot = path.resolve(desktopDir, "../..");
 const execFileAsync = promisify(execFile);
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmCommand = process.platform === "win32" ? process.execPath : "npm";
+const npmPrefixArgs =
+  process.platform === "win32" ? [requireEnvironmentVariable("npm_execpath")] : [];
 const prerequisite = "npm run dev:prerequisites";
+
+function requireEnvironmentVariable(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required to invoke npm on Windows`);
+  return value;
+}
 
 describe("desktop dev build contract", () => {
   test("runs one prerequisite before either platform dev entry point", async () => {
@@ -127,10 +135,14 @@ async function createIsolatedBuildCheckout() {
 
 async function runPrerequisite(isolatedRoot) {
   try {
-    await execFileAsync(npmCommand, ["run", "dev:prerequisites", "--workspace=@getpaseo/desktop"], {
-      cwd: isolatedRoot,
-      timeout: 60_000,
-    });
+    await execFileAsync(
+      npmCommand,
+      [...npmPrefixArgs, "run", "dev:prerequisites", "--workspace=@getpaseo/desktop"],
+      {
+        cwd: isolatedRoot,
+        timeout: 60_000,
+      },
+    );
   } catch (error) {
     throw new Error(`${error.stdout ?? ""}\n${error.stderr ?? ""}`, { cause: error });
   }

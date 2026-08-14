@@ -33,9 +33,21 @@ import {
 } from "../dist/index.js";
 
 const run = promisify(execFile);
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmCommand = process.platform === "win32" ? process.execPath : "npm";
+const npmPrefixArgs =
+  process.platform === "win32" ? [requireEnvironmentVariable("npm_execpath")] : [];
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const examples = JSON.parse(await readFile(path.join(packageRoot, "examples/v1.json"), "utf8"));
+
+function requireEnvironmentVariable(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required to invoke npm on Windows`);
+  return value;
+}
+
+function runNpm(args, options) {
+  return run(npmCommand, [...npmPrefixArgs, ...args], options);
+}
 
 test("documented lifecycle, fd3, control, and fd4 examples are exact newline-terminated bytes", () => {
   for (const [name, schema] of [
@@ -522,7 +534,7 @@ test("every export condition resolves from a packed standalone install", async (
   t.after(() => rm(root, { recursive: true, force: true }));
   const pack = JSON.parse(
     (
-      await run(npmCommand, ["pack", "--json", "--ignore-scripts", "--pack-destination", root], {
+      await runNpm(["pack", "--json", "--ignore-scripts", "--pack-destination", root], {
         cwd: packageRoot,
       })
     ).stdout,
@@ -530,7 +542,7 @@ test("every export condition resolves from a packed standalone install", async (
   const archive = path.join(root, pack[0].filename);
   const installRoot = path.join(root, "standalone");
   await mkdir(installRoot);
-  await run(npmCommand, ["install", "--ignore-scripts", "--no-package-lock", archive], {
+  await runNpm(["install", "--ignore-scripts", "--no-package-lock", archive], {
     cwd: installRoot,
   });
   const installed = path.join(installRoot, "node_modules/@getpaseo/workspace-runtime-contract");

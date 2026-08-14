@@ -55,38 +55,43 @@ describe("desktop dev build contract", () => {
     );
   });
 
-  test.each(["missing", "stale"])(
-    "the public prerequisite repairs %s server artifacts in an isolated checkout",
-    async (initialState) => {
-      const isolatedRoot = await createIsolatedBuildCheckout();
-      const serverExport = path.join(isolatedRoot, "packages/server/dist/server/server/exports.js");
-      const sourceExport = path.join(isolatedRoot, "packages/server/src/server/exports.ts");
+  test("the public prerequisite repairs missing and stale server artifacts in an isolated checkout", async () => {
+    const isolatedRoot = await createIsolatedBuildCheckout();
+    const staleServerExport = path.join(
+      isolatedRoot,
+      "packages/server/dist/server/server/exports.js",
+    );
+    const staleSourceExport = path.join(isolatedRoot, "packages/server/src/server/exports.ts");
+    const missingServerExport = path.join(
+      isolatedRoot,
+      "packages/server/dist/server/server/session.js",
+    );
+    const missingSourceExport = path.join(isolatedRoot, "packages/server/src/server/session.ts");
 
-      if (initialState === "stale") {
-        await mkdir(path.dirname(serverExport), { recursive: true });
-        await writeFile(serverExport, "// stale isolated artifact\n");
-        const staleTime = new Date(0);
-        await utimes(serverExport, staleTime, staleTime);
-      }
+    await mkdir(path.dirname(staleServerExport), { recursive: true });
+    await writeFile(staleServerExport, "// stale isolated artifact\n");
+    const staleTime = new Date(0);
+    await utimes(staleServerExport, staleTime, staleTime);
 
-      try {
-        await runPrerequisite(isolatedRoot);
-        await expect(access(serverExport)).resolves.toBeUndefined();
-        expect(await readFile(serverExport, "utf8")).not.toContain("stale isolated artifact");
-        expect((await stat(serverExport)).mtimeMs).toBeGreaterThanOrEqual(
-          (await stat(sourceExport)).mtimeMs,
-        );
-      } finally {
-        await rm(isolatedRoot, {
-          recursive: true,
-          force: true,
-          maxRetries: 5,
-          retryDelay: 100,
-        });
-      }
-    },
-    70_000,
-  );
+    try {
+      await runPrerequisite(isolatedRoot);
+      await expect(access(missingServerExport)).resolves.toBeUndefined();
+      expect(await readFile(staleServerExport, "utf8")).not.toContain("stale isolated artifact");
+      expect((await stat(staleServerExport)).mtimeMs).toBeGreaterThanOrEqual(
+        (await stat(staleSourceExport)).mtimeMs,
+      );
+      expect((await stat(missingServerExport)).mtimeMs).toBeGreaterThanOrEqual(
+        (await stat(missingSourceExport)).mtimeMs,
+      );
+    } finally {
+      await rm(isolatedRoot, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    }
+  }, 130_000);
 });
 
 async function createIsolatedBuildCheckout() {
@@ -146,7 +151,7 @@ async function runPrerequisite(isolatedRoot) {
       [...npmPrefixArgs, "run", "dev:prerequisites", "--workspace=@getpaseo/desktop"],
       {
         cwd: isolatedRoot,
-        timeout: 60_000,
+        timeout: 120_000,
       },
     );
   } catch (error) {

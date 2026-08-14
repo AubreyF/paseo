@@ -90,6 +90,7 @@ async function createIsolatedBuildCheckout() {
     "packages/client",
     "packages/desktop",
     "packages/highlight",
+    "packages/plugin",
     "packages/protocol",
     "packages/relay",
     "packages/server",

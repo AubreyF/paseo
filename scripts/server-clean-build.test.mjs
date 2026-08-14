@@ -10,6 +10,7 @@ const run = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const packageDirectories = [
   "packages/highlight",
+  "packages/plugin",
   "packages/relay",
   "packages/protocol",
   "packages/client",
@@ -139,24 +140,27 @@ function excludesBuildOutput(source) {
 async function createNodeModulesOverlay(isolatedRoot) {
   const sourceModules = path.join(repoRoot, "node_modules");
   const targetModules = path.join(isolatedRoot, "node_modules");
+  const workspaces = await isolatedWorkspaces(isolatedRoot);
+  const internalScopes = new Set(workspaces.map(({ name }) => name.split("/")[0]));
   await mkdir(targetModules);
-  await overlayModules(sourceModules, targetModules);
+  await overlayModules(sourceModules, targetModules, internalScopes);
 
-  const internalScope = path.join(targetModules, "@getpaseo");
-  await mkdir(internalScope);
-  for (const relativeDirectory of packageDirectories) {
-    const manifest = JSON.parse(
-      await readFile(path.join(isolatedRoot, relativeDirectory, "package.json"), "utf8"),
-    );
+  for (const { relativeDirectory, name } of workspaces) {
+    const [scope, packageName] = name.split("/");
+    const internalScope = path.join(targetModules, scope);
+    await mkdir(internalScope, { recursive: true });
     await symlink(
       path.join(isolatedRoot, relativeDirectory),
-      path.join(internalScope, manifest.name.slice("@getpaseo/".length)),
+      path.join(internalScope, packageName),
       "dir",
     );
   }
 }
 
 async function createPackageNodeModulesOverlays(isolatedRoot) {
+  const internalScopes = new Set(
+    (await isolatedWorkspaces(isolatedRoot)).map(({ name }) => name.split("/")[0]),
+  );
   for (const relativeDirectory of packageDirectories) {
     const sourceModules = path.join(repoRoot, relativeDirectory, "node_modules");
     try {
@@ -166,13 +170,24 @@ async function createPackageNodeModulesOverlays(isolatedRoot) {
     }
     const targetModules = path.join(isolatedRoot, relativeDirectory, "node_modules");
     await mkdir(targetModules);
-    await overlayModules(sourceModules, targetModules);
+    await overlayModules(sourceModules, targetModules, internalScopes);
   }
 }
 
-async function overlayModules(sourceModules, targetModules) {
+async function isolatedWorkspaces(isolatedRoot) {
+  return Promise.all(
+    packageDirectories.map(async (relativeDirectory) => ({
+      relativeDirectory,
+      name: JSON.parse(
+        await readFile(path.join(isolatedRoot, relativeDirectory, "package.json"), "utf8"),
+      ).name,
+    })),
+  );
+}
+
+async function overlayModules(sourceModules, targetModules, internalScopes) {
   for (const entry of await readdir(sourceModules, { withFileTypes: true })) {
-    if (entry.name === "@getpaseo") continue;
+    if (internalScopes.has(entry.name)) continue;
     await symlink(
       path.join(sourceModules, entry.name),
       path.join(targetModules, entry.name),

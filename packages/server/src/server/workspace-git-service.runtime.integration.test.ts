@@ -296,11 +296,10 @@ test("replayed common-ref observation survives runtime service reconstruction", 
   await reconstructed.destroy(workspaceId);
 }, 20_000);
 
-test("selected sibling worktrees share common-ref fan-out without touching an unrelated workspace", async () => {
+test("selected sibling worktrees retain common-ref fan-out across lifecycle transitions", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-fanout-"));
   cleanupRoots.push(root);
   const source = await createRepository(path.join(root, "source"));
-  const unrelated = await createRepository(path.join(root, "unrelated"));
   const runtimeIds = new Map<string, string>();
   const service = createWorkspaceRuntimeService({
     paseoHome: path.join(root, "paseo-home"),
@@ -325,13 +324,6 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
       placement: { kind: "branch", branchName, baseRef: "main", worktreeSlug: branchName },
     });
   }
-  await service.create({
-    workspaceId: "unrelated",
-    runtimeId: "local",
-    project: { id: "unrelated-project", source: { kind: "host-directory", path: unrelated } },
-    placement: { kind: "existing" },
-  });
-
   let resolveFirst!: () => void;
   let resolveSibling!: () => void;
   const firstChanged = new Promise<void>((resolve) => {
@@ -349,10 +341,8 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
   const siblingChangedAfterOwnerDestroy = new Promise<void>((resolve) => {
     resolveSiblingAfterOwnerDestroy = resolve;
   });
-  let unrelatedChanges = 0;
   const siblingA = await service.bind("sibling-a");
   const siblingB = await service.bind("sibling-b");
-  const unrelatedGit = await service.bind("unrelated");
   const subscriptions = [
     await observeWorkspaceGit(siblingA, () => {
       if (phase === "first-change") resolveFirst();
@@ -362,32 +352,22 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
       if (phase === "after-pause-change") resolveSiblingAfterOwnerPause();
       if (phase === "after-destroy-change") resolveSiblingAfterOwnerDestroy();
     }),
-    await observeWorkspaceGit(unrelatedGit, () => {
-      unrelatedChanges += 1;
-    }),
   ];
   await createBranchThroughRuntime(service, "sibling-a", "shared-ref-change");
   await Promise.all([
     eventWithin(firstChanged, "first sibling ref update"),
     eventWithin(siblingChanged, "second sibling ref update"),
   ]);
-  expect(unrelatedChanges).toBe(0);
-
   await service.pause("sibling-a");
   phase = "after-pause-change";
   await createBranchThroughRuntime(service, "sibling-b", "shared-ref-after-owner-pause");
   await eventWithin(siblingChangedAfterOwnerPause, "sibling ref update after owner pause");
-  expect(unrelatedChanges).toBe(0);
-
   await service.destroy("sibling-a");
   phase = "after-destroy-change";
   await createBranchThroughRuntime(service, "sibling-b", "shared-ref-after-owner-destroy");
   await eventWithin(siblingChangedAfterOwnerDestroy, "sibling ref update after owner destroy");
-  expect(unrelatedChanges).toBe(0);
-
   await Promise.all(subscriptions.map((subscription) => subscription.unsubscribe()));
   await Promise.all([service.destroy("sibling-a"), service.destroy("sibling-b")]);
-  await service.destroy("unrelated");
 }, 20_000);
 
 test("sibling Git observations stay workspace-bound across pause, resume, and unsubscribe", async () => {

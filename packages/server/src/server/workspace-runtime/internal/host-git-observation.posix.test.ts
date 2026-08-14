@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -11,6 +11,7 @@ import {
   type FileObserverCallback,
   type FileObserverOptions,
 } from "../../file-observer/index.js";
+import { getGitCommonDir } from "../../../utils/worktree.js";
 import { createHostGitObservationOwner } from "./host-git-observation.js";
 
 describe.runIf(process.platform !== "win32")("host Git observation on POSIX", () => {
@@ -22,16 +23,31 @@ describe.runIf(process.platform !== "win32")("host Git observation on POSIX", ()
       git(source, ["branch", "sibling"]);
       git(source, ["worktree", "add", sibling, "sibling"]);
       const unrelated = await repository(path.join(root, "unrelated"));
-      const owner = createHostGitObservationOwner();
+      const observer = new InstrumentedFileObserver();
+      const owner = createHostGitObservationOwner(observer);
+      let sourceChanges = 0;
+      let siblingChanges = 0;
+      let unrelatedChanges = 0;
 
       const [sourceSubscription, siblingSubscription] = await Promise.all([
-        owner.observe(source, () => undefined),
-        owner.observe(sibling, () => undefined),
+        owner.observe(source, () => {
+          sourceChanges += 1;
+        }),
+        owner.observe(sibling, () => {
+          siblingChanges += 1;
+        }),
       ]);
       expect(owner.getDiagnostics().activeObservationCount).toBe(1);
 
-      const unrelatedSubscription = await owner.observe(unrelated, () => undefined);
+      const unrelatedSubscription = await owner.observe(unrelated, () => {
+        unrelatedChanges += 1;
+      });
       expect(owner.getDiagnostics().activeObservationCount).toBe(2);
+
+      observer.emit(await realpath(await getGitCommonDir(source)));
+      expect(sourceChanges).toBe(1);
+      expect(siblingChanges).toBe(1);
+      expect(unrelatedChanges).toBe(0);
 
       await sourceSubscription.unsubscribe();
       expect(owner.getDiagnostics().activeObservationCount).toBe(2);
@@ -85,7 +101,7 @@ describe.runIf(process.platform !== "win32")("host Git observation on POSIX", ()
 
 class InstrumentedFileObserver implements FileObserver {
   readonly observer = createFileObserver();
-  readonly callbacks = new Set<FileObserverCallback>();
+  readonly callbacks = new Map<FileObserverCallback, string>();
   subscribeCount = 0;
 
   async subscribe(
@@ -94,7 +110,7 @@ class InstrumentedFileObserver implements FileObserver {
     options?: FileObserverOptions,
   ) {
     this.subscribeCount += 1;
-    this.callbacks.add(callback);
+    this.callbacks.set(callback, directory);
     const subscription = await this.observer.subscribe(directory, callback, options);
     let active = true;
     return {
@@ -109,7 +125,14 @@ class InstrumentedFileObserver implements FileObserver {
   }
 
   failActive(error: Error): void {
-    for (const callback of this.callbacks) callback(error, []);
+    for (const callback of this.callbacks.keys()) callback(error, []);
+  }
+
+  emit(directory: string): void {
+    for (const [callback, observedDirectory] of this.callbacks) {
+      if (observedDirectory === directory)
+        callback(null, [{ path: "refs/heads/main", type: "update" }]);
+    }
   }
 
   getDiagnostics() {

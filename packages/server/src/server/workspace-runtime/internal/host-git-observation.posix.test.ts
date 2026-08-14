@@ -6,9 +6,9 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import {
-  createFileObserver,
   type FileObserver,
   type FileObserverCallback,
+  type FileObserverDiagnostics,
   type FileObserverOptions,
 } from "../../file-observer/index.js";
 import { getGitCommonDir } from "../../../utils/worktree.js";
@@ -100,26 +100,23 @@ describe.runIf(process.platform !== "win32")("host Git observation on POSIX", ()
 });
 
 class InstrumentedFileObserver implements FileObserver {
-  readonly observer = createFileObserver();
   readonly callbacks = new Map<FileObserverCallback, string>();
   subscribeCount = 0;
 
   async subscribe(
     directory: string,
     callback: FileObserverCallback,
-    options?: FileObserverOptions,
+    _options?: FileObserverOptions,
   ) {
     this.subscribeCount += 1;
     this.callbacks.set(callback, directory);
-    const subscription = await this.observer.subscribe(directory, callback, options);
     let active = true;
     return {
-      updateIgnore: (paths: string[]) => subscription.updateIgnore(paths),
+      updateIgnore: async (_paths: string[]) => {},
       unsubscribe: async () => {
         if (!active) return;
         active = false;
         this.callbacks.delete(callback);
-        await subscription.unsubscribe();
       },
     };
   }
@@ -135,12 +132,33 @@ class InstrumentedFileObserver implements FileObserver {
     }
   }
 
-  getDiagnostics() {
-    return this.observer.getDiagnostics();
+  getDiagnostics(): FileObserverDiagnostics {
+    return {
+      activeObservationCount: this.callbacks.size,
+      nativeHandleCount: 0,
+      nativeTrackedFileCount: 0,
+      pendingEventCount: 0,
+      pendingReconciliationWorkCount: 0,
+      reconciliationInFlightCount: 0,
+      reconciliationCount: 0,
+      scopedReconciliationCount: 0,
+      fullReconciliationCount: 0,
+      reconciliationFailureCount: 0,
+      observerFailureCount: 0,
+      directoryLimitFailureCount: 0,
+      nativeEventCount: 0,
+      nativeChangeEventCount: 0,
+      nativeRenameEventCount: 0,
+      nativePathlessEventCount: 0,
+      nativeClassificationCount: 0,
+      nativeShallowScanCount: 0,
+      lastReconciliationDurationMs: 0,
+      maxReconciliationDurationMs: 0,
+    };
   }
 
-  close(): Promise<void> {
-    return this.observer.close();
+  async close(): Promise<void> {
+    this.callbacks.clear();
   }
 }
 

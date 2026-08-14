@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
   common: {
@@ -1649,6 +1650,7 @@ export const ptBR: TranslationResources = {
     archiveTooltip: "Arquivar subagente",
     archiveFinishedAction: "Arquivar subagentes concluídos",
     archiveFinishedTooltip: "Arquivar concluídos",
+    archiveFinishedRetry: "Tentar novamente ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1817,8 +1819,10 @@ export const ptBR: TranslationResources = {
       providers: "Provedores",
       usage: "Uso",
       terminals: "Terminais",
+      plugins: "Plugins",
       host: "Visão geral",
     },
+    plugins: pluginSettings["pt-BR"],
     metadataGeneration: {
       title: "Geração de metadados",
       description:

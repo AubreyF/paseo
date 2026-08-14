@@ -330,6 +330,18 @@ test("audited production loader exceptions are narrow", async (t) => {
   const root = await fixtureRoot(t);
   await source(
     root,
+    "packages/server/src/server/plugins/plugin-process.ts",
+    'import { createRequire } from "node:module";\n' +
+      'const nodeRequire = createRequire("package.json");\n' +
+      "function runtimeRequire(target) {\n" +
+      "  return nodeRequire(target);\n" +
+      "}\n" +
+      "function unreviewedPluginLoad(target) {\n" +
+      "  return nodeRequire(target);\n" +
+      "}\n",
+  );
+  await source(
+    root,
     "packages/server/src/server/workspace-runtime/command/internal/command-runtime.ts",
     'import { createRequire } from "node:module";\n' +
       "function resolveRuntimeCommand(target) {\n" +
@@ -359,6 +371,13 @@ test("audited production loader exceptions are narrow", async (t) => {
   );
 
   assert.deepEqual(await findWorkspaceBoundaryViolations(root), [
+    {
+      file: "packages/server/src/server/plugins/plugin-process.ts",
+      import: "<computed>",
+      rule: "nonliteral-module-load",
+      message:
+        "packages/server/src/server/plugins/plugin-process.ts: nonliteral-module-load forbids <computed>",
+    },
     {
       file: "packages/server/src/server/workspace-runtime/command/internal/command-runtime.ts",
       import: "<computed>",

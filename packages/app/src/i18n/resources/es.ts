@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
   common: {
@@ -1663,6 +1664,7 @@ export const es: TranslationResources = {
     archiveTooltip: "Subagente de archivo",
     archiveFinishedAction: "Archivar subagentes finalizados",
     archiveFinishedTooltip: "Archivar finalizados",
+    archiveFinishedRetry: "Reintentar ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1831,8 +1833,10 @@ export const es: TranslationResources = {
       providers: "Proveedores",
       usage: "Uso",
       terminals: "Terminals",
+      plugins: "Plugins",
       host: "Resumen",
     },
+    plugins: pluginSettings.es,
     metadataGeneration: {
       title: "Generación de metadatos",
       description:

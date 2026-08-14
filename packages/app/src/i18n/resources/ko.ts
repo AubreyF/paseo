@@ -1,4 +1,5 @@
 import type { TranslationResources } from "./en";
+import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
   common: {
@@ -1630,6 +1631,7 @@ export const ko: TranslationResources = {
     archiveTooltip: "서브에이전트 보관",
     archiveFinishedAction: "완료된 하위 에이전트 보관",
     archiveFinishedTooltip: "아카이브 완료",
+    archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
   },
   panels: {
     draft: {
@@ -1798,8 +1800,10 @@ export const ko: TranslationResources = {
       providers: "프로바이더",
       usage: "사용량",
       terminals: "터미널",
+      plugins: "플러그인",
       host: "개요",
     },
+    plugins: pluginSettings.ko,
     metadataGeneration: {
       title: "메타데이터 생성",
       description:

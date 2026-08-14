@@ -24,6 +24,7 @@ const migratedOwners = [
 ];
 const hostModules = new Set(["child_process", "fs", "fs/promises", "module", "which"]);
 const auditedNonliteralServerLoads = new Set([
+  "packages/server/src/server/plugins/plugin-process.ts|runtimeRequire|nodeRequire|load",
   "packages/server/src/server/workspace-runtime/command/internal/command-runtime.ts|resolveRuntimeCommand|moduleRequire|resolve",
   "packages/server/src/server/speech/providers/local/sherpa/sherpa-runtime-env.ts|resolveSherpaLoaderEnv|require|resolve",
   "packages/server/src/server/speech/providers/local/sherpa/sherpa-onnx-node-loader.ts|loadWithRequire|requireFn|load",

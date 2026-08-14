@@ -10,24 +10,21 @@ import { expect, test } from "vitest";
 const run = promisify(execFile);
 const workspaceHelper = fileURLToPath(new URL("../src/executable.mjs", import.meta.url));
 
-test.runIf(process.platform === "win32")(
-  "Windows command resolution honors PATHEXT",
-  async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "paseo-helper-windows-command-"));
-    try {
-      const executable = path.join(root, "paseo-pathext-fixture.CMD");
-      await writeFile(executable, "@exit /b 0\r\n");
-      const result = await run(
-        process.execPath,
-        [workspaceHelper, "resolve-command", "--name", "paseo-pathext-fixture"],
-        {
-          cwd: root,
-          env: { ...process.env, PATH: root, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-        },
-      );
-      expect(JSON.parse(result.stdout)).toEqual({ path: await realpath(executable) });
-    } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    }
-  },
-);
+test.runIf(process.platform === "win32")("Windows command resolution honors PATHEXT", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-helper-windows-command-"));
+  try {
+    const executable = path.join(root, "paseo-pathext-fixture.CMD");
+    await writeFile(executable, "@exit /b 0\r\n");
+    const result = await run(
+      process.execPath,
+      [workspaceHelper, "resolve-command", "--name", "paseo-pathext-fixture"],
+      {
+        cwd: root,
+        env: { ...process.env, PATH: root, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+      },
+    );
+    expect(JSON.parse(result.stdout)).toEqual({ path: await realpath(executable) });
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { constants, watch } from "node:fs";
-import { access, open, realpath, readdir, rename, stat, unlink } from "node:fs/promises";
+import { open, realpath, readdir, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
+
+import { resolveCommand } from "./command-resolution.mjs";
 
 const outsideMessage = "Access outside of workspace is not allowed";
 const imageTypes = new Map([
@@ -60,33 +62,6 @@ function allowedArguments(command) {
   }
   if (command === "resolve-command") return ["--name"];
   return [];
-}
-
-async function resolveCommand(workspaceRoot, name) {
-  if (!name) throw new Error("--name is required");
-  if (name.includes("/") || (process.platform === "win32" && name.includes("\\"))) {
-    const candidate = path.isAbsolute(name) ? name : path.resolve(workspaceRoot, name);
-    try {
-      await access(candidate, constants.X_OK);
-      return await realpath(candidate);
-    } catch {
-      return null;
-    }
-  }
-  const searchPath = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin";
-  for (const directory of new Set([
-    path.dirname(process.execPath),
-    ...searchPath.split(path.delimiter),
-  ])) {
-    const candidate = path.join(directory, name);
-    try {
-      await access(candidate, constants.X_OK);
-      return await realpath(candidate);
-    } catch {
-      // Continue through the runtime's own search path.
-    }
-  }
-  return null;
 }
 
 async function fileStat(workspaceRoot, relativePath) {

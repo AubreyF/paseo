@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { expect, test, vi } from "vitest";
 import { createWorkspaceGitDirectory } from "./workspace-git-directory.js";
 import type { WorkspaceGitWorkspace } from "./workspace-git-service.js";
@@ -69,13 +70,14 @@ test("legacy Git addresses remain available for host-visible runtime placements"
   });
 
   await expect(directory.resolve({ kind: "legacy", cwd })).resolves.toBe(legacy);
-  expect(bindLegacy).toHaveBeenCalledWith(cwd);
+  expect(bindLegacy).toHaveBeenCalledWith(resolve(cwd));
 });
 
 test("selected Git addresses normalize both fields before registry lookup", async () => {
+  const runtimeCwd = process.platform === "win32" ? "/workspace" : String.raw`C:\workspace`;
   const record = {
     workspaceId: "workspace-a",
-    cwd: "/shared",
+    cwd: runtimeCwd,
     runtime: { runtimeId: "command" },
   };
   const get = vi.fn(async () => record);
@@ -90,9 +92,9 @@ test("selected Git addresses normalize both fields before registry lookup", asyn
     directory.resolve({
       kind: "selected",
       workspaceId: " workspace-a ",
-      cwd: " /shared ",
+      cwd: ` ${runtimeCwd} `,
     }),
   ).resolves.toBe(selected);
   expect(get).toHaveBeenCalledWith("workspace-a");
-  expect(bindWorkspace).toHaveBeenCalledWith({ workspaceId: "workspace-a", cwd: "/shared" });
+  expect(bindWorkspace).toHaveBeenCalledWith({ workspaceId: "workspace-a", cwd: runtimeCwd });
 });

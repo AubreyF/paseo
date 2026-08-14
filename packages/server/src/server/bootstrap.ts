@@ -1142,12 +1142,14 @@ export async function createPaseoDaemon(
   });
   const archiveWorkspaceRecordExternal = async (
     workspaceId: string,
-    context?: WorkspaceArchiveContext,
+    context?: WorkspaceArchiveContext & { releaseBacking?: boolean },
   ) => {
     const workspace = await workspaceRegistry.get(workspaceId);
     if (workspace?.runtime) {
       if (!workspaceRuntime) throw new Error(`Workspace runtime is not available: ${workspaceId}`);
-      await workspaceRuntime.archive(workspaceId);
+      await workspaceRuntime.archive(workspaceId, {
+        releaseBacking: context?.releaseBacking,
+      });
       if (context?.autoArchivedChangeRequestUrl) {
         await workspaceRegistry.update(workspaceId, (archived) => ({
           ...archived,

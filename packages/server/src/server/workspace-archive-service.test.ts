@@ -196,6 +196,75 @@ function assertArchiveResult(
 }
 
 describe("archiveByScope", () => {
+  test("an external runtime never exposes its host source checkout as removable backing", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const sourceWorktree = await createPaseoOwnedWorktree(
+      repoDir,
+      paseoHome,
+      "external-source-decoy",
+    );
+    const workspaceId = "ws-external-source-decoy";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: "/runtime/workspace",
+          hostVisiblePath: sourceWorktree.worktreePath,
+          kind: "worktree",
+          runtimeId: "external-sandbox",
+          worktreeRoot: sourceWorktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-external-source-decoy",
+      releaseBacking: true,
+    });
+
+    expect(result.removedDirectory).toBe(false);
+    expect(existsSync(sourceWorktree.worktreePath)).toBe(true);
+  });
+
+  test("host-invisible runtimes sharing a public cwd release independently", async () => {
+    const { tempDir } = createGitRepo();
+    const workspaceId = "ws-host-invisible-a";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [
+        { workspaceId, cwd: "/workspace", kind: "git", runtimeId: "remote-a" },
+        {
+          workspaceId: "ws-host-invisible-b",
+          cwd: "/workspace",
+          kind: "git",
+          runtimeId: "remote-b",
+        },
+      ],
+    });
+    const archiveWorkspaceRecord = deps.archiveWorkspaceRecord;
+    const releases: boolean[] = [];
+    deps.archiveWorkspaceRecord = async (targetWorkspaceId, options) => {
+      releases.push(options?.releaseBacking === true);
+      await archiveWorkspaceRecord(targetWorkspaceId, options);
+    };
+
+    await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-host-invisible-release",
+      releaseBacking: true,
+    });
+
+    expect(releases).toEqual([true]);
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toContain(
+      "ws-host-invisible-b",
+    );
+  });
+
   test("workspace scope archives the record and removes the directory on last reference", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -694,7 +763,15 @@ describe("archiveByScope", () => {
     const deps = createArchiveDeps({
       paseoHome,
       activeWorkspaces: [
-        { workspaceId: targetWorkspaceId, cwd: worktree.worktreePath, kind: "worktree" },
+        {
+          workspaceId: targetWorkspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          runtimeId: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
       ],
     });
     deps.agentManager = {
@@ -724,17 +801,18 @@ describe("archiveByScope", () => {
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId: targetWorkspaceId },
       requestId: "req-snapshot-scope",
+      releaseBacking: true,
     });
 
     assertArchiveResult(result, {
       archivedWorkspaceIds: [targetWorkspaceId],
-      removedDirectory: true,
+      removedDirectory: false,
     });
     expect(result.archivedAgentIds).toContain(liveAgentId);
     expect(result.archivedAgentIds).toContain(targetStoredAgentId);
     expect(result.archivedAgentIds).not.toContain(otherStoredAgentId);
     expect(deps.archivedSnapshotIds).toEqual([targetStoredAgentId]);
-    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
   test("archives the durable snapshot when an observed live agent closes before teardown", async () => {

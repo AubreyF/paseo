@@ -28,7 +28,10 @@ interface CreateAgentLifecycleDispatchDependencies {
   archiveAgentForClose: (agentId: string) => Promise<unknown>;
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  archiveWorkspaceRecord: (
+    workspaceId: string,
+    options?: { releaseBacking?: boolean },
+  ) => Promise<void>;
   destroyWorkspace: (workspaceId: string) => Promise<void>;
   emit: (message: SessionOutboundMessage) => void;
   emitAgentRemove: (agentId: string) => Promise<void>;
@@ -227,6 +230,7 @@ export class CreateAgentLifecycleDispatch {
       {
         scope: { kind: "workspace", workspaceId: createdWorktree.workspace.workspaceId },
         requestId: randomUUID(),
+        releaseBacking: true,
       },
     );
 

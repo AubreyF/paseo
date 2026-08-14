@@ -44,7 +44,10 @@ export interface ArchiveDependencies {
   // reject ambiguous same-cwd matches when archiving by path without an explicit
   // workspaceId.
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
-  archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
+  archiveWorkspaceRecord: (
+    workspaceId: string,
+    options?: { releaseBacking?: boolean },
+  ) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
@@ -72,6 +75,7 @@ export interface ArchiveResult {
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;
+  releaseBacking?: boolean;
 }
 
 export async function requireActiveWorkspaceForArchive(
@@ -96,7 +100,8 @@ interface BackingDirectory {
 
 interface ArchiveTarget {
   backing: BackingDirectory | null;
-  preserveBackingDirectory: boolean;
+  runtimeManaged: boolean;
+  runtimeReferencePath: string | null;
   teardownTargets: Array<{ workspaceId: string | null; cwd: string }>;
   setupWorkspaceIds: string[];
   workspaceIds: string[];
@@ -154,10 +159,21 @@ async function archiveByScopeWithPriority(
       await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
     }
 
+    const releaseBacking = request.releaseBacking ?? !target.runtimeManaged;
+    const releaseRuntimeBacking =
+      releaseBacking &&
+      (target.runtimeReferencePath === null ||
+        (await isDirectoryUnreferenced(
+          await dependencies.listActiveWorkspaces(),
+          target.runtimeReferencePath,
+          new Set(targetWorkspaceIds),
+          dependencies,
+        )));
     const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
       dependencies,
       targetWorkspaceIds,
       request.requestId,
+      releaseRuntimeBacking,
     );
 
     if (target.backing?.mainRepoRoot) {
@@ -174,7 +190,7 @@ async function archiveByScopeWithPriority(
       }
     }
 
-    if (target.backing !== null) {
+    if (releaseBacking && target.backing !== null) {
       removedDirectory = await maybeRemoveDirectory(
         dependencies,
         request,
@@ -214,21 +230,18 @@ async function resolveArchiveTarget(
       );
       return {
         backing: null,
-        preserveBackingDirectory: false,
+        runtimeManaged: false,
+        runtimeReferencePath: null,
         teardownTargets: [],
         setupWorkspaceIds: [],
         workspaceIds: [],
       };
     }
     const isArchived = "archivedAt" in record && Boolean(record.archivedAt);
-    const isRuntimeSelected =
-      ("runtime" in record && Boolean(record.runtime)) ||
-      ("runtimeId" in record && Boolean(record.runtimeId));
     return {
-      backing: isRuntimeSelected
-        ? null
-        : await resolveWorkspaceBackingDirectory(record, dependencies),
-      preserveBackingDirectory: isRuntimeSelected,
+      backing: await resolveWorkspaceBackingDirectory(record, dependencies),
+      runtimeManaged: hasSelectedRuntime(record),
+      runtimeReferencePath: hasSelectedRuntime(record) ? (record.hostVisiblePath ?? null) : null,
       teardownTargets: isArchived ? [] : [{ workspaceId, cwd: record.cwd }],
       setupWorkspaceIds: [workspaceId],
       workspaceIds: isArchived ? [] : [workspaceId],
@@ -253,9 +266,11 @@ async function resolveArchiveTarget(
       ...backing,
       mainRepoRoot: persistedMainRepoRoot ?? backing.mainRepoRoot,
     },
-    preserveBackingDirectory: targetWorkspaces.some(
-      (workspace) => workspace.runtimeId !== null && workspace.runtimeId !== undefined,
-    ),
+    runtimeManaged: targetWorkspaces.some(hasSelectedRuntime),
+    runtimeReferencePath:
+      targetWorkspaces.find(
+        (workspace) => hasSelectedRuntime(workspace) && workspace.hostVisiblePath,
+      )?.hostVisiblePath ?? null,
     teardownTargets:
       targetWorkspaces.length > 0
         ? targetWorkspaces.map((workspace) => ({
@@ -293,6 +308,14 @@ async function resolveWorkspaceBackingDirectory(
   workspace: ActiveWorkspaceRef,
   dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
 ): Promise<BackingDirectory> {
+  if (hasSelectedRuntime(workspace)) {
+    return {
+      path: resolve(workspace.hostVisiblePath ?? workspace.cwd),
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: workspace.mainRepoRoot ?? null,
+      paseoWorktreesRoot: null,
+    };
+  }
   if (workspace.isPaseoOwnedWorktree && workspace.worktreeRoot && workspace.mainRepoRoot) {
     return {
       path: resolve(workspace.worktreeRoot),
@@ -340,6 +363,7 @@ async function archiveTargetRecords(
   dependencies: ArchiveDependencies,
   targetWorkspaceIds: string[],
   requestId: string,
+  releaseBacking: boolean,
 ): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
@@ -347,7 +371,7 @@ async function archiveTargetRecords(
   const results = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
       const agents = await archiveWorkspaceContents(dependencies, workspaceId);
-      await dependencies.archiveWorkspaceRecord(workspaceId);
+      await dependencies.archiveWorkspaceRecord(workspaceId, { releaseBacking });
       return { workspaceId, agents };
     }),
   );
@@ -376,7 +400,7 @@ async function maybeRemoveDirectory(
   archivedWorkspaceIds: string[],
 ): Promise<boolean> {
   const backing = target.backing;
-  if (target.preserveBackingDirectory || !backing?.isPaseoOwnedWorktree) {
+  if (!backing?.isPaseoOwnedWorktree) {
     return false;
   }
 
@@ -440,6 +464,13 @@ async function maybeRemoveDirectory(
     );
     return false;
   }
+}
+
+function hasSelectedRuntime(workspace: ActiveWorkspaceRef): boolean {
+  return (
+    workspace.runtimeId != null ||
+    ("runtime" in workspace && Boolean((workspace as { runtime?: unknown }).runtime))
+  );
 }
 
 function uniqueFilesystemPaths(paths: string[]): string[] {

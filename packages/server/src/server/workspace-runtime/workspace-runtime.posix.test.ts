@@ -442,16 +442,20 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
       });
 
     await Promise.all([
-      fixture.service.archive(fixture.workspaceId),
-      fixture.service.archive(fixture.workspaceId),
+      fixture.service.archive(fixture.workspaceId, { releaseBacking: true }),
+      fixture.service.archive(fixture.workspaceId, { releaseBacking: true }),
     ]);
     expect(fixture.archivedWorkspaceIds.has(fixture.workspaceId)).toBe(true);
+    if (runtimeId === "worktree") {
+      expect(existsSync(runtimeRoot)).toBe(false);
+    }
 
     await Promise.all([
       fixture.service.restore(fixture.workspaceId),
       fixture.service.restore(fixture.workspaceId),
     ]);
     expect(fixture.archivedWorkspaceIds.has(fixture.workspaceId)).toBe(false);
+    expect(existsSync(runtimeRoot)).toBe(true);
     await writeFile(path.join(runtimeRoot, "dirty-untracked.txt"), "observed\n");
     await expect(restoredChange).resolves.toEqual(["dirty-untracked.txt"]);
     await subscription.unsubscribe();
@@ -471,9 +475,11 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
       reconstructed.restore(fixture.workspaceId),
     ]);
     expect(fixture.archivedWorkspaceIds.has(fixture.workspaceId)).toBe(false);
-    expect(await readFile(path.join(runtimeRoot, "dirty-untracked.txt"), "utf8")).toBe(
-      "observed\n",
-    );
+    if (runtimeId !== "worktree") {
+      expect(await readFile(path.join(runtimeRoot, "dirty-untracked.txt"), "utf8")).toBe(
+        "observed\n",
+      );
+    }
 
     await Promise.all([
       reconstructed.destroy(fixture.workspaceId),
@@ -623,6 +629,127 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
     );
     await fixture.service.restore(fixture.workspaceId);
     await fixture.service.destroy(fixture.workspaceId);
+  });
+});
+
+posixDescribe("worktree exact restore", () => {
+  test("rejects a preserved worktree whose branch changed", async () => {
+    const fixture = await createFixture("worktree", { lifecycleRecords: true });
+    await fixture.service.create(fixture.createInput);
+    const runtimeRoot = fixture.runtimeRoot();
+    await fixture.service.archive(fixture.workspaceId);
+    execFileSync("git", ["switch", "-c", "unexpected-branch"], {
+      cwd: runtimeRoot,
+      stdio: "pipe",
+    });
+
+    await expect(fixture.service.restore(fixture.workspaceId)).rejects.toThrow(
+      "Workspace runtime worktree branch changed: expected runtime-branch, received unexpected-branch",
+    );
+
+    execFileSync("git", ["switch", "runtime-branch"], { cwd: runtimeRoot, stdio: "pipe" });
+    await fixture.service.restore(fixture.workspaceId);
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+
+  test("rejects a selected subdirectory replaced by an escaping symlink", async () => {
+    const fixture = await createFixture("worktree", { lifecycleRecords: true });
+    await mkdir(path.join(fixture.repo, "nested"));
+    await writeFile(path.join(fixture.repo, "nested", "file.txt"), "nested\n");
+    execFileSync("git", ["add", "."], { cwd: fixture.repo, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add nested"], {
+      cwd: fixture.repo,
+      stdio: "pipe",
+    });
+    await fixture.service.create({
+      ...fixture.createInput,
+      placement: {
+        ...(fixture.createInput.placement as Extract<
+          CreateWorkspaceInput["placement"],
+          { kind: "branch" }
+        >),
+        relativeCwd: "nested",
+      },
+    });
+    const runtimeRoot = fixture.runtimeRoot();
+    await fixture.service.archive(fixture.workspaceId);
+    await rm(path.join(runtimeRoot, "nested"), { recursive: true });
+    await symlink(fixture.root, path.join(runtimeRoot, "nested"));
+
+    await expect(fixture.service.restore(fixture.workspaceId)).rejects.toThrow();
+    expect(await realpath(path.join(runtimeRoot, "nested"))).toBe(await realpath(fixture.root));
+  });
+
+  test("fails closed when the saved path is occupied", async () => {
+    const fixture = await createFixture("worktree", { lifecycleRecords: true });
+    await fixture.service.create(fixture.createInput);
+    const runtimeRoot = fixture.runtimeRoot();
+    await fixture.service.archive(fixture.workspaceId, { releaseBacking: true });
+    await mkdir(runtimeRoot, { recursive: true });
+
+    await expect(fixture.service.restore(fixture.workspaceId)).rejects.toThrow(
+      `Workspace runtime worktree path is occupied: ${runtimeRoot}`,
+    );
+    expect(listLinkedWorktrees(fixture.repo)).not.toContain(runtimeRoot);
+
+    await rm(runtimeRoot, { recursive: true, force: true });
+    await fixture.service.restore(fixture.workspaceId);
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+
+  test("fails closed when the saved branch is checked out elsewhere", async () => {
+    const fixture = await createFixture("worktree", { lifecycleRecords: true });
+    await fixture.service.create(fixture.createInput);
+    const runtimeRoot = fixture.runtimeRoot();
+    await fixture.service.archive(fixture.workspaceId, { releaseBacking: true });
+    const otherRoot = path.join(fixture.root, "branch-owner");
+    execFileSync("git", ["worktree", "add", otherRoot, "runtime-branch"], {
+      cwd: fixture.repo,
+      stdio: "pipe",
+    });
+
+    await expect(fixture.service.restore(fixture.workspaceId)).rejects.toThrow();
+    expect(existsSync(runtimeRoot)).toBe(false);
+
+    execFileSync("git", ["worktree", "remove", "--force", otherRoot], {
+      cwd: fixture.repo,
+      stdio: "pipe",
+    });
+    await fixture.service.restore(fixture.workspaceId);
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+
+  test("removes a partial restore when the selected subdirectory is missing", async () => {
+    const fixture = await createFixture("worktree", { lifecycleRecords: true });
+    await mkdir(path.join(fixture.repo, "nested"));
+    await writeFile(path.join(fixture.repo, "nested", "file.txt"), "nested\n");
+    execFileSync("git", ["add", "."], { cwd: fixture.repo, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add nested"], {
+      cwd: fixture.repo,
+      stdio: "pipe",
+    });
+    const createInput: CreateWorkspaceInput = {
+      ...fixture.createInput,
+      placement: {
+        ...(fixture.createInput.placement as Extract<
+          CreateWorkspaceInput["placement"],
+          { kind: "branch" }
+        >),
+        relativeCwd: "nested",
+      },
+    };
+    await fixture.service.create(createInput);
+    const runtimeRoot = fixture.runtimeRoot();
+    await fixture.service.archive(fixture.workspaceId, { releaseBacking: true });
+    execFileSync("git", ["branch", "-f", "runtime-branch", "main~1"], {
+      cwd: fixture.repo,
+      stdio: "pipe",
+    });
+
+    await expect(fixture.service.restore(fixture.workspaceId)).rejects.toThrow(
+      "Selected project directory is missing from the worktree",
+    );
+    expect(existsSync(runtimeRoot)).toBe(false);
   });
 });
 

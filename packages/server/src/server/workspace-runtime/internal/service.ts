@@ -315,7 +315,7 @@ export function createService(
         unavailableFiles.delete(workspaceId);
       });
     },
-    async archive(workspaceId) {
+    async archive(workspaceId, archiveOptions) {
       await sequence(workspaceId, async () => {
         if (!records.archiveWorkspaceRecord) {
           throw new Error("Workspace runtime record store cannot archive workspaces");
@@ -324,6 +324,9 @@ export function createService(
         const inspection = await driver.inspect(workspaceId);
         if (inspection.status === "ready") await runArchiveHooks(workspaceId, driver);
         await pauseWithDriver(workspaceId, driver);
+        if (archiveOptions?.releaseBacking) {
+          await driver.releaseBacking?.(workspaceId);
+        }
         await records.archiveWorkspaceRecord(workspaceId);
       });
     },

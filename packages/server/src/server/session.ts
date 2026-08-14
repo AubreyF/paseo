@@ -953,8 +953,10 @@ export class Session {
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildProjectPlacementForWorkspaceId: (workspaceId) =>
         this.buildProjectPlacementForWorkspaceId(workspaceId),
-      emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
-        this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
+      emitWorkspaceUpdateForWorkspaceId: (workspaceId) => {
+        this.workspacesAwaitingInitialAgent.delete(workspaceId);
+        return this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+      },
       sequenceAgentUpdate: (payload, agent, project, agentId, includeSequence) =>
         this.directorySync.sequenceAgentUpdate(
           payload,
@@ -976,7 +978,8 @@ export class Session {
       archiveAgentForClose: (agentId) => this.archiveAgentForClose(agentId),
       findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
       listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-      archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+      archiveWorkspaceRecord: (workspaceId, archiveOptions) =>
+        this.archiveWorkspaceRecord(workspaceId, archiveOptions),
       destroyWorkspace: async (workspaceId) => {
         if (!this.workspaceRuntime) {
           throw new Error(`Workspace runtime is not available: ${workspaceId}`);
@@ -1228,26 +1231,22 @@ export class Session {
     workspace: WorkspaceDescriptorPayload,
     optimisticStatus?: WorkspaceDescriptorPayload["status"],
   ): Promise<void> {
-    try {
-      if (this.workspaceUpdatesSubscription) {
-        await this.emitWorkspaceUpdatesForWorkspaceIds(
-          [workspace.id],
-          optimisticStatus ? { optimisticStatus } : undefined,
-        );
-        return;
-      }
-      // COMPAT(workspaceCreateCausalUpdate): added in v0.1.106, remove after 2027-01-12.
-      // Older clients create before subscribing and require the causal update beside the response.
-      this.emit({
-        type: "workspace_update",
-        payload: {
-          kind: "upsert",
-          workspace: optimisticStatus ? { ...workspace, status: optimisticStatus } : workspace,
-        },
-      });
-    } finally {
-      if (optimisticStatus) this.workspacesAwaitingInitialAgent.delete(workspace.id);
+    if (this.workspaceUpdatesSubscription) {
+      await this.emitWorkspaceUpdatesForWorkspaceIds(
+        [workspace.id],
+        optimisticStatus ? { optimisticStatus } : undefined,
+      );
+      return;
     }
+    // COMPAT(workspaceCreateCausalUpdate): added in v0.1.106, remove after 2027-01-12.
+    // Older clients create before subscribing and require the causal update beside the response.
+    this.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: optimisticStatus ? { ...workspace, status: optimisticStatus } : workspace,
+      },
+    });
   }
 
   markWorkspaceArchivingForExternalMutation(
@@ -3218,6 +3217,7 @@ export class Session {
 
     let createdWorktreeForCleanup: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
+    let initialAgentWorkspaceId: string | null = null;
     try {
       const requestedCwd = resolve(config.cwd);
       const needsRequestedDirectory =
@@ -3248,6 +3248,7 @@ export class Session {
         createdWorktree,
         workspacePromptTitle,
       });
+      initialAgentWorkspaceId = resolvedIntent.intent.workspaceId;
       await this.requireCreateAgentWorkspaceReady(resolvedIntent);
 
       const { snapshot, liveSnapshot } = await createAgentCommand(
@@ -3317,6 +3318,10 @@ export class Session {
         createdWorktree: createdWorktreeForCleanup,
         createdAgentId,
       });
+      if (initialAgentWorkspaceId) {
+        this.workspacesAwaitingInitialAgent.delete(initialAgentWorkspaceId);
+        await this.emitWorkspaceUpdateForWorkspaceId(initialAgentWorkspaceId);
+      }
       const wireError = toWorktreeWireError(error);
       this.sessionLogger.error({ err: error }, "Failed to create agent");
       if (requestId) {
@@ -4064,7 +4069,8 @@ export class Session {
         agentStorage: this.agentStorage,
         findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
         listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+        archiveWorkspaceRecord: (workspaceId, options) =>
+          this.archiveWorkspaceRecord(workspaceId, options),
         emit: (message) => this.emit(message),
         emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
           this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
@@ -4901,15 +4907,20 @@ export class Session {
       }));
   }
 
-  private async archiveWorkspaceRecord(workspaceId: string, archivedAt?: string): Promise<void> {
-    const archiveTimestamp = archivedAt ?? new Date().toISOString();
+  private async archiveWorkspaceRecord(
+    workspaceId: string,
+    options?: { archivedAt?: string; releaseBacking?: boolean },
+  ): Promise<void> {
+    const archiveTimestamp = options?.archivedAt ?? new Date().toISOString();
     const currentWorkspace = await this.workspaceRegistry.get(workspaceId);
     const existingWorkspace = currentWorkspace?.runtime
       ? await (async () => {
           if (!this.workspaceRuntime) {
             throw new Error(`Workspace runtime is not available: ${workspaceId}`);
           }
-          await this.workspaceRuntime.archive(workspaceId);
+          await this.workspaceRuntime.archive(workspaceId, {
+            releaseBacking: options?.releaseBacking,
+          });
           return currentWorkspace;
         })()
       : await archivePersistedWorkspaceRecord({
@@ -5015,7 +5026,7 @@ export class Session {
           : null;
       const nextWorkspace = this.applyOptimisticWorkspaceStatus(
         filteredWorkspace,
-        options?.optimisticStatus,
+        this.resolveWorkspaceUpdateOptimisticStatus(workspaceId, options),
       );
       const lastEmitted = subscription.lastEmittedByWorkspaceId.get(workspaceId);
       if (
@@ -5066,6 +5077,14 @@ export class Session {
 
       this.bufferOrEmitWorkspaceUpdate(subscription, nextPayload);
     }
+  }
+
+  private resolveWorkspaceUpdateOptimisticStatus(
+    workspaceId: string,
+    options: WorkspaceUpdateOptions | undefined,
+  ): WorkspaceDescriptorPayload["status"] | undefined {
+    if (options?.optimisticStatus) return options.optimisticStatus;
+    return this.workspacesAwaitingInitialAgent.has(workspaceId) ? "running" : undefined;
   }
 
   private applyOptimisticWorkspaceStatus(
@@ -6329,7 +6348,8 @@ export class Session {
           findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
           getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
           listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-          archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+          archiveWorkspaceRecord: (workspaceId, options) =>
+            this.archiveWorkspaceRecord(workspaceId, options),
           emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
             this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
           markWorkspaceArchiving: (workspaceIds, archivingAt) =>

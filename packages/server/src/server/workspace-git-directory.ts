@@ -39,14 +39,14 @@ export function createWorkspaceGitDirectory(options: {
   function bindRecord(
     record: Pick<PersistedWorkspaceRecord, "workspaceId" | "cwd" | "runtime">,
   ): WorkspaceGitWorkspace {
-    const cwd = resolve(record.cwd);
+    const selected = record.runtime?.runtimeId !== undefined;
+    const cwd = selected ? record.cwd.trim() : resolve(record.cwd);
     const existing = boundRecords.get(record.workspaceId);
     if (existing) {
       if (existing.cwd !== cwd)
         throw new Error(`Workspace Git binding changed cwd: ${record.workspaceId}`);
       return existing.workspaceGit;
     }
-    const selected = record.runtime?.runtimeId !== undefined;
     const workspaceGit = selected
       ? workspaceGitService.bindWorkspace({
           workspaceId: record.workspaceId,
@@ -61,21 +61,22 @@ export function createWorkspaceGitDirectory(options: {
     bindRecord,
     getBound(workspaceId, cwd) {
       const bound = boundRecords.get(workspaceId);
-      if (!bound || bound.cwd !== resolve(cwd)) {
+      const addressedCwd = bound?.selected ? cwd.trim() : resolve(cwd);
+      if (!bound || bound.cwd !== addressedCwd) {
         throw new Error(`Workspace Git is not bound: ${workspaceId}`);
       }
       return bound.workspaceGit;
     },
     getObservationBinding(workspaceId, cwd) {
-      const normalizedCwd = resolve(cwd);
       const bound = boundRecords.get(workspaceId);
-      if (!bound || bound.cwd !== normalizedCwd) {
+      const addressedCwd = bound?.selected ? cwd.trim() : resolve(cwd);
+      if (!bound || bound.cwd !== addressedCwd) {
         throw new Error(`Workspace Git is not bound: ${workspaceId}`);
       }
       return {
         address: bound.selected
-          ? { kind: "selected", workspaceId, cwd: normalizedCwd }
-          : { kind: "legacy", cwd: normalizedCwd },
+          ? { kind: "selected", workspaceId, cwd: addressedCwd }
+          : { kind: "legacy", cwd: addressedCwd },
         workspaceGit: bound.workspaceGit,
       };
     },
@@ -89,10 +90,9 @@ export function createWorkspaceGitDirectory(options: {
         if (selectedCwd.length === 0) {
           throw new Error("cwd is required for selected workspace Git");
         }
-        const cwd = resolve(selectedCwd);
         const record = await workspaceRegistry.get(workspaceId);
         if (!record) throw new Error(`Workspace not found: ${workspaceId}`);
-        if (resolve(record.cwd) !== cwd) {
+        if (record.cwd.trim() !== selectedCwd) {
           throw new Error(`Workspace cwd does not match ${workspaceId}`);
         }
         return bindRecord(record);

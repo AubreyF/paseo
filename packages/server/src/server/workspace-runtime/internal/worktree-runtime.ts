@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -21,6 +21,8 @@ import { createRuntimeStateStore } from "./runtime-state.js";
 import { writePaseoWorktreeFirstAgentBranchAutoNameMetadata } from "../../../utils/worktree-metadata.js";
 import { createExternalProcessEnv } from "../../paseo-env.js";
 import { createStringCommandShellEnv } from "../../../utils/string-command-shell.js";
+import { runGitCommand } from "../../../utils/run-git-command.js";
+import { createRealpathAwarePathMatcher } from "../../../utils/path.js";
 
 interface WorktreeRuntimeState {
   workspaceId: string;
@@ -29,6 +31,8 @@ interface WorktreeRuntimeState {
   worktreeRoot: string;
   lifecycle: "ready" | "paused";
   lifecycleEnvironment: Readonly<Record<string, string>>;
+  branchName?: string;
+  relativeCwd?: string;
   ownsWorktree?: boolean;
 }
 
@@ -162,6 +166,8 @@ export function createWorktreeRuntime(options: {
             PASEO_WORKTREE_PATH: worktree.worktreePath,
             PASEO_BRANCH_NAME: worktree.branchName,
           },
+          branchName: worktree.branchName,
+          ...(input.placement.relativeCwd ? { relativeCwd: input.placement.relativeCwd } : {}),
           ownsWorktree: true,
         };
         await states.write(state);
@@ -193,12 +199,41 @@ export function createWorktreeRuntime(options: {
       const state = await states.read(workspaceId);
       if (state?.lifecycle === "paused") return;
       if (!state) throw new Error(`Workspace runtime worktree is missing: ${workspaceId}`);
-      await states.write({ ...state, lifecycle: "paused" });
+      const branchName = state.ownsWorktree === false ? undefined : await currentBranch(state);
+      await states.write({
+        ...state,
+        lifecycle: "paused",
+        ...(branchName
+          ? {
+              branchName,
+              lifecycleEnvironment: {
+                ...state.lifecycleEnvironment,
+                PASEO_BRANCH_NAME: branchName,
+              },
+            }
+          : {}),
+      });
+    },
+    async releaseBacking(workspaceId) {
+      const state = await states.read(workspaceId);
+      if (!state) throw new Error(`Workspace runtime worktree is missing: ${workspaceId}`);
+      if (state.lifecycle !== "paused") {
+        throw new Error(`Workspace runtime worktree is not paused: ${workspaceId}`);
+      }
+      if (state.ownsWorktree === false) return;
+      await deletePaseoWorktree({
+        cwd: state.sourceRoot,
+        worktreePath: state.worktreeRoot,
+        teardownCwds: [],
+        paseoHome: options.paseoHome,
+        worktreesBaseRoot: options.worktreesRoot,
+      });
     },
     async resume(workspaceId) {
       const current = await states.read(workspaceId);
       if (!current) throw new Error(`Workspace runtime worktree is missing: ${workspaceId}`);
-      const state = { ...current, lifecycle: "ready" as const };
+      const rematerialized = await rematerializeOwnedWorktree(current, options);
+      const state = { ...rematerialized, lifecycle: "ready" as const };
       await states.write(state);
       return { state: publicState(state), placement: hostPlacement(state.root) };
     },
@@ -241,8 +276,107 @@ function isWorktreeRuntimeState(
     (state.lifecycle === "ready" || state.lifecycle === "paused") &&
     !!state.lifecycleEnvironment &&
     typeof state.lifecycleEnvironment === "object" &&
+    (state.branchName === undefined || typeof state.branchName === "string") &&
+    (state.relativeCwd === undefined || typeof state.relativeCwd === "string") &&
     (state.ownsWorktree === undefined || typeof state.ownsWorktree === "boolean")
   );
+}
+
+async function currentBranch(state: WorktreeRuntimeState): Promise<string | undefined> {
+  const { stdout } = await runGitCommand(["branch", "--show-current"], {
+    cwd: state.worktreeRoot,
+  });
+  const branchName = stdout.trim();
+  if (!branchName) {
+    throw new Error(`Workspace runtime worktree has no current branch: ${state.workspaceId}`);
+  }
+  return branchName;
+}
+
+async function rematerializeOwnedWorktree(
+  state: WorktreeRuntimeState,
+  options: { paseoHome: string; worktreesRoot?: string },
+): Promise<WorktreeRuntimeState> {
+  const existing = await validateExistingWorktree(state);
+  if (existing) return existing;
+  if (state.ownsWorktree === false) {
+    throw new Error(`Workspace runtime worktree is missing: ${state.workspaceId}`);
+  }
+  const branchName = state.branchName ?? state.lifecycleEnvironment.PASEO_BRANCH_NAME;
+  if (!branchName) {
+    throw new Error(`Workspace runtime worktree has no restorable branch: ${state.workspaceId}`);
+  }
+  await mkdir(path.dirname(state.worktreeRoot), { recursive: true });
+  await runGitCommand(["worktree", "add", state.worktreeRoot, branchName], {
+    cwd: state.sourceRoot,
+    timeout: 120_000,
+  });
+  try {
+    const relativeCwd = state.relativeCwd ?? path.relative(state.worktreeRoot, state.root);
+    const root = await resolveRuntimeCwd(state.worktreeRoot, relativeCwd || undefined).catch(
+      (error) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new Error("Selected project directory is missing from the worktree", {
+            cause: error,
+          });
+        }
+        throw error;
+      },
+    );
+    return {
+      ...state,
+      root,
+      branchName,
+      ...(relativeCwd ? { relativeCwd } : {}),
+      lifecycleEnvironment: {
+        ...state.lifecycleEnvironment,
+        PASEO_WORKTREE_PATH: state.worktreeRoot,
+        PASEO_BRANCH_NAME: branchName,
+      },
+    };
+  } catch (error) {
+    await deletePaseoWorktree({
+      cwd: state.sourceRoot,
+      worktreePath: state.worktreeRoot,
+      teardownCwds: [],
+      paseoHome: options.paseoHome,
+      worktreesBaseRoot: options.worktreesRoot,
+    });
+    throw error;
+  }
+}
+
+async function validateExistingWorktree(
+  state: WorktreeRuntimeState,
+): Promise<WorktreeRuntimeState | null> {
+  try {
+    if (!(await stat(state.worktreeRoot)).isDirectory()) return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const { exitCode, stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+    cwd: state.worktreeRoot,
+    acceptExitCodes: [0, 128],
+  });
+  if (exitCode !== 0 || !createRealpathAwarePathMatcher(state.worktreeRoot)(stdout.trim())) {
+    throw new Error(`Workspace runtime worktree path is occupied: ${state.worktreeRoot}`);
+  }
+  const branchName = await currentBranch(state);
+  const expectedBranchName = state.branchName ?? state.lifecycleEnvironment.PASEO_BRANCH_NAME;
+  if (!expectedBranchName || branchName !== expectedBranchName) {
+    throw new Error(
+      `Workspace runtime worktree branch changed: expected ${expectedBranchName ?? "unknown"}, received ${branchName}`,
+    );
+  }
+  const relativeCwd = state.relativeCwd ?? path.relative(state.worktreeRoot, state.root);
+  try {
+    const root = await resolveRuntimeCwd(state.worktreeRoot, relativeCwd || undefined);
+    if ((await stat(root)).isDirectory()) return { ...state, root };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  throw new Error(`Selected project directory is missing from the worktree: ${state.root}`);
 }
 
 function hostPlacement(root: string) {

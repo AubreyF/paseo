@@ -145,7 +145,7 @@ export interface WorkspaceRuntimeService {
   requireHostVisiblePath(workspaceId: string): Promise<string>;
   pause(workspaceId: string): Promise<void>;
   resume(workspaceId: string): Promise<void>;
-  archive(workspaceId: string): Promise<void>;
+  archive(workspaceId: string, options?: { releaseBacking?: boolean }): Promise<void>;
   restore(workspaceId: string): Promise<void>;
   destroy(workspaceId: string): Promise<void>;
 }

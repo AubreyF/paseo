@@ -116,6 +116,8 @@ export interface WorkspaceRuntimeDriver {
     listener: () => void,
   ): Promise<{ unsubscribe(): Promise<void> }>;
   pause(workspaceId: WorkspaceId): Promise<void>;
+  /** Release restorable backing owned by this driver after the runtime is paused. */
+  releaseBacking?(workspaceId: WorkspaceId): Promise<void>;
   resume(workspaceId: WorkspaceId): Promise<WorkspaceDriverReady>;
   destroy(workspaceId: WorkspaceId): Promise<void>;
   reconcile?(workspaceIds: readonly WorkspaceId[]): Promise<void>;

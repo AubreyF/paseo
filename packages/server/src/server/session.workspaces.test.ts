@@ -9472,11 +9472,38 @@ test("workspace create emits through a matching workspace subscription", async (
     firstAgentContext: { prompt: "Implement the requested change" },
   });
 
+  const createdWorkspace = Array.from(workspaces.values())[0];
+  expect(createdWorkspace).toBeDefined();
+  await mutationListener?.({
+    kind: "upsert",
+    workspaceId: createdWorkspace.workspaceId,
+    workspace: createdWorkspace,
+  });
+
   const statuses = filterByType(emitted, "workspace_update").flatMap((message) =>
     message.payload.kind === "upsert" ? [message.payload.workspace.status] : [],
   );
   expect(statuses).toContain("running");
   expect(statuses).not.toContain("done");
+
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "create_agent_request",
+    requestId: "req-create-match-agent-failure",
+    workspaceId: createdWorkspace.workspaceId,
+    config: { provider: "unknown-provider", cwd: createdWorkspace.cwd },
+    initialPrompt: "This agent cannot be created.",
+    attachments: [],
+  });
+  expect(findByType(emitted, "status")?.payload).toMatchObject({
+    status: "agent_create_failed",
+    requestId: "req-create-match-agent-failure",
+  });
+  const failureStatuses = filterByType(emitted, "workspace_update").flatMap((message) =>
+    message.payload.kind === "upsert" ? [message.payload.workspace.status] : [],
+  );
+  expect(failureStatuses).toContain("done");
+  expect(failureStatuses).not.toContain("running");
 });
 
 test("workspace create stays out of a non-matching workspace subscription", async () => {

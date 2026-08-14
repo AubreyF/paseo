@@ -187,13 +187,13 @@ export function CompactExplorerSidebarHost({ children, enabled }: CompactExplore
   return (
     <>
       <CompactExplorerOpenGestureSurface
-        enabled={enabled && Boolean(model?.workspaceRoot)}
+        enabled={enabled && Boolean(model?.workspaceRoot) && Boolean(workspaceGit)}
         onOpenExplorer={handleOpenExplorer}
       >
         {children}
       </CompactExplorerOpenGestureSurface>
       <WorkspaceGitBoundary workspaceGit={workspaceGit}>
-        {enabled && model ? (
+        {enabled && model && workspaceGit ? (
           <CompactExplorerSidebar
             serverId={model.serverId}
             workspaceId={model.workspaceId}

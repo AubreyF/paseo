@@ -998,6 +998,7 @@ export class Session {
       archiveAgentForClose: (agentId) => this.archiveAgentForClose(agentId),
       findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
       listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+      listWorkspaceRecords: () => this.workspaceRegistry.list(),
       archiveWorkspaceRecord: (workspaceId, archiveOptions) =>
         this.archiveWorkspaceRecord(workspaceId, archiveOptions),
       destroyWorkspace: async (workspaceId) => {
@@ -4194,6 +4195,7 @@ export class Session {
         agentStorage: this.agentStorage,
         findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
         listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+        listWorkspaceRecords: () => this.workspaceRegistry.list(),
         archiveWorkspaceRecord: (workspaceId, options) =>
           this.archiveWorkspaceRecord(workspaceId, options),
         emit: (message) => this.emit(message),
@@ -6473,6 +6475,7 @@ export class Session {
           findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
           getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
           listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+          listWorkspaceRecords: () => this.workspaceRegistry.list(),
           archiveWorkspaceRecord: (workspaceId, options) =>
             this.archiveWorkspaceRecord(workspaceId, options),
           emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
@@ -6488,6 +6491,7 @@ export class Session {
         {
           scope: { kind: "workspace", workspaceId: existing.workspaceId },
           requestId: request.requestId,
+          releaseBacking: true,
         },
       );
 

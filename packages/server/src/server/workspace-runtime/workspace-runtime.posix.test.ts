@@ -1,6 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -449,6 +458,9 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
     if (runtimeId === "worktree") {
       expect(existsSync(runtimeRoot)).toBe(false);
     }
+    await expect(fixture.service.inspect(fixture.workspaceId)).resolves.toMatchObject({
+      status: "paused",
+    });
 
     await Promise.all([
       fixture.service.restore(fixture.workspaceId),
@@ -693,6 +705,22 @@ posixDescribe("worktree exact restore", () => {
     expect(listLinkedWorktrees(fixture.repo)).not.toContain(runtimeRoot);
 
     await rm(runtimeRoot, { recursive: true, force: true });
+    await fixture.service.restore(fixture.workspaceId);
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+
+  test("reports a missing source repository before attempting rematerialization", async () => {
+    const fixture = await createFixture("worktree", { lifecycleRecords: true });
+    await fixture.service.create(fixture.createInput);
+    await fixture.service.archive(fixture.workspaceId, { releaseBacking: true });
+    const displacedRepo = `${fixture.repo}-missing`;
+    await rename(fixture.repo, displacedRepo);
+
+    await expect(fixture.service.restore(fixture.workspaceId)).rejects.toThrow(
+      "The source repository needed to restore this worktree no longer exists.",
+    );
+
+    await rename(displacedRepo, fixture.repo);
     await fixture.service.restore(fixture.workspaceId);
     await fixture.service.destroy(fixture.workspaceId);
   });

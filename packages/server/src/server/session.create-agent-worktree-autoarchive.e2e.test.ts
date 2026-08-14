@@ -89,6 +89,18 @@ async function expectWorktreePresentInList(repoDir: string, worktreePath: string
     .toBe(true);
 }
 
+async function expectWorktreeAbsentFromList(repoDir: string, worktreePath: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const listed = await ctx.client.getPaseoWorktreeList({ cwd: repoDir });
+        return listed.worktrees.map((worktree) => worktree.worktreePath).includes(worktreePath);
+      },
+      { timeout: 10_000, interval: 100 },
+    )
+    .toBe(false);
+}
+
 async function expectWorktreeListEmpty(repoDir: string): Promise<void> {
   const listed = await ctx.client.getPaseoWorktreeList({ cwd: repoDir });
   expect(listed.worktrees).toEqual([]);
@@ -336,16 +348,16 @@ test("create_agent_request with worktree but no autoArchive leaves agent and wor
   await ctx.client.archivePaseoWorktree({ worktreePath: created.worktreePath });
 });
 
-test("archiving a created worktree preserves it for restore", async () => {
+test("archiving a created worktree releases its backing for restore", async () => {
   const created = await createAgentInBranchOffWorktree();
 
   await ctx.client.waitForFinish(created.agentId, 10000);
   await ctx.client.archivePaseoWorktree({ worktreePath: created.worktreePath });
 
   await expectAgentAbsentFromActiveList(created.agentId);
-  await expectWorktreePresentInList(created.repoDir, created.worktreePath);
-  expect(existsSync(created.worktreePath)).toBe(true);
-});
+  await expectWorktreeAbsentFromList(created.repoDir, created.worktreePath);
+  expect(existsSync(created.worktreePath)).toBe(false);
+}, 30_000);
 
 test("auto-archiving a created worktree keeps the directory when a sibling workspace references it", async () => {
   const created = await createAgentInBranchOffWorktree({ autoArchive: true, startIdle: true });

@@ -46,6 +46,13 @@ export function createWorktreeRuntime(options: {
   async function inspect(workspaceId: string): Promise<WorkspaceDriverInspection> {
     const state = await states.read(workspaceId);
     if (!state) return { status: "missing" };
+    if (state.lifecycle === "paused") {
+      return {
+        status: "paused",
+        state: publicState(state),
+        placement: hostPlacement(state.root),
+      };
+    }
     try {
       if (!(await stat(state.root)).isDirectory()) return { status: "missing" };
       return {
@@ -305,6 +312,18 @@ async function rematerializeOwnedWorktree(
   const branchName = state.branchName ?? state.lifecycleEnvironment.PASEO_BRANCH_NAME;
   if (!branchName) {
     throw new Error(`Workspace runtime worktree has no restorable branch: ${state.workspaceId}`);
+  }
+  try {
+    if (!(await stat(state.sourceRoot)).isDirectory()) {
+      throw new Error("The source repository needed to restore this worktree no longer exists.");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("The source repository needed to restore this worktree no longer exists.", {
+        cause: error,
+      });
+    }
+    throw error;
   }
   await mkdir(path.dirname(state.worktreeRoot), { recursive: true });
   await runGitCommand(["worktree", "add", state.worktreeRoot, branchName], {

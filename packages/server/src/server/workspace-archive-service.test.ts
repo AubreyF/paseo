@@ -19,6 +19,7 @@ import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import {
   archiveByScope,
   type ActiveWorkspaceRef,
@@ -196,6 +197,35 @@ function assertArchiveResult(
 }
 
 describe("archiveByScope", () => {
+  test("reports a target teardown failure after settling the archive operation", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const workspaceId = "ws-failed-runtime-archive";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: repoDir,
+          kind: "local_checkout",
+          runtimeId: "local",
+          hostVisiblePath: repoDir,
+        },
+      ],
+    });
+    deps.archiveWorkspaceRecord = vi.fn(async () => {
+      throw new Error("runtime archive failed");
+    });
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-failed-runtime-archive",
+      }),
+    ).rejects.toThrow("Failed to archive 1 workspace");
+
+    expect(deps.clearWorkspaceArchiving).toHaveBeenCalledWith([workspaceId]);
+  });
+
   test("an external runtime never exposes its host source checkout as removable backing", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -263,6 +293,78 @@ describe("archiveByScope", () => {
     expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toContain(
       "ws-host-invisible-b",
     );
+  });
+
+  test("releases an archived runtime owner when the final sibling reference is archived", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const ownerWorkspaceId = "ws-deferred-owner";
+    const siblingWorkspaceId = "ws-final-sibling";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [
+        {
+          workspaceId: siblingWorkspaceId,
+          cwd: repoDir,
+          hostVisiblePath: repoDir,
+          kind: "local_checkout",
+          runtimeId: "local",
+        },
+      ],
+    });
+    let siblingArchived = false;
+    const archiveWorkspaceRecord = deps.archiveWorkspaceRecord;
+    const archiveCalls: Array<{ workspaceId: string; releaseBacking: boolean }> = [];
+    deps.archiveWorkspaceRecord = async (workspaceId, options) => {
+      archiveCalls.push({ workspaceId, releaseBacking: options?.releaseBacking === true });
+      if (workspaceId === siblingWorkspaceId) {
+        siblingArchived = true;
+        await archiveWorkspaceRecord(workspaceId, options);
+      }
+    };
+    const workspaceRecord = (
+      workspaceId: string,
+      runtimeId: string,
+      archivedAt: string | null,
+    ): PersistedWorkspaceRecord => ({
+      workspaceId,
+      projectId: "project-deferred-owner",
+      cwd: repoDir,
+      hostVisiblePath: repoDir,
+      kind: "worktree",
+      displayName: workspaceId,
+      title: null,
+      branch: null,
+      worktreeRoot: repoDir,
+      baseBranch: null,
+      isPaseoOwnedWorktree: runtimeId === "worktree",
+      mainRepoRoot: repoDir,
+      runtime: { runtimeId },
+      deletionRequestedAt: null,
+      createdAt: "2026-08-14T00:00:00.000Z",
+      updatedAt: "2026-08-14T00:00:00.000Z",
+      archivedAt,
+      autoArchivedChangeRequestUrl: null,
+      pinnedAt: null,
+    });
+    deps.listWorkspaceRecords = async () => [
+      workspaceRecord(ownerWorkspaceId, "worktree", "2026-08-14T00:00:00.000Z"),
+      workspaceRecord(
+        siblingWorkspaceId,
+        "local",
+        siblingArchived ? "2026-08-14T00:01:00.000Z" : null,
+      ),
+    ];
+
+    await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId: siblingWorkspaceId },
+      requestId: "req-release-deferred-owner",
+      releaseBacking: true,
+    });
+
+    expect(archiveCalls).toEqual([
+      { workspaceId: siblingWorkspaceId, releaseBacking: true },
+      { workspaceId: ownerWorkspaceId, releaseBacking: true },
+    ]);
   });
 
   test("workspace scope archives the record and removes the directory on last reference", async () => {
@@ -605,14 +707,14 @@ describe("archiveByScope", () => {
       return originalArchiveWorkspaceRecord(workspaceId);
     };
 
-    const result = await archiveByScope(deps, {
-      scope: { kind: "worktree", targetPath: worktree.worktreePath },
-      requestId: "req-partial-failure",
-    });
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        requestId: "req-partial-failure",
+      }),
+    ).rejects.toThrow("Failed to archive 1 workspace");
 
-    expect(result.archivedWorkspaceIds).toEqual([workspaceB]);
-    expect(result.archivedWorkspaceIds).not.toContain(workspaceA);
-    expect(result.removedDirectory).toBe(false);
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceA]);
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 

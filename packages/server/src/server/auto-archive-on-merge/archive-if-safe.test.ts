@@ -505,6 +505,7 @@ describe("archiveIfSafe", () => {
       {
         scope: { kind: "workspace", workspaceId: "ws-auto-archive" },
         requestId: "auto-archive-on-merge",
+        releaseBacking: true,
       },
     );
     expect(harness.log.info).toHaveBeenCalledWith(

@@ -77,7 +77,12 @@ describe("desktop dev build contract", () => {
           (await stat(sourceExport)).mtimeMs,
         );
       } finally {
-        await rm(isolatedRoot, { recursive: true, force: true });
+        await rm(isolatedRoot, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 100,
+        });
       }
     },
     70_000,

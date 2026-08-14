@@ -54,6 +54,11 @@ type RecoveryPlan =
       state: Extract<WorkspaceRecoveryState, { kind: "recoverable" }>;
       workspace: PersistedWorkspaceRecord;
       sourceRepoRoot: string;
+    }
+  | {
+      kind: "runtime-restore";
+      state: Extract<WorkspaceRecoveryState, { kind: "recoverable" }>;
+      workspace: PersistedWorkspaceRecord;
     };
 
 type UnavailableRecoveryState = Extract<WorkspaceRecoveryState, { kind: "unavailable" }>;
@@ -108,8 +113,11 @@ export function createWorkspaceRecoveryService(deps: {
         };
       }
       const runtimeStatus = await deps.inspectRuntime(workspaceId);
-      if (runtimeStatus === "ready" || runtimeStatus === "paused") {
+      if (runtimeStatus === "ready") {
         return createRecoveryPlan({ action: "unarchive", workspace });
+      }
+      if (runtimeStatus === "paused") {
+        return createRecoveryPlan({ action: "runtime-restore", workspace });
       }
       return {
         kind: "unavailable",
@@ -172,7 +180,7 @@ export function createWorkspaceRecoveryService(deps: {
       await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
     }
     await deps.unarchiveWorkspace(resolved.workspace);
-    return { workspaceId, action: resolved.kind };
+    return { workspaceId, action: resolved.state.action };
   }
 
   async function recreateArchivedWorktree(
@@ -259,7 +267,8 @@ export function createWorkspaceRecoveryService(deps: {
 function createRecoveryPlan(
   input:
     | { action: "unarchive"; workspace: PersistedWorkspaceRecord }
-    | { action: "restore"; workspace: PersistedWorkspaceRecord; sourceRepoRoot: string },
+    | { action: "restore"; workspace: PersistedWorkspaceRecord; sourceRepoRoot: string }
+    | { action: "runtime-restore"; workspace: PersistedWorkspaceRecord },
 ): RecoveryPlan {
   const state = {
     kind: "recoverable" as const,
@@ -273,6 +282,13 @@ function createRecoveryPlan(
       state: { ...state, action: input.action },
       workspace: input.workspace,
       sourceRepoRoot: input.sourceRepoRoot,
+    };
+  }
+  if (input.action === "runtime-restore") {
+    return {
+      kind: input.action,
+      state: { ...state, action: "restore" },
+      workspace: input.workspace,
     };
   }
   return {

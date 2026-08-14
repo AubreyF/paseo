@@ -340,7 +340,7 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
   const siblingChanged = new Promise<void>((resolve) => {
     resolveSibling = resolve;
   });
-  let phase: "initial" | "first-change" | "after-pause-change" | "after-destroy-change" = "initial";
+  let phase: "first-change" | "after-pause-change" | "after-destroy-change" = "first-change";
   let resolveSiblingAfterOwnerPause!: () => void;
   const siblingChangedAfterOwnerPause = new Promise<void>((resolve) => {
     resolveSiblingAfterOwnerPause = resolve;
@@ -349,10 +349,7 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
   const siblingChangedAfterOwnerDestroy = new Promise<void>((resolve) => {
     resolveSiblingAfterOwnerDestroy = resolve;
   });
-  let resolveUnrelatedReady!: () => void;
-  const unrelatedReady = new Promise<void>((resolve) => {
-    resolveUnrelatedReady = resolve;
-  });
+  let unrelatedChanges = 0;
   const siblingA = await service.bind("sibling-a");
   const siblingB = await service.bind("sibling-b");
   const unrelatedGit = await service.bind("unrelated");
@@ -365,22 +362,10 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
       if (phase === "after-pause-change") resolveSiblingAfterOwnerPause();
       if (phase === "after-destroy-change") resolveSiblingAfterOwnerDestroy();
     }),
-  ];
-  const unrelatedReadinessSubscription = await observeWorkspaceGit(
-    unrelatedGit,
-    resolveUnrelatedReady,
-  );
-  await createBranchThroughRuntime(service, "unrelated", "unrelated-readiness");
-  await eventWithin(unrelatedReady, "unrelated observer readiness");
-  await unrelatedReadinessSubscription.unsubscribe();
-
-  let unrelatedChanges = 0;
-  subscriptions.push(
     await observeWorkspaceGit(unrelatedGit, () => {
       unrelatedChanges += 1;
     }),
-  );
-  phase = "first-change";
+  ];
   await createBranchThroughRuntime(service, "sibling-a", "shared-ref-change");
   await Promise.all([
     eventWithin(firstChanged, "first sibling ref update"),

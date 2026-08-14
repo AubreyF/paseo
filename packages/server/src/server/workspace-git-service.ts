@@ -3877,13 +3877,28 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 }
 
+const runtimeGitExecutables = new WeakMap<BoundWorkspaceRuntime, Promise<string>>();
+
+function resolveRuntimeGitExecutable(runtime: BoundWorkspaceRuntime): Promise<string> {
+  const existing = runtimeGitExecutables.get(runtime);
+  if (existing) return existing;
+  const resolving = runtime.resolveCommand("git").then((executable) => {
+    if (!executable) throw new Error("Git is not available in the workspace runtime");
+    return executable;
+  });
+  runtimeGitExecutables.set(runtime, resolving);
+  void resolving.catch(() => runtimeGitExecutables.delete(runtime));
+  return resolving;
+}
+
 async function runRuntimeGitCommand(
   runtime: BoundWorkspaceRuntime,
   args: string[],
   options: GitCommandOptions,
 ): Promise<GitCommandResult> {
+  const gitExecutable = await resolveRuntimeGitExecutable(runtime);
   const process = await runtime.run({
-    argv: ["git", "-c", "core.quotepath=false", ...args],
+    argv: [gitExecutable, "-c", "core.quotepath=false", ...args],
     env: buildRuntimeGitEnvironment(options),
     purpose: { kind: "git" },
   });
@@ -3936,9 +3951,7 @@ function buildRuntimeGitEnvironment(options: GitCommandOptions): Readonly<Record
   for (const [name, value] of Object.entries(options.envOverlay ?? {})) {
     if (value !== undefined) environment[name] = value;
   }
-  environment.PATH = ["/usr/local/bin", "/usr/bin", "/bin", environment.PATH]
-    .filter(Boolean)
-    .join(":");
+  environment.PATH = process.env.PATH ?? "";
   return environment;
 }
 

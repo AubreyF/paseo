@@ -375,14 +375,7 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
   await eventWithin(unrelatedReady, "unrelated observer readiness");
   unrelatedChanges = 0;
   phase = "first-change";
-  const branch = await service.run({
-    workspaceId: "sibling-a",
-    argv: ["git", "branch", "shared-ref-change"],
-    env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
-    purpose: { kind: "git" },
-  });
-  branch.stdin.end();
-  await expect(branch.exited).resolves.toEqual({ code: 0, signal: null });
+  await createBranchThroughRuntime(service, "sibling-a", "shared-ref-change");
   await Promise.all([
     eventWithin(firstChanged, "first sibling ref update"),
     eventWithin(siblingChanged, "second sibling ref update"),
@@ -391,27 +384,13 @@ test("selected sibling worktrees share common-ref fan-out without touching an un
 
   await service.pause("sibling-a");
   phase = "after-pause-change";
-  const branchAfterPause = await service.run({
-    workspaceId: "sibling-b",
-    argv: ["git", "branch", "shared-ref-after-owner-pause"],
-    env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
-    purpose: { kind: "git" },
-  });
-  branchAfterPause.stdin.end();
-  await expect(branchAfterPause.exited).resolves.toEqual({ code: 0, signal: null });
+  await createBranchThroughRuntime(service, "sibling-b", "shared-ref-after-owner-pause");
   await eventWithin(siblingChangedAfterOwnerPause, "sibling ref update after owner pause");
   expect(unrelatedChanges).toBe(0);
 
   await service.destroy("sibling-a");
   phase = "after-destroy-change";
-  const branchAfterDestroy = await service.run({
-    workspaceId: "sibling-b",
-    argv: ["git", "branch", "shared-ref-after-owner-destroy"],
-    env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
-    purpose: { kind: "git" },
-  });
-  branchAfterDestroy.stdin.end();
-  await expect(branchAfterDestroy.exited).resolves.toEqual({ code: 0, signal: null });
+  await createBranchThroughRuntime(service, "sibling-b", "shared-ref-after-owner-destroy");
   await eventWithin(siblingChangedAfterOwnerDestroy, "sibling ref update after owner destroy");
   expect(unrelatedChanges).toBe(0);
 
@@ -508,14 +487,17 @@ async function createBranchThroughRuntime(
   workspaceId: string,
   branch: string,
 ): Promise<void> {
-  const process = await service.run({
+  const runtime = await service.bind(workspaceId);
+  const gitExecutable = await runtime.resolveCommand("git");
+  expect(gitExecutable).not.toBeNull();
+  const childProcess = await service.run({
     workspaceId,
-    argv: ["git", "branch", branch],
-    env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
+    argv: [gitExecutable!, "branch", branch],
+    env: { PATH: process.env.PATH ?? "" },
     purpose: { kind: "git" },
   });
-  process.stdin.end();
-  await expect(process.exited).resolves.toEqual({ code: 0, signal: null });
+  childProcess.stdin.end();
+  await expect(childProcess.exited).resolves.toEqual({ code: 0, signal: null });
 }
 
 test("selected workspace Git reads and mutations stay inside its command runtime", async () => {
@@ -708,10 +690,14 @@ test("selected commit history highlighting never reads a deleted file from the h
     workspaceId: "history-workspace",
     cwd: hostDecoy,
   });
-  const hostWriter = spawn("/bin/sh", ["-c", "printf 'host trap\\n' > deleted.ts"], {
-    cwd: hostDecoy,
-    stdio: "ignore",
-  });
+  const hostWriter = spawn(
+    process.execPath,
+    [
+      "-e",
+      "setTimeout(() => require('node:fs').writeFileSync('deleted.ts', 'host trap\\\\n'), 60000)",
+    ],
+    { cwd: hostDecoy, stdio: "ignore" },
+  );
 
   const file = await selectedGit.getCommitFileDiff({ sha: deletionSha, path: "deleted.ts" });
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -778,9 +764,16 @@ test("selected workspaces with the same public cwd keep Git state, mutations, an
     path: "tracked.txt",
     contents: Buffer.from("runtime a dirty\n"),
   });
+  const runtimeA = await workspaceRuntime.bind("same-cwd-a");
+  const nodeExecutable = await runtimeA.resolveCommand("node");
+  expect(nodeExecutable).not.toBeNull();
   const createUntracked = await workspaceRuntime.run({
     workspaceId: "same-cwd-a",
-    argv: ["/bin/sh", "-c", "printf 'runtime a untracked\\n' > selected-proof.txt"],
+    argv: [
+      nodeExecutable!,
+      "-e",
+      "require('node:fs').writeFileSync('selected-proof.txt', 'runtime a untracked\\\\n')",
+    ],
     env: {},
     purpose: { kind: "git" },
   });
@@ -805,7 +798,11 @@ test("selected workspaces with the same public cwd keep Git state, mutations, an
   expect(JSON.stringify(diffB)).not.toContain("runtime a dirty");
   const removeUntracked = await workspaceRuntime.run({
     workspaceId: "same-cwd-a",
-    argv: ["/bin/rm", "selected-proof.txt"],
+    argv: [
+      nodeExecutable!,
+      "-e",
+      "require('node:fs').rmSync('selected-proof.txt', { force: true })",
+    ],
     env: {},
     purpose: { kind: "git" },
   });

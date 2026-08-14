@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { constants, watch } from "node:fs";
-import { open, realpath, readdir, rename, stat, unlink } from "node:fs/promises";
+import { access, open, realpath, readdir, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
-
-import { resolveCommand } from "./command-resolution.mjs";
 
 const outsideMessage = "Access outside of workspace is not allowed";
 const imageTypes = new Map([
@@ -62,6 +60,49 @@ function allowedArguments(command) {
   }
   if (command === "resolve-command") return ["--name"];
   return [];
+}
+
+async function resolveCommand(workspaceRoot, name) {
+  if (!name) throw new Error("--name is required");
+  const candidates = commandCandidates(name);
+  if (name.includes("/") || (process.platform === "win32" && name.includes("\\"))) {
+    for (const candidateName of candidates) {
+      const candidate = path.isAbsolute(candidateName)
+        ? candidateName
+        : path.resolve(workspaceRoot, candidateName);
+      const resolved = await resolveExecutable(candidate);
+      if (resolved) return resolved;
+    }
+    return null;
+  }
+  const searchPath = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin";
+  for (const directory of new Set([
+    path.dirname(process.execPath),
+    ...searchPath.split(path.delimiter),
+  ])) {
+    for (const candidateName of candidates) {
+      const resolved = await resolveExecutable(path.join(directory, candidateName));
+      if (resolved) return resolved;
+    }
+  }
+  return null;
+}
+
+function commandCandidates(name) {
+  if (process.platform !== "win32") return [name];
+  const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const nameExtension = path.extname(name).toLowerCase();
+  if (extensions.some((extension) => extension.toLowerCase() === nameExtension)) return [name];
+  return [name, ...extensions.map((extension) => `${name}${extension}`)];
+}
+
+async function resolveExecutable(candidate) {
+  try {
+    await access(candidate, constants.X_OK);
+    return await realpath(candidate);
+  } catch {
+    return null;
+  }
 }
 
 async function fileStat(workspaceRoot, relativePath) {

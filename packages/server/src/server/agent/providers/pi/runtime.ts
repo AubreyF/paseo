@@ -29,6 +29,7 @@ export interface PiStartSessionInput {
   cwd: string;
   workspace?: ProviderWorkspace;
   agentId?: string;
+  signal?: AbortSignal;
   env?: Record<string, string>;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;

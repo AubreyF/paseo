@@ -161,8 +161,8 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
       }),
     },
     agentStorage: {
-      list: async (): Promise<StoredAgentRecord[]> => [],
-    } as Pick<AgentStorage, "list">,
+      listByWorkspace: async (): Promise<StoredAgentRecord[]> => [],
+    } as Pick<AgentStorage, "listByWorkspace">,
     findWorkspaceIdForCwd: input.findWorkspaceIdForCwd ?? vi.fn(async () => null),
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !archivedWorkspaceIds.has(workspace.workspaceId)),
@@ -711,12 +711,15 @@ describe("archiveByScope", () => {
       }),
     };
     deps.agentStorage = {
-      list: async () =>
-        [
-          { id: targetStoredAgentId, workspaceId: targetWorkspaceId, archivedAt: null },
-          { id: otherStoredAgentId, workspaceId: otherWorkspaceId, archivedAt: null },
-        ] as StoredAgentRecord[],
-    } as Pick<AgentStorage, "list">;
+      listByWorkspace: async (workspaceId: string) =>
+        workspaceId === targetWorkspaceId
+          ? ([
+              { id: targetStoredAgentId, workspaceId: targetWorkspaceId, archivedAt: null },
+            ] as StoredAgentRecord[])
+          : ([
+              { id: otherStoredAgentId, workspaceId: otherWorkspaceId, archivedAt: null },
+            ] as StoredAgentRecord[]),
+    } as Pick<AgentStorage, "listByWorkspace">;
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId: targetWorkspaceId },

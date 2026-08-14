@@ -34,10 +34,12 @@ import {
   type ListImportableSessionsOptions,
   type ProviderCatalog,
   type ProviderWorkspace,
+  type ProviderRefreshContext,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
+import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
 import {
   checkProviderLaunchAvailable,
@@ -110,7 +112,6 @@ import {
 import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
 
 const OMP_PROVIDER = "omp";
-const OMP_CATALOG_REQUEST_TIMEOUT_MS = 120_000;
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
 const OMP_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
@@ -2325,26 +2326,47 @@ export class OmpAgentClient implements AgentClient {
     }
   }
 
-  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+  async fetchCatalog(
+    options: FetchCatalogOptions,
+    context?: ProviderRefreshContext,
+  ): Promise<ProviderCatalog> {
     const launchMode = this.resolveLaunchMode(undefined);
     const workspace = providerWorkspaceFromCatalogOptions(options);
     const cwd = workspace?.cwd ?? (options.scope === "global" ? homedir() : options.cwd);
-    const runtimeSession = await this.runtime.startSession({
-      cwd,
-      workspace,
-      protocolMode: "rpc-ui",
-      modeId: launchMode.modeId,
-      extraArgs: launchMode.extraArgs,
-    });
+    let runtimeSession: OmpRuntimeSession | undefined;
+    let closePromise: Promise<void> | undefined;
+    const closeSession = () => {
+      if (!runtimeSession) return Promise.resolve();
+      closePromise ??= runtimeSession.close();
+      return closePromise;
+    };
+    const handleAbort = () => void closeSession().catch(() => undefined);
+    context?.signal.addEventListener("abort", handleAbort, { once: true });
     try {
+      await runProviderRefreshActivity(context, "runtime.start", async () => {
+        runtimeSession = await this.runtime.startSession({
+          cwd,
+          workspace,
+          protocolMode: "rpc-ui",
+          modeId: launchMode.modeId,
+          extraArgs: launchMode.extraArgs,
+          signal: context?.signal,
+        });
+        if (context?.signal.aborted) await closeSession();
+      });
+      if (!runtimeSession) throw new Error("OMP catalog runtime did not start");
+      const catalogSession = runtimeSession;
       const models = transformOmpModels(
-        (await runtimeSession.getAvailableModels(OMP_CATALOG_REQUEST_TIMEOUT_MS)).map((model) =>
-          mapOmpModel(model, this.provider),
-        ),
+        (
+          await runProviderRefreshActivity(context, "get_available_models", () =>
+            catalogSession.getAvailableModels(null),
+          )
+        ).map((model) => mapOmpModel(model, this.provider)),
       );
       return { models, modes: [...OMP_MODES] };
     } finally {
-      await runtimeSession.close();
+      context?.signal.removeEventListener("abort", handleAbort);
+      await closeSession();
     }
   }
 

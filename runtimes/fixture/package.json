@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/fixture-workspace-runtime",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "description": "External command-runtime contract fixture",
   "bin": {
@@ -16,8 +16,8 @@
     "typecheck": "node --check src/index.mjs"
   },
   "dependencies": {
-    "@getpaseo/workspace-helper": "0.3.1",
-    "@getpaseo/workspace-runtime-contract": "0.3.1",
+    "@getpaseo/workspace-helper": "0.4.0",
+    "@getpaseo/workspace-runtime-contract": "0.4.0",
     "node-pty": "1.2.0-beta.15"
   }
 }

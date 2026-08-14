@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/workspace-helper",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Official confined workspace filesystem helper and typed binding for Paseo runtimes",
   "bin": {
     "paseo-workspace-helper": "./dist/executable.mjs"

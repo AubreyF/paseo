@@ -26,6 +26,7 @@ import type {
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
+  close(): Promise<void>;
 }
 
 function createStateWorkspace(overrides: Partial<ProviderWorkspace> = {}): ProviderWorkspace {
@@ -1435,6 +1436,52 @@ describe("ClaudeAgentSession context window usage", () => {
       model: options?.model,
     });
   }
+
+  test("emits canonical task snapshots from Claude TaskCreate results", async () => {
+    const session = await createSessionForTest();
+    try {
+      session.translateMessageToEvents({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "task-create-1",
+              name: "TaskCreate",
+              input: { subject: "Inspect provider", activeForm: "Inspecting provider" },
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      const events = session.translateMessageToEvents({
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "task-create-1", content: "created" }],
+        },
+        toolUseResult: { task: { id: "1", subject: "Inspect provider" } },
+      } as unknown as SDKMessage);
+
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "todo",
+          items: [
+            {
+              id: "1",
+              text: "Inspect provider",
+              activeForm: "Inspecting provider",
+              status: "pending",
+              completed: false,
+            },
+          ],
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  });
 
   async function collectStreamEvents(session: AgentSession, prompt = "turn") {
     const events: AgentStreamEvent[] = [];

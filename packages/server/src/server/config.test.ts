@@ -136,7 +136,6 @@ describe("server config", () => {
       workspaceId: "configured-runtime",
       runtimeId: "fixture",
       cwd: source,
-      hostVisiblePath: source,
       materializedFreshContent: true,
     });
     await expect(
@@ -144,6 +143,19 @@ describe("server config", () => {
     ).rejects.toThrow("Workspace runtime is not registered: unknown");
     await service.destroy("configured-runtime");
     expect(runtimeIds.has("configured-runtime")).toBe(false);
+  });
+
+  test("loads the provider catalog refresh timeout", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-provider-timeout-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { catalogRefreshTimeoutMs: 180_000 } }),
+    );
+
+    const config = loadConfig(paseoHome, { env: {} });
+
+    expect(config.providerCatalogRefreshTimeoutMs).toBe(180_000);
   });
 
   test("resolves bundled web UI path from source-tree modules", () => {

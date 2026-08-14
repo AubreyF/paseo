@@ -184,7 +184,6 @@ test("recursive observation updates tracked state and prunes ignored storms", as
       getCheckoutWorktreeState,
       getCheckoutDiff,
       runGitCommand,
-      getWorkspaceGitSelfHealPhaseMs: () => 7_000,
     } as never,
   });
   const diffManager = new CheckoutDiffManager({
@@ -324,7 +323,7 @@ test("recursive observation updates tracked state and prunes ignored storms", as
     editedDuringIgnoreUpdate = true;
     writeFileSync(newlyTrackedPath, "first\nsecond\n");
   };
-  writeFileSync(path.join(repoDir, ".git", "index"), "force-added\n");
+  writeFileSync(path.join(repoDir, ".gitignore"), "cache/\n");
   await vi.waitFor(
     () => {
       expect(editedDuringIgnoreUpdate).toBe(true);

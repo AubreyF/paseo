@@ -81,6 +81,7 @@ import * as Clipboard from "expo-clipboard";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { lineNumberGutterWidth } from "@/components/code-insets";
@@ -95,6 +96,7 @@ import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { useRequiredWorkspaceGit } from "@/git/workspace-git";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useOverlayFlatListScrollbar } from "@/components/ui/overlay-scrollbar/use-overlay-flat-list-scrollbar";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -120,6 +122,7 @@ import {
 } from "@/review";
 import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-working-diff";
 import { DiffTooLargeState } from "@/git/diff-too-large-state";
+import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -130,11 +133,14 @@ export function resolveDiffLayout(
   return canUseSplitLayout ? layout : "unified";
 }
 
-function fileHeaderPressableStyle({
-  hovered,
-  pressed,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.fileHeader, (Boolean(hovered) || pressed) && styles.fileHeaderActive];
+function fileHeaderPressableStyle(
+  { hovered, pressed }: PressableStateCallbackType & { hovered?: boolean },
+  isSelected: boolean,
+) {
+  return [
+    styles.fileHeader,
+    (Boolean(hovered) || pressed || isSelected) && styles.fileHeaderActive,
+  ];
 }
 
 interface HighlightedTextProps {
@@ -209,16 +215,23 @@ interface DiffFileSectionProps {
   file: ParsedDiffFile;
   workspaceFileDragScope?: { serverId: string; workspaceId: string };
   isExpanded: boolean;
+  isSelected?: boolean;
   /** Tree indentation level (0 on the flat/mobile path). */
   depth?: number;
   /** Show the muted directory suffix (flat list); false inside the folder tree. */
   showDir?: boolean;
   interactive?: boolean;
   onToggle?: (path: string) => void;
+  onSelect?: (path: string) => void;
   onOpenFile?: (path: string) => void;
   onAddToChat?: (path: string) => void;
   onCopyPath?: (path: string) => void;
+  onCopyRelativePath?: (path: string) => void;
+  onReveal?: (path: string) => void;
+  revealTargetName?: string;
   onDownload?: (path: string) => void;
+  onDuplicate?: (path: string) => void;
+  onRevert?: (path: string, oldPath?: string) => void;
   onHeaderHeightChange?: (path: string, height: number) => void;
   testID?: string;
 }
@@ -226,6 +239,56 @@ interface DiffFileSectionProps {
 const EMPTY_COMMENTS: readonly ReviewDraftComment[] = [];
 
 function noopStartComment(): void {}
+
+function useDiscardChangesAction({
+  serverId,
+  diffMode,
+}: {
+  serverId: string;
+  diffMode: "uncommitted" | "base";
+}): ((path: string, oldPath?: string) => void) | undefined {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const workspaceGit = useRequiredWorkspaceGit();
+  const discardChanges = useCheckoutGitActionsStore((state) => state.discardChanges);
+  // COMPAT(checkoutDiscardChanges): added in v0.3.0, remove gate after 2027-02-08.
+  const discardSupported = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutDiscardChanges === true,
+  );
+  const discardPath = useCallback(
+    async (path: string, oldPath?: string) => {
+      const confirmed = await confirmDialog({
+        title: t("workspace.fileActions.confirmRevert.title"),
+        message: t("workspace.fileActions.confirmRevert.message", { name: path }),
+        confirmLabel: t("workspace.fileActions.confirmRevert.confirm"),
+        cancelLabel: t("workspace.fileActions.confirmRevert.cancel"),
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      try {
+        await discardChanges({
+          serverId,
+          target: workspaceGit,
+          paths: oldPath ? [path, oldPath] : [path],
+        });
+      } catch (cause) {
+        toast.error(
+          cause instanceof Error ? cause.message : t("workspace.fileActions.confirmRevert.failed"),
+        );
+      }
+    },
+    [discardChanges, serverId, t, toast, workspaceGit],
+  );
+  const handleDiscardPath = useCallback(
+    (path: string, oldPath?: string) => {
+      void discardPath(path, oldPath);
+    },
+    [discardPath],
+  );
+  return discardSupported && diffMode === "uncommitted" ? handleDiscardPath : undefined;
+}
 
 const DIFF_LINE_HOVER_STYLE = isWeb ? ({ cursor: "auto" } as const) : null;
 
@@ -248,6 +311,10 @@ function LongPressableLine({
 }) {
   const onStartComment = reviewActions?.onStartComment;
   const handlePress = useCallback(() => {
+    const selection = isWeb ? window.getSelection() : null;
+    if (selection && !selection.isCollapsed && selection.toString().length > 0) {
+      return;
+    }
     if (reviewTarget && onStartComment) {
       onStartComment(reviewTarget);
     }
@@ -913,18 +980,84 @@ function SplitDiffColumn({
   );
 }
 
+function DiffFileActionsContextMenuContent({
+  file,
+  onOpenFile,
+  onAddToChat,
+  onCopyPath,
+  onCopyRelativePath,
+  onReveal,
+  revealTargetName,
+  onDownload,
+  onDuplicate,
+  onRevert,
+  testID,
+}: Pick<
+  DiffFileSectionProps,
+  | "file"
+  | "onOpenFile"
+  | "onAddToChat"
+  | "onCopyPath"
+  | "onCopyRelativePath"
+  | "onReveal"
+  | "revealTargetName"
+  | "onDownload"
+  | "onDuplicate"
+  | "onRevert"
+  | "testID"
+>) {
+  const handleOpenFile = useCallback(() => onOpenFile?.(file.path), [file.path, onOpenFile]);
+  const handleAddToChat = useCallback(() => onAddToChat?.(file.path), [file.path, onAddToChat]);
+  const handleCopyPath = useCallback(() => onCopyPath?.(file.path), [file.path, onCopyPath]);
+  const handleCopyRelativePath = useCallback(
+    () => onCopyRelativePath?.(file.path),
+    [file.path, onCopyRelativePath],
+  );
+  const handleReveal = useCallback(() => onReveal?.(file.path), [file.path, onReveal]);
+  const handleDownload = useCallback(() => onDownload?.(file.path), [file.path, onDownload]);
+  const handleDuplicate = useCallback(() => onDuplicate?.(file.path), [file.path, onDuplicate]);
+  const handleRevert = useCallback(
+    () => onRevert?.(file.path, file.oldPath),
+    [file.oldPath, file.path, onRevert],
+  );
+
+  return (
+    <FileActionsContextMenuContent
+      fileKind="file"
+      fileExists={!file.isDeleted}
+      onOpenFile={onOpenFile ? handleOpenFile : undefined}
+      onCopyPath={onCopyPath ? handleCopyPath : undefined}
+      onCopyRelativePath={onCopyRelativePath ? handleCopyRelativePath : undefined}
+      onReveal={onReveal ? handleReveal : undefined}
+      revealTargetName={revealTargetName}
+      onDownload={onDownload ? handleDownload : undefined}
+      onAddToChat={onAddToChat ? handleAddToChat : undefined}
+      onDuplicate={!file.isDeleted && onDuplicate ? handleDuplicate : undefined}
+      onRevert={onRevert ? handleRevert : undefined}
+      testIDPrefix={testID}
+    />
+  );
+}
+
 const DiffFileHeader = memo(function DiffFileHeader({
   file,
   workspaceFileDragScope,
   isExpanded,
+  isSelected = false,
   depth = 0,
   showDir = true,
   interactive = true,
   onToggle,
+  onSelect,
   onOpenFile,
   onAddToChat,
   onCopyPath,
+  onCopyRelativePath,
+  onReveal,
+  revealTargetName,
   onDownload,
+  onDuplicate,
+  onRevert,
   onHeaderHeightChange,
   testID,
 }: DiffFileSectionProps) {
@@ -939,29 +1072,24 @@ const DiffFileHeader = memo(function DiffFileHeader({
   const pressHandledRef = useRef(false);
   const pressInRef = useRef<{ ts: number; pageX: number; pageY: number } | null>(null);
 
+  const handleSelect = useCallback(() => {
+    if (interactive) {
+      onSelect?.(file.path);
+    }
+  }, [file.path, interactive, onSelect]);
+
   const toggleExpanded = useCallback(() => {
     if (!interactive) {
       return;
     }
+    const selection = isWeb ? window.getSelection() : null;
+    if (selection && !selection.isCollapsed && selection.toString().length > 0) {
+      return;
+    }
     pressHandledRef.current = true;
+    handleSelect();
     onToggle?.(file.path);
-  }, [file.path, interactive, onToggle]);
-
-  const handleOpenFile = useCallback(() => {
-    onOpenFile?.(file.path);
-  }, [file.path, onOpenFile]);
-
-  const handleAddToChat = useCallback(() => {
-    onAddToChat?.(file.path);
-  }, [file.path, onAddToChat]);
-
-  const handleCopyPath = useCallback(() => {
-    onCopyPath?.(file.path);
-  }, [file.path, onCopyPath]);
-
-  const handleDownload = useCallback(() => {
-    onDownload?.(file.path);
-  }, [file.path, onDownload]);
+  }, [file.path, handleSelect, interactive, onToggle]);
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -982,7 +1110,8 @@ const DiffFileHeader = memo(function DiffFileHeader({
 
   const handleLongPress = useCallback(() => {
     pressHandledRef.current = true;
-  }, []);
+    handleSelect();
+  }, [handleSelect]);
 
   const handlePressOut = useCallback(
     (event: { nativeEvent: { pageX: number; pageY: number } }) => {
@@ -1009,16 +1138,20 @@ const DiffFileHeader = memo(function DiffFileHeader({
     () => [styles.fileSectionHeaderContainer, isExpanded && styles.fileSectionHeaderExpanded],
     [isExpanded],
   );
+  const accessibilityState = useMemo(
+    () => ({ expanded: isExpanded, selected: isSelected }),
+    [isExpanded, isSelected],
+  );
 
   const headerPressableStyle = useCallback(
     (state: PressableStateCallbackType) =>
       depth > 0
         ? [
-            fileHeaderPressableStyle(state),
+            fileHeaderPressableStyle(state, isSelected),
             inlineUnistylesStyle({ paddingLeft: treeRowPaddingLeft(depth) }),
           ]
-        : fileHeaderPressableStyle(state),
-    [depth],
+        : fileHeaderPressableStyle(state, isSelected),
+    [depth, isSelected],
   );
 
   const fileName = file.path.split("/").pop() ?? file.path;
@@ -1030,7 +1163,7 @@ const DiffFileHeader = memo(function DiffFileHeader({
       >
         {showDir ? null : (
           <View style={styles.fileIcon}>
-            <MaterialFileIcon fileName={fileName} size={16} />
+            <MaterialFileIcon fileName={fileName} size={WORKSPACE_TREE_ICON_SIZE} />
           </View>
         )}
         <Text style={styles.fileName} numberOfLines={1}>
@@ -1061,7 +1194,14 @@ const DiffFileHeader = memo(function DiffFileHeader({
   let trigger: ReactElement;
   if (!interactive) {
     trigger = (
-      <View style={headerPressableStyle({ hovered: false, pressed: false })}>{headerContent}</View>
+      <View
+        {...{
+          onContextMenu: (event: { preventDefault?: () => void }) => event.preventDefault?.(),
+        }}
+        style={headerPressableStyle({ hovered: false, pressed: false })}
+      >
+        {headerContent}
+      </View>
     );
   } else {
     trigger = (
@@ -1073,7 +1213,10 @@ const DiffFileHeader = memo(function DiffFileHeader({
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         onLongPress={handleLongPress}
+        onContextMenu={handleSelect}
         onPress={toggleExpanded}
+        accessibilityState={accessibilityState}
+        aria-selected={isSelected}
       >
         {headerContent}
       </ContextMenuTrigger>
@@ -1091,14 +1234,18 @@ const DiffFileHeader = memo(function DiffFileHeader({
           </TooltipContent>
         </Tooltip>
         {interactive ? (
-          <FileActionsContextMenuContent
-            fileKind="file"
-            fileExists={!file.isDeleted}
-            onOpenFile={onOpenFile ? handleOpenFile : undefined}
-            onCopyPath={onCopyPath ? handleCopyPath : undefined}
-            onDownload={onDownload ? handleDownload : undefined}
-            onAddToChat={onAddToChat ? handleAddToChat : undefined}
-            testIDPrefix={testID}
+          <DiffFileActionsContextMenuContent
+            file={file}
+            onOpenFile={onOpenFile}
+            onAddToChat={onAddToChat}
+            onCopyPath={onCopyPath}
+            onCopyRelativePath={onCopyRelativePath}
+            onReveal={onReveal}
+            revealTargetName={revealTargetName}
+            onDownload={onDownload}
+            onDuplicate={onDuplicate}
+            onRevert={onRevert}
+            testID={testID}
           />
         ) : null}
       </ContextMenu>
@@ -1828,7 +1975,12 @@ interface SharedDiffViewProps {
         onOpenFile?: (path: string) => void;
         onAddToChat?: (path: string) => void;
         onCopyPath?: (path: string) => void;
+        onCopyRelativePath?: (path: string) => void;
+        onReveal?: (path: string) => void;
+        revealTargetName?: string;
         onDownload?: (path: string) => void;
+        onDuplicate?: (path: string) => void;
+        onRevert?: (path: string, oldPath?: string) => void;
         onExpandedPathsChange: (paths: string[]) => void;
         onCollapsedFoldersChange: (paths: string[]) => void;
       }
@@ -1883,10 +2035,28 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
   const workspaceFileDragScope =
     mode.kind === "working_tree" ? mode.workspaceFileDragScope : undefined;
   const onCopyPath = mode.kind === "working_tree" ? mode.onCopyPath : undefined;
+  const onCopyRelativePath = mode.kind === "working_tree" ? mode.onCopyRelativePath : undefined;
+  const onReveal = mode.kind === "working_tree" ? mode.onReveal : undefined;
+  const revealTargetName = mode.kind === "working_tree" ? mode.revealTargetName : undefined;
   const onDownload = mode.kind === "working_tree" ? mode.onDownload : undefined;
+  const onDuplicate = mode.kind === "working_tree" ? mode.onDuplicate : undefined;
+  const onRevert = mode.kind === "working_tree" ? mode.onRevert : undefined;
+  // Keep selection independent from expansion so future keyboard actions (such as R to rename)
+  // can target the current VCS file or folder without changing its open state.
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const handleSelectPath = useCallback((path: string) => setSelectedPath(path), []);
   const compressedTree = useMemo(() => compressSingleChildChains(buildDiffTree(files)), [files]);
   const allFolderPaths = useMemo(() => collectDirPaths(compressedTree), [compressedTree]);
   const allFolderPathSet = useMemo(() => new Set(allFolderPaths), [allFolderPaths]);
+  useEffect(() => {
+    if (
+      selectedPath &&
+      !allFolderPathSet.has(selectedPath) &&
+      !files.some((file) => file.path === selectedPath)
+    ) {
+      setSelectedPath(null);
+    }
+  }, [allFolderPathSet, files, selectedPath]);
   const effectiveCollapsedFolders = useMemo(
     () => new Set(Array.from(collapsedFolders).filter((path) => allFolderPathSet.has(path))),
     [allFolderPathSet, collapsedFolders],
@@ -2182,6 +2352,40 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
     [computeItemOffset, effectiveCollapsedFolders, mode],
   );
 
+  const handleCollapseFolder = useCallback(
+    (dirPath: string) => {
+      if (mode.kind !== "working_tree") {
+        return;
+      }
+      const targetOffset = computeItemOffset(
+        (item) => item.type === "folder" && item.dirPath === dirPath,
+      );
+      const folderHeight = folderRowHeightRef.current || defaultHeaderHeightRef.current;
+      if (
+        targetOffset !== null &&
+        shouldAnchorHeaderBeforeCollapse({
+          headerOffset: targetOffset,
+          headerHeight: folderHeight,
+          viewportOffset: diffListScrollOffsetRef.current,
+          viewportHeight: diffListViewportHeightRef.current,
+        })
+      ) {
+        diffListRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
+      }
+
+      const pathPrefix = `${dirPath}/`;
+      mode.onCollapsedFoldersChange([
+        ...new Set([
+          ...effectiveCollapsedFolders,
+          ...allFolderPaths.filter(
+            (folderPath) => folderPath === dirPath || folderPath.startsWith(pathPrefix),
+          ),
+        ]),
+      ]);
+    },
+    [allFolderPaths, computeItemOffset, effectiveCollapsedFolders, mode],
+  );
+
   const renderFlatItem = useCallback(
     ({ item }: { item: DiffFlatItem }) => {
       if (item.type === "folder") {
@@ -2191,10 +2395,19 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
             displayName={item.displayName}
             depth={item.depth}
             collapsed={item.collapsed}
+            isSelected={selectedPath === item.dirPath}
             additions={item.additions}
             deletions={item.deletions}
             onToggle={handleToggleFolder}
+            onCollapse={handleCollapseFolder}
+            onSelect={handleSelectPath}
             onHeightChange={handleFolderRowHeightChange}
+            onCopyPath={onCopyPath}
+            onCopyRelativePath={onCopyRelativePath}
+            onReveal={onReveal}
+            revealTargetName={revealTargetName}
+            onDuplicate={onDuplicate}
+            onRevert={onRevert}
             testID={`diff-folder-${item.dirPath}`}
           />
         );
@@ -2205,14 +2418,21 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
             file={item.file}
             workspaceFileDragScope={workspaceFileDragScope}
             isExpanded={item.isExpanded}
+            isSelected={selectedPath === item.file.path}
             depth={item.depth}
             showDir={viewMode === "flat"}
             interactive={interactive}
             onToggle={interactive ? (onFilePress ?? handleToggleExpanded) : undefined}
+            onSelect={handleSelectPath}
             onOpenFile={onOpenFile}
             onAddToChat={onAddToChat}
             onCopyPath={onCopyPath}
+            onCopyRelativePath={onCopyRelativePath}
+            onReveal={onReveal}
+            revealTargetName={revealTargetName}
             onDownload={onDownload}
+            onDuplicate={onDuplicate}
+            onRevert={onRevert}
             onHeaderHeightChange={handleHeaderHeightChange}
             testID={`diff-file-${item.fileIndex}`}
           />
@@ -2236,6 +2456,8 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       handleBodyHeightChange,
       handleFolderRowHeightChange,
       handleHeaderHeightChange,
+      handleCollapseFolder,
+      handleSelectPath,
       handleToggleExpanded,
       handleToggleFolder,
       layout,
@@ -2249,7 +2471,13 @@ export function SharedDiffView({ files, displayPreferences, mode }: SharedDiffVi
       onOpenFile,
       onAddToChat,
       onCopyPath,
+      onCopyRelativePath,
+      onReveal,
+      revealTargetName,
       onDownload,
+      onDuplicate,
+      onRevert,
+      selectedPath,
     ],
   );
 
@@ -2620,7 +2848,7 @@ export function GitDiffPane({
   onOpenFile,
   onAddToChat,
 }: GitDiffPaneProps) {
-  const target = useRequiredWorkspaceGit();
+  const workspaceGit = useRequiredWorkspaceGit();
   const { settings: appSettings } = useAppSettings();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -2661,6 +2889,11 @@ export function GitDiffPane({
   const overflowToggleStyle = useMemo(() => buildOverflowButtonStyle(), []);
 
   const toast = useToast();
+  const isLocalDaemon = useIsLocalDaemon(serverId);
+  const { targets: desktopOpenTargets } = useDesktopOpenTargets({
+    isLocalExecution: isLocalDaemon,
+  });
+  const fileManagerTarget = desktopOpenTargets.find((target) => target.kind === "file-manager");
   const {
     changesTabOpen,
     toggleChanges: handleToggleChangesTab,
@@ -2670,12 +2903,17 @@ export function GitDiffPane({
   const refreshSupported = useSessionStore(
     (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
   );
+  const client = useSessionStore((state) => state.sessions[serverId]?.client);
+  // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.
+  const fsEntryDuplicateEnabled = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.fsEntryDuplicate === true,
+  );
   const runRefresh = useCheckoutGitActionsStore((s) => s.refresh);
   const isRefreshing =
     useCheckoutGitActionsStore((s) =>
       s.getStatus({
         serverId,
-        target,
+        target: workspaceGit,
         actionId: "refresh",
       }),
     ) === "pending";
@@ -2684,10 +2922,10 @@ export function GitDiffPane({
     if (isRefreshing) {
       return;
     }
-    void runRefresh({ serverId, target }).catch((error) => {
+    void runRefresh({ serverId, target: workspaceGit }).catch((error) => {
       toast.error(error instanceof Error ? error.message : t("workspace.git.diff.failedRefresh"));
     });
-  }, [isRefreshing, runRefresh, serverId, t, target, toast]);
+  }, [isRefreshing, runRefresh, serverId, t, toast, workspaceGit]);
 
   const {
     status,
@@ -2708,7 +2946,7 @@ export function GitDiffPane({
     reviewAttachment,
   } = useWorkingDiff({
     serverId,
-    workspaceId: target.workspaceId,
+    workspaceId: workspaceGit.workspaceId,
     cwd,
     ignoreWhitespace: changesPreferences.hideWhitespace,
     enabled: enabled !== false,
@@ -2754,7 +2992,7 @@ export function GitDiffPane({
     [updateChangesPreferences],
   );
   const changesTree = useChangesTreeState({
-    workspaceId: target.workspaceId,
+    workspaceId: workspaceGit.workspaceId,
     cwd,
     files,
     viewMode,
@@ -2779,12 +3017,51 @@ export function GitDiffPane({
     },
     [cwd],
   );
+  const handleCopyRelativePath = useCallback((path: string) => {
+    void Clipboard.setStringAsync(path);
+  }, []);
+  const handleRevealPath = useCallback(
+    async (path: string) => {
+      if (!fileManagerTarget) {
+        return;
+      }
+      try {
+        await openDesktopTarget({
+          editorId: fileManagerTarget.id,
+          workspacePath: cwd,
+          filePath: buildAbsoluteExplorerPath({ workspaceRoot: cwd, entryPath: path }),
+        });
+      } catch (cause) {
+        toast.error(
+          cause instanceof Error ? cause.message : t("workspace.fileExplorer.errors.revealFailed"),
+        );
+      }
+    },
+    [cwd, fileManagerTarget, t, toast],
+  );
   const handleDownloadPath = useCallback(
     (path: string) => {
       downloadFile({ fileName: path.split("/").pop() ?? path, path });
     },
     [downloadFile],
   );
+  const handleDuplicatePath = useCallback(
+    async (path: string) => {
+      if (!client) {
+        return;
+      }
+      try {
+        const payload = await client.duplicateFileEntry({ cwd, path });
+        if (!payload.success) {
+          toast.error(payload.error ?? t("workspace.fileExplorer.errors.duplicateFailed"));
+        }
+      } catch (cause) {
+        toast.error(cause instanceof Error ? cause.message : String(cause));
+      }
+    },
+    [client, cwd, t, toast],
+  );
+  const onRevertPath = useDiscardChangesAction({ serverId, diffMode });
   const workingTreeMode = useMemo(
     () => ({
       kind: "working_tree" as const,
@@ -2797,7 +3074,12 @@ export function GitDiffPane({
       onOpenFile,
       onAddToChat,
       onCopyPath: handleCopyPath,
+      onCopyRelativePath: handleCopyRelativePath,
+      onReveal: fileManagerTarget ? handleRevealPath : undefined,
+      revealTargetName: fileManagerTarget?.label,
       onDownload: handleDownloadPath,
+      onDuplicate: fsEntryDuplicateEnabled ? handleDuplicatePath : undefined,
+      onRevert: onRevertPath,
       onExpandedPathsChange: changesTree.updateExpandedPaths,
       onCollapsedFoldersChange: changesTree.updateCollapsedFolders,
     }),
@@ -2812,7 +3094,13 @@ export function GitDiffPane({
       onOpenFile,
       onAddToChat,
       handleCopyPath,
+      handleCopyRelativePath,
       handleDownloadPath,
+      handleDuplicatePath,
+      handleRevealPath,
+      fileManagerTarget,
+      fsEntryDuplicateEnabled,
+      onRevertPath,
       changesTree.updateExpandedPaths,
       changesTree.updateCollapsedFolders,
     ],
@@ -2867,7 +3155,12 @@ export function GitDiffPane({
   );
 
   return (
-    <View style={styles.container}>
+    <View
+      {...{
+        onContextMenu: (event: { preventDefault?: () => void }) => event.preventDefault?.(),
+      }}
+      style={styles.container}
+    >
       {isGit && (currentBranchName || isMobile) ? (
         <View style={styles.header} testID="changes-header">
           <BranchSwitcher
@@ -3187,6 +3480,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     flexShrink: 1,
     minWidth: 0,
+    userSelect: "none",
   },
   fileDir: {
     fontSize: theme.fontSize.sm,
@@ -3194,6 +3488,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     flex: 1,
     minWidth: 0,
+    userSelect: "none",
   },
   fileDirSpacer: {
     flex: 1,

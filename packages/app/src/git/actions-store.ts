@@ -26,7 +26,8 @@ export type CheckoutGitAsyncActionId =
   | "enable-pr-auto-merge-rebase"
   | "disable-pr-auto-merge"
   | "merge-branch"
-  | "merge-from-base";
+  | "merge-from-base"
+  | "discard-changes";
 
 type CheckoutKey = string;
 type StatusMap = Partial<Record<CheckoutGitAsyncActionId, CheckoutGitActionStatus>>;
@@ -119,6 +120,11 @@ interface CheckoutGitActionsStoreState {
     serverId: string;
     target: WorkspaceGitTarget;
     baseRef: string;
+  }) => Promise<void>;
+  discardChanges: (params: {
+    serverId: string;
+    target: WorkspaceGitTarget;
+    paths: string[];
   }) => Promise<void>;
 }
 
@@ -352,6 +358,20 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
         });
         if (payload.error) {
           throw new Error(payload.error.message);
+        }
+      },
+    });
+  },
+
+  discardChanges: async ({ serverId, target, paths }) => {
+    await runCheckoutAction({
+      serverId,
+      target,
+      actionId: "discard-changes",
+      run: async () => {
+        const payload = await target.discardChanges({ paths });
+        if (!payload.success) {
+          throw new Error(payload.error?.message ?? "Failed to discard changes");
         }
       },
     });

@@ -17,6 +17,10 @@ import {
   type ProviderSnapshotEntry,
   type ProviderWorkspace,
 } from "./agent-sdk-types.js";
+import {
+  raceProviderRefreshAbort,
+  runProviderRefreshWithDeadline,
+} from "./provider-refresh-deadline.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
@@ -42,7 +46,8 @@ import {
   validateAgentConfigurationAgainstProvider,
 } from "./agent-configuration-validator.js";
 
-const DEFAULT_REFRESH_TIMEOUT_MS = 60_000;
+const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
+const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
 const REFRESH_TIMEOUT_ENV_VAR = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
 export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
@@ -51,14 +56,19 @@ export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
 // `copilot --acp` invocation, OpenCode workspace probes with many MCP servers).
 // Allow operators to bump the ceiling via env var without rebuilding.
 function resolveRefreshTimeoutMs(option: number | undefined): number {
-  if (typeof option === "number" && Number.isFinite(option) && option > 0) {
+  if (
+    typeof option === "number" &&
+    Number.isSafeInteger(option) &&
+    option > 0 &&
+    option <= MAX_REFRESH_TIMEOUT_MS
+  ) {
     return option;
   }
   const fromEnv = process.env[REFRESH_TIMEOUT_ENV_VAR];
   if (fromEnv) {
     // Number() handles scientific notation (e.g. "6e4") which parseInt would silently truncate.
     const parsed = Number(fromEnv);
-    if (Number.isFinite(parsed) && parsed > 0) {
+    if (Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_REFRESH_TIMEOUT_MS) {
       return parsed;
     }
   }
@@ -580,7 +590,7 @@ export class ProviderSnapshotManager {
           client.resolveCreateConfig?.bind(client) ?? definition.resolveCreateConfig,
         isCreateConfigUnattended:
           client.isCreateConfigUnattended?.bind(client) ?? definition.isCreateConfigUnattended,
-        fetchCatalog: client.fetchCatalog.bind(client),
+        fetchCatalog: (options, _client, context) => client.fetchCatalog(options, context),
       };
     }
 
@@ -899,22 +909,28 @@ export class ProviderSnapshotManager {
       }
 
       const client = this.ensureClient(provider, definition);
-      const catalogOptions = createFetchCatalogOptions(catalogScope, force);
-      const available = await withTimeout(
-        client.isAvailable(catalogOptions),
-        this.refreshTimeoutMs,
-        `Timed out checking ${definition.label} availability after ${this.refreshTimeoutMs}ms`,
-      );
-      if (!available) {
+      const catalog = await runProviderRefreshWithDeadline({
+        label: definition.label,
+        timeoutMs: this.refreshTimeoutMs,
+        operation: async (context) => {
+          const catalogOptions = createFetchCatalogOptions(catalogScope, force);
+          const available = await context.runActivity("availability", () =>
+            raceProviderRefreshAbort(
+              context.signal,
+              client.isAvailable(catalogOptions, context.signal),
+            ),
+          );
+          if (!available) {
+            return null;
+          }
+
+          return await definition.fetchCatalog(catalogOptions, client, context);
+        },
+      });
+      if (!catalog) {
         setEntry({ ...base, status: "unavailable", enabled: true });
         return;
       }
-
-      const catalog = await withTimeout(
-        definition.fetchCatalog({ ...catalogOptions, timeoutMs: this.refreshTimeoutMs }, client),
-        this.refreshTimeoutMs,
-        `Timed out refreshing ${definition.label} after ${this.refreshTimeoutMs}ms`,
-      );
 
       setEntry({
         ...base,

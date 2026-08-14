@@ -66,6 +66,24 @@ describe("checkout-git-actions-store", () => {
     expect(order).toEqual(["pull", "push"]);
   });
 
+  it("does not push when pull fails", async () => {
+    const push = vi.fn();
+    const target = capability({
+      pull: vi.fn(async () => ({ error: { message: "pull conflict" } })),
+      push,
+    });
+
+    await expect(
+      useCheckoutGitActionsStore.getState().pullAndPush({ serverId, target }),
+    ).rejects.toThrow("pull conflict");
+    expect(push).not.toHaveBeenCalled();
+    expect(
+      useCheckoutGitActionsStore
+        .getState()
+        .getStatus({ serverId, target, actionId: "pull-and-push" }),
+    ).toBe("idle");
+  });
+
   it("returns to idle when a bound mutation reports an error", async () => {
     const target = capability({
       refresh: vi.fn(async () => ({ error: { message: "not git" } })),
@@ -76,6 +94,22 @@ describe("checkout-git-actions-store", () => {
     expect(
       useCheckoutGitActionsStore.getState().getStatus({ serverId, target, actionId: "refresh" }),
     ).toBe("idle");
+  });
+
+  it("discards selected paths through the bound workspace capability", async () => {
+    const discardChanges = vi.fn(async () => ({ success: true, error: null }));
+    const target = capability({ discardChanges });
+
+    await useCheckoutGitActionsStore
+      .getState()
+      .discardChanges({ serverId, target, paths: ["renamed.ts", "original.ts"] });
+
+    expect(discardChanges).toHaveBeenCalledWith({ paths: ["renamed.ts", "original.ts"] });
+    expect(
+      useCheckoutGitActionsStore
+        .getState()
+        .getStatus({ serverId, target, actionId: "discard-changes" }),
+    ).toBe("success");
   });
 
   it("fails auto-merge before invoking Git when the daemon lacks the feature", async () => {

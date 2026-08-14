@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import pino from "pino";
 import {
@@ -24,6 +28,7 @@ import {
   createNoopWorkspaceGitService,
 } from "../../test-utils/workspace-git-service-stub.js";
 import { expandTilde } from "../../../utils/path.js";
+import { discardChanges } from "../../../utils/checkout-git.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
 function isCheckDetailsResponse(msg: SessionOutboundMessage): boolean {
@@ -454,6 +459,94 @@ describe("CheckoutSession", () => {
     });
   });
 
+  describe("discard changes", () => {
+    it("discards the paths, notifies git mutation, refreshes diffs, and confirms success", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "checkout-session-discard-"));
+      const cwd = realpathSync(tempDir);
+      try {
+        execFileSync("git", ["init", "-q"], { cwd });
+        execFileSync("git", ["config", "user.email", "test@example.com"], { cwd });
+        execFileSync("git", ["config", "user.name", "Test User"], { cwd });
+        writeFileSync(join(cwd, "file.txt"), "original\n");
+        execFileSync("git", ["add", "file.txt"], { cwd });
+        execFileSync("git", ["commit", "-qm", "initial"], { cwd });
+        writeFileSync(join(cwd, "file.txt"), "changed\n");
+
+        const { subscriber, refreshedCwds } = createFakeDiffSubscriber({
+          cwd: "",
+          files: [],
+          error: null,
+        });
+        const { checkout, emitted, gitMutationCalls } = makeCheckoutSession({
+          diff: subscriber,
+          git: { discardChanges },
+        });
+
+        await checkout.handleCheckoutDiscardChangesRequest({
+          type: "checkout.discard_changes.request",
+          cwd,
+          paths: ["file.txt"],
+          requestId: "discard-1",
+        });
+
+        expect(readFileSync(join(cwd, "file.txt"), "utf8").replaceAll("\r\n", "\n")).toBe(
+          "original\n",
+        );
+        expect(gitMutationCalls.notifyGitMutation).toEqual([
+          { cwd, reason: "discard-changes", options: undefined },
+        ]);
+        expect(refreshedCwds).toEqual([cwd]);
+        expect(emitted).toEqual([
+          {
+            type: "checkout.discard_changes.response",
+            payload: { cwd, success: true, error: null, requestId: "discard-1" },
+          },
+        ]);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("returns the checkout error without notifying git or refreshing diffs", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "checkout-session-discard-error-"));
+      const cwd = realpathSync(tempDir);
+      try {
+        const { subscriber, refreshedCwds } = createFakeDiffSubscriber({
+          cwd: "",
+          files: [],
+          error: null,
+        });
+        const { checkout, emitted, gitMutationCalls } = makeCheckoutSession({
+          diff: subscriber,
+          git: { discardChanges },
+        });
+
+        await checkout.handleCheckoutDiscardChangesRequest({
+          type: "checkout.discard_changes.request",
+          cwd,
+          paths: ["file.txt"],
+          requestId: "discard-error",
+        });
+
+        expect(gitMutationCalls.notifyGitMutation).toEqual([]);
+        expect(refreshedCwds).toEqual([]);
+        expect(emitted).toEqual([
+          {
+            type: "checkout.discard_changes.response",
+            payload: {
+              cwd,
+              success: false,
+              error: { code: "NOT_GIT_REPO", message: `Not a git repository: ${cwd}` },
+              requestId: "discard-error",
+            },
+          },
+        ]);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("diff subscriptions", () => {
     it("opens a subscription, streams updates tagged with the id, and tears down on unsubscribe", async () => {
       const { subscriber, subscriptions } = createFakeDiffSubscriber({
@@ -577,6 +670,16 @@ describe("CheckoutSession", () => {
           }),
         },
       ]);
+    });
+
+    it("does not emit the same checkout status twice", () => {
+      const { checkout, emitted } = makeCheckoutSession();
+      const snapshot = createGitSnapshot("/repo", "main");
+
+      checkout.emitStatusUpdate("workspace-1", "/repo", snapshot);
+      checkout.emitStatusUpdate("workspace-1", "/repo", snapshot);
+
+      expect(emitted).toHaveLength(1);
     });
   });
 

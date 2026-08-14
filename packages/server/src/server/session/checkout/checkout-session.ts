@@ -135,6 +135,7 @@ export class CheckoutSession {
   private readonly gitMetadataGenerator: GitMetadataGenerator;
   private readonly logger: pino.Logger;
   private readonly diffSubscriptions = new Map<string, () => void>();
+  private readonly statusUpdateFingerprints = new Map<string, string>();
 
   constructor(options: CheckoutSessionOptions) {
     this.host = options.host;
@@ -479,21 +480,25 @@ export class CheckoutSession {
   emitStatusUpdate(workspaceId: string, cwd: string, snapshot: WorkspaceGitRuntimeSnapshot): void {
     try {
       const requestId = `subscription:${workspaceId}`;
+      const payload = {
+        workspaceId,
+        ...buildCheckoutStatusPayloadFromSnapshot({
+          cwd,
+          requestId,
+          snapshot,
+        }),
+        prStatus: buildCheckoutPrStatusPayloadFromSnapshot({
+          cwd,
+          requestId,
+          snapshot,
+        }),
+      };
+      const fingerprint = JSON.stringify(payload);
+      if (this.statusUpdateFingerprints.get(workspaceId) === fingerprint) return;
+      this.statusUpdateFingerprints.set(workspaceId, fingerprint);
       this.host.emit({
         type: "checkout_status_update",
-        payload: {
-          workspaceId,
-          ...buildCheckoutStatusPayloadFromSnapshot({
-            cwd,
-            requestId,
-            snapshot,
-          }),
-          prStatus: buildCheckoutPrStatusPayloadFromSnapshot({
-            cwd,
-            requestId,
-            snapshot,
-          }),
-        },
+        payload,
       });
     } catch (error) {
       this.logger.warn({ err: error, cwd }, "Failed to emit workspace checkout status update");
@@ -613,6 +618,27 @@ export class CheckoutSession {
           error: toCheckoutError(error),
           requestId,
         },
+      });
+    }
+  }
+
+  async handleCheckoutDiscardChangesRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.discard_changes.request" }>,
+  ): Promise<void> {
+    const { cwd, paths, requestId } = msg;
+    try {
+      const workspaceGit = await this.resolveWorkspaceGit(msg);
+      await workspaceGit.discardChanges(paths);
+      await this.gitMutation.bind(workspaceGit).notify("discard-changes");
+      this.scheduleDiffRefresh(workspaceGit);
+      this.host.emit({
+        type: "checkout.discard_changes.response",
+        payload: { cwd, success: true, error: null, requestId },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.discard_changes.response",
+        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
       });
     }
   }
@@ -1426,6 +1452,7 @@ export class CheckoutSession {
       unsubscribe();
     }
     this.diffSubscriptions.clear();
+    this.statusUpdateFingerprints.clear();
   }
 }
 

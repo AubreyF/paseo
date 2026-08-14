@@ -2487,7 +2487,8 @@ export function NewWorkspaceScreen({
                 allowEmptySubmit={true}
                 submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
                 submitButtonTestID="new-workspace-launch-submit"
-                isSubmitLoading={isCreationBlocked}
+                isSubmitLoading={isPending}
+                isSubmitDisabled={isCreationBlocked}
                 submitBehavior="preserve-and-lock"
                 blurOnSubmit={true}
                 value={terminalComposerValue}
@@ -2511,7 +2512,8 @@ export function NewWorkspaceScreen({
                 submitButtonAccessibilityLabel={t("newWorkspace.create")}
                 submitButtonTestID="workspace-create-submit"
                 submitIcon="return"
-                isSubmitLoading={isCreationBlocked}
+                isSubmitLoading={isPending}
+                isSubmitDisabled={isCreationBlocked}
                 waitForGithubAutoAttachOnSubmit
                 submitBehavior="preserve-and-lock"
                 blurOnSubmit={true}

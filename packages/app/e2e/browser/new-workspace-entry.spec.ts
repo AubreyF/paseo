@@ -136,6 +136,7 @@ test.describe("New workspace entry points", () => {
       sourceDirectory: "/tmp/missing-project",
     });
 
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible({ timeout: 30_000 });
     await expectNewWorkspaceControlsEnabled(page);
   });
 

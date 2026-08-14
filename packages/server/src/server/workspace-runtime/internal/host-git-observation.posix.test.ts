@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   createFileObserver,
@@ -13,72 +13,74 @@ import {
 } from "../../file-observer/index.js";
 import { createHostGitObservationOwner } from "./host-git-observation.js";
 
-test("sibling host worktrees share one physical common-Git observation", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-host-git-observation-"));
-  try {
-    const source = await repository(path.join(root, "source"));
-    const sibling = path.join(root, "sibling");
-    git(source, ["branch", "sibling"]);
-    git(source, ["worktree", "add", sibling, "sibling"]);
-    const unrelated = await repository(path.join(root, "unrelated"));
-    const owner = createHostGitObservationOwner();
+describe.runIf(process.platform !== "win32")("host Git observation on POSIX", () => {
+  test("sibling host worktrees share one physical common-Git observation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-host-git-observation-"));
+    try {
+      const source = await repository(path.join(root, "source"));
+      const sibling = path.join(root, "sibling");
+      git(source, ["branch", "sibling"]);
+      git(source, ["worktree", "add", sibling, "sibling"]);
+      const unrelated = await repository(path.join(root, "unrelated"));
+      const owner = createHostGitObservationOwner();
 
-    const [sourceSubscription, siblingSubscription] = await Promise.all([
-      owner.observe(source, () => undefined),
-      owner.observe(sibling, () => undefined),
-    ]);
-    expect(owner.getDiagnostics().activeObservationCount).toBe(1);
+      const [sourceSubscription, siblingSubscription] = await Promise.all([
+        owner.observe(source, () => undefined),
+        owner.observe(sibling, () => undefined),
+      ]);
+      expect(owner.getDiagnostics().activeObservationCount).toBe(1);
 
-    const unrelatedSubscription = await owner.observe(unrelated, () => undefined);
-    expect(owner.getDiagnostics().activeObservationCount).toBe(2);
+      const unrelatedSubscription = await owner.observe(unrelated, () => undefined);
+      expect(owner.getDiagnostics().activeObservationCount).toBe(2);
 
-    await sourceSubscription.unsubscribe();
-    expect(owner.getDiagnostics().activeObservationCount).toBe(2);
-    await siblingSubscription.unsubscribe();
-    expect(owner.getDiagnostics().activeObservationCount).toBe(1);
-    await unrelatedSubscription.unsubscribe();
-    expect(owner.getDiagnostics().activeObservationCount).toBe(0);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+      await sourceSubscription.unsubscribe();
+      expect(owner.getDiagnostics().activeObservationCount).toBe(2);
+      await siblingSubscription.unsubscribe();
+      expect(owner.getDiagnostics().activeObservationCount).toBe(1);
+      await unrelatedSubscription.unsubscribe();
+      expect(owner.getDiagnostics().activeObservationCount).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
-test("a failed physical common watcher rebinds once without changing logical ownership", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-host-git-rebind-"));
-  try {
-    const source = await repository(path.join(root, "source"));
-    const sibling = path.join(root, "sibling");
-    git(source, ["branch", "sibling"]);
-    git(source, ["worktree", "add", sibling, "sibling"]);
-    const observer = new InstrumentedFileObserver();
-    const owner = createHostGitObservationOwner(observer);
-    let notifications = 0;
-    const subscriptions = await Promise.all([
-      owner.observe(source, () => {
-        notifications += 1;
-      }),
-      owner.observe(sibling, () => {
-        notifications += 1;
-      }),
-    ]);
-    expect(observer.subscribeCount).toBe(1);
-    expect(observer.getDiagnostics().activeObservationCount).toBe(1);
+  test("a failed physical common watcher rebinds once without changing logical ownership", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-host-git-rebind-"));
+    try {
+      const source = await repository(path.join(root, "source"));
+      const sibling = path.join(root, "sibling");
+      git(source, ["branch", "sibling"]);
+      git(source, ["worktree", "add", sibling, "sibling"]);
+      const observer = new InstrumentedFileObserver();
+      const owner = createHostGitObservationOwner(observer);
+      let notifications = 0;
+      const subscriptions = await Promise.all([
+        owner.observe(source, () => {
+          notifications += 1;
+        }),
+        owner.observe(sibling, () => {
+          notifications += 1;
+        }),
+      ]);
+      expect(observer.subscribeCount).toBe(1);
+      expect(observer.getDiagnostics().activeObservationCount).toBe(1);
 
-    observer.failActive(new Error("physical watcher failed"));
-    const barrier = await owner.observe(sibling, () => undefined);
-    expect(notifications).toBe(2);
-    expect(observer.subscribeCount).toBe(2);
-    expect(observer.getDiagnostics().activeObservationCount).toBe(1);
+      observer.failActive(new Error("physical watcher failed"));
+      const barrier = await owner.observe(sibling, () => undefined);
+      expect(notifications).toBe(2);
+      expect(observer.subscribeCount).toBe(2);
+      expect(observer.getDiagnostics().activeObservationCount).toBe(1);
 
-    await Promise.all([
-      ...subscriptions.map((subscription) => subscription.unsubscribe()),
-      barrier.unsubscribe(),
-    ]);
-    expect(observer.getDiagnostics().activeObservationCount).toBe(0);
-    await observer.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+      await Promise.all([
+        ...subscriptions.map((subscription) => subscription.unsubscribe()),
+        barrier.unsubscribe(),
+      ]);
+      expect(observer.getDiagnostics().activeObservationCount).toBe(0);
+      await observer.close();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 class InstrumentedFileObserver implements FileObserver {

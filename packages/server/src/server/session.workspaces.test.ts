@@ -2494,21 +2494,26 @@ test("non-git workspace uses deterministic directory name and no unknown branch 
 
 test("workspace placements preserve checkout facts independently from the project", async () => {
   const session = createSessionForWorkspaceTests();
+  const mainRepoRoot = path.resolve("/tmp/main-repo");
+  const manualWorktreeCwd = path.resolve("/tmp/manual-worktree");
+  const explicitDirectoryCwd = path.resolve("/tmp/plain-directory");
+  const paseoWorktreeRoot = path.resolve("/tmp/paseo-worktree");
+  const paseoSubdirectoryCwd = path.join(paseoWorktreeRoot, "packages", "app");
   const manualWorktree = createPersistedWorkspaceRecord({
     workspaceId: "ws-manual-worktree",
     projectId: "proj-manual-worktree",
-    cwd: "/tmp/manual-worktree",
+    cwd: manualWorktreeCwd,
     kind: "worktree",
     displayName: "manual",
     isPaseoOwnedWorktree: false,
-    mainRepoRoot: "/tmp/main-repo",
+    mainRepoRoot,
     createdAt: "2026-03-01T12:00:00.000Z",
     updatedAt: "2026-03-01T12:00:00.000Z",
   });
   const explicitDirectory = createPersistedWorkspaceRecord({
     workspaceId: "ws-explicit-directory",
     projectId: "proj-manual-worktree",
-    cwd: "/tmp/plain-directory",
+    cwd: explicitDirectoryCwd,
     kind: "directory",
     displayName: "plain",
     createdAt: "2026-03-01T12:00:00.000Z",
@@ -2517,17 +2522,17 @@ test("workspace placements preserve checkout facts independently from the projec
   const paseoSubdirectory = createPersistedWorkspaceRecord({
     workspaceId: "ws-paseo-subdirectory",
     projectId: "proj-manual-worktree",
-    cwd: "/tmp/paseo-worktree/packages/app",
+    cwd: paseoSubdirectoryCwd,
     kind: "worktree",
     displayName: "app",
     isPaseoOwnedWorktree: true,
-    mainRepoRoot: "/tmp/main-repo",
+    mainRepoRoot,
     createdAt: "2026-03-01T12:00:00.000Z",
     updatedAt: "2026-03-01T12:00:00.000Z",
   });
   const project = createPersistedProjectRecord({
     projectId: "proj-manual-worktree",
-    rootPath: "/tmp/main-repo",
+    rootPath: mainRepoRoot,
     kind: "git",
     displayName: "main",
     createdAt: "2026-03-01T12:00:00.000Z",
@@ -2541,7 +2546,7 @@ test("workspace placements preserve checkout facts independently from the projec
   session.workspaceGitService.peekSnapshot = (cwd: string) =>
     cwd === paseoSubdirectory.cwd
       ? createWorkspaceRuntimeSnapshot(cwd, {
-          git: { repoRoot: "/tmp/paseo-worktree" },
+          git: { repoRoot: paseoWorktreeRoot },
         })
       : null;
 
@@ -2552,7 +2557,7 @@ test("workspace placements preserve checkout facts independently from the projec
       checkout: expect.objectContaining({
         isGit: true,
         isPaseoOwnedWorktree: false,
-        mainRepoRoot: "/tmp/main-repo",
+        mainRepoRoot,
       }),
     }),
   );
@@ -2573,7 +2578,7 @@ test("workspace placements preserve checkout facts independently from the projec
     expect.objectContaining({
       checkout: expect.objectContaining({
         cwd: paseoSubdirectory.cwd,
-        worktreeRoot: "/tmp/paseo-worktree",
+        worktreeRoot: paseoWorktreeRoot,
       }),
     }),
   );

@@ -856,6 +856,8 @@ interface ComposerProps {
   submitIcon?: "arrow" | "return";
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
+  /** Disables submission without locking draft editing or attachments. */
+  isSubmitDisabled?: boolean;
   /** When true, waits for pasted GitHub links to resolve before enabling submit. */
   waitForGithubAutoAttachOnSubmit?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
@@ -1067,6 +1069,7 @@ export function Composer({
   submitButtonTestID,
   submitIcon = "arrow",
   isSubmitLoading = false,
+  isSubmitDisabled = false,
   waitForGithubAutoAttachOnSubmit = false,
   submitBehavior = "clear",
   blurOnSubmit = false,
@@ -2144,8 +2147,10 @@ export function Composer({
 
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
-  const isSubmitDisabled =
-    isSubmitLoadingVisible || (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
+  const isSubmitActionDisabled =
+    isSubmitDisabled ||
+    isSubmitLoadingVisible ||
+    (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2204,7 +2209,7 @@ export function Composer({
                 submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
                 submitButtonTestID={submitButtonTestID}
                 submitIcon={submitIcon}
-                isSubmitDisabled={isSubmitDisabled}
+                isSubmitDisabled={isSubmitActionDisabled}
                 isSubmitLoading={isSubmitLoadingVisible}
                 preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
                 attachments={selectedAttachments}

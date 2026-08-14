@@ -54,6 +54,12 @@ import { bindWorkspaceGitService } from "./test-utils/workspace-git-service-stub
 import { createStub } from "./test-utils/class-mocks.js";
 import type { WorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
+const REQUEST_WORKTREE_CWD = resolvePath("/tmp/request-worktree");
+const BASE_WORKTREE_CWD = resolvePath("/tmp/base-worktree");
+const SERVICE_WORKTREE_CWD = resolvePath("/tmp/service-worktree");
+const TEST_REPO_CWD = resolvePath("/tmp/repo");
+const TEST_WORKSPACE_CWD = resolvePath("/tmp/workspace");
+
 interface SessionHandlerInternals {
   interruptAgentIfRunning(agentId: string): Promise<void>;
   handleSendAgentMessage(
@@ -2078,7 +2084,7 @@ describe("session checkout merge handling", () => {
     const checkoutDiffManager = { scheduleRefreshForCwd: vi.fn() };
     const workspaceGitService = {
       getSnapshot: vi.fn().mockResolvedValue(
-        createWorkspaceGitSnapshot("/tmp/request-worktree", {
+        createWorkspaceGitSnapshot(REQUEST_WORKTREE_CWD, {
           git: {
             isGit: true,
             baseRef: "main",
@@ -2094,36 +2100,36 @@ describe("session checkout merge handling", () => {
       messages,
     });
 
-    checkoutGitMocks.mergeToBase.mockResolvedValue("/tmp/base-worktree");
+    checkoutGitMocks.mergeToBase.mockResolvedValue(BASE_WORKTREE_CWD);
 
     await session.handleMessage({
       type: "checkout_merge_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       baseRef: "main",
       requestId: "request-1",
     });
 
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD);
     expect(checkoutGitMocks.getCheckoutStatus).not.toHaveBeenCalled();
     expect(checkoutGitMocks.mergeToBase).toHaveBeenCalledWith(
-      "/tmp/request-worktree",
+      REQUEST_WORKTREE_CWD,
       {
         baseRef: "main",
         mode: "merge",
       },
       { paseoHome: "/tmp/paseo-home" },
     );
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/base-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(BASE_WORKTREE_CWD, {
       force: true,
       reason: "merge-to-base",
     });
     expect(github.invalidate).toHaveBeenCalledTimes(1);
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/base-worktree" });
-    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith("/tmp/base-worktree");
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: BASE_WORKTREE_CWD });
+    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith(BASE_WORKTREE_CWD);
     expect(messages).toContainEqual({
       type: "checkout_merge_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: true,
         error: null,
         requestId: "request-1",
@@ -2135,7 +2141,7 @@ describe("session checkout merge handling", () => {
     const messages: unknown[] = [];
     const workspaceGitService = {
       getSnapshot: vi.fn().mockResolvedValue(
-        createWorkspaceGitSnapshot("/tmp/request-worktree", {
+        createWorkspaceGitSnapshot(REQUEST_WORKTREE_CWD, {
           git: {
             isDirty: true,
           },
@@ -2146,17 +2152,17 @@ describe("session checkout merge handling", () => {
 
     await session.handleMessage({
       type: "checkout_merge_from_base_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       baseRef: "main",
       requireCleanTarget: true,
       requestId: "request-merge-from-base",
     });
 
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD);
     expect(messages).toContainEqual({
       type: "checkout_merge_from_base_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: false,
         error: {
           code: "UNKNOWN",
@@ -2172,7 +2178,7 @@ describe("session checkout merge handling", () => {
     const github = { invalidate: vi.fn() };
     const workspaceGitService = {
       getSnapshot: vi.fn().mockResolvedValue(
-        createWorkspaceGitSnapshot("/tmp/request-worktree", {
+        createWorkspaceGitSnapshot(REQUEST_WORKTREE_CWD, {
           git: {
             isDirty: false,
           },
@@ -2184,25 +2190,25 @@ describe("session checkout merge handling", () => {
 
     await session.handleMessage({
       type: "checkout_merge_from_base_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       baseRef: "main",
       requireCleanTarget: true,
       requestId: "request-merge-from-base-success",
     });
 
-    expect(checkoutGitMocks.mergeFromBase).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(checkoutGitMocks.mergeFromBase).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       baseRef: "main",
       requireCleanTarget: true,
     });
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       force: true,
       reason: "merge-from-base",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: REQUEST_WORKTREE_CWD });
     expect(messages).toContainEqual({
       type: "checkout_merge_from_base_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: true,
         error: null,
         requestId: "request-merge-from-base-success",
@@ -2297,26 +2303,26 @@ diff --git a/file.txt b/file.txt
 
     await session.handleMessage({
       type: "checkout_commit_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       message: "Ship it",
       addAll: true,
       requestId: "request-commit",
     });
 
-    expect(checkoutGitMocks.commitChanges).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(checkoutGitMocks.commitChanges).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       message: "Ship it",
       addAll: true,
     });
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       force: true,
       reason: "commit-changes",
     });
-    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD);
     expect(messages).toContainEqual({
       type: "checkout_commit_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: true,
         error: null,
         requestId: "request-commit",
@@ -2351,14 +2357,14 @@ diff --git a/file.txt b/file.txt
 
     await session.handleMessage({
       type: "checkout_commit_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       message: "",
       addAll: true,
       requestId: "request-generated-commit",
     });
 
     expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       mode: "uncommitted",
       includeStructured: true,
     });
@@ -2371,14 +2377,14 @@ diff --git a/file.txt b/file.txt
         }),
       }),
     );
-    expect(checkoutGitMocks.commitChanges).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(checkoutGitMocks.commitChanges).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       message: "Update file",
       addAll: true,
     });
     expect(messages).toContainEqual({
       type: "checkout_commit_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: true,
         error: null,
         requestId: "request-generated-commit",
@@ -2456,20 +2462,20 @@ diff --git a/file.txt b/file.txt
 
     await session.handleMessage({
       type: "checkout_commit_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       message: "",
       addAll: true,
       requestId: "request-generated-commit-fallback",
     });
 
-    expect(checkoutGitMocks.commitChanges).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(checkoutGitMocks.commitChanges).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       message: "Update files",
       addAll: true,
     });
     expect(messages).toContainEqual({
       type: "checkout_commit_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: true,
         error: null,
         requestId: "request-generated-commit-fallback",
@@ -2485,7 +2491,7 @@ diff --git a/file.txt b/file.txt
 
     await session.handleMessage({
       type: "checkout_commit_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       message: "Ship it",
       addAll: true,
       requestId: "request-commit-failure",
@@ -2495,7 +2501,7 @@ diff --git a/file.txt b/file.txt
     expect(messages).toContainEqual({
       type: "checkout_commit_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: false,
         error: {
           code: "UNKNOWN",
@@ -2620,7 +2626,7 @@ diff --git a/file.txt b/file.txt
 
     await session.handleMessage({
       type: "checkout_pr_create_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       baseRef: "main",
       title: "",
       body: "",
@@ -2628,7 +2634,7 @@ diff --git a/file.txt b/file.txt
     });
 
     expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(workspaceGitService.getCheckoutDiff).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       mode: "base",
       baseRef: "main",
       includeStructured: true,
@@ -2643,7 +2649,7 @@ diff --git a/file.txt b/file.txt
       }),
     );
     expect(checkoutGitMocks.createPullRequest).toHaveBeenCalledWith(
-      "/tmp/request-worktree",
+      REQUEST_WORKTREE_CWD,
       {
         title: "Update file",
         body: "Updates file.",
@@ -2654,7 +2660,7 @@ diff --git a/file.txt b/file.txt
     expect(messages).toContainEqual({
       type: "checkout_pr_create_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         url: "https://github.com/getpaseo/paseo/pull/1",
         number: 1,
         error: null,
@@ -2759,7 +2765,7 @@ diff --git a/file.txt b/file.txt
 
     await session.handleMessage({
       type: "checkout_pr_create_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       baseRef: "main",
       title: "",
       body: "",
@@ -2767,7 +2773,7 @@ diff --git a/file.txt b/file.txt
     });
 
     expect(checkoutGitMocks.createPullRequest).toHaveBeenCalledWith(
-      "/tmp/request-worktree",
+      REQUEST_WORKTREE_CWD,
       {
         title: "Update changes",
         body: "Automated PR generated by Paseo.",
@@ -2778,7 +2784,7 @@ diff --git a/file.txt b/file.txt
     expect(messages).toContainEqual({
       type: "checkout_pr_create_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         url: "https://github.com/getpaseo/paseo/pull/9",
         number: 9,
         error: null,
@@ -2801,22 +2807,22 @@ diff --git a/file.txt b/file.txt
 
     await session.handleMessage({
       type: "checkout_pr_create_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       baseRef: "main",
       title: "Update file",
       body: "Updates file.",
       requestId: "request-pr-create",
     });
 
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       force: true,
       reason: "create-pr",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: REQUEST_WORKTREE_CWD });
     expect(messages).toContainEqual({
       type: "checkout_pr_create_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         url: "https://github.com/getpaseo/paseo/pull/2",
         number: 2,
         error: null,
@@ -2864,13 +2870,13 @@ describe("session checkout pull request merge", () => {
 
     await session.handleMessage({
       type: "checkout_pr_merge_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       mergeMethod: "squash",
       requestId: "request-pr-merge",
     });
 
     expect(github.mergePullRequest).toHaveBeenCalledWith({
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       prNumber: 42,
       mergeMethod: "squash",
       status: {
@@ -2895,20 +2901,20 @@ describe("session checkout pull request merge", () => {
         },
       },
     });
-    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(1, "/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(1, REQUEST_WORKTREE_CWD, {
       force: true,
       includeForge: true,
       reason: "merge-pr-validation",
     });
-    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(2, "/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(2, REQUEST_WORKTREE_CWD, {
       force: true,
       reason: "merge-pr",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: REQUEST_WORKTREE_CWD });
     expect(messages).toContainEqual({
       type: "checkout_pr_merge_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: true,
         error: null,
         requestId: "request-pr-merge",
@@ -2963,13 +2969,13 @@ describe("session checkout pull request merge", () => {
 
     await session.handleMessage({
       type: "checkout_pr_merge_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       mergeMethod: "squash",
       requestId: "request-pr-merge-fresh-blocked",
     });
 
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       force: true,
       includeForge: true,
       reason: "merge-pr-validation",
@@ -2985,7 +2991,7 @@ describe("session checkout pull request merge", () => {
     expect(messages).toContainEqual({
       type: "checkout_pr_merge_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: false,
         error: {
           code: "UNKNOWN",
@@ -3016,13 +3022,13 @@ describe("session checkout pull request merge", () => {
 
     await session.handleMessage({
       type: "checkout_pr_merge_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       mergeMethod: "squash",
       requestId: "request-pr-merge-missing-github-facts",
     });
 
     expect(github.mergePullRequest).toHaveBeenCalledWith({
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       prNumber: 42,
       mergeMethod: "squash",
       status: {
@@ -3030,20 +3036,20 @@ describe("session checkout pull request merge", () => {
         mergeable: "MERGEABLE",
       },
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
-    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(1, "/tmp/request-worktree", {
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: REQUEST_WORKTREE_CWD });
+    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(1, REQUEST_WORKTREE_CWD, {
       force: true,
       includeForge: true,
       reason: "merge-pr-validation",
     });
-    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(2, "/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(2, REQUEST_WORKTREE_CWD, {
       force: true,
       reason: "merge-pr",
     });
     expect(messages).toContainEqual({
       type: "checkout_pr_merge_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: true,
         error: null,
         requestId: "request-pr-merge-missing-github-facts",
@@ -3088,7 +3094,7 @@ describe("session checkout pull request merge", () => {
 
     await session.handleMessage({
       type: "checkout_pr_merge_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       mergeMethod: "merge",
       requestId: "request-pr-merge-failure",
     });
@@ -3096,7 +3102,7 @@ describe("session checkout pull request merge", () => {
     expect(messages).toContainEqual({
       type: "checkout_pr_merge_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: false,
         error: {
           code: "UNKNOWN",
@@ -3155,14 +3161,14 @@ describe("session checkout pull request auto-merge", () => {
 
     await session.handleMessage({
       type: "checkout.forge.set_auto_merge.request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       enabled: true,
       mergeMethod: "squash",
       requestId: "request-pr-auto-merge-enable",
     });
 
     expect(github.enablePullRequestAutoMerge).toHaveBeenCalledWith({
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       prNumber: 42,
       mergeMethod: "squash",
       status: {
@@ -3171,20 +3177,20 @@ describe("session checkout pull request auto-merge", () => {
         forgeSpecific: autoMergeGithubFacts(),
       },
     });
-    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(1, "/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(1, REQUEST_WORKTREE_CWD, {
       force: true,
       includeForge: true,
       reason: "auto-merge-validation",
     });
-    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(2, "/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(2, REQUEST_WORKTREE_CWD, {
       force: true,
       reason: "enable-pr-auto-merge",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: REQUEST_WORKTREE_CWD });
     expect(messages).toContainEqual({
       type: "checkout.forge.set_auto_merge.response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         enabled: true,
         success: true,
         error: null,
@@ -3224,13 +3230,13 @@ describe("session checkout pull request auto-merge", () => {
 
     await session.handleMessage({
       type: "checkout.forge.set_auto_merge.request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       enabled: false,
       requestId: "request-pr-auto-merge-disable",
     });
 
     expect(github.disablePullRequestAutoMerge).toHaveBeenCalledWith({
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       prNumber: 42,
       status: {
         number: 42,
@@ -3245,20 +3251,20 @@ describe("session checkout pull request auto-merge", () => {
         }),
       },
     });
-    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(1, "/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(1, REQUEST_WORKTREE_CWD, {
       force: true,
       includeForge: true,
       reason: "auto-merge-validation",
     });
-    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(2, "/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenNthCalledWith(2, REQUEST_WORKTREE_CWD, {
       force: true,
       reason: "disable-pr-auto-merge",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: REQUEST_WORKTREE_CWD });
     expect(messages).toContainEqual({
       type: "checkout.forge.set_auto_merge.response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         enabled: false,
         success: true,
         error: null,
@@ -3287,7 +3293,7 @@ describe("session checkout pull request auto-merge", () => {
 
     await session.handleMessage({
       type: "checkout.forge.set_auto_merge.request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       enabled: true,
       mergeMethod: "merge",
       requestId: "request-pr-auto-merge-failure",
@@ -3296,7 +3302,7 @@ describe("session checkout pull request auto-merge", () => {
     expect(messages).toContainEqual({
       type: "checkout.forge.set_auto_merge.response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         enabled: true,
         success: false,
         error: {
@@ -3339,7 +3345,7 @@ describe("session checkout pull request auto-merge", () => {
 
     await session.handleMessage({
       type: "checkout.forge.set_auto_merge.request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       enabled: true,
       mergeMethod: "squash",
       requestId: "request-pr-auto-merge-method-disabled",
@@ -3349,7 +3355,7 @@ describe("session checkout pull request auto-merge", () => {
     // effect, so it is invoked but the mutation never completes (no invalidate).
     expect(github.enablePullRequestAutoMerge).toHaveBeenCalled();
     expect(github.invalidate).not.toHaveBeenCalled();
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       force: true,
       includeForge: true,
       reason: "auto-merge-validation",
@@ -3357,7 +3363,7 @@ describe("session checkout pull request auto-merge", () => {
     expect(messages).toContainEqual({
       type: "checkout.forge.set_auto_merge.response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         enabled: true,
         success: false,
         error: {
@@ -3400,7 +3406,7 @@ describe("session checkout pull request auto-merge", () => {
 
     await session.handleMessage({
       type: "checkout.forge.set_auto_merge.request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       enabled: false,
       requestId: "request-pr-auto-merge-disable-forbidden",
     });
@@ -3409,7 +3415,7 @@ describe("session checkout pull request auto-merge", () => {
     // effect, so it is invoked but the mutation never completes (no invalidate).
     expect(github.disablePullRequestAutoMerge).toHaveBeenCalled();
     expect(github.invalidate).not.toHaveBeenCalled();
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       force: true,
       includeForge: true,
       reason: "auto-merge-validation",
@@ -3417,7 +3423,7 @@ describe("session checkout pull request auto-merge", () => {
     expect(messages).toContainEqual({
       type: "checkout.forge.set_auto_merge.response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         enabled: false,
         success: false,
         error: {
@@ -3460,7 +3466,7 @@ describe("session checkout pull request auto-merge", () => {
 
     await session.handleMessage({
       type: "checkout.forge.set_auto_merge.request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       enabled: false,
       mergeMethod: "squash",
       requestId: "request-pr-auto-merge-disable-with-method",
@@ -3471,7 +3477,7 @@ describe("session checkout pull request auto-merge", () => {
     expect(messages).toContainEqual({
       type: "checkout.forge.set_auto_merge.response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         enabled: false,
         success: false,
         error: {
@@ -3494,20 +3500,20 @@ describe("session checkout pull and push handling", () => {
 
     await session.handleMessage({
       type: "checkout_pull_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       requestId: "request-pull",
     });
 
-    expect(checkoutGitMocks.pullCurrentBranch).toHaveBeenCalledWith("/tmp/request-worktree");
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(checkoutGitMocks.pullCurrentBranch).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD);
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       force: true,
       reason: "pull",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: REQUEST_WORKTREE_CWD });
     expect(messages).toContainEqual({
       type: "checkout_pull_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: true,
         error: null,
         requestId: "request-pull",
@@ -3524,20 +3530,20 @@ describe("session checkout pull and push handling", () => {
 
     await session.handleMessage({
       type: "checkout_push_request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       requestId: "request-push",
     });
 
-    expect(checkoutGitMocks.pushCurrentBranch).toHaveBeenCalledWith("/tmp/request-worktree");
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(checkoutGitMocks.pushCurrentBranch).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD);
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       force: true,
       reason: "push",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: REQUEST_WORKTREE_CWD });
     expect(messages).toContainEqual({
       type: "checkout_push_response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: true,
         error: null,
         requestId: "request-push",
@@ -3561,21 +3567,21 @@ describe("session checkout refresh handling", () => {
 
     await session.handleMessage({
       type: "checkout.refresh.request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       requestId: "request-refresh",
     });
 
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: REQUEST_WORKTREE_CWD });
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD, {
       force: true,
       includeForge: true,
       reason: "manual-refresh",
     });
-    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith(REQUEST_WORKTREE_CWD);
     expect(messages).toContainEqual({
       type: "checkout.refresh.response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: true,
         error: null,
         requestId: "request-refresh",
@@ -3599,7 +3605,7 @@ describe("session checkout refresh handling", () => {
 
     await session.handleMessage({
       type: "checkout.refresh.request",
-      cwd: "/tmp/request-worktree",
+      cwd: REQUEST_WORKTREE_CWD,
       requestId: "request-refresh-error",
     });
 
@@ -3607,7 +3613,7 @@ describe("session checkout refresh handling", () => {
     expect(messages).toContainEqual({
       type: "checkout.refresh.response",
       payload: {
-        cwd: "/tmp/request-worktree",
+        cwd: REQUEST_WORKTREE_CWD,
         success: false,
         error: { code: "UNKNOWN", message: "not a git repository" },
         requestId: "request-refresh-error",
@@ -3620,26 +3626,26 @@ describe("session checkout status handling", () => {
   test("returns checkout status from the workspace git service snapshot", async () => {
     const messages: unknown[] = [];
     const workspaceGitService = {
-      getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot("/tmp/service-worktree")),
+      getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot(SERVICE_WORKTREE_CWD)),
       peekSnapshot: vi.fn(),
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
     await session.handleMessage({
       type: "checkout_status_request",
-      cwd: "/tmp/service-worktree",
+      cwd: SERVICE_WORKTREE_CWD,
       requestId: "request-status",
     });
 
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/service-worktree");
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(SERVICE_WORKTREE_CWD);
     expect(checkoutGitMocks.getCheckoutStatus).not.toHaveBeenCalled();
     expect(messages).toContainEqual({
       type: "checkout_status_response",
       payload: {
-        cwd: "/tmp/service-worktree",
+        cwd: SERVICE_WORKTREE_CWD,
         isGit: true,
-        repoRoot: "/tmp/service-worktree",
+        repoRoot: SERVICE_WORKTREE_CWD,
         mainRepoRoot: null,
         currentBranch: "feature/service",
         isDirty: true,
@@ -3852,7 +3858,7 @@ describe("session workspace descriptors", () => {
     const workspaceGitService = {
       getSnapshot: vi.fn(),
       peekSnapshot: vi.fn(() =>
-        createWorkspaceGitSnapshot("/tmp/workspace", {
+        createWorkspaceGitSnapshot(TEST_WORKSPACE_CWD, {
           git: { diffStat: { additions: 7, deletions: 2 } },
         }),
       ),
@@ -3867,19 +3873,19 @@ describe("session workspace descriptors", () => {
       {
         workspaceId: "workspace-1",
         projectId: "project-1",
-        cwd: "/tmp/workspace",
+        cwd: TEST_WORKSPACE_CWD,
         kind: "checkout",
         displayName: "Workspace",
       },
       {
         projectId: "project-1",
-        rootPath: "/tmp/workspace",
+        rootPath: TEST_WORKSPACE_CWD,
         displayName: "Project",
         kind: "git",
       },
     );
 
-    expect(workspaceGitService.peekSnapshot).toHaveBeenCalledWith("/tmp/workspace");
+    expect(workspaceGitService.peekSnapshot).toHaveBeenCalledWith(TEST_WORKSPACE_CWD);
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
     expect(checkoutGitMocks.getCachedCheckoutShortstat).not.toHaveBeenCalled();
     expect(checkoutGitMocks.warmCheckoutShortstatInBackground).not.toHaveBeenCalled();
@@ -3888,7 +3894,7 @@ describe("session workspace descriptors", () => {
 
   test("does not cold-load git data while describing a workspace", async () => {
     const workspaceGitService = {
-      getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot("/tmp/workspace")),
+      getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot(TEST_WORKSPACE_CWD)),
       peekSnapshot: vi.fn(() => null),
     };
     const session = createSessionForTest({ workspaceGitService });
@@ -3897,19 +3903,19 @@ describe("session workspace descriptors", () => {
       {
         workspaceId: "workspace-1",
         projectId: "project-1",
-        cwd: "/tmp/workspace",
+        cwd: TEST_WORKSPACE_CWD,
         kind: "checkout",
         displayName: "Workspace",
       },
       {
         projectId: "project-1",
-        rootPath: "/tmp/workspace",
+        rootPath: TEST_WORKSPACE_CWD,
         displayName: "Project",
         kind: "git",
       },
     );
 
-    expect(workspaceGitService.peekSnapshot).toHaveBeenCalledWith("/tmp/workspace");
+    expect(workspaceGitService.peekSnapshot).toHaveBeenCalledWith(TEST_WORKSPACE_CWD);
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
     expect(descriptor.diffStat).toBeNull();
     expect(descriptor.gitRuntime).toBeUndefined();
@@ -3930,13 +3936,13 @@ describe("session branch validation", () => {
 
     await session.handleMessage({
       type: "validate_branch_request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       branchName: "feature",
       requestId: "request-validate-service",
     });
 
     expect(workspaceGitService.validateBranchRef).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.validateBranchRef).toHaveBeenCalledWith("/tmp/repo", "feature");
+    expect(workspaceGitService.validateBranchRef).toHaveBeenCalledWith(TEST_REPO_CWD, "feature");
     expect(checkoutGitMocks.resolveBranchCheckout).not.toHaveBeenCalled();
     expect(messages).toContainEqual({
       type: "validate_branch_response",
@@ -4000,7 +4006,7 @@ describe("session checkout switch branch handling", () => {
     const github = { invalidate: vi.fn() };
     const workspaceGitService = {
       getSnapshot: vi.fn().mockResolvedValue(
-        createWorkspaceGitSnapshot("/tmp/repo", {
+        createWorkspaceGitSnapshot(TEST_REPO_CWD, {
           git: {
             isDirty: false,
           },
@@ -4013,24 +4019,24 @@ describe("session checkout switch branch handling", () => {
 
     await session.handleMessage({
       type: "checkout_switch_branch_request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       branch: "release",
       requestId: "request-switch",
     });
 
     expect(checkoutGitMocks.checkoutResolvedBranch).toHaveBeenCalledWith({
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       resolution: { kind: "local", name: "release" },
     });
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(TEST_REPO_CWD, {
       force: true,
       reason: "switch-branch",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/repo" });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: TEST_REPO_CWD });
     expect(messages).toContainEqual({
       type: "checkout_switch_branch_response",
       payload: {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         success: true,
         branch: "release",
         source: "local",
@@ -4052,7 +4058,7 @@ describe("session checkout rename branch handling", () => {
 
     await session.handleMessage({
       type: "checkout.rename_branch.request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       branch: "Feature Name",
       requestId: "request-rename-invalid",
     });
@@ -4062,7 +4068,7 @@ describe("session checkout rename branch handling", () => {
     expect(messages).toContainEqual({
       type: "checkout.rename_branch.response",
       payload: {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         success: false,
         currentBranch: null,
         error: {
@@ -4086,13 +4092,13 @@ describe("session checkout rename branch handling", () => {
 
     await session.handleMessage({
       type: "checkout.rename_branch.request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       branch: "feature/new-name",
       requestId: "request-rename-failure",
     });
 
     expect(checkoutGitMocks.renameCurrentBranch).toHaveBeenCalledWith(
-      "/tmp/repo",
+      TEST_REPO_CWD,
       "feature/new-name",
     );
     expect(workspaceGitService.peekSnapshot).not.toHaveBeenCalled();
@@ -4100,7 +4106,7 @@ describe("session checkout rename branch handling", () => {
     expect(messages).toContainEqual({
       type: "checkout.rename_branch.response",
       payload: {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         success: false,
         currentBranch: null,
         error: {
@@ -4117,7 +4123,7 @@ describe("session checkout rename branch handling", () => {
     const github = { invalidate: vi.fn() };
     const workspaceGitService = {
       getSnapshot: vi.fn().mockResolvedValue(
-        createWorkspaceGitSnapshot("/tmp/repo", {
+        createWorkspaceGitSnapshot(TEST_REPO_CWD, {
           git: {
             currentBranch: "feature/new-name",
             isDirty: false,
@@ -4125,7 +4131,7 @@ describe("session checkout rename branch handling", () => {
         }),
       ),
       peekSnapshot: vi.fn(() =>
-        createWorkspaceGitSnapshot("/tmp/repo", {
+        createWorkspaceGitSnapshot(TEST_REPO_CWD, {
           git: { currentBranch: "feature/old-name" },
         }),
       ),
@@ -4138,24 +4144,24 @@ describe("session checkout rename branch handling", () => {
 
     await session.handleMessage({
       type: "checkout.rename_branch.request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       branch: "feature/new-name",
       requestId: "request-rename-success",
     });
 
     expect(checkoutGitMocks.renameCurrentBranch).toHaveBeenCalledWith(
-      "/tmp/repo",
+      TEST_REPO_CWD,
       "feature/new-name",
     );
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(TEST_REPO_CWD, {
       force: true,
       reason: "rename-branch",
     });
-    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/repo" });
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: TEST_REPO_CWD });
     expect(messages).toContainEqual({
       type: "checkout.rename_branch.response",
       payload: {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         success: true,
         currentBranch: "feature/new-name",
         error: null,
@@ -4258,14 +4264,14 @@ describe("session branch suggestions handling", () => {
 
     await session.handleMessage({
       type: "branch_suggestions_request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       query: "service",
       limit: 5,
       requestId: "request-branches",
     });
 
     expect(workspaceGitService.suggestBranchesForCwd).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.suggestBranchesForCwd).toHaveBeenCalledWith("/tmp/repo", {
+    expect(workspaceGitService.suggestBranchesForCwd).toHaveBeenCalledWith(TEST_REPO_CWD, {
       query: "service",
       limit: 5,
     });
@@ -4302,18 +4308,18 @@ describe("session stash list handling", () => {
 
     await session.handleMessage({
       type: "stash_list_request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       paseoOnly: true,
       requestId: "request-stashes",
     });
 
     expect(workspaceGitService.listStashes).toHaveBeenCalledTimes(1);
-    expect(workspaceGitService.listStashes).toHaveBeenCalledWith("/tmp/repo", {
+    expect(workspaceGitService.listStashes).toHaveBeenCalledWith(TEST_REPO_CWD, {
       paseoOnly: true,
     });
     expect(messages).toContainEqual({
       type: "stash_list_response",
-      payload: { cwd: "/tmp/repo", entries, error: null, requestId: "request-stashes" },
+      payload: { cwd: TEST_REPO_CWD, entries, error: null, requestId: "request-stashes" },
     });
   });
 });
@@ -4333,23 +4339,23 @@ describe("session stash mutation handling", () => {
 
     await session.handleMessage({
       type: "stash_save_request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       branch: "feature",
       requestId: "request-stash-push",
     });
 
     expect(gitCommandMocks.runGitCommand).toHaveBeenCalledWith(
       ["stash", "push", "--include-untracked", "-m", "paseo-auto-stash: feature"],
-      { cwd: "/tmp/repo", timeout: 120_000 },
+      { cwd: TEST_REPO_CWD, timeout: 120_000 },
     );
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(TEST_REPO_CWD, {
       force: true,
       reason: "stash-push",
     });
     expect(messages).toContainEqual({
       type: "stash_save_response",
       payload: {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         success: true,
         error: null,
         requestId: "request-stash-push",
@@ -4371,23 +4377,23 @@ describe("session stash mutation handling", () => {
 
     await session.handleMessage({
       type: "stash_pop_request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       stashIndex: 0,
       requestId: "request-stash-pop",
     });
 
     expect(gitCommandMocks.runGitCommand).toHaveBeenCalledWith(["stash", "pop", "stash@{0}"], {
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       timeout: 120_000,
     });
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(TEST_REPO_CWD, {
       force: true,
       reason: "stash-pop",
     });
     expect(messages).toContainEqual({
       type: "stash_pop_response",
       payload: {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         success: true,
         error: null,
         requestId: "request-stash-pop",
@@ -4404,7 +4410,7 @@ describe("session paseo worktree creation handling", () => {
       workspaceRuntime: createStub<WorkspaceRuntimeService>({}),
     });
     paseoWorktreeServiceMocks.createPaseoWorktree.mockResolvedValue({
-      repoRoot: "/tmp/repo",
+      repoRoot: TEST_REPO_CWD,
       worktree: {
         branchName: "feature/new-worktree",
         worktreePath: "/tmp/paseo/worktrees/new-worktree",
@@ -4420,12 +4426,12 @@ describe("session paseo worktree creation handling", () => {
     });
 
     await asSessionInternals(session).createPaseoWorktree({
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       worktreeSlug: "new-worktree",
       runSetup: false,
     });
 
-    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(TEST_REPO_CWD, {
       force: true,
       reason: "create-worktree",
     });
@@ -4442,7 +4448,7 @@ describe("session paseo worktree creation handling", () => {
 describe("session workspace script handling", () => {
   test("passes the project slug and cached branch into workspace script spawning", async () => {
     const messages: unknown[] = [];
-    const snapshot = createWorkspaceGitSnapshot("/tmp/repo", {
+    const snapshot = createWorkspaceGitSnapshot(TEST_REPO_CWD, {
       git: {
         currentBranch: "feature/service-scripts",
         remoteUrl: "https://github.com/getpaseo/paseo.git",
@@ -4455,7 +4461,7 @@ describe("session workspace script handling", () => {
     const workspaceRegistry = {
       get: vi.fn().mockResolvedValue({
         workspaceId: "workspace-1",
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
       }),
     };
     spawnMocks.spawnWorkspaceScript.mockResolvedValue({
@@ -4485,7 +4491,7 @@ describe("session workspace script handling", () => {
 
     expect(spawnMocks.spawnWorkspaceScript).toHaveBeenCalledWith(
       expect.objectContaining({
-        repoRoot: "/tmp/repo",
+        repoRoot: TEST_REPO_CWD,
         workspaceId: "workspace-1",
         projectSlug: "paseo",
         branchName: "feature/service-scripts",
@@ -4545,7 +4551,7 @@ describe("session pull request timeline handling", () => {
 
     await session.handleMessage({
       type: "github_search_request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       query: "search",
       limit: 5,
       kinds: ["github-pr"],
@@ -4553,7 +4559,7 @@ describe("session pull request timeline handling", () => {
     });
 
     expect(github.searchIssuesAndPrs).toHaveBeenCalledWith({
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       query: "search",
       limit: 5,
       kinds: ["github-pr"],
@@ -4599,7 +4605,7 @@ describe("session pull request timeline handling", () => {
 
     await session.handleMessage({
       type: "forge.search.request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       query: "search",
       limit: 5,
       kinds: ["change_request"],
@@ -4648,7 +4654,7 @@ describe("session pull request timeline handling", () => {
 
     await session.handleMessage({
       type: "pull_request_timeline_request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       prNumber: 42,
       repoOwner: "getpaseo",
       repoName: "paseo",
@@ -4656,7 +4662,7 @@ describe("session pull request timeline handling", () => {
     });
 
     expect(github.getPullRequestTimeline).toHaveBeenCalledWith({
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       prNumber: 42,
       repoOwner: "getpaseo",
       repoName: "paseo",
@@ -4664,7 +4670,7 @@ describe("session pull request timeline handling", () => {
     expect(messages).toContainEqual({
       type: "pull_request_timeline_response",
       payload: {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         prNumber: 42,
         items: [
           {
@@ -4707,7 +4713,7 @@ describe("session pull request timeline handling", () => {
 
     await session.handleMessage({
       type: "pull_request_timeline_request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       ...identity,
       requestId: "request-invalid",
     });
@@ -4717,7 +4723,7 @@ describe("session pull request timeline handling", () => {
     expect(messages).toContainEqual({
       type: "pull_request_timeline_response",
       payload: {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         prNumber: identity.prNumber,
         items: [],
         truncated: false,
@@ -4742,7 +4748,7 @@ describe("session pull request timeline handling", () => {
 
     await session.handleMessage({
       type: "pull_request_timeline_request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       prNumber: 42,
       repoOwner: "getpaseo",
       repoName: "paseo",
@@ -4753,7 +4759,7 @@ describe("session pull request timeline handling", () => {
     expect(messages).toContainEqual({
       type: "pull_request_timeline_response",
       payload: {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         prNumber: 42,
         items: [],
         truncated: false,
@@ -4809,7 +4815,7 @@ describe("session pull request timeline handling", () => {
 
     await session.handleMessage({
       type: "checkout.forge.get_check_details.request",
-      cwd: "/tmp/repo",
+      cwd: TEST_REPO_CWD,
       repoOwner: "getpaseo",
       repoName: "paseo",
       checkRunId: 12345,
@@ -4819,7 +4825,7 @@ describe("session pull request timeline handling", () => {
 
     expect(checkDetailRequests).toEqual([
       {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         repoOwner: "getpaseo",
         repoName: "paseo",
         checkRunId: 12345,
@@ -4830,7 +4836,7 @@ describe("session pull request timeline handling", () => {
     expect(messages).toContainEqual({
       type: "checkout.forge.get_check_details.response",
       payload: {
-        cwd: "/tmp/repo",
+        cwd: TEST_REPO_CWD,
         success: true,
         details: {
           checkRunId: 12345,

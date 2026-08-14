@@ -1425,9 +1425,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.selectedWorkspaces.clear();
     this.legacyWorkspaces.clear();
 
-    for (const target of this.workspaceTargets.values()) {
-      this.closeWorkspaceTarget(target);
-    }
+    const workspaceTargetDisposals = [...this.workspaceTargets.values()].map((target) =>
+      this.closeWorkspaceTarget(target),
+    );
     this.workspaceTargets.clear();
 
     for (const target of this.repoTargets.values()) {
@@ -1448,6 +1448,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.disposePromise = Promise.all([
       this.fileObserver.close(),
       ...selectedWorkspaceDisposals,
+      ...workspaceTargetDisposals,
     ]).then(() => undefined);
     return this.disposePromise;
   }
@@ -3750,7 +3751,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
     }
 
-    this.closeWorkspaceTarget(target);
+    void this.closeWorkspaceTarget(target);
     this.workspaceTargets.delete(target.cwd);
   }
 
@@ -3796,9 +3797,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchTargets.delete(target.cwd);
   }
 
-  private closeWorkspaceTarget(target: WorkspaceGitTarget): void {
+  private closeWorkspaceTarget(target: WorkspaceGitTarget): Promise<void> {
     target.closed = true;
-    void target.runtimeObservation?.unsubscribe();
+    const runtimeObservationDisposal =
+      target.runtimeObservation?.unsubscribe() ?? Promise.resolve();
     target.runtimeObservation = null;
     if (target.workingTreeWatchTarget) {
       this.removeWorkspaceWorkingTreeLink(target.workingTreeWatchTarget, target.cwd);
@@ -3814,6 +3816,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     this.stopForgePrStatusPollForTarget(target);
     target.listeners.clear();
+    return runtimeObservationDisposal;
   }
 
   private closeWorkingTreeWatchTarget(target: WorkingTreeWatchTarget): void {

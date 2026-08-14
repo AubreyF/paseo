@@ -24,6 +24,14 @@ function eventWithin(event: Promise<void>, label: string): Promise<void> {
   ]);
 }
 
+function createDeferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 afterEach(async () => {
   await Promise.all(
     cleanupRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
@@ -104,6 +112,69 @@ test.each(["local", "worktree"] as const)(
   },
   20_000,
 );
+
+test("workspace Git disposal waits for runtime observation teardown", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-dispose-"));
+  cleanupRoots.push(root);
+  const source = await createRepository(path.join(root, "source"));
+  const workspaceId = "runtime-git-dispose";
+  const runtimeIds = new Map<string, string>();
+  const workspaceRuntime = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "paseo-home"),
+    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
+    persistRuntimeId: async (id, runtimeId) => {
+      runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
+  });
+  await workspaceRuntime.create({
+    workspaceId,
+    runtimeId: "local",
+    project: { id: "dispose-project", source: { kind: "host-directory", path: source } },
+    placement: { kind: "existing" },
+  });
+
+  const boundRuntime = await workspaceRuntime.bind(workspaceId);
+  const originalSubscribe = boundRuntime.files.subscribe.bind(boundRuntime.files);
+  const unsubscribeStarted = createDeferred();
+  const unsubscribeReleased = createDeferred();
+  boundRuntime.files.subscribe = async (...args) => {
+    const subscription = await originalSubscribe(...args);
+    return {
+      unsubscribe: async () => {
+        unsubscribeStarted.resolve();
+        await unsubscribeReleased.promise;
+        await subscription.unsubscribe();
+      },
+    };
+  };
+
+  const workspaceGit = new WorkspaceGitServiceImpl({
+    logger: createLogger(),
+    paseoHome: path.join(root, "paseo-home"),
+    workspaceRuntime,
+  });
+  const selectedGit = workspaceGit.bindWorkspace({ workspaceId, cwd: source });
+  await selectedGit.observe(() => undefined);
+
+  const disposal = workspaceGit.dispose();
+  try {
+    await eventWithin(unsubscribeStarted.promise, "runtime observation teardown");
+    expect(
+      await Promise.race([
+        disposal.then(() => "disposed" as const),
+        Promise.resolve("pending" as const),
+      ]),
+    ).toBe("pending");
+  } finally {
+    unsubscribeReleased.resolve();
+  }
+  await disposal;
+  await workspaceRuntime.destroy(workspaceId);
+});
 
 test.each([
   ["local", "pause", "resume"],

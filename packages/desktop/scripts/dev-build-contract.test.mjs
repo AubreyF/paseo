@@ -19,6 +19,7 @@ import { describe, expect, test } from "vitest";
 const desktopDir = path.resolve(import.meta.dirname, "..");
 const repoRoot = path.resolve(desktopDir, "../..");
 const execFileAsync = promisify(execFile);
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const prerequisite = "npm run dev:prerequisites";
 
 describe("desktop dev build contract", () => {
@@ -35,6 +36,14 @@ describe("desktop dev build contract", () => {
     expect(packageJson.scripts["dev:win"]).toBe("powershell ./scripts/dev.ps1");
     expect(devScript.indexOf("npm run build:main")).toBeLessThan(
       devScript.indexOf('exec node "$SCRIPT_DIR/dev-runner.mjs"'),
+    );
+  });
+
+  test("builds the private runtime fixture before renderer acceptance", async () => {
+    const packageJson = JSON.parse(await readFile(path.join(desktopDir, "package.json"), "utf8"));
+
+    expect(packageJson.scripts["pretest:e2e:renderer"]).toBe(
+      "npm --prefix ../.. run build:workspace-runtime-fixture",
     );
   });
 
@@ -118,7 +127,7 @@ async function createIsolatedBuildCheckout() {
 
 async function runPrerequisite(isolatedRoot) {
   try {
-    await execFileAsync("npm", ["run", "dev:prerequisites", "--workspace=@getpaseo/desktop"], {
+    await execFileAsync(npmCommand, ["run", "dev:prerequisites", "--workspace=@getpaseo/desktop"], {
       cwd: isolatedRoot,
       timeout: 60_000,
     });

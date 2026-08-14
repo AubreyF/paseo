@@ -1141,9 +1141,7 @@ export class AgentManager {
       options.workspaceId,
     );
     this.requireEnabledProvider(storedConfig.provider);
-    const client = options.workspaceId
-      ? this.requireClient(storedConfig.provider)
-      : await this.requireAvailableClient({ provider: storedConfig.provider });
+    const client = this.requireClient(storedConfig.provider);
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
       client,
@@ -1151,7 +1149,7 @@ export class AgentManager {
       options?.env,
       options.workspaceId,
     );
-    await this.requireWorkspaceProviderAvailable(
+    await this.requireProviderAvailableForLaunch(
       client,
       storedConfig.provider,
       storedConfig.cwd,
@@ -1232,11 +1230,6 @@ export class AgentManager {
     );
 
     const client = this.requireClient(handle.provider);
-    if (!options?.workspaceId && !(await client.isAvailable())) {
-      throw new Error(
-        `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
-      );
-    }
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
       client,
@@ -1244,7 +1237,7 @@ export class AgentManager {
       undefined,
       options?.workspaceId,
     );
-    await this.requireWorkspaceProviderAvailable(
+    await this.requireProviderAvailableForLaunch(
       client,
       storedConfig.provider,
       storedConfig.cwd,
@@ -1307,7 +1300,7 @@ export class AgentManager {
       undefined,
       input.workspaceId,
     );
-    await this.requireWorkspaceProviderAvailable(
+    await this.requireProviderAvailableForLaunch(
       client,
       input.provider,
       storedConfig.cwd,
@@ -4687,15 +4680,20 @@ export class AgentManager {
     return launchContext.paseoTools ? stripInternalPaseoMcpServer(launchConfig) : launchConfig;
   }
 
-  private async requireWorkspaceProviderAvailable(
+  private async requireProviderAvailableForLaunch(
     client: AgentClient,
     provider: AgentProvider,
     cwd: string,
     workspaceId: string | undefined,
     launchContext: AgentLaunchContext,
   ): Promise<void> {
-    if (!workspaceId) return;
-    if (!launchContext.workspace) return;
+    if (!launchContext.workspace) {
+      await this.requireAvailableClient({ provider });
+      return;
+    }
+    if (!workspaceId) {
+      throw new Error(`Workspace-scoped provider '${provider}' is missing a workspace ID.`);
+    }
     const available = await client.isAvailable({
       scope: "workspace",
       cwd,

@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const packageRoot = path.resolve(import.meta.dirname, "..");
 
 test("packed helper works from a fresh project without monorepo source fallback", async (t) => {
@@ -15,10 +16,10 @@ test("packed helper works from a fresh project without monorepo source fallback"
   const packDirectory = path.join(root, "packs");
   const project = path.join(root, "project");
   await Promise.all([mkdir(packDirectory), mkdir(project)]);
-  await run("npm", ["run", "build"], { cwd: packageRoot });
+  await run(npmCommand, ["run", "build"], { cwd: packageRoot });
   const packed = JSON.parse(
     (
-      await run("npm", ["pack", "--json", "--pack-destination", packDirectory], {
+      await run(npmCommand, ["pack", "--json", "--pack-destination", packDirectory], {
         cwd: packageRoot,
       })
     ).stdout,
@@ -30,7 +31,7 @@ test("packed helper works from a fresh project without monorepo source fallback"
       dependencies: { "@getpaseo/workspace-helper": `file:${path.join(packDirectory, packed)}` },
     }),
   );
-  await run("npm", ["install", "--ignore-scripts"], { cwd: project });
+  await run(npmCommand, ["install", "--ignore-scripts"], { cwd: project });
   await writeFile(path.join(project, "notes.txt"), "before\n");
 
   const imported = JSON.parse(

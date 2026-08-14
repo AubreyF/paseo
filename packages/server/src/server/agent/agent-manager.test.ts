@@ -1891,6 +1891,62 @@ test("selected workspace availability fails closed without probing or launching 
   }
 });
 
+test("host-placed workspaces require host provider availability before create and resume", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-host-workspace-provider-"));
+  const availabilityScopes: Array<FetchCatalogOptions | undefined> = [];
+  let createCalls = 0;
+  let resumeCalls = 0;
+  class UnavailableHostClient extends TestAgentClient {
+    override async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
+      availabilityScopes.push(options);
+      return false;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      createCalls += 1;
+      return new TestAgentSession(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumeCalls += 1;
+      return await super.resumeSession(handle, overrides);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new UnavailableHostClient() },
+    logger,
+    resolveProviderWorkspace: async () => null,
+  });
+  const handle: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId: "host-workspace-session",
+    metadata: { cwd: workdir },
+  };
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: "local-workspace",
+      }),
+    ).rejects.toThrow("Provider 'codex' is not available");
+    await expect(
+      manager.resumeAgentFromPersistence(handle, undefined, undefined, {
+        workspaceId: "local-workspace",
+      }),
+    ).rejects.toThrow("Provider 'codex' is not available");
+
+    expect(availabilityScopes.length).toBeGreaterThanOrEqual(2);
+    expect(availabilityScopes.every((scope) => scope === undefined)).toBe(true);
+    expect(createCalls).toBe(0);
+    expect(resumeCalls).toBe(0);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("selected workspace without a bound capability never checks host availability", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-missing-workspace-capability-"));
   let hostAvailabilityCalls = 0;

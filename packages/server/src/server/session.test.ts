@@ -51,6 +51,8 @@ import {
 import type { CheckDetails, ForgeService } from "../services/forge-service.js";
 import type { GitHubPullRequestStatusFacts } from "../services/github-facts.js";
 import { bindWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
+import { createStub } from "./test-utils/class-mocks.js";
+import type { WorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
 interface SessionHandlerInternals {
   interruptAgentIfRunning(agentId: string): Promise<void>;
@@ -304,6 +306,7 @@ interface SessionForTestOptions {
     getProjectSlug?: ReturnType<typeof vi.fn>;
   };
   workspaceRegistry?: { get: ReturnType<typeof vi.fn> };
+  workspaceRuntime?: WorkspaceRuntimeService;
   projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
   terminalManager?: SessionOptions["terminalManager"];
   serviceProxy?: SessionOptions["serviceProxy"];
@@ -477,6 +480,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       get: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
     },
+    workspaceRuntime: options.workspaceRuntime,
     scheduleService: asScheduleService(),
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
@@ -1832,7 +1836,7 @@ describe("session provider refresh cwd routing", () => {
   test("get_providers_snapshot_request forwards cwd to the provider authority", async () => {
     const messages: unknown[] = [];
     const workspaceCwd = resolvePath("/tmp/session-provider-snapshot");
-    const { manager: providerSnapshotManager, getSnapshot } = createProviderSnapshotManagerStub();
+    const { manager: providerSnapshotManager, readSnapshot } = createProviderSnapshotManagerStub();
     const session = createSessionForTest({ messages, providerSnapshotManager });
 
     await session.handleMessage({
@@ -1841,7 +1845,7 @@ describe("session provider refresh cwd routing", () => {
       requestId: "snapshot-workspace",
     });
 
-    expect(getSnapshot).toHaveBeenCalledWith(workspaceCwd);
+    expect(readSnapshot).toHaveBeenCalledWith({ cwd: workspaceCwd });
   });
 
   test("preserves legacy model and mode list requests without cwd as global", async () => {
@@ -4328,7 +4332,10 @@ describe("session stash mutation handling", () => {
 describe("session paseo worktree creation handling", () => {
   test("forces workspace git refreshes for the source repo and created worktree", async () => {
     const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
-    const session = createSessionForTest({ workspaceGitService });
+    const session = createSessionForTest({
+      workspaceGitService,
+      workspaceRuntime: createStub<WorkspaceRuntimeService>({}),
+    });
     paseoWorktreeServiceMocks.createPaseoWorktree.mockResolvedValue({
       repoRoot: "/tmp/repo",
       worktree: {

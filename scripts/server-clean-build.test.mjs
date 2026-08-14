@@ -56,6 +56,58 @@ test("build:server:clean constructs public prerequisites without runtime impleme
   await assert.rejects(access(path.join(isolatedRoot, "runtimes")));
 });
 
+test("public runtime packages construct complete tarballs from source", async (t) => {
+  const isolatedRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-runtime-packages-"));
+  t.after(() => rm(isolatedRoot, { recursive: true, force: true }));
+
+  await copyBuildCheckout(isolatedRoot);
+  await createNodeModulesOverlay(isolatedRoot);
+  await createPackageNodeModulesOverlays(isolatedRoot);
+
+  for (const relativePath of [
+    "packages/workspace-runtime-contract/dist",
+    "packages/workspace-helper/dist",
+  ]) {
+    await assert.rejects(access(path.join(isolatedRoot, relativePath)), relativePath);
+  }
+
+  const packDirectory = path.join(isolatedRoot, "packs");
+  await mkdir(packDirectory);
+  const packages = [
+    {
+      workspace: "@getpaseo/workspace-runtime-contract",
+      files: ["dist/index.js", "dist/index.d.ts"],
+    },
+    {
+      workspace: "@getpaseo/workspace-helper",
+      files: ["dist/index.js", "dist/index.d.ts", "dist/executable.mjs"],
+      executable: "dist/executable.mjs",
+    },
+  ];
+
+  for (const expected of packages) {
+    const packed = JSON.parse(
+      (
+        await run(
+          "npm",
+          [
+            "pack",
+            "--json",
+            `--workspace=${expected.workspace}`,
+            "--pack-destination",
+            packDirectory,
+          ],
+          { cwd: isolatedRoot, timeout: 120_000 },
+        )
+      ).stdout,
+    )[0];
+    const files = new Map(packed.files.map((file) => [file.path, file]));
+    for (const expectedFile of expected.files) assert.ok(files.has(expectedFile), expectedFile);
+    if (expected.executable) assert.equal(files.get(expected.executable)?.mode, 0o755);
+    await access(path.join(packDirectory, packed.filename));
+  }
+});
+
 async function copyBuildCheckout(isolatedRoot) {
   await Promise.all([
     ...["package.json", "package-lock.json", "tsconfig.base.json", "tsconfig.json"].map((file) =>

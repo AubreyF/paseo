@@ -23,7 +23,10 @@ test.runIf(process.platform === "win32")("Windows command resolution honors PATH
         env: { ...process.env, PATH: root, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
       },
     );
-    expect(JSON.parse(result.stdout)).toEqual({ path: await realpath(executable) });
+    expect(JSON.parse(result.stdout)).toEqual({
+      protocolVersion: 1,
+      path: await realpath(executable),
+    });
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }

@@ -2,12 +2,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseURL =
   process.env.E2E_BASE_URL ?? `http://localhost:${process.env.E2E_METRO_PORT ?? "8081"}`;
-const dockerAcceptance = process.env.E2E_DOCKER_ACCEPTANCE === "1";
-
 export default defineConfig({
   testDir: "./e2e",
   testMatch: ["**/*.spec.ts"],
-  testIgnore: dockerAcceptance ? [] : ["**/new-workspace-docker.spec.ts"],
   globalSetup: "../app/e2e/support/global-setup.ts",
   timeout: 60_000,
   expect: {

@@ -18,7 +18,7 @@ const cleanupRoots: string[] = [];
 const posixDescribe = describe.runIf(process.platform !== "win32");
 const runtimeContractIds = ["local", "worktree", "fixture"] as const;
 const fixtureRuntimeExecutable = fileURLToPath(
-  new URL("../../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
+  new URL("../../../../../runtimes/fixture/src/index.mjs", import.meta.url),
 );
 
 afterEach(async () => {
@@ -106,7 +106,6 @@ posixDescribe("setup eligibility", () => {
     await expect(
       fixture.service.create({
         ...fixture.createInput,
-        setupFromPaseoConfig: true,
       }),
     ).resolves.toMatchObject({ runtimeId: "local", cwd: fixture.repo });
 
@@ -115,7 +114,48 @@ posixDescribe("setup eligibility", () => {
   });
 });
 
+posixDescribe("setup lifecycle environment", () => {
+  test("supplies main's lifecycle variables only for setup execution", async () => {
+    const fixture = await createFixture("worktree");
+    await fixture.service.create(fixture.createInput);
+    const runtime = await fixture.service.bind(fixture.workspaceId);
+    const setup = await runtime.run({
+      argv: [
+        "/bin/sh",
+        "-c",
+        'printf \'%s\\n\' "$PASEO_SOURCE_CHECKOUT_PATH" "$PASEO_ROOT_PATH" "$PASEO_WORKTREE_PATH" "$PASEO_BRANCH_NAME" "$PASEO_WORKTREE_PORT"',
+      ],
+      env: {},
+      purpose: { kind: "setup" },
+    });
+    setup.stdin.end();
+    const output = (await collect(setup.stdout)).trim().split("\n");
+    await expect(setup.exited).resolves.toEqual({ code: 0, signal: null });
+
+    expect(await realpath(output[0]!)).toBe(await realpath(fixture.repo));
+    expect(output[1]).toBe(output[0]);
+    expect(await realpath(output[2]!)).toBe(await realpath(fixture.runtimeRoot()));
+    expect(output[3]).toBeTruthy();
+    expect(Number(output[4])).toBeGreaterThan(0);
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+});
+
 posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId) => {
+  test("returns after materialization without waiting for configured setup", async () => {
+    const fixture = await createFixture(runtimeId);
+    await writeFile(
+      path.join(fixture.repo, "paseo.json"),
+      JSON.stringify({ worktree: { setup: ["while [ ! -f setup-release ]; do sleep 1; done"] } }),
+    );
+
+    const created = await fixture.service.create(fixture.createInput);
+
+    expect(created.materializedFreshContent).toBe(runtimeId !== "local");
+    expect(existsSync(path.join(fixture.runtimeRoot(), "setup-release"))).toBe(false);
+    await fixture.service.destroy(fixture.workspaceId);
+  });
+
   test("creates a provider probe by adopting the project root without setup", async () => {
     const fixture = await createFixture(runtimeId);
     const setupMarker = path.join(fixture.repo, "probe-setup-ran.txt");
@@ -125,7 +165,6 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
       placement: { kind: "existing" },
       purpose: "provider-probe",
       setup: [{ argv: ["/bin/sh", "-c", "printf setup > probe-setup-ran.txt"], env: {} }],
-      setupFromPaseoConfig: false,
     });
 
     expect(await realpath(created.cwd)).toBe(await realpath(fixture.repo));
@@ -267,22 +306,27 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
       workspaceId: fixture.workspaceId,
       runtimeId,
       cwd: compatibilityCwd,
-      hostVisiblePath: compatibilityCwd,
+      ...(runtimeId === "fixture" ? {} : { hostVisiblePath: compatibilityCwd }),
+      materializedFreshContent: runtimeId !== "local",
     });
     await expect(fixture.service.inspect(fixture.workspaceId)).resolves.toEqual({
       status: "ready",
       cwd: compatibilityCwd,
-      hostVisiblePath: compatibilityCwd,
+      ...(runtimeId === "fixture" ? {} : { hostVisiblePath: compatibilityCwd }),
     });
-    await expect(fixture.service.requireHostVisiblePath(fixture.workspaceId)).resolves.toBe(
-      compatibilityCwd,
-    );
+    if (runtimeId === "fixture") {
+      await expect(fixture.service.requireHostVisiblePath(fixture.workspaceId)).rejects.toThrow(
+        `Workspace has no host-visible path: ${fixture.workspaceId}`,
+      );
+    } else {
+      await expect(fixture.service.requireHostVisiblePath(fixture.workspaceId)).resolves.toBe(
+        compatibilityCwd,
+      );
+    }
 
     const runtimeRoot = fixture.runtimeRoot();
     expect(await readFile(path.join(runtimeRoot, "committed.txt"), "utf8")).toBe("committed\n");
-    if (runtimeId === "worktree") {
-      expect(await readFile(path.join(runtimeRoot, "setup-owned.txt"), "utf8")).toBe("setup\n");
-    }
+    expect(existsSync(path.join(runtimeRoot, "setup-owned.txt"))).toBe(false);
 
     const child = await fixture.service.run({
       workspaceId: fixture.workspaceId,
@@ -369,11 +413,7 @@ posixDescribe.each(runtimeContractIds)("%s runtime public contract", (runtimeId)
     await fixture.service.create(input);
     await fixture.service.pause(fixture.workspaceId);
     await fixture.service.create(input);
-    if (runtimeId === "local") {
-      expect(existsSync(path.join(fixture.runtimeRoot(), setupMarker))).toBe(false);
-    } else {
-      expect(await readFile(path.join(fixture.runtimeRoot(), setupMarker), "utf8")).toBe("setup\n");
-    }
+    expect(existsSync(path.join(fixture.runtimeRoot(), setupMarker))).toBe(false);
     await expect(
       fixture.service.run({
         workspaceId: fixture.workspaceId,

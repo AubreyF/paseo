@@ -29,7 +29,7 @@ describe("desktop dev build contract", () => {
     expect(packageJson.scripts.predev).toBe(prerequisite);
     expect(packageJson.scripts["predev:win"]).toBe(prerequisite);
     expect(packageJson.scripts["dev:prerequisites"]).toBe(
-      "npm --prefix ../.. run build:server-deps && npm --prefix ../.. run build:docker-workspace-runtime && npm --prefix ../.. run build --workspace=@getpaseo/server",
+      "npm --prefix ../.. run build:server-deps && npm --prefix ../.. run build --workspace=@getpaseo/server",
     );
     expect(packageJson.scripts.dev).toBe("./scripts/dev.sh");
     expect(packageJson.scripts["dev:win"]).toBe("powershell ./scripts/dev.ps1");
@@ -72,12 +72,12 @@ async function createIsolatedBuildCheckout() {
   const packageDirectories = [
     "packages/client",
     "packages/desktop",
-    "packages/docker-workspace-runtime",
     "packages/highlight",
     "packages/protocol",
     "packages/relay",
     "packages/server",
     "packages/workspace-runtime-contract",
+    "packages/workspace-helper",
   ];
 
   try {

@@ -1140,11 +1140,12 @@ test("create_agent_request launches from an exact subdirectory in a created work
       resolveProviderWorkspace: async (workspaceId) => {
         const workspace = await workspaceRegistry.get(workspaceId);
         if (!workspace?.runtime) return null;
+        const runtime = await workspaceRuntime.bind(workspaceId);
         return bindProviderWorkspace({
-          runtime: await workspaceRuntime.bind(workspaceId),
+          runtime,
           cwd: ".",
           policy: resolveProviderPlacementPolicy({
-            runtimeId: workspace.runtime.runtimeId,
+            capability: runtime.provider,
             hostEnvironment: process.env,
           }),
         });
@@ -9567,7 +9568,12 @@ test("workspace.create.request materializes an explicit project's git source ins
       ...workspace,
       runtime: { runtimeId: input.runtimeId },
     });
-    return { workspaceId: input.workspaceId, runtimeId: input.runtimeId, cwd: runtimeCwd };
+    return {
+      workspaceId: input.workspaceId,
+      runtimeId: input.runtimeId,
+      cwd: runtimeCwd,
+      materializedFreshContent: false,
+    };
   };
 
   await session.handleMessage({

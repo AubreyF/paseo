@@ -1,5 +1,5 @@
-import type { WorkspaceFileContent, WorkspaceFileRead, WorkspaceWatchEvent } from "../index.js";
-import type { WorkspaceFilesOwner, WorkspaceHelperProcess } from "./integration/index.js";
+import type { WorkspaceFileContent, WorkspaceFileRead, WorkspaceWatchEvent } from "./files.js";
+import type { WorkspaceFilesOwner, WorkspaceHelperProcess } from "./binding.js";
 import {
   describeSchema,
   directorySchema,

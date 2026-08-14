@@ -26,8 +26,10 @@ import {
 } from "../../script-status-projection.js";
 import { deriveProjectServiceSlug, deriveProjectSlug } from "../../workspace-git-metadata.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
-import { PaseoConfigSchema, type PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
+import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import type { WorkspaceRuntimeService } from "../../workspace-runtime/index.js";
+import { parsePaseoConfigContentsOrThrow } from "../../../utils/worktree.js";
+import { resolvePaseoConfigPath } from "../../../utils/paseo-config-file.js";
 
 type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
 
@@ -76,7 +78,10 @@ export async function readWorkspacePaseoConfig(input: {
     const file = await files.read("paseo.json");
     const chunks: Buffer[] = [];
     for await (const chunk of file.chunks) chunks.push(Buffer.from(chunk));
-    return PaseoConfigSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    return parsePaseoConfigContentsOrThrow(
+      Buffer.concat(chunks),
+      resolvePaseoConfigPath(workspace.cwd),
+    );
   } catch (error) {
     logger.warn(
       { workspaceId: workspace.workspaceId, err: error },

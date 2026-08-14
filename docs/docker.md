@@ -10,7 +10,7 @@ The image source lives in [`docker/`](../docker/).
 
 The official image:
 
-- builds `@getpaseo/server` and `@getpaseo/cli` from source-built workspace tarballs
+- builds `@getpaseo/server`, `@getpaseo/cli`, and their public workspace packages from source-built workspace tarballs
 - runs the daemon as the non-root `paseo` user
 - listens on `0.0.0.0:6767` inside the container
 - enables the bundled daemon web UI with `PASEO_WEB_UI_ENABLED=true`
@@ -21,34 +21,6 @@ Open the container's HTTP origin, for example `http://localhost:6767`, to load
 the web UI. The served app receives a same-origin connection hint and connects
 back to that daemon. Static UI files load without daemon auth; API and
 WebSocket requests still require `PASEO_PASSWORD` when one is configured.
-
-## Docker workspace runtime
-
-Paseo Desktop registers the Docker workspace runtime as a generic command runtime. It is separate from running the Paseo daemon image described on this page: the daemon stays on the host and the registered runtime materializes each selected project's committed Git content into a runtime-owned Docker volume. Files, watching, terminals, Git, scripts, provider discovery, and agents then use the same workspace-runtime boundary.
-
-The current POC requires the retained `paseo-workspace-runtime:phase3-qa` image. Build another tag from the repository root and replace the opaque `options.image` value when needed:
-
-```bash
-docker build -f packages/docker-workspace-runtime/Dockerfile -t paseo-workspace-runtime:local .
-```
-
-```json
-{
-  "workspaceRuntimes": {
-    "docker": {
-      "type": "command",
-      "label": "Docker",
-      "command": ["@getpaseo/docker-workspace-runtime"],
-      "options": {
-        "image": "paseo-workspace-runtime:local",
-        "bindMounts": []
-      }
-    }
-  }
-}
-```
-
-Docker owns the meaning and validation of every value under `options`. Set `workspaceRuntimes.docker` to `null` to remove the distribution registration, or replace it with any command registration. The `docker` key is an ordinary runtime ID.
 
 ## Quick Start
 

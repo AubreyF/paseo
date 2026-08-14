@@ -17,16 +17,14 @@ import type {
   WorkspaceFiles,
   WorkspaceFilesSubscription,
   WorkspaceWatchEvent,
-} from "../../workspace-helper/index.js";
-import {
-  bindWorkspaceHelper,
-  type WorkspaceFilesOwner,
-} from "../../workspace-helper/internal/integration/index.js";
+} from "@getpaseo/workspace-helper";
+import { bindWorkspaceHelper, type WorkspaceFilesOwner } from "@getpaseo/workspace-helper";
 import { PaseoConfigSchema } from "@getpaseo/protocol/paseo-config-schema";
 import {
   createGitCommonObservationCoordinator,
   type ObservationRebindTransaction,
 } from "../git-observation/internal/integration.js";
+import { findFreePort } from "../../service-proxy.js";
 
 const gracefulStopMilliseconds = 1_000;
 const forcedStopMilliseconds = 1_000;
@@ -51,6 +49,7 @@ export function createService(
   >();
   const unavailableFiles = new Map<string, "paused" | "recovering" | "destroyed">();
   const boundRuntimes = new Map<string, { runtimeId: string; runtime: BoundWorkspaceRuntime }>();
+  const setupAugmentations = new Map<string, Readonly<Record<string, string>>>();
   const gitCommonObservations = createGitCommonObservationCoordinator();
 
   function requireRegistered(runtimeId: string): WorkspaceRuntimeDriver {
@@ -74,7 +73,18 @@ export function createService(
     if (inspection.status !== "ready") {
       throw new Error(`Workspace runtime is ${inspection.status}: ${input.workspaceId}`);
     }
-    const runtimeProcess = await driver.spawn({ ...input, stdio: { kind: "pipes" } });
+    const runtimeProcess = await driver.spawn({
+      ...input,
+      env: {
+        ...(input.purpose.kind === "setup" ? driver.setupEnvironment?.() : {}),
+        ...input.env,
+        ...(input.purpose.kind === "setup" || driver.provider.environment === "isolated"
+          ? inspection.state.lifecycleEnvironment
+          : {}),
+        ...(input.purpose.kind === "setup" ? setupAugmentations.get(input.workspaceId) : {}),
+      },
+      stdio: { kind: "pipes" },
+    });
     if (runtimeProcess.kind !== "pipes") {
       throw new Error(`Workspace runtime returned PTY mode for a pipe launch: ${driver.id}`);
     }
@@ -93,6 +103,12 @@ export function createService(
     }
     const runtimeProcess = await driver.spawn({
       ...input,
+      env: {
+        ...input.env,
+        ...(driver.provider.environment === "isolated"
+          ? inspection.state.lifecycleEnvironment
+          : {}),
+      },
       stdio: { kind: "pty", rows: input.rows, cols: input.cols, term: input.term },
     });
     if (runtimeProcess.kind !== "pty") {
@@ -192,33 +208,18 @@ export function createService(
               await helper.close();
             }
           }
-          if (ready.materializedFreshContent && input.purpose !== "provider-probe") {
-            const setupCommands = input.setupFromPaseoConfig
-              ? await readConfiguredSetupCommands(input.workspaceId)
-              : (input.setup ?? []);
-            for (const command of setupCommands) {
-              const process = await runWithDriver(driver, {
-                workspaceId: input.workspaceId,
-                ...command,
-                purpose: { kind: "setup" },
-              });
-              process.stdin.end();
-              const [, , exit] = await Promise.all([
-                drain(process.stdout),
-                drain(process.stderr),
-                process.exited,
-              ]);
-              if (exit.code !== 0 || exit.signal !== null) {
-                throw new Error(`Workspace setup failed: ${exit.code ?? exit.signal}`);
-              }
-            }
-          }
           await records.persistRuntimeId(input.workspaceId, input.runtimeId, ready.placement);
+          if (ready.materializedFreshContent && input.purpose !== "provider-probe") {
+            setupAugmentations.set(input.workspaceId, {
+              PASEO_WORKTREE_PORT: String(await findFreePort()),
+            });
+          }
           unavailableFiles.delete(input.workspaceId);
           return {
             workspaceId: input.workspaceId,
             runtimeId: input.runtimeId,
             ...ready.placement,
+            materializedFreshContent: ready.materializedFreshContent,
           };
         } catch (error) {
           if (ownsNewResource) {
@@ -300,32 +301,6 @@ export function createService(
       }
       return inspection.placement.hostVisiblePath;
     },
-    async runSetup(workspaceId, signal) {
-      const commands = await readConfiguredSetupCommands(workspaceId);
-      for (const command of commands) {
-        if (signal?.aborted) throw signal.reason;
-        const process = await sequence(workspaceId, async () =>
-          runWithDriver(await resolve(workspaceId), {
-            workspaceId,
-            ...command,
-            purpose: { kind: "setup" },
-          }),
-        );
-        const abort = () => process.kill("SIGTERM");
-        signal?.addEventListener("abort", abort, { once: true });
-        process.stdin.end();
-        const [stdout, stderr, exit] = await Promise.all([
-          drainText(process.stdout),
-          drainText(process.stderr),
-          process.exited,
-        ]).finally(() => signal?.removeEventListener("abort", abort));
-        if (exit.code !== 0 || exit.signal !== null) {
-          throw new Error(
-            `Workspace setup failed (${exit.code ?? exit.signal}): ${stderr || stdout}`,
-          );
-        }
-      }
-    },
     async pause(workspaceId) {
       await sequence(workspaceId, async () => {
         await pauseWithDriver(workspaceId, await resolve(workspaceId));
@@ -375,6 +350,7 @@ export function createService(
         const runtimeId = await records.resolveRuntimeId(workspaceId);
         if (!runtimeId) {
           unavailableFiles.delete(workspaceId);
+          setupAugmentations.delete(workspaceId);
           return;
         }
         if (!records.beginWorkspaceDeletion || !records.removeWorkspaceRecord) {
@@ -399,6 +375,7 @@ export function createService(
     }
     await records.removeWorkspaceRecord(workspaceId);
     unavailableFiles.delete(workspaceId);
+    setupAugmentations.delete(workspaceId);
   }
 
   async function pauseWithDriver(
@@ -447,23 +424,6 @@ export function createService(
         );
       }
     }
-  }
-
-  async function readConfiguredSetupCommands(workspaceId: string) {
-    const config = await readWorkspaceConfig(workspaceId);
-    const driver = await resolve(workspaceId);
-    const inspection = await driver.inspect(workspaceId);
-    if (inspection.status !== "ready") {
-      throw new Error(`Workspace runtime is ${inspection.status}: ${workspaceId}`);
-    }
-    const env = {
-      ...lifecycleEnvironment(),
-      ...inspection.state.lifecycleEnvironment,
-    };
-    return (config?.worktree?.setup ?? []).map((command) => ({
-      argv: lifecycleShellCommand(command),
-      env,
-    }));
   }
 
   async function readWorkspaceConfig(workspaceId: string) {
@@ -703,12 +663,6 @@ function combineRebindTransactions(
 
 function noOpRebindTransaction(): ObservationRebindTransaction {
   return { commit: async () => {}, rollback: async () => {} };
-}
-
-async function drain(stream: NodeJS.ReadableStream): Promise<void> {
-  for await (const _chunk of stream) {
-    // Setup output is consumed here so a verbose command cannot block on a full pipe.
-  }
 }
 
 async function drainText(stream: NodeJS.ReadableStream): Promise<string> {

@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 import { Socket } from "node:net";
 import { createInterface } from "node:readline";
 import * as pty from "node-pty";
+
+const workspaceHelper = fileURLToPath(new URL("../dist/paseo-workspace-helper", import.meta.url));
 import {
   COMMAND_RUNTIME_PROTOCOL_VERSION,
   CommandRuntimeControlSchema,
@@ -146,8 +148,8 @@ async function create(id, request) {
     displayCwd: request.options.preserveSourceDisplayCwd
       ? sourceRoot
       : (request.options.displayCwd ?? root),
-    hostVisiblePath: request.options.exposeHostVisiblePath === false ? undefined : root,
     lifecycle: "ready",
+    lifecycleEnvironment: request.options.lifecycleEnvironment,
     ownedRoot,
     createInput: request.input,
   };
@@ -171,14 +173,15 @@ async function inspect(id, options) {
 }
 
 function publicState(state) {
-  return { workspaceId: state.workspaceId, lifecycle: state.lifecycle };
+  return {
+    workspaceId: state.workspaceId,
+    lifecycle: state.lifecycle,
+    ...(state.lifecycleEnvironment ? { lifecycleEnvironment: state.lifecycleEnvironment } : {}),
+  };
 }
 
 function publicPlacement(state) {
-  return {
-    cwd: state.displayCwd,
-    ...(state.hostVisiblePath ? { hostVisiblePath: state.hostVisiblePath } : {}),
-  };
+  return { cwd: state.displayCwd };
 }
 
 async function setLifecycle(id, options, lifecycle) {
@@ -245,7 +248,7 @@ async function execute(id) {
   if (
     envelope.options.crashPipeWrapper &&
     envelope.purpose.kind === "workspace-script" &&
-    envelope.purpose.script === "wrapper-crash"
+    (await consumePipeWrapperCrash(id, envelope.options))
   ) {
     process.exit(47);
   }
@@ -286,13 +289,7 @@ function resolveFixtureCommand(envelope) {
   if (Array.isArray(configured) && configured.every((value) => typeof value === "string")) {
     return [...configured, ...envelope.argv.slice(1)];
   }
-  return [
-    process.execPath,
-    fileURLToPath(
-      new URL("../../server/src/server/workspace-helper/executable.mjs", import.meta.url),
-    ),
-    ...envelope.argv.slice(1),
-  ];
+  return [process.execPath, workspaceHelper, ...envelope.argv.slice(1)];
 }
 
 async function executePty(id, envelope, controls, controlStream) {
@@ -527,6 +524,16 @@ async function readState(id, options) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
+}
+
+async function consumePipeWrapperCrash(id, options) {
+  const state = await readState(id, options);
+  if (!state || state.pipeWrapperCrashConsumed) return false;
+  await writeFile(
+    stateFile(id, options),
+    JSON.stringify({ ...state, pipeWrapperCrashConsumed: true }),
+  );
+  return true;
 }
 
 function stateFile(id, options) {

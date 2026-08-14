@@ -71,7 +71,7 @@ test("probes and creates a workspace in a selected runtime", async ({ page, runt
       editorTargets: hostOpenTargets,
     });
     await gotoNewWorkspaceForRuntime(page, runtimeProject);
-    await expectRuntimeChoices(page, ["Local", "Worktree", "Docker", "Fixture", "Fixture Failure"]);
+    await expectRuntimeChoices(page, ["Local", "Worktree", "Fixture", "Fixture Failure"]);
     await selectRuntime(page, "Fixture");
   });
 

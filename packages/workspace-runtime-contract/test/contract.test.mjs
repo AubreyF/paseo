@@ -5,6 +5,11 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
+
+test("the public contract contains no host or provider authority fields", async () => {
+  const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /host-directory|hostVisiblePath|provider-probe|provider:/u);
+});
 import { promisify } from "node:util";
 
 import {
@@ -54,7 +59,7 @@ test("documented lifecycle, fd3, control, and fd4 examples are exact newline-ter
 });
 
 test("lifecycle uses one exact stdin request and one exact stdout response", async () => {
-  assert.equal(examples.lifecycleRequest.input.purpose, "provider-probe");
+  assert.equal(examples.lifecycleRequest.input.purpose, "discovery");
   assert.deepEqual(examples.lifecycleResponse.state, {
     workspaceId: "workspace-01",
     lifecycle: "ready",
@@ -425,25 +430,10 @@ test("every public v1 object rejects unknown authority at every nesting level", 
       { protocolVersion: 1, type: "ok" },
       [],
     ],
-    [
-      "agent purpose",
-      CommandRuntimeProcessPurposeSchema,
-      { kind: "agent", agentId: "a", provider: "p" },
-      [],
-    ],
-    [
-      "terminal purpose",
-      CommandRuntimeProcessPurposeSchema,
-      { kind: "terminal", terminalId: "t" },
-      [],
-    ],
+    ["agent purpose", CommandRuntimeProcessPurposeSchema, { kind: "agent" }, []],
+    ["terminal purpose", CommandRuntimeProcessPurposeSchema, { kind: "terminal" }, []],
     ["Git purpose", CommandRuntimeProcessPurposeSchema, { kind: "git" }, []],
-    [
-      "provider purpose",
-      CommandRuntimeProcessPurposeSchema,
-      { kind: "provider-probe", provider: "p" },
-      [],
-    ],
+    ["discovery purpose", CommandRuntimeProcessPurposeSchema, { kind: "discovery" }, []],
     ["helper purpose", CommandRuntimeProcessPurposeSchema, { kind: "workspace-helper" }, []],
     ["script purpose", CommandRuntimeProcessPurposeSchema, examples.pipeSpawnControl.purpose, []],
     ["setup purpose", CommandRuntimeProcessPurposeSchema, { kind: "setup" }, []],

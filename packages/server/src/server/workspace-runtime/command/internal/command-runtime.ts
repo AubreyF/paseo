@@ -71,7 +71,7 @@ export function createCommandRuntime(
       encodeCommandRuntimeMessage(CommandRuntimeLifecycleRequestSchema, {
         protocolVersion: COMMAND_RUNTIME_PROTOCOL_VERSION,
         runtimeInstanceId,
-        input,
+        input: input ? commandCreateInput(input) : undefined,
         options: config.options ?? {},
       }),
     );
@@ -189,14 +189,38 @@ export function createCommandRuntime(
   }
 }
 
-function commandReady(
-  state: WorkspaceDriverState,
-  placement: { cwd: string; hostVisiblePath?: string } | undefined,
-) {
+function commandReady(state: WorkspaceDriverState, placement: { cwd: string } | undefined) {
   if (!placement) {
     throw new Error("Workspace runtime did not return public placement");
   }
   return { state, placement };
+}
+
+function commandCreateInput(input: WorkspaceDriverCreateInput) {
+  return {
+    ...input,
+    project: {
+      ...input.project,
+      source:
+        input.project.source.kind === "host-directory"
+          ? { kind: "directory" as const, path: input.project.source.path }
+          : input.project.source,
+    },
+    purpose: input.purpose === "provider-probe" ? ("discovery" as const) : undefined,
+  };
+}
+
+function commandPurpose(input: WorkspaceDriverSpawnInput["purpose"]) {
+  switch (input.kind) {
+    case "provider-probe":
+      return { kind: "discovery" as const };
+    case "agent":
+    case "terminal":
+    case "workspace-script":
+      return { kind: input.kind };
+    default:
+      return input;
+  }
 }
 
 function assertProtocolVersion(runtimeId: string, value: unknown): void {
@@ -318,7 +342,7 @@ function spawnCommandPty(
       argv: input.argv,
       cwd: input.cwd,
       env: input.env,
-      purpose: input.purpose,
+      purpose: commandPurpose(input.purpose),
       options,
       runtimeInstanceId,
       execId,
@@ -642,7 +666,7 @@ function spawnCommandProcess(
       argv: input.argv,
       cwd: input.cwd,
       env: input.env,
-      purpose: input.purpose,
+      purpose: commandPurpose(input.purpose),
       options,
       runtimeInstanceId,
       execId,

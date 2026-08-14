@@ -71,30 +71,23 @@ Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain wher
 
 ## Workspace runtimes
 
-New Workspace always offers Local and Worktree. Paseo Desktop and CLI distributions also register Docker through the same command-runtime configuration available to users.
-
-From the Paseo repository root, build the image:
-
-```bash
-docker build -f packages/docker-workspace-runtime/Dockerfile -t paseo-workspace-runtime:local .
-```
-
-Then replace the distribution registration's opaque image option in daemon configuration:
+New Workspace always offers Local and Worktree. Other runtimes appear only when you register an
+external command runtime in daemon configuration:
 
 ```json
 {
   "workspaceRuntimes": {
-    "docker": {
+    "isolated": {
       "type": "command",
-      "label": "Docker",
-      "command": ["@getpaseo/docker-workspace-runtime"],
-      "options": { "image": "paseo-workspace-runtime:local", "bindMounts": [] }
+      "label": "Isolated",
+      "command": ["/absolute/path/to/runtime-executable"],
+      "options": {}
     }
   }
 }
 ```
 
-Every registered runtime uses `type: "command"`. `command` is an argv array, not a shell string. Its first value may be a scoped package executable, filesystem path, or executable on `PATH`. Optional `label` names the runtime in New Workspace, and `options` passes arbitrary JSON to the runtime unchanged. Set a distribution runtime ID to `null` to remove it. Every runtime must provide `paseo-workspace-helper` inside its execution environment. Runtime implementations follow the [`@getpaseo/workspace-runtime-contract`](https://github.com/getpaseo/paseo/tree/main/packages/workspace-runtime-contract).
+Every registered runtime uses `type: "command"`. `command` is an argv array, not a shell string. Its first value may be a package executable, filesystem path, or executable on `PATH`. Optional `label` names the runtime in New Workspace, and `options` passes arbitrary JSON to the runtime unchanged. Remove an entry to unregister it. Every runtime must provide `paseo-workspace-helper` inside its execution environment. Runtime implementations follow the [`@getpaseo/workspace-runtime-contract`](https://github.com/getpaseo/paseo/tree/main/packages/workspace-runtime-contract).
 
 ## Voice
 

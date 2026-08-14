@@ -133,6 +133,7 @@ jobs:
         run: |
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/protocol
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/workspace-runtime-contract
+          npm pack --dry-run --ignore-scripts --workspace=@getpaseo/workspace-helper
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/client
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
 
@@ -169,7 +170,15 @@ jobs:
 
       - name: Test workspace runtime command contract package
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
-        run: npm test --workspace=@getpaseo/workspace-runtime-contract
+        run: npm test --workspace=@getpaseo/workspace-runtime-contract && npm test --workspace=@getpaseo/workspace-helper
+
+      - name: Prove the command runtime fixture is independently installable
+        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+        run: node --test scripts/workspace-runtime-standalone.test.mjs
+
+      - name: Prove clean server builds own public prerequisites
+        if: ${{ runner.os == 'Linux' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+        run: node --test scripts/server-clean-build.test.mjs
 
       - name: Run server tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}

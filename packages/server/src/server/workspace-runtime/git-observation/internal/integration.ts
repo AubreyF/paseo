@@ -1,6 +1,6 @@
 import type { BoundWorkspaceRuntime } from "../../index.js";
 import type { WorkspaceRuntimeDriver } from "../../drivers/index.js";
-import type { WorkspaceFilesSubscription } from "../../../workspace-helper/index.js";
+import type { WorkspaceFilesSubscription } from "@getpaseo/workspace-helper";
 import { registerGitCommonObservationCapability } from "./capability.js";
 
 interface GitObservation {

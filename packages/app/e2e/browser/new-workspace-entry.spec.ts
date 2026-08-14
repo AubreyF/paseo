@@ -287,7 +287,7 @@ test.describe("New workspace entry points", () => {
       await expectNewWorkspaceProjectSelected(page, gitProject.projectDisplayName);
 
       await expectWorkspaceRuntimeSelected(page, "local");
-      await expectWorkspaceRuntimeChoices(page, ["local", "worktree", "docker"]);
+      await expectWorkspaceRuntimeChoices(page, ["local", "worktree"]);
     } finally {
       await gitProject.cleanup();
       await nonGitProject.cleanup();

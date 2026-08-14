@@ -12,7 +12,7 @@ import type {
   WorkspaceProcessPurpose,
   WorkspaceRuntimeProviderCapability,
 } from "../../../workspace-runtime/index.js";
-import type { WorkspaceDirectory } from "../../../workspace-helper/index.js";
+import type { WorkspaceDirectory } from "@getpaseo/workspace-helper";
 
 export interface ProviderPlacementPolicy {
   environment:

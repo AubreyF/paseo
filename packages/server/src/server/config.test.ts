@@ -94,7 +94,7 @@ describe("server config", () => {
     const stateDirectory = path.join(paseoHome, "runtime-state");
     await Promise.all([mkdir(source), mkdir(stateDirectory)]);
     const fixtureExecutable = fileURLToPath(
-      new URL("../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
+      new URL("../../../../runtimes/fixture/src/index.mjs", import.meta.url),
     );
     const configPath = path.join(paseoHome, "config.json");
     await writeFile(

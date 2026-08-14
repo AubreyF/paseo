@@ -317,10 +317,9 @@ export async function selectNewWorkspaceProject(
   await expectNewWorkspaceProjectSelected(page, input.projectDisplayName);
 }
 
-type WorkspaceRuntimeChoice = "docker" | "local" | "worktree";
+type WorkspaceRuntimeChoice = "local" | "worktree";
 
 const WORKSPACE_RUNTIME_LABEL: Record<WorkspaceRuntimeChoice, string> = {
-  docker: "Docker",
   local: "Local",
   worktree: "Worktree",
 };

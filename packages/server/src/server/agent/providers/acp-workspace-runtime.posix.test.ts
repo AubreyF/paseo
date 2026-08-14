@@ -13,11 +13,11 @@ import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { bindProviderWorkspace } from "./workspace/index.js";
 
 const fixtureAgent = new URL(
-  "../../test-utils/fixtures/workspace-runtime-acp-agent.mjs",
+  "../../../../../../runtimes/fixture/test/fixtures/workspace-runtime-acp-agent.mjs",
   import.meta.url,
 );
 const fixtureRuntime = fileURLToPath(
-  new URL("../../../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
+  new URL("../../../../../../runtimes/fixture/src/index.mjs", import.meta.url),
 );
 
 const posixDescribe = describe.runIf(process.platform !== "win32");

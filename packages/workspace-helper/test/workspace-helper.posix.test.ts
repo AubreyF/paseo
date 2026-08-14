@@ -6,15 +6,15 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, test } from "vitest";
 
-import type { WorkspaceWatchEvent } from "./index.js";
-import { bindWorkspaceHelper, type WorkspaceHelperProcess } from "./internal/integration/index.js";
+import type { WorkspaceWatchEvent } from "../src/files.js";
+import { bindWorkspaceHelper, type WorkspaceHelperProcess } from "../src/binding.js";
 
 const posixDescribe = describe.runIf(process.platform !== "win32");
 const cleanupRoots: string[] = [];
 const adversarialHelper = fileURLToPath(
   new URL("./fixtures/adversarial-helper.mjs", import.meta.url),
 );
-const workspaceHelper = fileURLToPath(new URL("./executable.mjs", import.meta.url));
+const workspaceHelper = fileURLToPath(new URL("../src/executable.mjs", import.meta.url));
 
 afterEach(async () => {
   await Promise.all(
@@ -41,6 +41,52 @@ async function collect(chunks: AsyncIterable<Uint8Array>): Promise<Buffer> {
 }
 
 posixDescribe("workspace-helper public capability", () => {
+  test("executable describe reports the exact versioned capability contract", async () => {
+    const child = spawn(process.execPath, [workspaceHelper, "describe"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exit] = await Promise.all([
+      collect(child.stdout),
+      collect(child.stderr),
+      childProcess(child).exited,
+    ]);
+    expect(exit, stderr.toString()).toEqual({ code: 0, signal: null });
+    expect(JSON.parse(stdout.toString())).toEqual({
+      protocolVersion: 1,
+      version: 1,
+      capabilities: ["files", "watch", "resolve-command"],
+    });
+  });
+
+  test("watch framing accepts split frames and rejects malformed input", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "paseo-workspace-helper-framing-"));
+    cleanupRoots.push(parent);
+    const child = spawn(process.execPath, [workspaceHelper, "watch"], {
+      cwd: parent,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const stdout = collect(child.stdout);
+    const stderr = collect(child.stderr);
+    child.stdin.write('{"protocolVersion":1,"type":"subscribe","id":"split","paths":["."],');
+    child.stdin.end('"recursive":false,"ignoredPaths":[]}\nnot-json\n');
+    await expect(childProcess(child).exited).resolves.toEqual({ code: 1, signal: null });
+    expect((await stdout).toString()).toContain('"type":"ready"');
+    expect((await stdout).toString()).toContain('"type":"subscribed"');
+    expect((await stderr).toString()).toMatch(/JSON|Unexpected token/);
+  });
+
+  test("overflow frames propagate through the typed binding", async () => {
+    const recorded = await recordedClient("overflow");
+    try {
+      const event = new Promise<WorkspaceWatchEvent>((resolve) => {
+        void recorded.client.files.subscribe({ paths: ["notes.txt"] }, resolve);
+      });
+      await expect(event).resolves.toEqual({ type: "overflow" });
+    } finally {
+      await recorded.cleanup();
+    }
+  });
+
   test("client sends only workspace-relative helper paths", async () => {
     const { client } = await fixture();
     expect(() => client.files.stat("/tmp/outside")).toThrow(

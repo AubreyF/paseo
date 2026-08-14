@@ -1321,7 +1321,7 @@ export async function createPaseoDaemon(
         getDaemonTcpHost: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.host : null),
         serviceProxyPublicBaseUrl,
         onScriptsChanged: null,
-        runWorkspaceSetup: (workspaceId) => workspaceRuntime.runSetup(workspaceId),
+        bindWorkspaceRuntime: (workspaceId) => workspaceRuntime.bind(workspaceId),
       },
       input,
       serviceOptions,

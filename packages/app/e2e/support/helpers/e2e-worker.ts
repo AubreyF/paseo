@@ -148,13 +148,8 @@ async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> 
   const materializeRoot = path.join(paseoHome, "fixture-workspaces");
   const fixtureProviderSource = path.resolve(
     __dirname,
-    "../../../../server/src/server/test-utils/fixtures/workspace-runtime-acp-agent.mjs",
+    "../../../../../runtimes/fixture/test/fixtures/workspace-runtime-acp-agent.mjs",
   );
-  const dockerAcceptance = process.env.E2E_DOCKER_ACCEPTANCE === "1";
-  const dockerImage = process.env.E2E_DOCKER_WORKSPACE_IMAGE;
-  if (dockerAcceptance && !dockerImage) {
-    throw new Error("E2E_DOCKER_WORKSPACE_IMAGE is required for Docker acceptance");
-  }
   await mkdir(stateDirectory, { recursive: true });
   await writeFile(
     configPath,
@@ -168,47 +163,25 @@ async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> 
           claude: { ...existing.agents?.providers?.claude, enabled: false },
           codex: { ...existing.agents?.providers?.codex, enabled: false },
           copilot: { ...existing.agents?.providers?.copilot, enabled: false },
-          opencode: {
-            ...existing.agents?.providers?.opencode,
-            enabled: dockerAcceptance,
-          },
+          opencode: { ...existing.agents?.providers?.opencode, enabled: false },
           pi: { ...existing.agents?.providers?.pi, enabled: false },
           "fixture-agent": {
             extends: "acp",
             label: "Fixture Agent",
             command: [process.execPath, "./.paseo-fixture-agent.mjs"],
             models: [{ id: "fixture-model", label: "Fixture Model", isDefault: true }],
-            enabled: !dockerAcceptance,
+            enabled: true,
           },
-          ...(dockerAcceptance
-            ? {
-                "docker-fixture": {
-                  extends: "acp",
-                  label: "Docker Fixture",
-                  command: ["node", "/usr/local/bin/paseo-fixture-agent.mjs"],
-                },
-              }
-            : {}),
         },
       },
       workspaceRuntimes: {
         ...existing.workspaceRuntimes,
-        ...(dockerAcceptance
-          ? {
-              docker: {
-                type: "command",
-                label: "Docker",
-                command: ["@getpaseo/docker-workspace-runtime"],
-                options: { image: dockerImage, bindMounts: [] },
-              },
-            }
-          : {}),
         fixture: {
           type: "command",
           label: "Fixture",
           command: [
             process.execPath,
-            path.resolve(__dirname, "../../../../fixture-workspace-runtime/src/index.mjs"),
+            path.resolve(__dirname, "../../../../../runtimes/fixture/src/index.mjs"),
           ],
           options: {
             stateDirectory,
@@ -222,7 +195,7 @@ async function configureDesktopFixtureRuntime(paseoHome: string): Promise<void> 
           label: "Fixture Failure",
           command: [
             process.execPath,
-            path.resolve(__dirname, "../../../../fixture-workspace-runtime/src/index.mjs"),
+            path.resolve(__dirname, "../../../../../runtimes/fixture/src/index.mjs"),
           ],
           options: {
             stateDirectory: path.join(paseoHome, "fixture-failure-runtime"),

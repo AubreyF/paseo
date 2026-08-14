@@ -88,6 +88,19 @@ agent timeline types, provider config schemas, and other values shared by daemon
 and clients. Server, app, CLI, and `@getpaseo/client` all depend on this package;
 it does not depend on the server.
 
+### Workspace runtime packages
+
+`packages/workspace-runtime-contract` owns the versioned command-runtime lifecycle and exec wire
+contract. `packages/workspace-helper` owns the official confined files/watch/command-resolution
+executable and its typed binding. The daemon depends on those two packages and registers command
+runtimes without importing an implementation.
+
+`runtimes/fixture` is a private generic contract fixture. Runtime implementations live in their own
+repositories and depend on published versions of the two public workspace packages. CLI, Desktop,
+server, release workflows, and the daemon image do not depend on, bundle, publish, or register an
+implementation. Tests invoke registered runtimes through their public command, never through source
+imports.
+
 ### `packages/client` — Daemon client library and SDK facade
 
 Owns the low-level daemon WebSocket driver plus the higher-level `PaseoClient`

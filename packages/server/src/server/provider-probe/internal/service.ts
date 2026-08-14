@@ -171,7 +171,6 @@ export function createService(options: ServiceOptions): ProviderProbeService {
         },
         placement: { kind: "existing" },
         purpose: "provider-probe",
-        setupFromPaseoConfig: false,
       });
       const created = await options.store.get(workspaceId);
       if (!created) throw new Error(`Provider probe record not found after create: ${workspaceId}`);

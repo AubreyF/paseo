@@ -244,6 +244,7 @@ import {
   handlePaseoWorktreeArchiveRequest as handleWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
+  runWorktreeSetupInBackground,
 } from "./worktree-session.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
@@ -5526,8 +5527,9 @@ export class Session {
       await this.workspaceRegistry.remove(workspace.workspaceId);
       throw new Error(`Project not found after workspace creation: ${workspace.projectId}`);
     }
+    let materializedFreshContent = false;
     try {
-      await workspaceRuntime.create({
+      const placement = await workspaceRuntime.create({
         workspaceId: workspace.workspaceId,
         runtimeId,
         project: {
@@ -5535,8 +5537,8 @@ export class Session {
           source: projectRuntimeSource(project),
         },
         placement: { kind: "existing" },
-        setupFromPaseoConfig: true,
       });
+      materializedFreshContent = placement.materializedFreshContent;
     } catch (error) {
       await this.workspaceRegistry.remove(workspace.workspaceId);
       throw error;
@@ -5560,14 +5562,52 @@ export class Session {
       descriptor,
       request.firstAgentContext ? "running" : undefined,
     );
-    void this.workspaceGitService
-      .getSnapshot(workspace.cwd, { force: true, includeForge: true, reason: "open_project" })
-      .catch((error) => {
-        this.sessionLogger.warn(
-          { err: error, cwd: workspace.cwd },
-          "Background snapshot refresh failed after workspace.create",
-        );
-      });
+    if (materializedFreshContent) {
+      this.workspaceSetupRuntime.start(workspace.workspaceId, (signal) =>
+        runWorktreeSetupInBackground(
+          {
+            emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
+              this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
+            cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) => {
+              this.workspaceSetupSnapshots.set(workspaceId, snapshot);
+            },
+            emit: (message) => this.emit(message),
+            sessionLogger: this.sessionLogger,
+            terminalManager: this.terminalManager,
+            archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+            serviceProxy: this.serviceProxy,
+            scriptRuntimeStore: this.scriptRuntimeStore,
+            getDaemonTcpPort: this.getDaemonTcpPort,
+            getDaemonTcpHost: this.getDaemonTcpHost,
+            serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
+            onScriptsChanged: (workspaceId, workspaceDirectory) => {
+              this.workspaceScripts.emitStatusUpdate(workspaceId, workspaceDirectory);
+            },
+            bindWorkspaceRuntime: (workspaceId) => workspaceRuntime.bind(workspaceId),
+          },
+          {
+            requestCwd: materializedWorkspace.cwd,
+            repoRoot: materializedWorkspace.cwd,
+            workspaceId: workspace.workspaceId,
+            worktree: {
+              branchName: "",
+              worktreePath: materializedWorkspace.cwd,
+            },
+            shouldBootstrap: true,
+            slug: workspace.workspaceId,
+            worktreePath: materializedWorkspace.cwd,
+            workspaceCwd: materializedWorkspace.cwd,
+          },
+          signal,
+        ),
+      );
+    }
+    void this.warmWorkspaceGitDataForWorkspace(materializedWorkspace).catch((error) => {
+      this.sessionLogger.warn(
+        { err: error, workspaceId: materializedWorkspace.workspaceId },
+        "Background snapshot refresh failed after workspace.create",
+      );
+    });
     if (request.firstAgentContext) {
       const firstAgentContext = request.firstAgentContext;
       this.workspaceAutoName.scheduleForDirectory(
@@ -6177,9 +6217,9 @@ export class Session {
         onScriptsChanged: (workspaceId, workspaceDirectory) => {
           this.workspaceScripts.emitStatusUpdate(workspaceId, workspaceDirectory);
         },
-        runWorkspaceSetup: async (workspaceId, signal) => {
+        bindWorkspaceRuntime: async (workspaceId) => {
           if (!this.workspaceRuntime) throw new Error("Workspace runtime service was not composed");
-          await this.workspaceRuntime.runSetup(workspaceId, signal);
+          return this.workspaceRuntime.bind(workspaceId);
         },
       },
       input,

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { WorkspaceFiles } from "../workspace-helper/index.js";
+import type { WorkspaceFiles } from "@getpaseo/workspace-helper";
 
 import { createCommandRuntimeAdapter } from "./command/index.js";
 import { createHostGitObservationOwner } from "./internal/host-git-observation.js";
@@ -76,8 +76,6 @@ export interface CreateWorkspaceInput {
   project: { id: string; source: WorkspaceProjectSource };
   placement: WorkspacePlacement;
   purpose?: "provider-probe";
-  setup?: readonly WorkspaceSetupCommand[];
-  setupFromPaseoConfig?: boolean;
   markFirstAgentBranchAutoName?: boolean;
   seedPaseoConfigFrom?: string;
 }
@@ -145,7 +143,6 @@ export interface WorkspaceRuntimeService {
   files(workspaceId: string): WorkspaceFiles;
   inspect(workspaceId: string): Promise<WorkspaceRuntimeInspection>;
   requireHostVisiblePath(workspaceId: string): Promise<string>;
-  runSetup(workspaceId: string, signal?: AbortSignal): Promise<void>;
   pause(workspaceId: string): Promise<void>;
   resume(workspaceId: string): Promise<void>;
   archive(workspaceId: string): Promise<void>;
@@ -165,11 +162,15 @@ export interface WorkspaceRuntimePlacement {
   runtimeId: string;
   cwd: string;
   hostVisiblePath?: string;
+  materializedFreshContent: boolean;
 }
 
 export type WorkspaceRuntimeInspection =
   | { status: "missing" | "error" }
-  | ({ status: "paused" | "ready" } & Omit<WorkspaceRuntimePlacement, "workspaceId" | "runtimeId">);
+  | ({ status: "paused" | "ready" } & Omit<
+      WorkspaceRuntimePlacement,
+      "workspaceId" | "runtimeId" | "materializedFreshContent"
+    >);
 
 export interface WorkspaceRuntimeRecordStore {
   resolveRuntimeId(workspaceId: string): Promise<string | null>;

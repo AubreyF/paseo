@@ -54,6 +54,7 @@ function print(value) {
 function handleWatchCommand(command, finish) {
   if (command.type === "subscribe" && mode !== "no-subscribed") {
     print({ type: "subscribed", subscriptionId: command.id });
+    if (mode === "overflow") print({ type: "overflow", subscriptionId: command.id });
     return;
   }
   if (command.type === "unsubscribe" && mode !== "no-unsubscribed") {

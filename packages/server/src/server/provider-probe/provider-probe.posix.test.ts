@@ -55,7 +55,6 @@ posixDescribe("provider probe service", () => {
       },
       placement: { kind: "existing" },
       purpose: "provider-probe",
-      setupFromPaseoConfig: false,
     });
     await expect(fixture.service.records.resolveRuntimeId(firstResult.workspaceId)).resolves.toBe(
       "fixture",

@@ -11,10 +11,7 @@ import { observeWorkspaceGit } from "./workspace-git-observation.js";
 import { createWorkspaceRuntimeService } from "./workspace-runtime/index.js";
 
 const fixtureExecutable = fileURLToPath(
-  new URL("../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
-);
-const helperExecutable = fileURLToPath(
-  new URL("./workspace-helper/executable.mjs", import.meta.url),
+  new URL("../../../../runtimes/fixture/src/index.mjs", import.meta.url),
 );
 const cleanupRoots: string[] = [];
 
@@ -471,7 +468,6 @@ test("selected workspace Git reads and mutations stay inside its command runtime
       fixture: {
         type: "command",
         command: [process.execPath, fixtureExecutable],
-        helperCommand: [process.execPath, helperExecutable],
         options: { stateDirectory, recordLaunchInWorkspace: false },
       },
     },
@@ -615,7 +611,6 @@ test("selected commit history highlighting never reads a deleted file from the h
       fixture: {
         type: "command",
         command: [process.execPath, fixtureExecutable],
-        helperCommand: [process.execPath, helperExecutable],
         options: { stateDirectory, recordLaunchInWorkspace: false },
       },
     },
@@ -677,7 +672,6 @@ test("selected workspaces with the same public cwd keep Git state, mutations, an
       fixture: {
         type: "command",
         command: [process.execPath, fixtureExecutable],
-        helperCommand: [process.execPath, helperExecutable],
         options: { stateDirectory, recordLaunchInWorkspace: false },
       },
     },

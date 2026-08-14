@@ -10,10 +10,10 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createWorkspaceRuntimeService } from "./index.js";
 
 const fixtureExecutable = fileURLToPath(
-  new URL("../../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
+  new URL("../../../../../runtimes/fixture/src/index.mjs", import.meta.url),
 );
 const helperExecutable = fileURLToPath(
-  new URL("../workspace-helper/executable.mjs", import.meta.url),
+  new URL("../../../../../packages/workspace-helper/src/executable.mjs", import.meta.url),
 );
 const rebindHelperExecutable = fileURLToPath(
   new URL("../test-utils/fixtures/workspace-helper-rebind-fixture.mjs", import.meta.url),
@@ -54,10 +54,7 @@ test("a trusted registered command is selected and receives secret launch data o
     await readFile(path.join(fixture.source, ".runtime-launch.json"), "utf8"),
   ) as { argv: string[]; purpose: unknown };
   expect(JSON.stringify(launch.argv)).not.toContain(secret);
-  expect(launch.purpose).toEqual({
-    kind: "workspace-script",
-    script: "secure-envelope-contract",
-  });
+  expect(launch.purpose).toEqual({ kind: "workspace-script" });
 
   await expect(
     fixture.service.create({
@@ -69,7 +66,7 @@ test("a trusted registered command is selected and receives secret launch data o
   await fixture.service.destroy(fixture.workspaceId);
 });
 
-test("the fixture executable receives provider probe purpose through the strict lifecycle contract", async () => {
+test("the fixture executable receives generic discovery purpose through the strict lifecycle contract", async () => {
   const fixture = await createFixture("provider-probe-purpose");
   await fixture.service.create({
     ...fixture.createInput,
@@ -83,10 +80,10 @@ test("the fixture executable receives provider probe purpose through the strict 
     workspaceId: fixture.workspaceId,
     project: {
       projectId: fixture.createInput.project.id,
-      source: fixture.createInput.project.source,
+      source: { kind: "directory", path: fixture.createInput.project.source.path },
     },
     placement: fixture.createInput.placement,
-    purpose: "provider-probe",
+    purpose: "discovery",
   });
   await fixture.service.destroy(fixture.workspaceId);
 });
@@ -860,6 +857,53 @@ test("an existing runtime selection cannot be switched before target driver disp
 
   await fixture.service.destroy(fixture.workspaceId);
 });
+
+test("isolated command runtimes apply lifecycle environment to pipes and PTY", async () => {
+  const fixture = await createFixture("lifecycle-environment", false, "pty", {
+    lifecycleEnvironment: {
+      HOME: "/runtime/home",
+      TMPDIR: "/runtime/tmp",
+      RUNTIME_VALUE: "runtime",
+    },
+  });
+  await fixture.service.create(fixture.createInput);
+  const workload = await fixture.service.run({
+    workspaceId: fixture.workspaceId,
+    argv: [
+      processExecPath(),
+      "-e",
+      "process.stdout.write(JSON.stringify({home:process.env.HOME,tmp:process.env.TMPDIR,value:process.env.RUNTIME_VALUE,caller:process.env.CALLER_VALUE}))",
+    ],
+    env: { RUNTIME_VALUE: "caller", CALLER_VALUE: "caller" },
+    purpose: { kind: "workspace-script", script: "lifecycle-environment" },
+  });
+  workload.stdin.end();
+  await expect(collectText(workload.stdout)).resolves.toBe(
+    JSON.stringify({
+      home: "/runtime/home",
+      tmp: "/runtime/tmp",
+      value: "runtime",
+      caller: "caller",
+    }),
+  );
+  await expect(workload.exited).resolves.toEqual({ code: 0, signal: null });
+
+  const terminal = await fixture.service.openTerminal({
+    workspaceId: fixture.workspaceId,
+    argv: [processExecPath(), "-e", "process.stdout.write(process.env.RUNTIME_VALUE)"],
+    env: { RUNTIME_VALUE: "caller" },
+    purpose: { kind: "terminal", terminalId: "lifecycle-environment" },
+    rows: 24,
+    cols: 80,
+  });
+  let output = "";
+  terminal.onData((data) => {
+    output += data;
+  });
+  await expect(terminal.exited).resolves.toEqual({ code: 0, signal: null });
+  expect(output).toContain("runtime");
+  await fixture.service.destroy(fixture.workspaceId);
+}, 15_000);
 
 async function createFixture(
   name: string,

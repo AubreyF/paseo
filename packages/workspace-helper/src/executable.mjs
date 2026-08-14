@@ -1,4 +1,4 @@
-#!/usr/local/bin/node
+#!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { constants, watch } from "node:fs";
 import { access, open, realpath, readdir, rename, stat, unlink } from "node:fs/promises";

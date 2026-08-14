@@ -106,6 +106,8 @@ export interface WorkspaceRuntimeDriver {
   };
   readonly scriptTerminal: import("../index.js").WorkspaceScriptTerminal;
   readonly provider: import("../index.js").WorkspaceRuntimeProviderCapability;
+  /** Private setup-only base environment owned by this execution boundary. */
+  setupEnvironment?(): Readonly<Record<string, string>>;
   create(input: WorkspaceDriverCreateInput): Promise<WorkspaceDriverCreation>;
   inspect(workspaceId: WorkspaceId): Promise<WorkspaceDriverInspection>;
   spawn(input: WorkspaceDriverSpawnInput): Promise<WorkspaceDriverProcess>;

@@ -19,6 +19,8 @@ import { hostWorkspaceHelper } from "./host-helper.js";
 import type { HostGitObservationOwner } from "./host-git-observation.js";
 import { createRuntimeStateStore } from "./runtime-state.js";
 import { writePaseoWorktreeFirstAgentBranchAutoNameMetadata } from "../../../utils/worktree-metadata.js";
+import { createExternalProcessEnv } from "../../paseo-env.js";
+import { createStringCommandShellEnv } from "../../../utils/string-command-shell.js";
 
 interface WorktreeRuntimeState {
   workspaceId: string;
@@ -72,6 +74,7 @@ export function createWorktreeRuntime(options: {
       environment: "inherit-sanitized-host",
       sharedHostProviders: new Set(["opencode"]),
     },
+    setupEnvironment: () => createStringCommandShellEnv(createExternalProcessEnv(process.env)),
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);
       if (existing.status === "ready" || existing.status === "paused") {
@@ -153,9 +156,10 @@ export function createWorktreeRuntime(options: {
           sourceRoot,
           lifecycle: "ready",
           lifecycleEnvironment: {
-            PASEO_SOURCE_CHECKOUT_PATH: ".",
-            PASEO_ROOT_PATH: ".",
-            PASEO_WORKTREE_PATH: ".",
+            PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+            PASEO_SOURCE_CHECKOUT_PATH: sourceRoot,
+            PASEO_ROOT_PATH: sourceRoot,
+            PASEO_WORKTREE_PATH: worktree.worktreePath,
             PASEO_BRANCH_NAME: worktree.branchName,
           },
           ownsWorktree: true,

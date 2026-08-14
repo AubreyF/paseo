@@ -16,9 +16,8 @@ on:
       - "packages/app/**"
       - "packages/cli/**"
       - "packages/client/**"
-      - "packages/docker-workspace-runtime/**"
       - "packages/desktop/**"
-      - "packages/fixture-workspace-runtime/**"
+      - "packages/workspace-helper/**"
       - "packages/workspace-runtime-contract/**"
       - "packages/expo-two-way-audio/**"
       - "packages/highlight/**"
@@ -158,46 +157,6 @@ jobs:
           provenance: false
           cache-from: type=gha,scope=paseo
           cache-to: type=gha,scope=paseo,mode=max
-
-  workspace-runtime-test:
-    needs: setup
-    if: needs.setup.outputs.publish != 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: node scripts/npm-retry.mjs ci
-
-      - name: Build server stack
-        run: npm run build:server
-
-      - name: Build Docker workspace runtime CLI
-        run: npm run build:docker-workspace-runtime
-
-      - name: Build Docker acceptance image
-        run: docker build --file packages/docker-workspace-runtime/Dockerfile --tag paseo-workspace-runtime-e2e:test .
-
-      - name: Test workspace runtime contract
-        run: npm run test:workspace-runtime:docker --workspace=@getpaseo/server
-        env:
-          E2E_DOCKER_WORKSPACE_IMAGE: paseo-workspace-runtime-e2e:test
-
-      - name: Install Playwright browser
-        run: npx playwright install chromium
-
-      - name: Test Docker Desktop acceptance journey
-        run: npm run test:e2e:renderer --workspace=@getpaseo/desktop -- e2e/new-workspace-docker.spec.ts --workers=1
-        env:
-          E2E_DOCKER_ACCEPTANCE: "1"
-          E2E_DOCKER_WORKSPACE_IMAGE: paseo-workspace-runtime-e2e:test
 
   publish:
     needs: setup

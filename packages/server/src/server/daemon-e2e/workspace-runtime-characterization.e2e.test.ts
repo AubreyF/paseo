@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -14,6 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FileVersion } from "@getpaseo/protocol/messages";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { DaemonClient } from "../test-utils/daemon-client.js";
@@ -30,13 +32,13 @@ import {
 const FIXTURE_PROVIDER = "workspace-runtime-fixture";
 const FIXTURE_MODEL = "fixture-model";
 const fixtureAgentPath = fileURLToPath(
-  new URL("../test-utils/fixtures/workspace-runtime-acp-agent.mjs", import.meta.url),
+  new URL(
+    "../../../../../runtimes/fixture/test/fixtures/workspace-runtime-acp-agent.mjs",
+    import.meta.url,
+  ),
 );
 const fixtureRuntimePath = fileURLToPath(
-  new URL("../../../../fixture-workspace-runtime/src/index.mjs", import.meta.url),
-);
-const workspaceHelperPath = fileURLToPath(
-  new URL("../workspace-helper/executable.mjs", import.meta.url),
+  new URL("../../../../../runtimes/fixture/src/index.mjs", import.meta.url),
 );
 
 interface CharacterizedWorkspace {
@@ -115,6 +117,63 @@ function createRepository(): string {
     stdio: "pipe",
   });
   return repo;
+}
+
+function createBarrierRepository(mode: "complete" | "fail" = "complete"): string {
+  const repo = createRepository();
+  writeFileSync(
+    path.join(repo, "setup-barrier.mjs"),
+    mode === "complete"
+      ? `import { existsSync, writeFileSync } from "node:fs";
+process.stdout.write("setup-streamed-before-release\\n");
+writeFileSync("setup-environment.json", JSON.stringify({
+  custom: process.env.PASEO_SETUP_CUSTOM_INHERITED,
+  supervised: process.env.PASEO_SUPERVISED,
+  electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE,
+  bashEnv: process.env.BASH_ENV,
+  home: process.env.HOME,
+  path: process.env.PATH,
+  source: process.env.PASEO_SOURCE_CHECKOUT_PATH,
+  root: process.env.PASEO_ROOT_PATH,
+  worktree: process.env.PASEO_WORKTREE_PATH,
+  branch: process.env.PASEO_BRANCH_NAME,
+  port: process.env.PASEO_WORKTREE_PORT,
+}));
+const timer = setInterval(() => {
+  if (!existsSync("release-setup")) return;
+  clearInterval(timer);
+  writeFileSync("setup-after-release.txt", "completed\\n");
+}, 10);
+`
+      : `process.stdout.write("setup-failed-after-publication\\n"); process.exit(7);\n`,
+  );
+  writeFileSync(
+    path.join(repo, "paseo.json"),
+    JSON.stringify({
+      worktree: { setup: [`${JSON.stringify(process.execPath)} setup-barrier.mjs`] },
+    }),
+  );
+  execFileSync("git", ["add", "."], { cwd: repo, stdio: "pipe" });
+  execFileSync("git", ["commit", "--amend", "--no-edit"], { cwd: repo, stdio: "pipe" });
+  return repo;
+}
+
+function waitForRawMessage<T extends SessionOutboundMessage>(
+  selectedClient: DaemonClient,
+  predicate: (message: SessionOutboundMessage) => message is T,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      unsubscribe();
+      reject(new Error("Timed out waiting for public daemon message"));
+    }, 15_000);
+    const unsubscribe = selectedClient.subscribeRawMessages((message) => {
+      if (!predicate(message)) return;
+      clearTimeout(timeout);
+      unsubscribe();
+      resolve(message);
+    });
+  });
 }
 
 async function createCharacterizedWorkspace(kind: "local" | "worktree") {
@@ -452,7 +511,175 @@ describe("current workspace runtime journeys", () => {
       }
     }
   }, 120_000);
+
+  test("owned worktree publishes, streams setup, and runs an agent before setup releases", async () => {
+    const repo = createBarrierRepository();
+    const bashEnvMarker = path.join(repo, "bash-env-was-sourced");
+    const bashEnvStartup = path.join(repo, "setup-bash-env.sh");
+    writeFileSync(bashEnvStartup, `printf sourced > ${JSON.stringify(bashEnvMarker)}\n`);
+    const originalCustom = process.env.PASEO_SETUP_CUSTOM_INHERITED;
+    const originalSupervised = process.env.PASEO_SUPERVISED;
+    const originalElectronRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
+    const originalBashEnv = process.env.BASH_ENV;
+    process.env.PASEO_SETUP_CUSTOM_INHERITED = "custom daemon value with spaces";
+    process.env.PASEO_SUPERVISED = "must-be-sanitized";
+    process.env.ELECTRON_RUN_AS_NODE = "must-be-sanitized";
+    process.env.BASH_ENV = bashEnvStartup;
+    const messages: SessionOutboundMessage[] = [];
+    const unsubscribe = client.subscribeRawMessages((message) => messages.push(message));
+    let workspace: CharacterizedWorkspace | undefined;
+    try {
+      const created = await client.createWorkspace({
+        runtimeId: "worktree",
+        source: {
+          kind: "worktree",
+          cwd: repo,
+          action: "branch-off",
+          branchName: "causal-worktree",
+          worktreeSlug: "causal-worktree",
+          baseBranch: "main",
+        },
+      });
+      if (!created.workspace?.workspaceDirectory) {
+        throw new Error(created.error ?? "Causal worktree creation failed");
+      }
+      workspace = {
+        id: created.workspace.id,
+        projectId: created.workspace.projectId,
+        cwd: created.workspace.workspaceDirectory,
+        kind: "worktree",
+      };
+
+      expect(existsSync(path.join(workspace.cwd, "release-setup"))).toBe(false);
+      expect(
+        messages.some(
+          (message) =>
+            message.type === "workspace.create.response" &&
+            message.payload.workspace?.id === workspace?.id,
+        ),
+      ).toBe(true);
+      expect(
+        messages.some(
+          (message) =>
+            message.type === "workspace_update" &&
+            message.payload.kind === "upsert" &&
+            message.payload.workspace.id === workspace?.id,
+        ),
+      ).toBe(true);
+
+      const isRunningSetup = (
+        message: SessionOutboundMessage,
+      ): message is Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }> =>
+        message.type === "workspace_setup_progress" &&
+        message.payload.workspaceId === workspace?.id &&
+        message.payload.status === "running" &&
+        message.payload.detail.commands.some(
+          (command) =>
+            command.status === "running" && command.log.includes("setup-streamed-before-release"),
+        );
+      const running =
+        messages.find(isRunningSetup) ??
+        (await waitForRawMessage(
+          client,
+          (
+            message,
+          ): message is Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }> =>
+            isRunningSetup(message),
+        ));
+      expect(running.payload.detail.worktreePath).toBe(workspace.cwd);
+      expect(running.payload.detail.commands[0]?.cwd).toBe(workspace.cwd);
+      expect(existsSync(path.join(workspace.cwd, "setup-after-release.txt"))).toBe(false);
+      const setupEnvironment = JSON.parse(
+        await readWorkspaceTextFile(workspace.id, workspace.cwd, "setup-environment.json"),
+      ) as Record<string, string | undefined>;
+      expect(setupEnvironment).toMatchObject({
+        custom: "custom daemon value with spaces",
+        home: process.env.HOME,
+        path: process.env.PATH,
+        source: realpathSync(repo),
+        root: realpathSync(repo),
+        worktree: workspace.cwd,
+        branch: "causal-worktree",
+        port: expect.stringMatching(/^\d+$/u),
+      });
+      expect(setupEnvironment.supervised).toBeUndefined();
+      expect(setupEnvironment.electronRunAsNode).toBeUndefined();
+      expect(setupEnvironment.bashEnv).toBeUndefined();
+      expect(existsSync(bashEnvMarker)).toBe(false);
+
+      await client.refreshProvidersSnapshot({
+        cwd: workspace.cwd,
+        workspaceId: workspace.id,
+        providers: [FIXTURE_PROVIDER],
+      });
+      const agent = await client.createAgent({
+        provider: FIXTURE_PROVIDER,
+        model: FIXTURE_MODEL,
+        cwd: workspace.cwd,
+        workspaceId: workspace.id,
+        title: "agent before setup release",
+      });
+      await client.sendMessage(agent.id, "agent-before-release");
+      expect((await client.waitForFinish(agent.id, 30_000)).status).toBe("idle");
+      await expect(
+        readWorkspaceTextFile(workspace.id, workspace.cwd, "stdio-agent-output.txt"),
+      ).resolves.toBe("agent-before-release\n");
+      expect(existsSync(path.join(workspace.cwd, "release-setup"))).toBe(false);
+
+      writeFileSync(path.join(workspace.cwd, "release-setup"), "release\n");
+      await expect
+        .poll(() => client.fetchWorkspaceSetupStatus(workspace!.id), { timeout: 15_000 })
+        .toMatchObject({ snapshot: { status: "completed", error: null } });
+      await expect(
+        readWorkspaceTextFile(workspace.id, workspace.cwd, "setup-after-release.txt"),
+      ).resolves.toBe("completed\n");
+    } finally {
+      restoreProcessEnvironment("PASEO_SETUP_CUSTOM_INHERITED", originalCustom);
+      restoreProcessEnvironment("PASEO_SUPERVISED", originalSupervised);
+      restoreProcessEnvironment("ELECTRON_RUN_AS_NODE", originalElectronRunAsNode);
+      restoreProcessEnvironment("BASH_ENV", originalBashEnv);
+      unsubscribe();
+      if (workspace) await client.removeProject(workspace.projectId).catch(() => undefined);
+    }
+  }, 120_000);
+
+  test("setup failure after publication leaves the worktree usable", async () => {
+    const repo = createBarrierRepository("fail");
+    const created = await client.createWorkspace({
+      runtimeId: "worktree",
+      source: {
+        kind: "worktree",
+        cwd: repo,
+        action: "branch-off",
+        branchName: "failed-setup-worktree",
+        worktreeSlug: "failed-setup-worktree",
+        baseBranch: "main",
+      },
+    });
+    if (!created.workspace?.workspaceDirectory) throw new Error(created.error ?? "create failed");
+    const workspace = {
+      id: created.workspace.id,
+      projectId: created.workspace.projectId,
+      cwd: created.workspace.workspaceDirectory,
+      kind: "worktree" as const,
+    };
+    try {
+      await expect
+        .poll(() => client.fetchWorkspaceSetupStatus(workspace.id), { timeout: 15_000 })
+        .toMatchObject({ snapshot: { status: "failed" } });
+      await expectFileEditAndWatch(workspace);
+      await expectGitObservation(workspace);
+      await expectTerminalCommand(workspace);
+    } finally {
+      await client.removeProject(workspace.projectId).catch(() => undefined);
+    }
+  }, 120_000);
 });
+
+function restoreProcessEnvironment(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
 
 test("catalog selection creates through a configured runtime while omission remains local", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "workspace-runtime-selection-"));
@@ -473,7 +700,6 @@ test("catalog selection creates through a configured runtime while omission rema
         type: "command",
         label: "Fixture",
         command: [process.execPath, fixtureRuntimePath],
-        helperCommand: [process.execPath, workspaceHelperPath],
         options: { stateDirectory },
       },
     },
@@ -488,7 +714,6 @@ test("catalog selection creates through a configured runtime while omission rema
       runtimes: [
         { runtimeId: "local", builtin: true, requiresGitProject: false },
         { runtimeId: "worktree", builtin: true, requiresGitProject: true },
-        { runtimeId: "docker", builtin: true, requiresGitProject: true },
         {
           runtimeId: "fixture",
           builtin: false,
@@ -554,7 +779,6 @@ test("provider probes match user workspace snapshots for every host-backed runti
         type: "command",
         label: "Fixture",
         command: [process.execPath, fixtureRuntimePath],
-        helperCommand: [process.execPath, workspaceHelperPath],
         options: { stateDirectory, materializeRoot },
       },
     },

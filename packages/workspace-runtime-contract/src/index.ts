@@ -8,7 +8,7 @@ const OptionsSchema = z.record(z.string(), z.json());
 const CommandSchema = z.array(z.string()).min(1);
 
 export const CommandRuntimeProjectSourceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("host-directory"), path: z.string() }).strict(),
+  z.object({ kind: z.literal("directory"), path: z.string() }).strict(),
   z
     .object({
       kind: z.literal("git"),
@@ -83,7 +83,7 @@ export const CommandRuntimeCreateInputSchema = z
       .object({ projectId: z.string(), source: CommandRuntimeProjectSourceSchema })
       .strict(),
     placement: CommandRuntimePlacementIntentSchema,
-    purpose: z.literal("provider-probe").optional(),
+    purpose: z.literal("discovery").optional(),
     markFirstAgentBranchAutoName: z.boolean().optional(),
     seedPaseoConfigFrom: z.string().optional(),
   })
@@ -110,7 +110,6 @@ export const CommandRuntimeStateSchema = z
 export const CommandRuntimePlacementSchema = z
   .object({
     cwd: z.string(),
-    hostVisiblePath: z.string().optional(),
   })
   .strict();
 
@@ -162,12 +161,12 @@ export const CommandRuntimeDescribeResponseSchema = z
   .strict();
 
 export const CommandRuntimeProcessPurposeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("agent"), agentId: z.string(), provider: z.string() }).strict(),
-  z.object({ kind: z.literal("terminal"), terminalId: z.string() }).strict(),
+  z.object({ kind: z.literal("agent") }).strict(),
+  z.object({ kind: z.literal("terminal") }).strict(),
   z.object({ kind: z.literal("git") }).strict(),
-  z.object({ kind: z.literal("provider-probe"), provider: z.string() }).strict(),
+  z.object({ kind: z.literal("discovery") }).strict(),
   z.object({ kind: z.literal("workspace-helper") }).strict(),
-  z.object({ kind: z.literal("workspace-script"), script: z.string() }).strict(),
+  z.object({ kind: z.literal("workspace-script") }).strict(),
   z.object({ kind: z.literal("setup") }).strict(),
   z.object({ kind: z.literal("archive") }).strict(),
 ]);

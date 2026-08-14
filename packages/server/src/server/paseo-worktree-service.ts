@@ -121,7 +121,7 @@ async function createPaseoWorktreeWithPriority(
       intent: plan.intent,
       workspace: persistedWorkspace,
       repoRoot: plan.repoRoot,
-      created: true,
+      created: placement.materializedFreshContent,
     };
   } catch (error) {
     await deps.workspaceRuntime

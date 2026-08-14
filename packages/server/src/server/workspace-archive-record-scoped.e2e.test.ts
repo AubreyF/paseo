@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -280,18 +280,36 @@ test.skipIf(process.platform === "win32")(
   async () => {
     const repoDir = createGitRepo();
     const setupStartedPath = path.join(repoDir, "setup-started");
-    const stopSetupPath = path.join(repoDir, "stop-setup");
+    const descendantPidPath = path.join(repoDir, "setup-descendant.pid");
+    writeFileSync(
+      path.join(repoDir, "setup-descendant.mjs"),
+      `process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);\n`,
+    );
+    writeFileSync(
+      path.join(repoDir, "setup-owner.mjs"),
+      `import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import path from "node:path";
+const source = process.env.PASEO_SOURCE_CHECKOUT_PATH;
+const child = spawn(process.execPath, ["setup-descendant.mjs"], { stdio: "ignore" });
+writeFileSync(path.join(source, "setup-descendant.pid"), String(child.pid));
+writeFileSync(path.join(source, "setup-started"), "started");
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1000);
+`,
+    );
     writeFileSync(
       path.join(repoDir, "paseo.json"),
       JSON.stringify({
         worktree: {
-          setup: [
-            `node -e "const fs=require('fs'),path=require('path');const source=process.env.PASEO_SOURCE_CHECKOUT_PATH;const worktree=process.env.PASEO_WORKTREE_PATH;const target=path.join(worktree,'node_modules/react-native-svg/lib/typescript');fs.writeFileSync(path.join(source,'setup-started'),'started');while(!fs.existsSync(path.join(source,'stop-setup'))){try{fs.mkdirSync(target,{recursive:true});fs.writeFileSync(path.join(target,'active'),String(Date.now()))}catch{}}"`,
-          ],
+          setup: [`${JSON.stringify(process.execPath)} setup-owner.mjs`],
         },
       }),
     );
-    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["add", "paseo.json", "setup-owner.mjs", "setup-descendant.mjs"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
     execFileSync(
       "git",
       ["-c", "commit.gpgsign=false", "commit", "-m", "add active worktree setup"],
@@ -313,8 +331,13 @@ test.skipIf(process.platform === "win32")(
 
     try {
       await expect.poll(() => existsSync(setupStartedPath), { timeout: 10000 }).toBe(true);
+      const descendantPid = Number.parseInt(readFileSync(descendantPidPath, "utf8"), 10);
+      expect(() => process.kill(descendantPid, 0)).not.toThrow();
 
       const archive = await ctx.client.archiveWorkspace(workspace.id);
+      expect(() => process.kill(descendantPid, 0)).toThrow(
+        expect.objectContaining({ code: "ESRCH" }),
+      );
       const retry = await ctx.client.archiveWorkspace(workspace.id);
 
       expect({ archiveError: archive.error, retryError: retry.error }).toEqual({
@@ -324,7 +347,14 @@ test.skipIf(process.platform === "win32")(
       expect((await activeWorkspaceIds()).has(workspace.id)).toBe(false);
       expect(existsSync(workspace.workspaceDirectory)).toBe(true);
     } finally {
-      writeFileSync(stopSetupPath, "stop\n");
+      if (existsSync(descendantPidPath)) {
+        const descendantPid = Number.parseInt(readFileSync(descendantPidPath, "utf8"), 10);
+        try {
+          process.kill(descendantPid, "SIGKILL");
+        } catch {
+          // The production archive path reaped the setup process tree.
+        }
+      }
     }
   },
   60000,

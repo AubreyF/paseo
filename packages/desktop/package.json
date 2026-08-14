@@ -15,10 +15,10 @@
   },
   "main": "dist/main.js",
   "scripts": {
-    "build": "npm --prefix ../.. run build:docker-workspace-runtime:clean && npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.yml",
+    "build": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.yml",
     "build:main": "tsc -p tsconfig.json",
     "capture-harness": "./capture-harness/run.sh",
-    "dev:prerequisites": "npm --prefix ../.. run build:server-deps && npm --prefix ../.. run build:docker-workspace-runtime && npm --prefix ../.. run build --workspace=@getpaseo/server",
+    "dev:prerequisites": "npm --prefix ../.. run build:server-deps && npm --prefix ../.. run build --workspace=@getpaseo/server",
     "predev": "npm run dev:prerequisites",
     "dev": "./scripts/dev.sh",
     "predev:win": "npm run dev:prerequisites",
@@ -31,7 +31,6 @@
   },
   "dependencies": {
     "@getpaseo/cli": "*",
-    "@getpaseo/docker-workspace-runtime": "*",
     "@getpaseo/server": "*",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.6.2",

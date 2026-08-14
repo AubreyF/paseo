@@ -16,7 +16,7 @@ import type {
   SessionInboundMessage,
   SessionOutboundMessage,
 } from "../../messages.js";
-import type { WorkspaceFileKind, WorkspaceFiles } from "../../workspace-helper/index.js";
+import type { WorkspaceFileKind, WorkspaceFiles } from "@getpaseo/workspace-helper";
 import type { WorkspaceRuntimeService } from "../../workspace-runtime/index.js";
 import type { WorkspaceRegistry } from "../../workspace-registry.js";
 import { FileUploadStore } from "../../file-upload/index.js";

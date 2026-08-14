@@ -1125,6 +1125,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
 
 test("create_agent_request launches from an exact subdirectory in a created worktree", async () => {
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-worktree-cwd-"));
+  let cleanupRuntime: (() => Promise<void>) | null = null;
   try {
     const parent = path.join(workdir, "parent");
     const child = path.join(parent, "packages", "app");
@@ -1282,6 +1283,12 @@ test("create_agent_request launches from an exact subdirectory in a created work
       providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: null,
     });
+    cleanupRuntime = async () => {
+      await session.cleanup();
+      for (const workspace of await workspaceRegistry.list()) {
+        if (workspace.runtime) await workspaceRuntime.destroy(workspace.workspaceId);
+      }
+    };
 
     await session.handleMessage({
       type: "create_agent_request",
@@ -1290,6 +1297,16 @@ test("create_agent_request launches from an exact subdirectory in a created work
       attachments: [],
       worktree: { mode: "branch-off", newBranch: "feature/created-worktree" },
     });
+    await vi.waitFor(
+      () =>
+        expect(
+          emitted.some(
+            (message) =>
+              message.type === "workspace_setup_progress" && message.payload.status === "completed",
+          ),
+        ).toBe(true),
+      { timeout: 10_000 },
+    );
 
     const [createdAgent] = agentManager.listAgents();
     const createdWorktreeRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
@@ -1308,6 +1325,7 @@ test("create_agent_request launches from an exact subdirectory in a created work
       agent: { cwd: createdAgent?.cwd },
     });
   } finally {
+    await cleanupRuntime?.();
     rmSync(workdir, { recursive: true, force: true });
   }
 });

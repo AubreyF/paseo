@@ -17,15 +17,17 @@ function createDeferred<T>() {
 
 test("selected runtime Git observation prunes paths ignored by that runtime checkout", async () => {
   let subscriptionInput: Parameters<BoundWorkspaceRuntime["files"]["subscribe"]>[0] | null = null;
+  const run = vi.fn(async () => ({
+    stdin: new PassThrough(),
+    stdout: Readable.from(["node_modules/\0packages/server/dist/\0"]),
+    stderr: Readable.from([]),
+    exited: Promise.resolve({ code: 0, signal: null }),
+    kill: () => undefined,
+  }));
+  const resolveCommand = vi.fn(async () => "C:\\runtime\\git.exe");
   const runtime = {
-    run: async () => ({
-      stdin: new PassThrough(),
-      stdout: Readable.from(["node_modules/\0packages/server/dist/\0"]),
-      stderr: Readable.from([]),
-      exited: Promise.resolve({ code: 0, signal: null }),
-      kill: () => undefined,
-    }),
-    resolveCommand: async () => null,
+    run,
+    resolveCommand,
     scriptTerminal: { kind: "direct-command", command: "/bin/sh", argsPrefix: ["-lc"] },
     files: {
       subscribe: async (input) => {
@@ -44,6 +46,43 @@ test("selected runtime Git observation prunes paths ignored by that runtime chec
     recursive: true,
     ignoredPaths: ["node_modules", "packages/server/dist"],
   });
+  expect(resolveCommand).toHaveBeenCalledWith("git");
+  expect(run).toHaveBeenCalledWith({
+    argv: [
+      "C:\\runtime\\git.exe",
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--directory",
+      "-z",
+    ],
+    env: { GIT_OPTIONAL_LOCKS: "0" },
+    purpose: { kind: "git" },
+  });
+  await subscription.unsubscribe();
+});
+
+test("selected runtime Git observation stays available when Git is unavailable", async () => {
+  let subscriptionInput: Parameters<BoundWorkspaceRuntime["files"]["subscribe"]>[0] | null = null;
+  const runtime = {
+    run: vi.fn(),
+    resolveCommand: vi.fn(async () => null),
+    scriptTerminal: { kind: "direct-command", command: "/bin/sh", argsPrefix: ["-lc"] },
+    files: {
+      subscribe: async (input) => {
+        subscriptionInput = input;
+        return { unsubscribe: async () => undefined };
+      },
+    },
+  } as unknown as BoundWorkspaceRuntime;
+  const coordinator = createGitCommonObservationCoordinator();
+  coordinator.bind(runtime, "workspace-1", {} as WorkspaceRuntimeDriver);
+
+  const subscription = await observeWorkspaceGit(runtime, () => undefined);
+
+  expect(subscriptionInput).toEqual({ paths: ["."], recursive: true, ignoredPaths: [] });
+  expect(runtime.run).not.toHaveBeenCalled();
   await subscription.unsubscribe();
 });
 

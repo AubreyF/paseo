@@ -173,9 +173,11 @@ export function createGitCommonObservationCoordinator(): GitCommonObservationCoo
 }
 
 async function readGitIgnoredPaths(runtime: BoundWorkspaceRuntime): Promise<string[]> {
+  const git = await runtime.resolveCommand("git");
+  if (!git) return [];
   const process = await runtime.run({
-    argv: ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-    env: { GIT_OPTIONAL_LOCKS: "0", PATH: "/usr/local/bin:/usr/bin:/bin" },
+    argv: [git, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+    env: { GIT_OPTIONAL_LOCKS: "0" },
     purpose: { kind: "git" },
   });
   process.stdin.end();

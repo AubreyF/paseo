@@ -731,49 +731,40 @@ test("selected workspaces with the same public cwd keep snapshots and diffs isol
 }, 25_000);
 
 test("selected workspaces with the same public cwd keep observations isolated", async () => {
-  const { workspaceA, workspaceB, workspaceRuntime } = await createSamePublicCwdFixture();
-  const commandRuntimeEventTimeoutMs = 15_000;
-  await Promise.all([
-    workspaceA.getSnapshot({ force: true, includeForge: false, reason: "observation-warm-a" }),
-    workspaceB.getSnapshot({ force: true, includeForge: false, reason: "observation-warm-b" }),
+  const { workspaceRuntime } = await createSamePublicCwdFixture();
+  const [runtimeA, runtimeB] = await Promise.all([
+    workspaceRuntime.bind("same-cwd-a"),
+    workspaceRuntime.bind("same-cwd-b"),
   ]);
-  let observedAWaiter: { dirty: boolean; resolve: () => void } | null = null;
   let workspaceAChanges = 0;
-  const workspaceBStates: Array<{ branch: string | null; dirty: boolean | null }> = [];
+  let workspaceBChanges = 0;
+  let resolveObservedA!: () => void;
+  const observedA = new Promise<void>((resolve) => {
+    resolveObservedA = resolve;
+  });
   const [observationA, observationB] = await Promise.all([
-    workspaceA.observe((snapshot) => {
+    observeWorkspaceGit(runtimeA, () => {
       workspaceAChanges += 1;
-      if (observedAWaiter?.dirty === snapshot.git.isDirty) {
-        observedAWaiter.resolve();
-        observedAWaiter = null;
-      }
+      resolveObservedA();
     }),
-    workspaceB.observe((snapshot) => {
-      workspaceBStates.push({
-        branch: snapshot.git.currentBranch,
-        dirty: snapshot.git.isDirty,
-      });
+    observeWorkspaceGit(runtimeB, () => {
+      workspaceBChanges += 1;
     }),
   ]);
 
-  const waitForObservedA = (dirty: boolean) =>
-    new Promise<void>((resolve) => {
-      observedAWaiter = { dirty, resolve };
+  try {
+    await workspaceRuntime.files("same-cwd-a").write({
+      path: "tracked.txt",
+      contents: Buffer.from("runtime a watched\n"),
     });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  workspaceAChanges = 0;
-  workspaceBStates.length = 0;
-  const observedA = waitForObservedA(true);
-  await workspaceRuntime.files("same-cwd-a").write({
-    path: "tracked.txt",
-    contents: Buffer.from("runtime a watched\n"),
-  });
-  await eventWithin(observedA, "workspace A change", commandRuntimeEventTimeoutMs);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(workspaceAChanges).toBeGreaterThan(0);
-  expect(workspaceBStates).toEqual([]);
-  await Promise.all([observationA.unsubscribe(), observationB.unsubscribe()]);
-}, 30_000);
+    await eventWithin(observedA, "workspace A change");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(workspaceAChanges).toBeGreaterThan(0);
+    expect(workspaceBChanges).toBe(0);
+  } finally {
+    await Promise.all([observationA.unsubscribe(), observationB.unsubscribe()]);
+  }
+}, 20_000);
 
 test("selected workspaces with the same public cwd keep mutations and caches isolated", async () => {
   const {

@@ -183,6 +183,28 @@ export function createService(
       if (failures.length > 0)
         throw new AggregateError(failures, "Workspace reconciliation failed");
     },
+    async close() {
+      const workspaceIds = new Set([
+        ...processesByWorkspaceId.keys(),
+        ...fileClients.keys(),
+        ...fileSubscriptions.keys(),
+        ...boundRuntimes.keys(),
+      ]);
+      boundRuntimes.clear();
+      await Promise.all(
+        [...fileSubscriptions.values()].flatMap((subscriptions) =>
+          [...subscriptions].map(async (subscription) => {
+            await subscription.bound?.unsubscribe();
+            subscription.bound = null;
+          }),
+        ),
+      );
+      await gitCommonObservations.close();
+      await Promise.all(
+        [...workspaceIds].map((workspaceId) => closeFiles(workspaceId, true, null)),
+      );
+      await Promise.all([...workspaceIds].map((workspaceId) => stopProcesses(workspaceId)));
+    },
     async create(input) {
       return sequence(input.workspaceId, async () => {
         const selectedRuntimeId = await records.resolveRuntimeId(input.workspaceId);
@@ -520,7 +542,11 @@ export function createService(
     return client;
   }
 
-  async function closeFiles(workspaceId: string, forgetSubscriptions = false): Promise<void> {
+  async function closeFiles(
+    workspaceId: string,
+    forgetSubscriptions = false,
+    reason: Error | null = new Error("Workspace files client is closed"),
+  ): Promise<void> {
     const cached = fileClients.get(workspaceId);
     fileClients.delete(workspaceId);
     const subscriptions = fileSubscriptions.get(workspaceId);
@@ -528,7 +554,7 @@ export function createService(
       for (const subscription of subscriptions) subscription.bound = null;
       if (forgetSubscriptions) fileSubscriptions.delete(workspaceId);
     }
-    if (cached) await cached.client.close();
+    if (cached) await cached.client.close(reason ?? undefined);
   }
 
   async function stageSubscriptionRebind(

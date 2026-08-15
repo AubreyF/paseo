@@ -15,7 +15,7 @@ export interface WorkspaceFilesOwner {
   files: WorkspaceFiles;
   resolveCommand(command: string): Promise<string | null>;
   verify(): Promise<void>;
-  close(): Promise<void>;
+  close(reason?: Error): Promise<void>;
 }
 
 export function bindWorkspaceHelper(options: {

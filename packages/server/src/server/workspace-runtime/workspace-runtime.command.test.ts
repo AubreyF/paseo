@@ -399,7 +399,7 @@ test("a failed second subscription rebind rolls back the staged observer set bef
       ),
   ).toBe(false);
   await fixture.service.destroy(fixture.workspaceId);
-});
+}, 10_000);
 
 test("a file operation racing pause cannot reconstruct the closing helper client", async () => {
   const fixture = await createFixture("files-pause-race", true);

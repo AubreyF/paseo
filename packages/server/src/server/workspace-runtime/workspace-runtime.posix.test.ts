@@ -22,6 +22,7 @@ import {
   type WorkspaceRuntimeOptions,
   type WorkspaceRuntimeService,
 } from "./index.js";
+import { observeWorkspaceGit } from "../workspace-git-observation.js";
 
 const cleanupRoots: string[] = [];
 const posixDescribe = describe.runIf(process.platform !== "win32");
@@ -147,6 +148,31 @@ posixDescribe("setup lifecycle environment", () => {
     expect(output[3]).toBeTruthy();
     expect(Number(output[4])).toBeGreaterThan(0);
     await fixture.service.destroy(fixture.workspaceId);
+  });
+});
+
+posixDescribe("service lifecycle", () => {
+  test("close releases runtime processes and observations without destroying backing", async () => {
+    const fixture = await createFixture("worktree");
+    await fixture.service.create(fixture.createInput);
+    const runtime = await fixture.service.bind(fixture.workspaceId);
+    const observation = await observeWorkspaceGit(runtime, () => undefined);
+    const child = await fixture.service.run({
+      workspaceId: fixture.workspaceId,
+      argv: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+      env: {},
+      purpose: { kind: "workspace-script", script: "daemon-shutdown" },
+    });
+    child.stdin.end();
+
+    await fixture.service.close();
+
+    await expect(child.exited).resolves.toEqual({ code: null, signal: "SIGTERM" });
+    expect(existsSync(fixture.runtimeRoot())).toBe(true);
+    expect(fixture.runtimeIds.get(fixture.workspaceId)).toBe("worktree");
+    await observation.unsubscribe();
+
+    await createWorkspaceRuntimeService(fixture.options).destroy(fixture.workspaceId);
   });
 });
 

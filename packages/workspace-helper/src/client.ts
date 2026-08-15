@@ -164,12 +164,12 @@ export function createClient(options: {
         );
       }
     },
-    async close() {
+    async close(reason) {
       closePromise ??= (async () => {
         closing = true;
         watchSubscriptions.clear();
         if (watcher) {
-          await stopWatcher(watcher, new Error("Workspace files client is closed"));
+          await stopWatcher(watcher, reason);
         }
         await watcherRecovery?.catch(() => undefined);
         await Promise.all([...processes].map((child) => terminate(child)));
@@ -390,7 +390,11 @@ function handleWatchEvent(state: WatchState, line: string): void {
 }
 
 function acknowledgement(state: WatchState, key: string): Promise<void> {
-  return new Promise((resolve, reject) => state.acknowledgements.set(key, { resolve, reject }));
+  const pending = new Promise<void>((resolve, reject) =>
+    state.acknowledgements.set(key, { resolve, reject }),
+  );
+  void pending.catch(() => undefined);
+  return pending;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

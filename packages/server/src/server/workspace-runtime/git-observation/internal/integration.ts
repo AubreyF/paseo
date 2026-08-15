@@ -18,6 +18,7 @@ export interface ObservationRebindTransaction {
 
 export interface GitCommonObservationCoordinator {
   bind(runtime: BoundWorkspaceRuntime, workspaceId: string, driver: WorkspaceRuntimeDriver): void;
+  close(): Promise<void>;
   pause(workspaceId: string): Promise<void>;
   stageResume(workspaceId: string): Promise<ObservationRebindTransaction>;
   destroy(workspaceId: string): Promise<void>;
@@ -53,6 +54,11 @@ export function createGitCommonObservationCoordinator(): GitCommonObservationCoo
           };
         },
       });
+    },
+    async close() {
+      const selected = [...observations];
+      observations.clear();
+      await Promise.allSettled(selected.map((observation) => observation.physical?.unsubscribe()));
     },
     async pause(workspaceId) {
       for (const observation of owned(workspaceId)) {

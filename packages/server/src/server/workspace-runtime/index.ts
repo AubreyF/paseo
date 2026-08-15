@@ -136,6 +136,7 @@ export interface WorkspaceRuntimeProviderCapability {
 export interface WorkspaceRuntimeService {
   listRuntimes(): readonly WorkspaceRuntimeCatalogEntry[];
   reconcile(): Promise<void>;
+  close(): Promise<void>;
   create(input: CreateWorkspaceInput): Promise<WorkspaceRuntimePlacement>;
   run(input: WorkspaceProcessInput): Promise<WorkspaceProcess>;
   openTerminal(input: WorkspaceTerminalInput): Promise<WorkspaceTerminal>;

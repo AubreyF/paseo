@@ -736,6 +736,8 @@ test("selected workspaces with the same public cwd keep observations isolated", 
     workspaceRuntime.bind("same-cwd-a"),
     workspaceRuntime.bind("same-cwd-b"),
   ]);
+  const gitObservation = await observeWorkspaceGit(runtimeA, () => undefined);
+  await gitObservation.unsubscribe();
   let workspaceAChanges = 0;
   let workspaceBChanges = 0;
   let resolveObservedA!: () => void;
@@ -743,12 +745,15 @@ test("selected workspaces with the same public cwd keep observations isolated", 
     resolveObservedA = resolve;
   });
   const [observationA, observationB] = await Promise.all([
-    observeWorkspaceGit(runtimeA, () => {
+    runtimeA.files.subscribe({ paths: ["tracked.txt"] }, (event) => {
+      if (event.type !== "changed" || !event.paths.includes("tracked.txt")) return;
       workspaceAChanges += 1;
       resolveObservedA();
     }),
-    observeWorkspaceGit(runtimeB, () => {
-      workspaceBChanges += 1;
+    runtimeB.files.subscribe({ paths: ["tracked.txt"] }, (event) => {
+      if (event.type === "changed" && event.paths.includes("tracked.txt")) {
+        workspaceBChanges += 1;
+      }
     }),
   ]);
 

@@ -14,6 +14,7 @@ const fixtureExecutable = fileURLToPath(
   new URL("../../../../runtimes/fixture/src/index.mjs", import.meta.url),
 );
 const cleanupRoots: string[] = [];
+const cleanupTasks: Array<() => Promise<void>> = [];
 
 function eventWithin(event: Promise<void>, label: string): Promise<void> {
   return Promise.race([
@@ -33,9 +34,22 @@ function createDeferred(): { promise: Promise<void>; resolve(): void } {
 }
 
 afterEach(async () => {
-  await Promise.all(
+  const teardownResults = await Promise.allSettled(
+    cleanupTasks
+      .splice(0)
+      .toReversed()
+      .map((cleanup) => cleanup()),
+  );
+  const removalResults = await Promise.allSettled(
     cleanupRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
+  const results = [...teardownResults, ...removalResults];
+  const failures = results
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => result.reason);
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "Runtime Git fixture cleanup failed");
+  }
 });
 
 test.each(["local", "worktree"] as const)(
@@ -471,54 +485,9 @@ async function createBranchThroughRuntime(
   await expect(childProcess.exited).resolves.toEqual({ code: 0, signal: null });
 }
 
-test("selected workspace Git reads and mutations stay inside its command runtime", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-"));
-  cleanupRoots.push(root);
-  const runtimeRepository = await createRepository(path.join(root, "runtime-repository"));
-  const hostDecoy = await createRepository(path.join(root, "host-decoy"));
-  const remoteRepository = path.join(root, "remote.git");
-  await mkdir(remoteRepository);
-  git(remoteRepository, "init", "--bare", "--initial-branch=main");
-  git(runtimeRepository, "remote", "add", "origin", remoteRepository);
-  git(runtimeRepository, "push", "-u", "origin", "main");
-  const stateDirectory = path.join(root, "runtime-state");
-  await mkdir(stateDirectory);
-  const workspaceId = "runtime-git-workspace";
-  const runtimeIds = new Map<string, string>();
-  const workspaceRuntime = createWorkspaceRuntimeService({
-    paseoHome: path.join(root, "paseo-home"),
-    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
-    persistRuntimeId: async (id, runtimeId) => {
-      runtimeIds.set(id, runtimeId);
-    },
-    beginWorkspaceDeletion: async () => {},
-    removeWorkspaceRecord: async (id) => {
-      runtimeIds.delete(id);
-    },
-    externalRuntimes: {
-      fixture: {
-        type: "command",
-        command: [process.execPath, fixtureExecutable],
-        options: { stateDirectory, recordLaunchInWorkspace: false },
-      },
-    },
-  });
-  await workspaceRuntime.create({
-    workspaceId,
-    runtimeId: "fixture",
-    project: {
-      id: "runtime-git-project",
-      source: { kind: "host-directory", path: runtimeRepository },
-    },
-    placement: { kind: "existing" },
-  });
-  const service = new WorkspaceGitServiceImpl({
-    logger: createLogger(),
-    paseoHome: path.join(root, "paseo-home"),
-    workspaceRuntime,
-  });
-  const selectedGit = service.bindWorkspace({ workspaceId, cwd: hostDecoy });
-
+test("selected workspace Git reads stay inside its command runtime", async () => {
+  const { hostDecoy, runtimeRepository, selectedGit, workspaceRuntime, workspaceId } =
+    await createCommandRuntimeGitFixture();
   await workspaceRuntime.files(workspaceId).write({
     path: "tracked.txt",
     contents: Buffer.from("runtime edit\n"),
@@ -540,18 +509,14 @@ test("selected workspace Git reads and mutations stay inside its command runtime
   expect(JSON.stringify(dirty)).not.toContain(runtimeRepository);
   expect(JSON.stringify(diff)).toContain("runtime edit");
   expect(JSON.stringify(diff)).not.toContain("host edit");
+}, 20_000);
+
+test("selected workspace Git rejects mutations unsupported by its command runtime", async () => {
+  const { hostDecoy, selectedGit } = await createCommandRuntimeGitFixture();
+  git(hostDecoy, "branch", "host-only");
   await expect(selectedGit.switchBranch("host-only")).rejects.toThrow(
     "Branch not found: host-only",
   );
-  await selectedGit.stashPush("paseo-runtime-stash");
-  expect((await selectedGit.getSnapshot({ force: true, reason: "stash-push" })).git.isDirty).toBe(
-    false,
-  );
-  await selectedGit.stashPop(0);
-  expect((await selectedGit.getSnapshot({ force: true, reason: "stash-pop" })).git.isDirty).toBe(
-    true,
-  );
-
   await expect(selectedGit.mergeToBase({ baseRef: "main" })).rejects.toThrow(
     "Selected workspace Git does not support merge to base",
   );
@@ -562,6 +527,30 @@ test("selected workspace Git reads and mutations stay inside its command runtime
     "Selected workspace Git does not support branch rename",
   );
   await expect(selectedGit.push()).rejects.toThrow("Selected workspace Git does not support push");
+}, 20_000);
+
+test("selected workspace Git mutations and fetch stay inside its command runtime", async () => {
+  const { root, hostDecoy, runtimeRepository, selectedGit, workspaceRuntime, workspaceId } =
+    await createCommandRuntimeGitFixture();
+  const remoteRepository = path.join(root, "remote.git");
+  await mkdir(remoteRepository);
+  git(remoteRepository, "init", "--bare", "--initial-branch=main");
+  git(runtimeRepository, "remote", "add", "origin", remoteRepository);
+  git(runtimeRepository, "push", "-u", "origin", "main");
+
+  await workspaceRuntime.files(workspaceId).write({
+    path: "tracked.txt",
+    contents: Buffer.from("runtime edit\n"),
+  });
+  await writeFile(path.join(hostDecoy, "tracked.txt"), "host edit\n");
+  await selectedGit.stashPush("paseo-runtime-stash");
+  expect((await selectedGit.getSnapshot({ force: true, reason: "stash-push" })).git.isDirty).toBe(
+    false,
+  );
+  await selectedGit.stashPop(0);
+  expect((await selectedGit.getSnapshot({ force: true, reason: "stash-pop" })).git.isDirty).toBe(
+    true,
+  );
 
   await selectedGit.commit({ message: "runtime commit", addAll: true });
   await selectedGit.createBranch({ branch: "runtime-branch", baseRef: "main" });
@@ -591,24 +580,17 @@ test("selected workspace Git reads and mutations stay inside its command runtime
   await selectedGit.fetch();
   const fetched = await selectedGit.getSnapshot();
   expect(fetched.git.behindOfOrigin).toBe(1);
-
-  await workspaceRuntime.destroy(workspaceId);
-  git(runtimeRepository, "checkout", "runtime-branch");
-  await workspaceRuntime.create({
-    workspaceId,
-    runtimeId: "fixture",
-    project: {
-      id: "runtime-git-project",
-      source: { kind: "host-directory", path: runtimeRepository },
-    },
-    placement: { kind: "existing" },
-  });
-  const reconstructed = await selectedGit.getSnapshot();
-  expect(reconstructed.git.currentBranch).toBe("runtime-branch");
-
-  await service.dispose();
-  await workspaceRuntime.destroy(workspaceId);
 }, 40_000);
+
+test("selected workspace Git reconstructs command runtime state after recreation", async () => {
+  const { recreate, runtimeRepository, selectedGit, workspaceRuntime, workspaceId } =
+    await createCommandRuntimeGitFixture();
+  await workspaceRuntime.destroy(workspaceId);
+  git(runtimeRepository, "branch", "-m", "runtime-rebuilt");
+  await recreate();
+  const reconstructed = await selectedGit.getSnapshot();
+  expect(reconstructed.git.currentBranch).toBe("runtime-rebuilt");
+}, 20_000);
 
 test("selected commit history highlighting never reads a deleted file from the host cwd", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-history-"));
@@ -681,56 +663,8 @@ test("selected commit history highlighting never reads a deleted file from the h
   await workspaceRuntime.destroy("history-workspace");
 }, 20_000);
 
-test("selected workspaces with the same public cwd keep Git state, mutations, and caches isolated", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-same-cwd-"));
-  cleanupRoots.push(root);
-  const runtimeARepository = await createRepository(path.join(root, "runtime-a"));
-  const runtimeBRepository = await createRepository(path.join(root, "runtime-b"));
-  git(runtimeBRepository, "branch", "-m", "runtime-b");
-  const publicCwd = await createRepository(path.join(root, "shared-public-cwd"));
-  git(publicCwd, "branch", "-m", "host-decoy");
-  await writeFile(path.join(publicCwd, "selected-proof.txt"), Buffer.alloc(32, 0));
-  const stateDirectory = path.join(root, "runtime-state");
-  await mkdir(stateDirectory);
-  const runtimeIds = new Map<string, string>();
-  const workspaceRuntime = createWorkspaceRuntimeService({
-    paseoHome: path.join(root, "paseo-home"),
-    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
-    persistRuntimeId: async (id, runtimeId) => {
-      runtimeIds.set(id, runtimeId);
-    },
-    beginWorkspaceDeletion: async () => {},
-    removeWorkspaceRecord: async (id) => {
-      runtimeIds.delete(id);
-    },
-    externalRuntimes: {
-      fixture: {
-        type: "command",
-        command: [process.execPath, fixtureExecutable],
-        options: { stateDirectory, recordLaunchInWorkspace: false },
-      },
-    },
-  });
-  for (const [workspaceId, source] of [
-    ["same-cwd-a", runtimeARepository],
-    ["same-cwd-b", runtimeBRepository],
-  ] as const) {
-    await workspaceRuntime.create({
-      workspaceId,
-      runtimeId: "fixture",
-      project: { id: workspaceId, source: { kind: "host-directory", path: source } },
-      placement: { kind: "existing" },
-    });
-  }
-  const service = new WorkspaceGitServiceImpl({
-    logger: createLogger(),
-    paseoHome: path.join(root, "paseo-home"),
-    workspaceRuntime,
-    deps: { getWorkspaceGitSelfHealPhaseMs: () => 60_000 },
-  });
-  const workspaceA = service.bindWorkspace({ workspaceId: "same-cwd-a", cwd: publicCwd });
-  const workspaceB = service.bindWorkspace({ workspaceId: "same-cwd-b", cwd: publicCwd });
-
+test("selected workspaces with the same public cwd keep snapshots and diffs isolated", async () => {
+  const { workspaceA, workspaceB, workspaceRuntime } = await createSamePublicCwdFixture();
   await workspaceRuntime.files("same-cwd-a").write({
     path: "tracked.txt",
     contents: Buffer.from("runtime a dirty\n"),
@@ -779,7 +713,10 @@ test("selected workspaces with the same public cwd keep Git state, mutations, an
   });
   removeUntracked.stdin.end();
   await expect(removeUntracked.exited).resolves.toEqual({ code: 0, signal: null });
+}, 25_000);
 
+test("selected workspaces with the same public cwd keep observations isolated", async () => {
+  const { workspaceA, workspaceB, workspaceRuntime } = await createSamePublicCwdFixture();
   let observedAWaiter: { dirty: boolean; resolve: () => void } | null = null;
   let observedBWaiter: { dirty: boolean; resolve: () => void } | null = null;
   let workspaceAChanges = 0;
@@ -819,19 +756,19 @@ test("selected workspaces with the same public cwd keep Git state, mutations, an
     path: "tracked.txt",
     contents: Buffer.from("initial\n"),
   });
-  await observedAClean;
+  await eventWithin(observedAClean, "workspace A readiness");
   const observedBDirty = waitForObservedB(true);
   await workspaceRuntime.files("same-cwd-b").write({
     path: "tracked.txt",
     contents: Buffer.from("runtime b startup barrier\n"),
   });
-  await observedBDirty;
+  await eventWithin(observedBDirty, "workspace B dirty readiness");
   const observedBClean = waitForObservedB(false);
   await workspaceRuntime.files("same-cwd-b").write({
     path: "tracked.txt",
     contents: Buffer.from("initial\n"),
   });
-  await observedBClean;
+  await eventWithin(observedBClean, "workspace B clean readiness");
   workspaceAChanges = 0;
   workspaceBChanges = 0;
   workspaceBStates.length = 0;
@@ -841,7 +778,7 @@ test("selected workspaces with the same public cwd keep Git state, mutations, an
     path: "tracked.txt",
     contents: Buffer.from("runtime a watched\n"),
   });
-  await observedA;
+  await eventWithin(observedA, "workspace A change");
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(workspaceAChanges).toBeGreaterThan(0);
   expect(workspaceBStates).toEqual([]);
@@ -849,16 +786,31 @@ test("selected workspaces with the same public cwd keep Git state, mutations, an
     path: "tracked.txt",
     contents: Buffer.from("runtime b watched\n"),
   });
-  await observedB;
+  await eventWithin(observedB, "workspace B change");
   expect(workspaceBChanges).toBeGreaterThan(0);
   const restoredB = waitForObservedB(false);
   await workspaceRuntime.files("same-cwd-b").write({
     path: "tracked.txt",
     contents: Buffer.from("initial\n"),
   });
-  await restoredB;
+  await eventWithin(restoredB, "workspace B restoration");
   await Promise.all([observationA.unsubscribe(), observationB.unsubscribe()]);
+}, 30_000);
 
+test("selected workspaces with the same public cwd keep mutations and caches isolated", async () => {
+  const {
+    publicCwd,
+    recreateA,
+    runtimeARepository,
+    runtimeBRepository,
+    workspaceA,
+    workspaceB,
+    workspaceRuntime,
+  } = await createSamePublicCwdFixture();
+  await workspaceRuntime.files("same-cwd-a").write({
+    path: "tracked.txt",
+    contents: Buffer.from("runtime a commit\n"),
+  });
   await Promise.all([
     workspaceA.commit({ message: "runtime a commit", addAll: true }),
     workspaceB.createBranch({ branch: "runtime-b-next", baseRef: "runtime-b" }),
@@ -876,28 +828,131 @@ test("selected workspaces with the same public cwd keep Git state, mutations, an
 
   await workspaceRuntime.destroy("same-cwd-a");
   git(runtimeARepository, "branch", "-m", "runtime-a-rebuilt");
-  await workspaceRuntime.create({
-    workspaceId: "same-cwd-a",
-    runtimeId: "fixture",
-    project: {
-      id: "same-cwd-a",
-      source: { kind: "host-directory", path: runtimeARepository },
-    },
-    placement: { kind: "existing" },
-  });
+  await recreateA();
   const [rebuiltA, cachedB] = await Promise.all([
     workspaceA.getSnapshot(),
     workspaceB.getSnapshot(),
   ]);
   expect(rebuiltA.git.currentBranch).toBe("runtime-a-rebuilt");
   expect(cachedB.git.currentBranch).toBe("runtime-b-next");
+}, 30_000);
 
-  await service.dispose();
+async function createCommandRuntimeGitFixture() {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-"));
+  cleanupRoots.push(root);
+  const runtimeRepository = await createRepository(path.join(root, "runtime-repository"));
+  const hostDecoy = await createRepository(path.join(root, "host-decoy"));
+  const stateDirectory = path.join(root, "runtime-state");
+  await mkdir(stateDirectory);
+  const workspaceId = "runtime-git-workspace";
+  const runtimeIds = new Map<string, string>();
+  const workspaceRuntime = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "paseo-home"),
+    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
+    persistRuntimeId: async (id, runtimeId) => {
+      runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
+    externalRuntimes: {
+      fixture: {
+        type: "command",
+        command: [process.execPath, fixtureExecutable],
+        options: { stateDirectory, recordLaunchInWorkspace: false },
+      },
+    },
+  });
+  cleanupTasks.push(() => workspaceRuntime.close());
+  const recreate = () =>
+    workspaceRuntime.create({
+      workspaceId,
+      runtimeId: "fixture",
+      project: {
+        id: "runtime-git-project",
+        source: { kind: "host-directory", path: runtimeRepository },
+      },
+      placement: { kind: "existing" },
+    });
+  await recreate();
+  const service = new WorkspaceGitServiceImpl({
+    logger: createLogger(),
+    paseoHome: path.join(root, "paseo-home"),
+    workspaceRuntime,
+  });
+  cleanupTasks.push(() => service.dispose());
+  const selectedGit = service.bindWorkspace({ workspaceId, cwd: hostDecoy });
+  return {
+    root,
+    hostDecoy,
+    recreate,
+    runtimeRepository,
+    selectedGit,
+    workspaceId,
+    workspaceRuntime,
+  };
+}
+
+async function createSamePublicCwdFixture() {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-same-cwd-"));
+  cleanupRoots.push(root);
+  const runtimeARepository = await createRepository(path.join(root, "runtime-a"));
+  const runtimeBRepository = await createRepository(path.join(root, "runtime-b"));
+  git(runtimeBRepository, "branch", "-m", "runtime-b");
+  const publicCwd = await createRepository(path.join(root, "shared-public-cwd"));
+  git(publicCwd, "branch", "-m", "host-decoy");
+  await writeFile(path.join(publicCwd, "selected-proof.txt"), Buffer.alloc(32, 0));
+  const stateDirectory = path.join(root, "runtime-state");
+  await mkdir(stateDirectory);
+  const runtimeIds = new Map<string, string>();
+  const workspaceRuntime = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "paseo-home"),
+    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
+    persistRuntimeId: async (id, runtimeId) => {
+      runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
+    externalRuntimes: {
+      fixture: {
+        type: "command",
+        command: [process.execPath, fixtureExecutable],
+        options: { stateDirectory, recordLaunchInWorkspace: false },
+      },
+    },
+  });
+  cleanupTasks.push(() => workspaceRuntime.close());
+  const createWorkspace = (workspaceId: string, source: string) =>
+    workspaceRuntime.create({
+      workspaceId,
+      runtimeId: "fixture",
+      project: { id: workspaceId, source: { kind: "host-directory", path: source } },
+      placement: { kind: "existing" },
+    });
   await Promise.all([
-    workspaceRuntime.destroy("same-cwd-a"),
-    workspaceRuntime.destroy("same-cwd-b"),
+    createWorkspace("same-cwd-a", runtimeARepository),
+    createWorkspace("same-cwd-b", runtimeBRepository),
   ]);
-}, 40_000);
+  const service = new WorkspaceGitServiceImpl({
+    logger: createLogger(),
+    paseoHome: path.join(root, "paseo-home"),
+    workspaceRuntime,
+    deps: { getWorkspaceGitSelfHealPhaseMs: () => 60_000 },
+  });
+  cleanupTasks.push(() => service.dispose());
+  return {
+    publicCwd,
+    recreateA: () => createWorkspace("same-cwd-a", runtimeARepository),
+    runtimeARepository,
+    runtimeBRepository,
+    workspaceA: service.bindWorkspace({ workspaceId: "same-cwd-a", cwd: publicCwd }),
+    workspaceB: service.bindWorkspace({ workspaceId: "same-cwd-b", cwd: publicCwd }),
+    workspaceRuntime,
+  };
+}
 
 async function createRepository(directory: string): Promise<string> {
   await mkdir(directory);

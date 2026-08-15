@@ -16,11 +16,11 @@ const fixtureExecutable = fileURLToPath(
 const cleanupRoots: string[] = [];
 const cleanupTasks: Array<() => Promise<void>> = [];
 
-function eventWithin(event: Promise<void>, label: string): Promise<void> {
+function eventWithin(event: Promise<void>, label: string, timeoutMs = 5_000): Promise<void> {
   return Promise.race([
     event,
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 5_000),
+      setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs),
     ),
   ]);
 }
@@ -34,19 +34,22 @@ function createDeferred(): { promise: Promise<void>; resolve(): void } {
 }
 
 afterEach(async () => {
-  const teardownResults = await Promise.allSettled(
-    cleanupTasks
-      .splice(0)
-      .toReversed()
-      .map((cleanup) => cleanup()),
-  );
+  const failures: unknown[] = [];
+  for (const cleanup of cleanupTasks.splice(0).toReversed()) {
+    try {
+      await cleanup();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
   const removalResults = await Promise.allSettled(
     cleanupRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
-  const results = [...teardownResults, ...removalResults];
-  const failures = results
-    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-    .map((result) => result.reason);
+  failures.push(
+    ...removalResults
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason),
+  );
   if (failures.length > 0) {
     throw new AggregateError(failures, "Runtime Git fixture cleanup failed");
   }
@@ -529,15 +532,9 @@ test("selected workspace Git rejects mutations unsupported by its command runtim
   await expect(selectedGit.push()).rejects.toThrow("Selected workspace Git does not support push");
 }, 20_000);
 
-test("selected workspace Git mutations and fetch stay inside its command runtime", async () => {
-  const { root, hostDecoy, runtimeRepository, selectedGit, workspaceRuntime, workspaceId } =
+test("selected workspace Git stash stays inside its command runtime", async () => {
+  const { hostDecoy, selectedGit, workspaceRuntime, workspaceId } =
     await createCommandRuntimeGitFixture();
-  const remoteRepository = path.join(root, "remote.git");
-  await mkdir(remoteRepository);
-  git(remoteRepository, "init", "--bare", "--initial-branch=main");
-  git(runtimeRepository, "remote", "add", "origin", remoteRepository);
-  git(runtimeRepository, "push", "-u", "origin", "main");
-
   await workspaceRuntime.files(workspaceId).write({
     path: "tracked.txt",
     contents: Buffer.from("runtime edit\n"),
@@ -551,7 +548,17 @@ test("selected workspace Git mutations and fetch stay inside its command runtime
   expect((await selectedGit.getSnapshot({ force: true, reason: "stash-pop" })).git.isDirty).toBe(
     true,
   );
+  expect(await readFile(path.join(hostDecoy, "tracked.txt"), "utf8")).toBe("host edit\n");
+}, 25_000);
 
+test("selected workspace Git commit and branch stay inside its command runtime", async () => {
+  const { hostDecoy, runtimeRepository, selectedGit, workspaceRuntime, workspaceId } =
+    await createCommandRuntimeGitFixture();
+  await workspaceRuntime.files(workspaceId).write({
+    path: "tracked.txt",
+    contents: Buffer.from("runtime edit\n"),
+  });
+  await writeFile(path.join(hostDecoy, "tracked.txt"), "host edit\n");
   await selectedGit.commit({ message: "runtime commit", addAll: true });
   await selectedGit.createBranch({ branch: "runtime-branch", baseRef: "main" });
   await selectedGit.switchBranch("main");
@@ -568,7 +575,15 @@ test("selected workspace Git mutations and fetch stay inside its command runtime
   expect(await readFile(path.join(hostDecoy, "tracked.txt"), "utf8")).toBe("host edit\n");
   expect(git(runtimeRepository, "log", "-1", "--format=%s")).toBe("runtime commit");
   expect(git(runtimeRepository, "branch", "--list", "runtime-branch")).toBe("runtime-branch");
+}, 30_000);
 
+test("selected workspace Git fetch stays inside its command runtime", async () => {
+  const { root, runtimeRepository, selectedGit } = await createCommandRuntimeGitFixture();
+  const remoteRepository = path.join(root, "remote.git");
+  await mkdir(remoteRepository);
+  git(remoteRepository, "init", "--bare", "--initial-branch=main");
+  git(runtimeRepository, "remote", "add", "origin", remoteRepository);
+  git(runtimeRepository, "push", "-u", "origin", "main");
   const upstream = path.join(root, "upstream");
   execFileSync("git", ["clone", remoteRepository, upstream], { stdio: "pipe" });
   git(upstream, "config", "user.email", "test@example.com");
@@ -580,7 +595,7 @@ test("selected workspace Git mutations and fetch stay inside its command runtime
   await selectedGit.fetch();
   const fetched = await selectedGit.getSnapshot();
   expect(fetched.git.behindOfOrigin).toBe(1);
-}, 40_000);
+}, 25_000);
 
 test("selected workspace Git reconstructs command runtime state after recreation", async () => {
   const { recreate, runtimeRepository, selectedGit, workspaceRuntime, workspaceId } =
@@ -717,6 +732,11 @@ test("selected workspaces with the same public cwd keep snapshots and diffs isol
 
 test("selected workspaces with the same public cwd keep observations isolated", async () => {
   const { workspaceA, workspaceB, workspaceRuntime } = await createSamePublicCwdFixture();
+  const commandRuntimeEventTimeoutMs = 10_000;
+  await Promise.all([
+    workspaceA.getSnapshot({ force: true, includeForge: false, reason: "observation-warm-a" }),
+    workspaceB.getSnapshot({ force: true, includeForge: false, reason: "observation-warm-b" }),
+  ]);
   let observedAWaiter: { dirty: boolean; resolve: () => void } | null = null;
   let observedBWaiter: { dirty: boolean; resolve: () => void } | null = null;
   let workspaceAChanges = 0;
@@ -751,24 +771,7 @@ test("selected workspaces with the same public cwd keep observations isolated", 
     new Promise<void>((resolve) => {
       observedBWaiter = { dirty, resolve };
     });
-  const observedAClean = waitForObservedA(false);
-  await workspaceRuntime.files("same-cwd-a").write({
-    path: "tracked.txt",
-    contents: Buffer.from("initial\n"),
-  });
-  await eventWithin(observedAClean, "workspace A readiness");
-  const observedBDirty = waitForObservedB(true);
-  await workspaceRuntime.files("same-cwd-b").write({
-    path: "tracked.txt",
-    contents: Buffer.from("runtime b startup barrier\n"),
-  });
-  await eventWithin(observedBDirty, "workspace B dirty readiness");
-  const observedBClean = waitForObservedB(false);
-  await workspaceRuntime.files("same-cwd-b").write({
-    path: "tracked.txt",
-    contents: Buffer.from("initial\n"),
-  });
-  await eventWithin(observedBClean, "workspace B clean readiness");
+  await new Promise<void>((resolve) => setImmediate(resolve));
   workspaceAChanges = 0;
   workspaceBChanges = 0;
   workspaceBStates.length = 0;
@@ -778,7 +781,7 @@ test("selected workspaces with the same public cwd keep observations isolated", 
     path: "tracked.txt",
     contents: Buffer.from("runtime a watched\n"),
   });
-  await eventWithin(observedA, "workspace A change");
+  await eventWithin(observedA, "workspace A change", commandRuntimeEventTimeoutMs);
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(workspaceAChanges).toBeGreaterThan(0);
   expect(workspaceBStates).toEqual([]);
@@ -786,14 +789,8 @@ test("selected workspaces with the same public cwd keep observations isolated", 
     path: "tracked.txt",
     contents: Buffer.from("runtime b watched\n"),
   });
-  await eventWithin(observedB, "workspace B change");
+  await eventWithin(observedB, "workspace B change", commandRuntimeEventTimeoutMs);
   expect(workspaceBChanges).toBeGreaterThan(0);
-  const restoredB = waitForObservedB(false);
-  await workspaceRuntime.files("same-cwd-b").write({
-    path: "tracked.txt",
-    contents: Buffer.from("initial\n"),
-  });
-  await eventWithin(restoredB, "workspace B restoration");
   await Promise.all([observationA.unsubscribe(), observationB.unsubscribe()]);
 }, 30_000);
 

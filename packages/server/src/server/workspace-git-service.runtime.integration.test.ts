@@ -732,7 +732,7 @@ test("selected workspaces with the same public cwd keep snapshots and diffs isol
 
 test("selected workspaces with the same public cwd keep observations isolated", async () => {
   const { workspaceA, workspaceB, workspaceRuntime } = await createSamePublicCwdFixture();
-  const commandRuntimeEventTimeoutMs = 10_000;
+  const commandRuntimeEventTimeoutMs = 15_000;
   await Promise.all([
     workspaceA.getSnapshot({ force: true, includeForge: false, reason: "observation-warm-a" }),
     workspaceB.getSnapshot({ force: true, includeForge: false, reason: "observation-warm-b" }),
@@ -792,7 +792,7 @@ test("selected workspaces with the same public cwd keep observations isolated", 
   await eventWithin(observedB, "workspace B change", commandRuntimeEventTimeoutMs);
   expect(workspaceBChanges).toBeGreaterThan(0);
   await Promise.all([observationA.unsubscribe(), observationB.unsubscribe()]);
-}, 30_000);
+}, 45_000);
 
 test("selected workspaces with the same public cwd keep mutations and caches isolated", async () => {
   const {

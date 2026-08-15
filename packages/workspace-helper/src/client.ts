@@ -100,7 +100,8 @@ export function createClient(options: {
         return { ...metadata, chunks } satisfies WorkspaceFileRead;
       },
       async write(input) {
-        const args = ["--path", requireRelativePath(input.path)];
+        const writtenPath = requireRelativePath(input.path);
+        const args = ["--path", writtenPath];
         if (input.expectedModifiedAt) args.push("--expected-modified-at", input.expectedModifiedAt);
         if (input.expectedRevision) args.push("--expected-revision", input.expectedRevision);
         const child = await command("fs-write", args);
@@ -121,7 +122,9 @@ export function createClient(options: {
         }
         const [body, diagnostics, exit] = await Promise.all([stdout, stderr, child.exited]);
         if (exit.code !== 0 || exit.signal !== null) throw helperError(diagnostics, exit);
-        return writeResultSchema.parse(JSON.parse(body));
+        const result = writeResultSchema.parse(JSON.parse(body));
+        if (result.status === "written") notifyWrite(writtenPath);
+        return result;
       },
       async subscribe(input, listener) {
         if (closing) throw new Error("Workspace files client is closed");
@@ -208,6 +211,13 @@ export function createClient(options: {
         if (watchSubscriptions.size === 0 && state) await stopWatcher(state);
       },
     };
+  }
+
+  function notifyWrite(writtenPath: string): void {
+    for (const subscription of watchSubscriptions.values()) {
+      if (!subscriptionIncludesPath(subscription.input, writtenPath)) continue;
+      subscription.listener({ type: "changed", paths: [writtenPath] });
+    }
   }
 
   async function requireWatcher(): Promise<WatchState> {
@@ -529,6 +539,24 @@ function requireRelativePath(value: string): string {
     throw new Error(`Workspace helper path must be relative: ${value}`);
   }
   return value;
+}
+
+function subscriptionIncludesPath(
+  input: LogicalWatchSubscription["input"],
+  changedPath: string,
+): boolean {
+  if (input.ignoredPaths?.some((ignoredPath) => isPathInside(changedPath, ignoredPath))) {
+    return false;
+  }
+  return input.paths.some(
+    (watchedPath) =>
+      changedPath === watchedPath ||
+      (input.recursive === true && isPathInside(changedPath, watchedPath)),
+  );
+}
+
+function isPathInside(candidate: string, directory: string): boolean {
+  return directory === "." || candidate === directory || candidate.startsWith(`${directory}/`);
 }
 
 function onceDrain(stream: NodeJS.WritableStream): Promise<void> {

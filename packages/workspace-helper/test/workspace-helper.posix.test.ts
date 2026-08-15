@@ -40,6 +40,70 @@ async function collect(chunks: AsyncIterable<Uint8Array>): Promise<Buffer> {
   return Buffer.concat(collected);
 }
 
+describe("workspace-helper cross-platform observation", () => {
+  test("successful client writes notify matching live subscriptions", async () => {
+    const { client, root } = await fixture();
+    await mkdir(path.join(root, "ignored"));
+    await writeFile(path.join(root, "notes.txt"), "before\n");
+    await writeFile(path.join(root, "other.txt"), "other\n");
+    await writeFile(path.join(root, "ignored", "secret.txt"), "secret\n");
+    const exactEvents: WorkspaceWatchEvent[] = [];
+    const recursiveEvents: WorkspaceWatchEvent[] = [];
+    const unrelatedEvents: WorkspaceWatchEvent[] = [];
+    const subscriptions = await Promise.all([
+      client.files.subscribe({ paths: ["notes.txt"] }, (event) => exactEvents.push(event)),
+      client.files.subscribe(
+        { paths: ["."], recursive: true, ignoredPaths: ["ignored"] },
+        (event) => recursiveEvents.push(event),
+      ),
+      client.files.subscribe({ paths: ["other.txt"] }, (event) => unrelatedEvents.push(event)),
+    ]);
+
+    try {
+      await expect(
+        client.files.write({ path: "notes.txt", contents: Buffer.from("after\n") }),
+      ).resolves.toMatchObject({ status: "written" });
+      expect(exactEvents).toContainEqual({ type: "changed", paths: ["notes.txt"] });
+      expect(recursiveEvents).toContainEqual({ type: "changed", paths: ["notes.txt"] });
+      expect(unrelatedEvents).not.toContainEqual({ type: "changed", paths: ["notes.txt"] });
+
+      await expect(
+        client.files.write({
+          path: "ignored/secret.txt",
+          contents: Buffer.from("hidden\n"),
+        }),
+      ).resolves.toMatchObject({ status: "written" });
+      expect(recursiveEvents).not.toContainEqual({
+        type: "changed",
+        paths: ["ignored/secret.txt"],
+      });
+    } finally {
+      await Promise.all(subscriptions.map((subscription) => subscription.unsubscribe()));
+      await client.close();
+    }
+  });
+
+  test("direct filesystem writes still reach the native watcher", async () => {
+    const { client, root } = await fixture();
+    await writeFile(path.join(root, "watched.txt"), "before\n");
+    let resolveChanged!: (paths: string[]) => void;
+    const changed = new Promise<string[]>((resolve) => {
+      resolveChanged = resolve;
+    });
+    const subscription = await client.files.subscribe({ paths: ["watched.txt"] }, (event) => {
+      if (event.type === "changed") resolveChanged(event.paths);
+    });
+
+    try {
+      await writeFile(path.join(root, "watched.txt"), "after\n");
+      await expect(eventWithin(changed, "native watch change")).resolves.toEqual(["watched.txt"]);
+    } finally {
+      await subscription.unsubscribe();
+      await client.close();
+    }
+  });
+});
+
 posixDescribe("workspace-helper public capability", () => {
   test("executable describe reports the exact versioned capability contract", async () => {
     const child = spawn(process.execPath, [workspaceHelper, "describe"], {
@@ -455,4 +519,16 @@ function childProcess(child: ReturnType<typeof spawn>): WorkspaceHelperProcess {
     }),
     kill: (signal) => child.kill(signal),
   };
+}
+
+function eventWithin<T>(event: Promise<T>, label: string, timeoutMs = 5_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    event,
+    new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }

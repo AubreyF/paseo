@@ -1425,20 +1425,21 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.selectedWorkspaces.clear();
     this.legacyWorkspaces.clear();
 
+    const repoTargetDisposals = [...this.repoTargets.values()].map((target) =>
+      this.closeRepoTarget(target),
+    );
+    this.repoTargets.clear();
+
+    const workingTreeWatchDisposals = [...this.workingTreeWatchTargets.values()].map((target) =>
+      this.closeWorkingTreeWatchTarget(target),
+    );
+    this.workingTreeWatchTargets.clear();
+
     const workspaceTargetDisposals = [...this.workspaceTargets.values()].map((target) =>
       this.closeWorkspaceTarget(target),
     );
     this.workspaceTargets.clear();
 
-    for (const target of this.repoTargets.values()) {
-      this.closeRepoTarget(target);
-    }
-    this.repoTargets.clear();
-
-    for (const target of this.workingTreeWatchTargets.values()) {
-      this.closeWorkingTreeWatchTarget(target);
-    }
-    this.workingTreeWatchTargets.clear();
     this.workingTreeWatchSetups.clear();
     this.workingTreeWatchResolutions.clear();
     this.workingTreeWatchAliases.clear();
@@ -1448,6 +1449,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.disposePromise = Promise.all([
       this.fileObserver.close(),
       ...selectedWorkspaceDisposals,
+      ...repoTargetDisposals,
+      ...workingTreeWatchDisposals,
       ...workspaceTargetDisposals,
     ]).then(() => undefined);
     return this.disposePromise;
@@ -3744,7 +3747,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       const repoTarget = this.repoTargets.get(target.repoGitRoot);
       repoTarget?.workspaceKeys.delete(target.cwd);
       if (repoTarget && repoTarget.workspaceKeys.size === 0) {
-        this.closeRepoTarget(repoTarget);
+        void this.closeRepoTarget(repoTarget);
         this.repoTargets.delete(target.repoGitRoot);
       } else if (repoTarget?.cwd === target.cwd) {
         repoTarget.cwd = repoTarget.workspaceKeys.values().next().value ?? repoTarget.cwd;
@@ -3766,7 +3769,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
 
-    this.closeWorkingTreeWatchTarget(target);
+    void this.closeWorkingTreeWatchTarget(target);
     this.workingTreeWatchTargets.delete(cwd);
   }
 
@@ -3778,7 +3781,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (target.workspaceKeys.size > 0 || target.listeners.size > 0) {
       return;
     }
-    this.closeWorkingTreeWatchTarget(target);
+    void this.closeWorkingTreeWatchTarget(target);
     if (this.workingTreeWatchTargets.get(target.cwd) === target) {
       this.workingTreeWatchTargets.delete(target.cwd);
     }
@@ -3793,7 +3796,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     ) {
       return;
     }
-    this.closeWorkingTreeWatchTarget(target);
+    void this.closeWorkingTreeWatchTarget(target);
     this.workingTreeWatchTargets.delete(target.cwd);
   }
 
@@ -3819,7 +3822,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return runtimeObservationDisposal;
   }
 
-  private closeWorkingTreeWatchTarget(target: WorkingTreeWatchTarget): void {
+  private closeWorkingTreeWatchTarget(target: WorkingTreeWatchTarget): Promise<void> {
     target.closed = true;
     for (const alias of target.aliases) {
       if (this.workingTreeWatchAliases.get(alias) === target.cwd) {
@@ -3837,18 +3840,20 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       target.recovery.timer = null;
     }
 
+    let subscriptionDisposal = Promise.resolve();
     if (target.subscription) {
       const subscription = target.subscription;
       target.subscription = null;
-      void subscription.unsubscribe().catch((error) => {
+      subscriptionDisposal = subscription.unsubscribe().catch((error) => {
         this.logger.warn({ err: error, cwd: target.cwd }, "Failed to stop working tree watcher");
       });
     }
     target.workspaceKeys.clear();
     target.listeners.clear();
+    return subscriptionDisposal;
   }
 
-  private closeRepoTarget(target: RepoGitTarget): void {
+  private closeRepoTarget(target: RepoGitTarget): Promise<void> {
     target.closed = true;
     if (target.intervalId) {
       clearInterval(target.intervalId);
@@ -3863,10 +3868,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       clearTimeout(target.recovery.timer);
       target.recovery.timer = null;
     }
+    let subscriptionDisposal = Promise.resolve();
     if (target.subscription) {
       const subscription = target.subscription;
       target.subscription = null;
-      void subscription.unsubscribe().catch((error) => {
+      subscriptionDisposal = subscription.unsubscribe().catch((error) => {
         this.logger.warn(
           { err: error, repoGitRoot: target.repoGitRoot },
           "Failed to stop repository metadata watcher",
@@ -3874,6 +3880,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       });
     }
     target.workspaceKeys.clear();
+    return subscriptionDisposal;
   }
 }
 

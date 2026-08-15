@@ -1,11 +1,19 @@
 import { PassThrough, Readable } from "node:stream";
 
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { observeWorkspaceGit } from "../../../workspace-git-observation.js";
 import type { BoundWorkspaceRuntime } from "../../index.js";
 import type { WorkspaceRuntimeDriver } from "../../drivers/index.js";
 import { createGitCommonObservationCoordinator } from "./integration.js";
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 test("selected runtime Git observation prunes paths ignored by that runtime checkout", async () => {
   let subscriptionInput: Parameters<BoundWorkspaceRuntime["files"]["subscribe"]>[0] | null = null;
@@ -37,4 +45,42 @@ test("selected runtime Git observation prunes paths ignored by that runtime chec
     ignoredPaths: ["node_modules", "packages/server/dist"],
   });
   await subscription.unsubscribe();
+});
+
+test("closing Git observation waits for and releases an in-flight acquisition", async () => {
+  const physicalUnsubscribe = vi.fn(async () => {});
+  const physical = createDeferred<{ unsubscribe(): Promise<void> }>();
+  const workingTreeUnsubscribe = vi.fn(async () => {});
+  const runtime = {
+    files: {
+      subscribe: vi.fn(async () => ({ unsubscribe: workingTreeUnsubscribe })),
+    },
+  } as unknown as BoundWorkspaceRuntime;
+  const driver = {
+    observeGit: vi.fn(() => physical.promise),
+  } as unknown as WorkspaceRuntimeDriver;
+  const coordinator = createGitCommonObservationCoordinator();
+  coordinator.bind(runtime, "workspace-1", driver);
+
+  const observation = observeWorkspaceGit(runtime, () => undefined);
+  await vi.waitFor(() => expect(driver.observeGit).toHaveBeenCalledTimes(1));
+  const closing = coordinator.close();
+  expect(coordinator.close()).toBe(closing);
+  expect(
+    await Promise.race([
+      closing.then(() => "closed" as const),
+      Promise.resolve("pending" as const),
+    ]),
+  ).toBe("pending");
+
+  physical.resolve({ unsubscribe: physicalUnsubscribe });
+  await expect(observation).rejects.toThrow("Git common observation coordinator is closed");
+  await closing;
+  expect(physicalUnsubscribe).toHaveBeenCalledTimes(1);
+  expect(workingTreeUnsubscribe).toHaveBeenCalledTimes(1);
+
+  await expect(observeWorkspaceGit(runtime, () => undefined)).rejects.toThrow(
+    "Git common observation coordinator is closed",
+  );
+  expect(driver.observeGit).toHaveBeenCalledTimes(1);
 });

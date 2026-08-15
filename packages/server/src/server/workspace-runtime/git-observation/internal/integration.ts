@@ -11,6 +11,8 @@ interface GitObservation {
   physical: { unsubscribe(): Promise<void> } | null;
 }
 
+type PhysicalGitObservation = NonNullable<GitObservation["physical"]>;
+
 export interface ObservationRebindTransaction {
   commit(): Promise<void>;
   rollback(): Promise<void>;
@@ -27,11 +29,17 @@ export interface GitCommonObservationCoordinator {
 /** Git invalidation is workspace-bound. Runtime-private observers never disclose placement. */
 export function createGitCommonObservationCoordinator(): GitCommonObservationCoordinator {
   const observations = new Set<GitObservation>();
+  const acquisitions = new Set<Promise<PhysicalGitObservation>>();
+  const resumeStages = new Set<Map<GitObservation, PhysicalGitObservation>>();
+  let closePromise: Promise<void> | null = null;
+  let closed = false;
 
   return {
     bind(runtime, workspaceId, driver) {
+      assertOpen();
       registerGitCommonObservationCapability(runtime, {
         observe: async (listener) => {
+          assertOpen();
           const observation: GitObservation = {
             workspaceId,
             runtime,
@@ -39,7 +47,7 @@ export function createGitCommonObservationCoordinator(): GitCommonObservationCoo
             listener,
             physical: null,
           };
-          observation.physical = await start(observation);
+          observation.physical = await acquire(observation);
           observations.add(observation);
           let active = true;
           return {
@@ -47,54 +55,66 @@ export function createGitCommonObservationCoordinator(): GitCommonObservationCoo
               if (!active) return;
               active = false;
               observations.delete(observation);
-              const physical = observation.physical;
-              observation.physical = null;
-              await physical?.unsubscribe();
+              await stop(observation);
             },
           };
         },
       });
     },
-    async close() {
-      const selected = [...observations];
-      observations.clear();
-      await Promise.allSettled(selected.map((observation) => observation.physical?.unsubscribe()));
+    close() {
+      if (closePromise) return closePromise;
+      closed = true;
+      closePromise = (async () => {
+        await Promise.allSettled(acquisitions);
+        await Promise.allSettled([...resumeStages].map((stage) => disposeStage(stage)));
+        const selected = [...observations];
+        observations.clear();
+        await Promise.allSettled(selected.map((observation) => stop(observation)));
+      })();
+      return closePromise;
     },
     async pause(workspaceId) {
       for (const observation of owned(workspaceId)) {
-        const physical = observation.physical;
-        observation.physical = null;
-        await physical?.unsubscribe();
+        await stop(observation);
       }
     },
     async stageResume(workspaceId) {
-      const staged = new Map<GitObservation, { unsubscribe(): Promise<void> }>();
+      assertOpen();
+      const staged = new Map<GitObservation, PhysicalGitObservation>();
+      resumeStages.add(staged);
       try {
         for (const observation of owned(workspaceId)) {
-          if (!observation.physical) staged.set(observation, await start(observation));
+          if (!observation.physical) staged.set(observation, await acquire(observation));
         }
       } catch (error) {
-        await Promise.allSettled([...staged.values()].map((item) => item.unsubscribe()));
+        await disposeStage(staged);
         throw error;
       }
       let finished = false;
       return {
         async commit() {
           if (finished) return;
+          if (closed) {
+            finished = true;
+            await disposeStage(staged);
+            throw new Error("Git common observation coordinator is closed");
+          }
           finished = true;
+          resumeStages.delete(staged);
           for (const [observation, physical] of staged) observation.physical = physical;
+          staged.clear();
         },
         async rollback() {
           if (finished) return;
           finished = true;
-          await Promise.allSettled([...staged.values()].map((item) => item.unsubscribe()));
+          await disposeStage(staged);
         },
       };
     },
     async destroy(workspaceId) {
       const selected = owned(workspaceId);
       for (const observation of selected) observations.delete(observation);
-      await Promise.allSettled(selected.map((observation) => observation.physical?.unsubscribe()));
+      await Promise.allSettled(selected.map((observation) => stop(observation)));
     },
   };
 
@@ -102,7 +122,42 @@ export function createGitCommonObservationCoordinator(): GitCommonObservationCoo
     return [...observations].filter((observation) => observation.workspaceId === workspaceId);
   }
 
-  async function start(observation: GitObservation) {
+  function assertOpen(): void {
+    if (closed) throw new Error("Git common observation coordinator is closed");
+  }
+
+  function acquire(observation: GitObservation): Promise<PhysicalGitObservation> {
+    assertOpen();
+    const acquisition = (async () => {
+      const physical = await start(observation);
+      if (closed) {
+        await physical.unsubscribe();
+        throw new Error("Git common observation coordinator is closed");
+      }
+      return physical;
+    })();
+    acquisitions.add(acquisition);
+    void acquisition.then(
+      () => acquisitions.delete(acquisition),
+      () => acquisitions.delete(acquisition),
+    );
+    return acquisition;
+  }
+
+  async function stop(observation: GitObservation): Promise<void> {
+    const physical = observation.physical;
+    observation.physical = null;
+    await physical?.unsubscribe();
+  }
+
+  async function disposeStage(stage: Map<GitObservation, PhysicalGitObservation>): Promise<void> {
+    resumeStages.delete(stage);
+    const physical = [...stage.values()];
+    stage.clear();
+    await Promise.allSettled(physical.map((item) => item.unsubscribe()));
+  }
+
+  async function start(observation: GitObservation): Promise<PhysicalGitObservation> {
     if (observation.driver.observeGit) {
       return observation.driver.observeGit(observation.workspaceId, observation.listener);
     }

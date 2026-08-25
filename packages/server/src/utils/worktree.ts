@@ -1153,12 +1153,18 @@ export async function deletePaseoWorktree({
 }
 
 export async function rollbackCreatedPaseoWorktree(
-  options: DeletePaseoWorktreeOptions,
+  options: DeletePaseoWorktreeOptions & { createdBranchName?: string },
   cause: unknown,
 ): Promise<never> {
   let cleanupError: unknown;
   try {
     await deletePaseoWorktree(options);
+    if (options.createdBranchName && options.cwd) {
+      await runGitCommand(["branch", "--delete", "--force", options.createdBranchName], {
+        cwd: options.cwd,
+        acceptExitCodes: [0, 1],
+      });
+    }
   } catch (error) {
     cleanupError = error;
   }
@@ -1227,10 +1233,22 @@ export const createWorktree = async ({
 }: CreateWorktreeOptions): Promise<CreatedWorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
   const paseoWorktreesBaseRoot = resolvePaseoWorktreesBaseRoot({ paseoHome, worktreesRoot });
-  const worktreeIncludePlan = await readWorktreeIncludePlan({
-    sourceRoot: cwd,
-    excludedSourceRoots: [paseoWorktreesBaseRoot],
-  });
+  const worktreeIncludePlan = await (async () => {
+    try {
+      return await readWorktreeIncludePlan({
+        sourceRoot: cwd,
+        excludedSourceRoots: [paseoWorktreesBaseRoot],
+      });
+    } catch (error) {
+      if (sourcePlan.createdBranchName) {
+        await runGitCommand(["branch", "--delete", "--force", sourcePlan.createdBranchName], {
+          cwd,
+          acceptExitCodes: [0, 1],
+        });
+      }
+      throw error;
+    }
+  })();
   let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
@@ -1288,7 +1306,14 @@ export const createWorktree = async ({
     };
   } catch (error) {
     return rollbackCreatedPaseoWorktree(
-      { cwd, worktreePath, teardownCwds: [], paseoHome, worktreesBaseRoot: worktreesRoot },
+      {
+        cwd,
+        worktreePath,
+        teardownCwds: [],
+        paseoHome,
+        worktreesBaseRoot: worktreesRoot,
+        createdBranchName: sourcePlan.createdBranchName,
+      },
       error,
     );
   }
@@ -1316,6 +1341,7 @@ interface ResolveWorktreeSourcePlanOptions {
 
 interface WorktreeSourcePlan {
   branchName: string;
+  createdBranchName?: string;
   // Display name and exact ref are two different facts. The name cannot round-trip to a
   // commit — "main" resolves local-first even when the worktree was cut from a fork's
   // upstream — so comparisons and actions read the ref and the UI reads the name.
@@ -1353,6 +1379,7 @@ async function resolveWorktreeSourcePlan({
 
       return {
         branchName: newBranchName,
+        createdBranchName: newBranchName,
         metadataBaseRefName: normalizedBaseBranch,
         metadataBaseRef: resolvedBaseBranch,
         changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
@@ -1373,11 +1400,22 @@ async function resolveWorktreeSourcePlan({
         } catch {
           throw new UnknownBranchError({ branchName: source.branchName, cwd });
         }
+        return {
+          branchName: source.branchName,
+          createdBranchName: source.branchName,
+          metadataBaseRefName: source.branchName,
+          changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+            headRef: source.branchName,
+            localBranchName: source.branchName,
+          }),
+          addArguments: [source.branchName],
+        };
       }
       if (await isBranchCheckedOut(cwd, source.branchName)) {
         const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
         return {
           branchName,
+          createdBranchName: branchName,
           metadataBaseRefName: source.branchName,
           changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
             headRef: branchName,
@@ -1446,6 +1484,7 @@ async function resolveWorktreeSourcePlan({
 
       return {
         branchName: localBranchName,
+        createdBranchName: localBranchName,
         metadataBaseRefName: normalizedBaseRefName,
         changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
           headRef: source.headRef,

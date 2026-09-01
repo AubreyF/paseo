@@ -53,7 +53,8 @@ import {
   navigateToWorkspace,
   useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
-import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
+import { normalizeWorkspaceDescriptor } from "@/stores/session-store-hooks";
+import { acceptWorkspaceSnapshots as mergeWorkspaces } from "@/runtime/session-data";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
@@ -1551,7 +1552,6 @@ export function NewWorkspaceScreen({
   const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
-  const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const {
     allHosts,
     selectedServerId,
@@ -2021,7 +2021,6 @@ export function NewWorkspaceScreen({
       buildCreateWorktreeInput,
       createdWorkspace,
       effectiveIsolation,
-      mergeWorkspaces,
       queryClient,
       selectedItem,
       selectedProject,

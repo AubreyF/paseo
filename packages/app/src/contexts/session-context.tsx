@@ -32,14 +32,29 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import type { GitSetupOptions } from "@getpaseo/protocol/messages";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
-import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import {
+  createViewedTimelineOwnerForHost,
+  fetchAgentTimeline,
+  useHostRuntimeIsConnected,
+} from "@/runtime/host-runtime";
+import {
+  applyAgentTurn,
+  getAgentConversationSnapshot,
+  getAgentSnapshot,
+  getAgentStreamSnapshot,
+  getAgentTimelineSnapshot,
+  getSessionFocusSnapshot,
+  publishAudioPlayback as setIsPlayingAudio,
+  publishAgentInitialization as setInitializingAgents,
+  advanceHistorySyncGeneration as bumpHistorySyncGeneration,
+  flushAgentActivity as flushAgentLastActivity,
+  publishPendingPermissions as setPendingPermissions,
+  publishServerInfo as updateSessionServerInfo,
+  publishViewedTimeline as setViewedTimelineSync,
+} from "@/runtime/session-data";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
-import {
-  selectAgentTimelineState,
-  useSessionStore,
-  type SessionState,
-} from "@/stores/session-store";
+import { useSessionFocus } from "@/stores/session-store-hooks";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { sendOsNotification } from "@/utils/os-notifications";
 import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
@@ -78,7 +93,7 @@ export type {
   ExplorerFileKind,
   ExplorerEncoding,
   AgentFileExplorerState,
-} from "@/stores/session-store";
+} from "@/stores/session-store-hooks";
 
 type AudioOutputPayload = Extract<SessionOutboundMessage, { type: "audio_output" }>["payload"];
 
@@ -131,32 +146,6 @@ const findLatestAssistantMessageText = (items: StreamItem[]): string | null => {
       return item.text;
     }
   }
-  return null;
-};
-
-const getLatestPermissionRequest = (
-  session: SessionState | undefined,
-  agentId: string,
-): NotificationPermissionRequest | null => {
-  if (!session) {
-    return null;
-  }
-
-  let latest: NotificationPermissionRequest | null = null;
-  for (const pending of session.pendingPermissions.values()) {
-    if (pending.agentId === agentId) {
-      latest = pending.request;
-    }
-  }
-  if (latest) {
-    return latest;
-  }
-
-  const agentPending = session.agents.get(agentId)?.pendingPermissions;
-  if (agentPending && agentPending.length > 0) {
-    return agentPending[agentPending.length - 1] as NotificationPermissionRequest;
-  }
-
   return null;
 };
 
@@ -235,29 +224,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const isConnected = useHostRuntimeIsConnected(serverId);
   const toast = useToast();
 
-  // Zustand store actions
-  const setIsPlayingAudio = useSessionStore((state) => state.setIsPlayingAudio);
-  const setAgentStreamTail = useSessionStore((state) => state.setAgentStreamTail);
-  const setAgentStreamHead = useSessionStore((state) => state.setAgentStreamHead);
-  const applyAgentTurnLiveness = useSessionStore((state) => state.applyAgentTurnLiveness);
-  const clearAgentTurnLiveness = useSessionStore((state) => state.clearAgentTurnLiveness);
-  const clearAgentStreamHead = useSessionStore((state) => state.clearAgentStreamHead);
-  const setInitializingAgents = useSessionStore((state) => state.setInitializingAgents);
-  const bumpHistorySyncGeneration = useSessionStore((state) => state.bumpHistorySyncGeneration);
-  const setAgents = useSessionStore((state) => state.setAgents);
-  const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
-  const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
-  const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
-  const setViewedTimelineSync = useSessionStore((state) => state.setViewedTimelineSync);
   const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
 
   // Track focused agent for heartbeat
-  const focusedAgentId = useSessionStore(
-    (state) => state.sessions[serverId]?.focusedAgentId ?? null,
-  );
-  const focusedTerminalId = useSessionStore(
-    (state) => state.sessions[serverId]?.focusedTerminalId ?? null,
-  );
+  const { focusedAgentId, focusedTerminalId } = useSessionFocus(serverId);
   const _sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
@@ -289,7 +259,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         bumpHistorySyncGeneration,
       });
     },
-    [bumpHistorySyncGeneration, serverId],
+    [serverId],
   );
 
   // Client activity tracking (heartbeat, push token registration)
@@ -309,8 +279,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       notification?: AgentAttentionNotificationPayload;
     }) => {
       const appState = appStateRef.current;
-      const session = useSessionStore.getState().sessions[serverId];
-      const attentionFocusedAgentId = session?.focusedAgentId ?? null;
+      const attentionFocusedAgentId = getSessionFocusSnapshot(serverId).focusedAgentId;
       if (params.reason === "error") {
         return;
       }
@@ -327,12 +296,16 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
       attentionNotifiedRef.current.set(params.agentId, timestampMs);
 
-      const head = session?.agentStreamHead.get(params.agentId) ?? [];
-      const tail = session?.agentStreamTail.get(params.agentId) ?? [];
+      const { head, tail } = getAgentStreamSnapshot(serverId, params.agentId);
+      const conversation = getAgentConversationSnapshot(serverId, params.agentId);
+      const agent = getAgentSnapshot(serverId, params.agentId);
       const assistantMessage =
         findLatestAssistantMessageText(head) ?? findLatestAssistantMessageText(tail);
-      const permissionRequest = getLatestPermissionRequest(session, params.agentId);
-      const workspaceId = session?.agents?.get(params.agentId)?.workspaceId;
+      const permissionRequest =
+        conversation.pendingPermissions.at(-1)?.request ??
+        (agent?.pendingPermissions.at(-1) as NotificationPermissionRequest | undefined) ??
+        null;
+      const workspaceId = agent?.workspaceId;
 
       const notification = resolveAgentAttentionNotification({
         notification: params.notification,
@@ -372,7 +345,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
       ...(serverInfo.features ? { features: serverInfo.features } : {}),
     });
-  }, [client, serverId, updateSessionServerInfo]);
+  }, [client, serverId]);
 
   useEffect(() => {
     const unregister = voiceRuntime?.registerSession({
@@ -406,7 +379,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       },
     });
     return () => unregister?.();
-  }, [client, serverId, setIsPlayingAudio, t, voiceRuntime]);
+  }, [client, serverId, t, voiceRuntime]);
 
   useEffect(() => {
     voiceRuntime?.updateSessionConnection(serverId, isConnected);
@@ -418,16 +391,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       flushAgentLastActivity();
       setInitializingAgents(serverId, new Map());
     }
-  }, [flushAgentLastActivity, serverId, isConnected, setInitializingAgents]);
-
-  useEffect(
-    () =>
-      client.subscribeConnectionStatus((connection) => {
-        if (connection.status === "connected") return;
-        clearAgentTurnLiveness(serverId);
-      }),
-    [clearAgentTurnLiveness, client, serverId],
-  );
+  }, [serverId, isConnected]);
 
   const applyWorkspaceSetupProgress = useCallback(
     (payload: WorkspaceSetupProgressPayload) => {
@@ -451,22 +415,18 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const initialDeliveryMode = getTimelineDeliveryMode(
       client.getLastServerInfoMessage()?.features?.selectiveAgentTimeline,
     );
-    const sync = getHostRuntimeStore().createViewedTimelineOwner(serverId, {
+    const sync = createViewedTimelineOwnerForHost(serverId, {
       initialDeliveryMode,
       setSubscription: (agentIds) => client.setAgentTimelineSubscription(agentIds),
       readCursor: (agentId) => {
-        const timeline = selectAgentTimelineState(
-          useSessionStore.getState().sessions[serverId],
-          agentId,
-        );
+        const timeline = getAgentTimelineSnapshot(serverId, agentId);
         return timeline.status === "synced" && timeline.range
           ? { epoch: timeline.range.epoch, endSeq: timeline.range.endSeq }
           : undefined;
       },
       fetchPage: async (agentId, request) => {
-        const session = useSessionStore.getState().sessions[serverId];
         const initKey = getInitKey(serverId, agentId);
-        const shouldInitialize = selectAgentTimelineState(session, agentId).status !== "synced";
+        const shouldInitialize = getAgentTimelineSnapshot(serverId, agentId).status !== "synced";
         if (shouldInitialize) {
           if (!getInitDeferred(initKey)) {
             const deferred = createInitDeferred(initKey, request.direction ?? "tail");
@@ -480,7 +440,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           setAgentInitializing(agentId, true);
         }
         try {
-          const page = await getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request);
+          const page = await fetchAgentTimeline(serverId, agentId, request);
           if (shouldInitialize && getInitDeferred(initKey)) {
             refreshAgentInitializationTimeout({ key: initKey, agentId, setAgentInitializing });
           }
@@ -496,11 +456,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       fetchLatestTail: async (agentId) => {
         forcedTimelineTailReplacements.current.add(agentId);
         try {
-          return await getHostRuntimeStore().fetchAgentTimeline(
-            serverId,
-            agentId,
-            planTimelineTailFetch(),
-          );
+          return await fetchAgentTimeline(serverId, agentId, planTimelineTailFetch());
         } finally {
           forcedTimelineTailReplacements.current.delete(agentId);
         }
@@ -524,7 +480,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       setViewedTimelineSync(serverId, null);
       sync.dispose();
     };
-  }, [client, serverId, setInitializingAgents, setViewedTimelineSync]);
+  }, [client, serverId]);
 
   useEffect(() => {
     viewedTimelineSyncRef.current?.setConnected(isConnected);
@@ -552,7 +508,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         { event: streamEvent, seq, epoch, timestamp: parsedTimestamp },
       ]);
       if (turnLiveness.length > 0) {
-        applyAgentTurnLiveness(serverId, agentId, turnLiveness);
+        applyAgentTurn(serverId, agentId, turnLiveness);
       }
       owner.enqueueStreamEvent(agentId, {
         event: streamEvent,
@@ -582,8 +538,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (message.type !== "agent.timeline.replacement") return;
       void requestTimelineReplacement(
         {
-          fetchAgentTimeline: (agentId, request) =>
-            getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, request),
+          fetchAgentTimeline: (agentId, request) => fetchAgentTimeline(serverId, agentId, request),
         },
         message.payload.agentId,
       ).catch((error: unknown) => {
@@ -802,18 +757,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     client,
     queryClient,
     serverId,
-    setIsPlayingAudio,
-    setAgentStreamTail,
-    setAgentStreamHead,
-    applyAgentTurnLiveness,
-    clearAgentStreamHead,
-    setInitializingAgents,
-    setAgents,
-    setPendingPermissions,
     notifyAgentAttention,
     applyWorkspaceSetupProgress,
     applyTimelineResponse,
-    updateSessionServerInfo,
     toast,
     voiceRuntime,
     voiceAudioEngine,

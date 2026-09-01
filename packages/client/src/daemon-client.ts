@@ -1401,6 +1401,14 @@ export class DaemonClient {
     ) {
       return;
     }
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    if (this.connectPromise) {
+      this.attemptConnect();
+      return;
+    }
     void this.connect();
   }
 
@@ -5929,6 +5937,10 @@ export class DaemonClient {
 
   setReconnectEnabled(enabled: boolean): void {
     this.config = { ...this.config, reconnect: { ...this.config.reconnect, enabled } };
+    if (!enabled && this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
   }
 
   private scheduleReconnect(input?: {

@@ -128,6 +128,12 @@ import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/confi
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
+import { createVoiceChat, type VoiceChat } from "./voice-chat/index.js";
+import { createManualVoiceProvider } from "./voice-chat/providers/manual/provider.js";
+import {
+  resolveManualVoiceConfig,
+  type ManualVoiceConfig,
+} from "./voice-chat/providers/manual/config.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -178,6 +184,7 @@ import type {
   PluginSource,
   TerminalProfile,
 } from "@getpaseo/protocol/messages";
+import { MutableManualVoiceOrchestratorConfigSchema } from "@getpaseo/protocol/messages";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -199,6 +206,7 @@ import { terminateWithTreeKill } from "../utils/tree-kill.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import {
   createRequireBearerMiddleware,
+  isAgentMcpCapabilityToken,
   isAgentMcpRequestAuthorized,
   type DaemonAuthConfig,
 } from "./auth.js";
@@ -428,9 +436,7 @@ export interface PaseoDaemonConfig {
   auth?: DaemonAuthConfig;
   openai?: PaseoOpenAIConfig;
   speech?: PaseoSpeechConfig;
-  voiceLlmProvider?: AgentProvider | null;
-  voiceLlmProviderExplicit?: boolean;
-  voiceLlmModel?: string | null;
+  manualVoice?: ManualVoiceConfig;
   dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
@@ -521,8 +527,24 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
+function isAgentMcpEndpointAvailable(enabled: boolean, hasInternalCapability: boolean): boolean {
+  return enabled || hasInternalCapability;
+}
+
+function resolveDaemonManualVoiceConfig(config: PaseoDaemonConfig): ManualVoiceConfig {
+  return (
+    config.manualVoice ??
+    resolveManualVoiceConfig({
+      paseoHome: config.paseoHome,
+      persisted: undefined,
+      providers: undefined,
+    })
+  );
+}
+
 function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
+  const manualVoice = resolveDaemonManualVoiceConfig(config);
 
   const initialConfig: MutableDaemonConfig = {
     relay: { enabled: config.relayEnabled ?? true },
@@ -549,6 +571,9 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
     skills: { selection: config.skillSelection },
+    manualVoice: {
+      orchestrator: manualVoice.orchestrator,
+    },
   };
 
   if (config.terminalProfiles !== undefined) {
@@ -1326,10 +1351,9 @@ export async function createPaseoDaemon(
     { elapsed: elapsed() },
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
   );
-  logger.info(
-    "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
-  );
   logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
+
+  let voiceChat: VoiceChat | null = null;
 
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
@@ -1385,10 +1409,10 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     callerAgentId: runtime.callerAgentId,
-    enableVoiceTools: runtime.enableVoiceTools,
-    voiceOnly: runtime.voiceOnly,
-    resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
-    resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
+    resolveCallerContext: (agentId) =>
+      agentManager.getInternalAgentPaseoTools(agentId)?.caller ?? null,
+    resolveToolExtension: (agentId) =>
+      agentManager.getInternalAgentPaseoTools(agentId)?.extension ?? null,
     logger,
   });
   const createAgentToolCatalog = (runtime: PaseoToolRuntimeContext) =>
@@ -1435,7 +1459,11 @@ export async function createPaseoDaemon(
       req: express.Request,
       res: express.Response,
     ): Promise<void> => {
-      if (!mcpEnabled) {
+      const hasInternalCapability = isAgentMcpCapabilityToken({
+        capabilityToken: agentMcpAuthToken,
+        authorizationHeader: req.header("authorization"),
+      });
+      if (!isAgentMcpEndpointAvailable(mcpEnabled, hasInternalCapability)) {
         res.status(404).json({ error: "Agent MCP endpoint disabled" });
         return;
       }
@@ -1523,10 +1551,24 @@ export async function createPaseoDaemon(
     logger.info({ route: agentMcpRoute, enabled: mcpEnabled }, "Agent MCP route mounted");
   }
 
-  const speechService = createSpeechService({
+  const dictationSpeechService = createSpeechService({
     logger,
     openaiConfig: config.openai,
     speechConfig: config.speech,
+  });
+  const manualVoiceProvider = createManualVoiceProvider({
+    config: resolveDaemonManualVoiceConfig(config),
+    agentManager,
+    agentStorage,
+    workspaceRegistry,
+    logger,
+  });
+  daemonConfigStore.onFieldChange("manualVoice.orchestrator", (value) => {
+    const orchestrator = MutableManualVoiceOrchestratorConfigSchema.parse(value);
+    manualVoiceProvider.configureOrchestrator(orchestrator);
+  });
+  voiceChat = createVoiceChat({
+    provider: manualVoiceProvider,
   });
   logger.info({ elapsed: elapsed() }, "Speech service created");
 
@@ -1562,6 +1604,7 @@ export async function createPaseoDaemon(
           const logAndResolve = async () => {
             boundListenTarget = resolveBoundListenTarget(listenTarget, httpServer);
             const mcpBaseUrl = createAgentMcpBaseUrl(boundListenTarget);
+            agentManager.setRequiredPaseoToolsBaseUrl(mcpBaseUrl);
             agentMcpBaseUrl =
               !mcpEnabled || config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
             agentManager.setMcpBaseUrl(agentMcpBaseUrl);
@@ -1629,7 +1672,7 @@ export async function createPaseoDaemon(
               },
               workspaceAutoName,
               config.auth,
-              speechService,
+              dictationSpeechService,
               terminalManager,
               {
                 finalTimeoutMs: config.dictationFinalTimeoutMs,
@@ -1679,6 +1722,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              voiceChat,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
@@ -1722,7 +1766,8 @@ export async function createPaseoDaemon(
 
       // Start speech service after listening so synchronous Sherpa native
       // model loading doesn't block the server from accepting connections.
-      speechService.start();
+      dictationSpeechService.start();
+      manualVoiceProvider.startHarness();
       scriptHealthMonitor.start();
     } catch (error) {
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
@@ -1750,7 +1795,9 @@ export async function createPaseoDaemon(
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
     terminalManager.killAll();
-    await speechService.stop();
+    await voiceChat?.close();
+    await manualVoiceProvider.stopHarness();
+    await dictationSpeechService.stop();
     await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {

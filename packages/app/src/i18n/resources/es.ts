@@ -1968,6 +1968,7 @@ export const es: TranslationResources = {
       projects: "Proyectos",
       connections: "Conexiones",
       agents: "Agents",
+      voice: "Voz",
       metadata: "Metadatos",
       workspaces: "Workspaces",
       providers: "Proveedores",

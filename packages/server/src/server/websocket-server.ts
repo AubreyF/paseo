@@ -60,7 +60,7 @@ import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
-import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
+import type { VoiceChat } from "./voice-chat/index.js";
 import {
   computeNotificationPlan,
   isPushEligibleAttentionReason,
@@ -388,11 +388,8 @@ function buildServerCapabilities(params: {
         }),
       }),
       voice: toServerCapabilityState({
-        state: readiness.realtimeVoice,
-        reason: resolveCapabilityReason({
-          state: readiness.realtimeVoice,
-          readiness,
-        }),
+        state: { ...readiness.realtimeVoice, enabled: false },
+        reason: "Update Paseo to use voice chat.",
       }),
     },
   };
@@ -571,8 +568,7 @@ export class VoiceAssistantWebSocketServer {
   private dictation!: {
     finalTimeoutMs?: number;
   } | null;
-  private readonly voiceSpeakHandlers = new Map<string, VoiceSpeakHandler>();
-  private readonly voiceCallerContexts = new Map<string, VoiceCallerContext>();
+  private readonly voiceChat: VoiceChat | null;
   private readonly workspaceSetupSnapshots = new Map<string, WorkspaceSetupSnapshot>();
   private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
@@ -647,6 +643,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    voiceChat?: VoiceChat | null,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -663,6 +660,7 @@ export class VoiceAssistantWebSocketServer {
     this.hubRelationships = hubRelationships ?? null;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
+    this.voiceChat = voiceChat ?? null;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
@@ -1421,9 +1419,6 @@ export class VoiceAssistantWebSocketServer {
       pluginRuntime: this.pluginRuntime,
       orchestrationSkills: this.orchestrationSkills,
       mcpBaseUrl: this.mcpBaseUrl,
-      stt: () => this.speech?.resolveStt() ?? null,
-      sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
-      tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
       providerUsageService: this.providerUsageService,
@@ -1438,23 +1433,7 @@ export class VoiceAssistantWebSocketServer {
       getDaemonTcpHost: this.getDaemonTcpHost ?? undefined,
       serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
       resolveScriptHealth: this.resolveScriptHealth ?? undefined,
-      voice: {
-        turnDetection: () => this.speech?.resolveTurnDetection() ?? null,
-      },
-      voiceBridge: {
-        registerVoiceSpeakHandler: (agentId, handler) => {
-          this.voiceSpeakHandlers.set(agentId, handler);
-        },
-        unregisterVoiceSpeakHandler: (agentId) => {
-          this.voiceSpeakHandlers.delete(agentId);
-        },
-        registerVoiceCallerContext: (agentId, context) => {
-          this.voiceCallerContexts.set(agentId, context);
-        },
-        unregisterVoiceCallerContext: (agentId) => {
-          this.voiceCallerContexts.delete(agentId);
-        },
-      },
+      voiceChat: this.voiceChat,
       dictation:
         this.dictation || this.speech
           ? {
@@ -1627,6 +1606,8 @@ export class VoiceAssistantWebSocketServer {
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
+        // COMPAT(voiceChat): added in v0.7.0, remove gate after 2027-08-29.
+        voiceChat: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
@@ -1817,14 +1798,6 @@ export class VoiceAssistantWebSocketServer {
     });
   }
 
-  public resolveVoiceSpeakHandler(callerAgentId: string): VoiceSpeakHandler | null {
-    return this.voiceSpeakHandlers.get(callerAgentId) ?? null;
-  }
-
-  public resolveVoiceCallerContext(callerAgentId: string): VoiceCallerContext | null {
-    return this.voiceCallerContexts.get(callerAgentId) ?? null;
-  }
-
   private async detachSocket(
     ws: WebSocketLike,
     details: {
@@ -1876,6 +1849,11 @@ export class VoiceAssistantWebSocketServer {
 
     if (connection.sockets.size === 0) {
       this.unregisterBrowserToolsClient(connection);
+      await connection.session.handleTransportDisconnect();
+      if (connection.sockets.size > 0) {
+        this.finishPluginSocketCleanup(ws);
+        return;
+      }
       if (connection.lifecycle === "ephemeral-plugin") {
         this.pluginSocketIds.delete(ws);
         await this.cleanupConnection(connection, "Plugin session disconnected");

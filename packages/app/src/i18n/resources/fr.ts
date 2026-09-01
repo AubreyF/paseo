@@ -1973,6 +1973,7 @@ export const fr: TranslationResources = {
       projects: "Projets",
       connections: "Relations",
       agents: "Agents",
+      voice: "Voix",
       metadata: "Métadonnées",
       workspaces: "Workspaces",
       providers: "Fournisseurs",

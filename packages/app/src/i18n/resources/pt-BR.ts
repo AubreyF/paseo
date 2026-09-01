@@ -1954,6 +1954,7 @@ export const ptBR: TranslationResources = {
       projects: "Projetos",
       connections: "Conexões",
       agents: "Agentes",
+      voice: "Voz",
       metadata: "Metadados",
       workspaces: "Workspaces",
       providers: "Provedores",

@@ -75,7 +75,11 @@ import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
-import type { PaseoToolCatalogFactory } from "./tools/types.js";
+import type {
+  PaseoCallerContext,
+  PaseoToolCatalogFactory,
+  PaseoToolExtension,
+} from "./tools/types.js";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
@@ -268,6 +272,28 @@ export interface CreateAgentOptions {
   // undefined is an explicit decision: the agent never appears in the sidebar.
   workspaceId: string | undefined;
   owner?: AgentOwner;
+  paseoTools?: "required";
+  systemPromptBehavior?: "append-daemon" | "authoritative";
+}
+
+export interface InternalAgentPaseoTools {
+  caller: PaseoCallerContext;
+  extension?: PaseoToolExtension;
+}
+
+export interface LaunchInternalAgentOptions {
+  agentId?: string;
+  config: AgentSessionConfig;
+  workspaceId: string | undefined;
+  labels?: Record<string, string>;
+  initialTitle?: string | null;
+  tools: InternalAgentPaseoTools;
+  systemPromptBehavior: "authoritative";
+}
+
+export interface InternalAgentHandle {
+  agent: ManagedAgent;
+  dispose(): Promise<void>;
 }
 
 export interface AgentManagerOptions {
@@ -280,6 +306,7 @@ export interface AgentManagerOptions {
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
+  requiredPaseoToolsBaseUrl?: string;
   mcpAuthToken?: string;
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
@@ -291,6 +318,10 @@ export interface AgentManagerOptions {
     expectedTurnId: string;
   }) => Promise<void>;
   logger: Logger;
+}
+
+function resolveRequiredPaseoToolsBaseUrl(options: AgentManagerOptions): string | null {
+  return options.requiredPaseoToolsBaseUrl ?? null;
 }
 
 export type ActiveTurnSteerDispatchResult =
@@ -691,9 +722,11 @@ export class AgentManager {
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
+  private requiredPaseoToolsBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
+  private readonly internalAgentTools = new Map<string, InternalAgentPaseoTools>();
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
@@ -710,6 +743,7 @@ export class AgentManager {
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
+    this.requiredPaseoToolsBaseUrl = resolveRequiredPaseoToolsBaseUrl(options);
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
@@ -781,6 +815,10 @@ export class AgentManager {
     this.mcpBaseUrl = url;
   }
 
+  setRequiredPaseoToolsBaseUrl(url: string | null): void {
+    this.requiredPaseoToolsBaseUrl = url;
+  }
+
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
   }
@@ -791,6 +829,10 @@ export class AgentManager {
 
   setPaseoToolCatalogFactory(factory: PaseoToolCatalogFactory | null): void {
     this.paseoToolCatalogFactory = factory;
+  }
+
+  getInternalAgentPaseoTools(agentId: string): InternalAgentPaseoTools | null {
+    return this.internalAgentTools.get(agentId) ?? null;
   }
 
   /**
@@ -1138,6 +1180,49 @@ export class AgentManager {
     return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
   }
 
+  async launchInternalAgentWithRequiredPaseoTools(
+    options: LaunchInternalAgentOptions,
+  ): Promise<InternalAgentHandle> {
+    const agentId = validateAgentId(options.agentId ?? this.idFactory(), "launchInternalAgent");
+    if (this.internalAgentTools.has(agentId)) {
+      throw new Error(`Internal agent tool context already exists for ${agentId}`);
+    }
+    this.internalAgentTools.set(agentId, options.tools);
+    let agent: ManagedAgent;
+    try {
+      agent = await this.createAgent(options.config, agentId, {
+        workspaceId: options.workspaceId,
+        labels: options.labels,
+        initialTitle: options.initialTitle,
+        paseoTools: "required",
+        systemPromptBehavior: options.systemPromptBehavior,
+      });
+    } catch (error) {
+      this.internalAgentTools.delete(agentId);
+      throw error;
+    }
+
+    let disposed = false;
+    let disposal: Promise<void> | null = null;
+    return {
+      agent,
+      dispose: async () => {
+        if (disposed) return;
+        disposal ??= (async () => {
+          await this.detachDelegatedChildren(agentId);
+          if (this.agents.has(agentId)) await this.archiveAgent(agentId);
+          this.internalAgentTools.delete(agentId);
+          disposed = true;
+        })();
+        try {
+          await disposal;
+        } finally {
+          if (!disposed) disposal = null;
+        }
+      },
+    };
+  }
+
   private async createAgentInternal(
     config: AgentSessionConfig,
     agentId: string | undefined,
@@ -1150,6 +1235,8 @@ export class AgentManager {
       config,
       resolvedAgentId,
       options?.env,
+      options.paseoTools,
+      options.systemPromptBehavior,
     );
     this.requireEnabledProvider(storedConfig.provider);
     const client = await this.requireAvailableClient({
@@ -1160,10 +1247,17 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       options?.env,
+      options.paseoTools,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
+    await this.requirePaseoToolsSupport(
+      session,
+      providerLaunchConfig,
+      launchContext,
+      options.paseoTools,
+    );
     await this.requireExternalMcpSupport(session, storedConfig);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
@@ -1622,6 +1716,15 @@ export class AgentManager {
           await this.archiveSnapshot(currentChild.id, new Date().toISOString());
         }
       });
+    }
+  }
+
+  private async detachDelegatedChildren(parentAgentId: string): Promise<void> {
+    if (!this.registry) return;
+    const records = await this.registry.list();
+    for (const record of records) {
+      if (record.archivedAt || record.labels?.[PARENT_AGENT_ID_LABEL] !== parentAgentId) continue;
+      await this.detachAgent(record.id);
     }
   }
 
@@ -3255,6 +3358,18 @@ export class AgentManager {
     throw new Error(`Provider '${storedConfig.provider}' does not support MCP servers`);
   }
 
+  private async requirePaseoToolsSupport(
+    session: AgentSession,
+    launchConfig: AgentSessionConfig,
+    launchContext: AgentLaunchContext,
+    requirement: CreateAgentOptions["paseoTools"],
+  ): Promise<void> {
+    if (requirement !== "required" || launchContext.paseoTools) return;
+    if (launchConfig.mcpServers?.paseo && session.capabilities.supportsMcpServers === true) return;
+    await this.closeUnregisteredSession(session);
+    throw new Error(`Provider '${launchConfig.provider}' cannot receive required Paseo tools`);
+  }
+
   private async initializeAgentTimelineForRegister(params: {
     agentId: string;
     now: Date;
@@ -4799,16 +4914,21 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string,
     env?: Record<string, string>,
+    paseoTools?: CreateAgentOptions["paseoTools"],
+    systemPromptBehavior: CreateAgentOptions["systemPromptBehavior"] = "append-daemon",
   ): Promise<PreparedSessionConfig> {
     const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
-    const launchConfig = this.applyDaemonAppendSystemPrompt(
-      withRuntimePaseoMcpServer({
-        config: storedConfig,
-        agentId,
-        mcpBaseUrl: this.mcpBaseUrl,
-        mcpAuthToken: this.mcpAuthToken,
-      }),
-    );
+    const mcpBaseUrl = paseoTools === "required" ? this.requiredPaseoToolsBaseUrl : this.mcpBaseUrl;
+    const runtimeConfig = withRuntimePaseoMcpServer({
+      config: storedConfig,
+      agentId,
+      mcpBaseUrl,
+      mcpAuthToken: this.mcpAuthToken,
+    });
+    const launchConfig =
+      systemPromptBehavior === "authoritative"
+        ? runtimeConfig
+        : this.applyDaemonAppendSystemPrompt(runtimeConfig);
     return { storedConfig, launchConfig };
   }
 
@@ -4830,6 +4950,7 @@ export class AgentManager {
     client: AgentClient,
     cwd: string,
     env?: Record<string, string>,
+    paseoTools?: CreateAgentOptions["paseoTools"],
   ): Promise<AgentLaunchContext> {
     const context: AgentLaunchContext = {
       agentId,
@@ -4840,7 +4961,7 @@ export class AgentManager {
       },
     };
     if (
-      this.paseoToolsEnabled &&
+      (this.paseoToolsEnabled || paseoTools === "required") &&
       client.capabilities.supportsNativePaseoTools &&
       this.paseoToolCatalogFactory
     ) {

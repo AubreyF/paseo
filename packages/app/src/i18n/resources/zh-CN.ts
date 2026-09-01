@@ -1901,6 +1901,7 @@ export const zhCN: TranslationResources = {
       projects: "项目",
       connections: "连接",
       agents: "Agents",
+      voice: "语音",
       metadata: "元数据",
       workspaces: "Workspaces",
       providers: "Providers",

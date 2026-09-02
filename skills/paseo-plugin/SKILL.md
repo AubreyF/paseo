@@ -598,6 +598,8 @@ Use `--host <url>` when managing a daemon other than the CLI default. A Git sour
 
 Do not restart the daemon to load source changes. Restarting it can kill the agent performing the work.
 
+For an old mixed entry, follow the standalone [runtime-entry migration guide](https://paseo.sh/docs/plugins/migration.md) mechanically.
+
 ## Verify the outcome
 
 After a change:

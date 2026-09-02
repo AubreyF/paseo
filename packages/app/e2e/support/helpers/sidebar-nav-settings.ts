@@ -38,12 +38,9 @@ function itemLabel(key: SidebarNavKey): string {
   }[key];
 }
 
-async function rowTop(locator: Locator): Promise<number> {
+async function rowTop(locator: Locator): Promise<number | null> {
   const box = await locator.boundingBox();
-  if (!box) {
-    throw new Error("Expected a laid-out sidebar row to measure");
-  }
-  return box.y;
+  return box?.y ?? null;
 }
 
 export async function seedSidebarNavPreferences(
@@ -139,7 +136,11 @@ async function expectVerticalOrder(
         const measured = await Promise.all(
           keys.map(async (key) => ({ key, top: await rowTop(locate(key)) })),
         );
-        return measured.sort((a, b) => a.top - b.top).map((entry) => entry.key);
+        const laidOut = measured.filter(
+          (entry): entry is { key: SidebarNavKey; top: number } => entry.top !== null,
+        );
+        if (laidOut.length !== keys.length) return null;
+        return laidOut.sort((a, b) => a.top - b.top).map((entry) => entry.key);
       },
       { message: `Expected ${subject} in order`, timeout: 15_000 },
     )

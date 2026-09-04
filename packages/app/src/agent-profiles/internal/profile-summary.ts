@@ -39,18 +39,42 @@ export function buildAgentProfileTags(input: {
   const modeId = input.profile.modeId?.trim();
   if (modeId) {
     const mode = entry?.modes?.find((candidate) => candidate.id === modeId);
-    tags.push({ id: "mode", label: mode ? formatAgentModeLabel(mode) : modeId });
+    tags.push({
+      id: "mode",
+      label: mode ? formatAgentModeLabel(mode) : modeId,
+    });
   }
 
   const thinkingOptionId = input.profile.thinkingOptionId?.trim();
   if (thinkingOptionId) {
-    tags.push({ id: "thinking", label: formatThinkingOptionLabel({ id: thinkingOptionId }) });
+    tags.push({
+      id: "thinking",
+      label: formatThinkingOptionLabel({ id: thinkingOptionId }),
+    });
   }
 
   const featureCount = Object.keys(input.profile.featureValues ?? {}).length;
   if (featureCount > 0) {
-    tags.push({ id: "features", label: input.formatFeatureCount(featureCount) });
+    tags.push({
+      id: "features",
+      label: input.formatFeatureCount(featureCount),
+    });
   }
 
   return tags;
+}
+
+/** Avoid repeating the provider when a profile deliberately uses the same display name. */
+export function buildAgentProfilePickerSummary(input: {
+  profile: AgentProfile;
+  entries: readonly ProviderSnapshotEntry[] | undefined;
+  formatFeatureCount: (count: number) => string;
+}): string {
+  const tags = buildAgentProfileTags(input);
+  const profileName = input.profile.name.trim().toLowerCase();
+  const firstVisibleIndex = tags[0]?.label.trim().toLowerCase() === profileName ? 1 : 0;
+  return tags
+    .slice(firstVisibleIndex)
+    .map((tag) => tag.label)
+    .join(" · ");
 }

@@ -14,14 +14,24 @@ test.setTimeout(120_000);
 const PRIMARY = {
   id: "codex-primary-test",
   label: "Codex Primary",
-  models: [{ id: "primary-model", label: "Primary model", description: "Primary test model" }],
+  models: [
+    {
+      id: "primary-model",
+      label: "Primary model",
+      description: "Primary test model",
+    },
+  ],
 };
 
 const SECONDARY = {
   id: "codex-secondary-test",
   label: "Codex Secondary",
   models: [
-    { id: "secondary-model", label: "Secondary model", description: "Secondary test model" },
+    {
+      id: "secondary-model",
+      label: "Secondary model",
+      description: "Secondary test model",
+    },
   ],
 };
 
@@ -31,10 +41,20 @@ test("model selector shows usage for each configured account and its profiles", 
   const primaryProvider = await seedModelProvider(PRIMARY);
   const secondaryProvider = await seedModelProvider(SECONDARY);
   const profiles = await seedAgentProfiles([
-    { id: "agent_profile_primary_usage", name: "Primary account", provider: PRIMARY.id },
-    { id: "agent_profile_secondary_usage", name: "Secondary account", provider: SECONDARY.id },
+    {
+      id: "agent_profile_primary_usage",
+      name: PRIMARY.label,
+      provider: PRIMARY.id,
+    },
+    {
+      id: "agent_profile_secondary_usage",
+      name: SECONDARY.label,
+      provider: SECONDARY.id,
+    },
   ]);
-  const workspace = await seedWorkspace({ repoPrefix: "provider-usage-selector-" });
+  const workspace = await seedWorkspace({
+    repoPrefix: "provider-usage-selector-",
+  });
   const usageFixture = await installProviderUsageFixture(page, [
     {
       fetchedAt: "2026-09-03T00:00:00.000Z",
@@ -75,12 +95,12 @@ test("model selector shows usage for each configured account and its profiles", 
       /84% left · resets \d+h/,
     );
     await expect(page.getByTestId(`model-provider-${SECONDARY.id}`)).toContainText("17% left");
-    await expect(page.getByTestId("model-profile-row-agent_profile_primary_usage")).toContainText(
-      "84% left",
-    );
-    await expect(page.getByTestId("model-profile-row-agent_profile_secondary_usage")).toContainText(
-      "17% left",
-    );
+    const primaryProfile = page.getByTestId("model-profile-row-agent_profile_primary_usage");
+    const secondaryProfile = page.getByTestId("model-profile-row-agent_profile_secondary_usage");
+    await expect(primaryProfile.getByText(PRIMARY.label, { exact: true })).toHaveCount(1);
+    await expect(secondaryProfile.getByText(SECONDARY.label, { exact: true })).toHaveCount(1);
+    await expect(primaryProfile).toContainText(/84% · \d+h/);
+    await expect(secondaryProfile).toContainText("17%");
 
     await testInfo.attach("provider-usage-model-selector", {
       body: await page.screenshot(),

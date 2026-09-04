@@ -13,7 +13,7 @@ import {
   toAgentConfigApply,
   type MaterializedAgentProfile,
 } from "./materialize-profile";
-import { buildAgentProfileTags } from "./profile-summary";
+import { buildAgentProfilePickerSummary } from "./profile-summary";
 import { useAgentProfiles } from "./use-agent-profiles";
 
 /** The draft composer owns profile application as one state transition. */
@@ -22,7 +22,11 @@ export interface DraftAgentProfileControls {
 }
 
 export type AgentProfileApplyTarget =
-  | { kind: "agent"; agentId: string; availableModeIds: readonly string[] | null }
+  | {
+      kind: "agent";
+      agentId: string;
+      availableModeIds: readonly string[] | null;
+    }
   | { kind: "draft"; controls: DraftAgentProfileControls };
 
 /** Everything the model picker renders for one profile. It never sees the profile itself. */
@@ -101,9 +105,11 @@ export function useAgentProfilePicker(
         icon: profile.icon ?? "",
         color: profile.color ?? "",
         name: profile.name,
-        summary: buildAgentProfileTags({ profile, entries, formatFeatureCount })
-          .map((tag) => tag.label)
-          .join(" · "),
+        summary: buildAgentProfilePickerSummary({
+          profile,
+          entries,
+          formatFeatureCount,
+        }),
       })),
     [applicableProfiles, entries, formatFeatureCount],
   );

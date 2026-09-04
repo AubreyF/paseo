@@ -63,6 +63,9 @@ type CodexUsageResponse = z.infer<typeof CodexUsageResponseSchema>;
 interface CodexQuotaProviderOptions {
   logger: Logger;
   codexHome?: string;
+  providerId?: string;
+  displayName?: string;
+  strictCodexHome?: boolean;
   fetch?: ProviderApiFetch;
 }
 
@@ -77,14 +80,20 @@ function codexWindow(
 }
 
 export class CodexQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "codex";
-  readonly displayName = "Codex";
+  readonly providerId: string;
+  readonly displayName: string;
 
-  private readonly codexHome: string;
+  private readonly codexHome: string | null;
+  private readonly strictCodexHome: boolean;
   private readonly fetchApi: ProviderApiFetch;
 
   constructor(options: CodexQuotaProviderOptions) {
-    this.codexHome = options.codexHome || process.env["CODEX_HOME"] || join(homedir(), ".codex");
+    this.providerId = options.providerId ?? "codex";
+    this.displayName = options.displayName ?? "Codex";
+    this.strictCodexHome = options.strictCodexHome ?? false;
+    this.codexHome = this.strictCodexHome
+      ? (options.codexHome ?? null)
+      : options.codexHome || process.env["CODEX_HOME"] || join(homedir(), ".codex");
     this.fetchApi = options.fetch ?? fetch;
   }
 
@@ -170,11 +179,16 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async readCodexAuth(): Promise<CodexAuth | null> {
-    const candidates = [
-      ...(process.env["CODEX_HOME"] ? [join(process.env["CODEX_HOME"], "auth.json")] : []),
-      join(homedir(), ".config", "codex", "auth.json"),
-      join(this.codexHome, "auth.json"),
-    ];
+    let candidates: string[];
+    if (this.strictCodexHome) {
+      candidates = this.codexHome ? [join(this.codexHome, "auth.json")] : [];
+    } else {
+      candidates = [
+        ...(process.env["CODEX_HOME"] ? [join(process.env["CODEX_HOME"], "auth.json")] : []),
+        join(homedir(), ".config", "codex", "auth.json"),
+        ...(this.codexHome ? [join(this.codexHome, "auth.json")] : []),
+      ];
+    }
     for (const path of candidates) {
       if (!existsSync(path)) continue;
       try {

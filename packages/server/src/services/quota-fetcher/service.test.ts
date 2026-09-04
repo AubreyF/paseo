@@ -15,6 +15,7 @@ import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 import { ProviderUsageService } from "./service.js";
+import { createProviderUsageFetchers } from "./manifest.js";
 
 function writeClaudeCredentials(
   dir: string,
@@ -183,6 +184,38 @@ function findProvider(result: { providers: ProviderUsage[] }, providerId: string
 }
 
 describe("ProviderUsageService", () => {
+  it("rebuilds fetchers from current provider configuration on a fresh fetch", async () => {
+    let providers = { secondary: { extends: "codex", label: "Secondary" } };
+    const createFetchers = vi.fn((current = {}) => {
+      const fetchers: ProviderUsageFetcher[] = [];
+      for (const [providerId, provider] of Object.entries(current)) {
+        fetchers.push(
+          usageFetcher({
+            providerId,
+            displayName: provider.label ?? providerId,
+            status: "available",
+            planLabel: null,
+            windows: [],
+          }),
+        );
+      }
+      return fetchers;
+    });
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      getProviderConfigs: () => providers,
+      createFetchers,
+    });
+
+    const first = await service.listUsage();
+    providers = { secondary: { extends: "codex", label: "Renamed" } };
+    const second = await service.listUsage({ forceRefresh: true });
+
+    expect(first.providers[0]?.displayName).toBe("Secondary");
+    expect(second.providers[0]?.displayName).toBe("Renamed");
+    expect(createFetchers).toHaveBeenCalledTimes(2);
+  });
+
   it("returns arbitrary registered providers and windows as normalized usage data", async () => {
     const service = new ProviderUsageService({
       logger: createLogger(),
@@ -344,6 +377,103 @@ describe("ProviderUsageService", () => {
         },
       ],
     });
+  });
+});
+
+describe("configured Codex usage fetchers", () => {
+  let primaryHome: string;
+  let secondaryHome: string;
+
+  beforeEach(() => {
+    primaryHome = mkdtempSync(join(tmpdir(), "paseo-primary-codex-"));
+    secondaryHome = mkdtempSync(join(tmpdir(), "paseo-secondary-codex-"));
+    writeCodexAuth(primaryHome, "primary-token");
+    writeCodexAuth(secondaryHome, "secondary-token");
+  });
+
+  afterEach(() => {
+    rmSync(primaryHome, { recursive: true, force: true });
+    rmSync(secondaryHome, { recursive: true, force: true });
+  });
+
+  it("keeps configured accounts isolated by provider id, label, and Codex home", async () => {
+    const fetchApi = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const authorization = new Headers(init?.headers).get("Authorization");
+      return jsonResponse(
+        makeCodexResponse({
+          rate_limit: {
+            primary_window: {
+              used_percent: authorization === "Bearer primary-token" ? 10 : 70,
+              reset_at: 1_748_812_800,
+            },
+          },
+        }),
+      );
+    }) as unknown as typeof fetch;
+    const fetchers = createProviderUsageFetchers({
+      logger: createLogger(),
+      fetch: fetchApi,
+      providers: {
+        codex: { label: "Primary", env: { CODEX_HOME: primaryHome } },
+        secondary: {
+          extends: "codex",
+          label: "Secondary",
+          env: { CODEX_HOME: secondaryHome },
+        },
+      },
+    }).filter((fetcher) => fetcher.providerId === "codex" || fetcher.providerId === "secondary");
+
+    const usage = await Promise.all(fetchers.map((fetcher) => fetcher.fetchUsage()));
+
+    expect(usage).toEqual([
+      expect.objectContaining({
+        providerId: "codex",
+        displayName: "Primary",
+        windows: [expect.objectContaining({ remainingPct: 90 })],
+      }),
+      expect.objectContaining({
+        providerId: "secondary",
+        displayName: "Secondary",
+        windows: [expect.objectContaining({ remainingPct: 30 })],
+      }),
+    ]);
+  });
+
+  it("does not fall back when a custom account has no configured home", async () => {
+    const previousCodexHome = process.env["CODEX_HOME"];
+    process.env["CODEX_HOME"] = primaryHome;
+    const fetchApi = vi.fn() as unknown as typeof fetch;
+    try {
+      const fetcher = createProviderUsageFetchers({
+        logger: createLogger(),
+        fetch: fetchApi,
+        providers: { secondary: { extends: "codex", label: "Secondary" } },
+      }).find((candidate) => candidate.providerId === "secondary");
+
+      await expect(fetcher?.fetchUsage()).resolves.toEqual(
+        expect.objectContaining({ providerId: "secondary", status: "unavailable" }),
+      );
+      expect(fetchApi).not.toHaveBeenCalled();
+    } finally {
+      if (previousCodexHome === undefined) delete process.env["CODEX_HOME"];
+      else process.env["CODEX_HOME"] = previousCodexHome;
+    }
+  });
+
+  it("omits disabled configured accounts", () => {
+    const fetchers = createProviderUsageFetchers({
+      logger: createLogger(),
+      providers: {
+        secondary: {
+          extends: "codex",
+          label: "Secondary",
+          env: { CODEX_HOME: secondaryHome },
+          enabled: false,
+        },
+      },
+    });
+
+    expect(fetchers.some((fetcher) => fetcher.providerId === "secondary")).toBe(false);
   });
 });
 

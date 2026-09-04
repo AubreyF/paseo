@@ -58,5 +58,39 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
 export function createProviderUsageFetchers(
   options: ProviderUsageFetcherFactoryOptions,
 ): ProviderUsageFetcher[] {
-  return PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options));
+  const configuredCodex = options.providers?.["codex"];
+  const fetchers = PROVIDER_USAGE_FETCHERS.flatMap((entry) => {
+    if (entry.providerId !== "codex") return [entry.create(options)];
+    if (configuredCodex?.enabled === false) return [];
+    const codexHome = configuredCodex?.env?.["CODEX_HOME"];
+    return [
+      new CodexQuotaProvider({
+        logger: options.logger,
+        fetch: options.fetch,
+        providerId: "codex",
+        displayName: configuredCodex?.label ?? "Codex",
+        codexHome,
+        strictCodexHome: codexHome !== undefined,
+      }),
+    ];
+  });
+
+  for (const [providerId, provider] of Object.entries(options.providers ?? {})) {
+    if (providerId === "codex" || provider.extends !== "codex" || provider.enabled === false) {
+      continue;
+    }
+    const codexHome = provider.env?.["CODEX_HOME"];
+    fetchers.push(
+      new CodexQuotaProvider({
+        logger: options.logger,
+        fetch: options.fetch,
+        providerId,
+        displayName: provider.label ?? providerId,
+        codexHome,
+        strictCodexHome: true,
+      }),
+    );
+  }
+
+  return fetchers;
 }

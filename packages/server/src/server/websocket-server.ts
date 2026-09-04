@@ -735,6 +735,7 @@ export class VoiceAssistantWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
+      getProviderConfigs: () => this.daemonConfigStore.get().providers,
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);

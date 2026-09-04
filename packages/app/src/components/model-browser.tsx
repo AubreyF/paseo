@@ -51,7 +51,10 @@ import {
 } from "@/provider-selection/provider-selection";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
-import { formatProviderUsageSummary } from "@/provider-usage/compact-summary";
+import {
+  formatProviderUsageCompactSummary,
+  formatProviderUsageSummary,
+} from "@/provider-usage/compact-summary";
 import type { ProviderUsage } from "@/provider-usage/types";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -519,10 +522,12 @@ function ModelBrowserPressable({
 }
 
 type ModelBrowserRowTone = "default" | "elevated" | "drillDown";
+type ModelBrowserRowTextLayout = "inline" | "stacked";
 
 function ModelBrowserRow({
   label,
   description,
+  trailingSummary,
   leadingSlot,
   trailingSlot,
   selected = false,
@@ -530,11 +535,13 @@ function ModelBrowserRow({
   tone = "default",
   labelMuted = false,
   spacing = "model",
+  textLayout = "inline",
   onPress,
   testID,
 }: {
   label: string;
   description?: string;
+  trailingSummary?: string;
   leadingSlot: React.ReactNode;
   trailingSlot?: React.ReactNode;
   selected?: boolean;
@@ -543,6 +550,7 @@ function ModelBrowserRow({
   /** For rows that offer an action rather than name a thing you can pick. */
   labelMuted?: boolean;
   spacing?: "model" | "provider";
+  textLayout?: ModelBrowserRowTextLayout;
   onPress: () => void;
   testID?: string;
 }) {
@@ -557,10 +565,14 @@ function ModelBrowserRow({
     [spacing, tone],
   );
   const contentStyle = useMemo(
-    () => [styles.browserRowText, description && styles.browserRowTextInline],
-    [description],
+    () => [
+      styles.browserRowText,
+      description &&
+        (textLayout === "stacked" ? styles.browserRowTextStacked : styles.browserRowTextInline),
+    ],
+    [description, textLayout],
   );
-  const hasTrailing = selected || trailingSlot;
+  const hasTrailing = selected || trailingSummary || trailingSlot;
 
   return (
     <ModelBrowserPressable
@@ -588,6 +600,11 @@ function ModelBrowserRow({
         </View>
         {hasTrailing ? (
           <View style={styles.browserRowTrailing}>
+            {trailingSummary ? (
+              <Text numberOfLines={1} style={styles.browserRowTrailingSummary}>
+                {trailingSummary}
+              </Text>
+            ) : null}
             {selectionIndicator ? (
               <View style={styles.browserRowSelection}>
                 {selected ? (
@@ -745,7 +762,9 @@ function ModelRow({
       <ModelRowProfileAction
         hovered={isHovered}
         onPress={handleEditProfiles}
-        label={t("modelSelector.editProfilesCount", { count: profiledRows.length })}
+        label={t("modelSelector.editProfilesCount", {
+          count: profiledRows.length,
+        })}
         testID={`model-edit-profiles-${row.provider}-${row.modelId}`}
       >
         <AgentProfileGlyph icon={primary.icon} color={primary.color} size={ICON_SIZE.xs} />
@@ -864,12 +883,13 @@ function AgentProfilePickerRowView({
     () => <AgentProfileGlyph icon={row.icon} color={row.color} size={ICON_SIZE.sm} />,
     [row.color, row.icon],
   );
-  const usageSummary = formatProviderUsageSummary(usage);
-  const description = [row.summary, usageSummary].filter(Boolean).join(" · ");
+  const usageSummary = formatProviderUsageCompactSummary(usage);
   return (
     <ModelBrowserRow
       label={row.name}
-      description={description}
+      description={row.summary || undefined}
+      trailingSummary={usageSummary ?? undefined}
+      textLayout="stacked"
       tone="elevated"
       onPress={handlePress}
       leadingSlot={leadingSlot}
@@ -1028,6 +1048,7 @@ function GroupProviderButton({
     <ModelBrowserRow
       label={provider.label}
       description={usageSummary ?? undefined}
+      textLayout={usageSummary ? "stacked" : "inline"}
       leadingSlot={leadingSlot}
       trailingSlot={trailingSlot}
       tone="drillDown"
@@ -1634,6 +1655,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "baseline",
     gap: theme.spacing[2],
   },
+  browserRowTextStacked: {
+    gap: 1,
+  },
   browserRowLabel: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
@@ -1648,6 +1672,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
+  },
+  browserRowTrailingSummary: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    flexShrink: 0,
   },
   browserRowTrailing: {
     flexDirection: "row",

@@ -51,6 +51,9 @@ import {
 } from "@/provider-selection/provider-selection";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
+import { formatProviderUsageSummary } from "@/provider-usage/compact-summary";
+import type { ProviderUsage } from "@/provider-usage/types";
+import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
   groupProfilesByProviderModel,
@@ -158,6 +161,7 @@ export interface ModelBrowserState {
   selectedProvider: string;
   selectedModel: string;
   profiles: AgentProfilePicker | null;
+  serverId: string | null;
   view: ModelBrowserView;
   searchQuery: string;
   isSearchFocused: boolean;
@@ -199,6 +203,7 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   searchQuery: string;
   isSearchFocused: boolean;
   profiles: AgentProfilePicker | null;
+  serverId: string | null;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   scrolling: "sheet" | "independent";
   searchAllOnFocus: boolean;
@@ -393,6 +398,7 @@ export function useModelBrowser({
     selectedProvider,
     selectedModel,
     profiles,
+    serverId,
     view,
     searchQuery,
     isSearchFocused,
@@ -847,19 +853,23 @@ function SelectableModelRow({
 function AgentProfilePickerRowView({
   row,
   onApply,
+  usage,
 }: {
   row: AgentProfilePickerRowModel;
   onApply: (profileId: string) => void;
+  usage?: ProviderUsage;
 }) {
   const handlePress = useCallback(() => onApply(row.id), [onApply, row.id]);
   const leadingSlot = useMemo(
     () => <AgentProfileGlyph icon={row.icon} color={row.color} size={ICON_SIZE.sm} />,
     [row.color, row.icon],
   );
+  const usageSummary = formatProviderUsageSummary(usage);
+  const description = [row.summary, usageSummary].filter(Boolean).join(" · ");
   return (
     <ModelBrowserRow
       label={row.name}
-      description={row.summary}
+      description={description}
       tone="elevated"
       onPress={handlePress}
       leadingSlot={leadingSlot}
@@ -877,10 +887,12 @@ function AgentProfilesPickerSection({
   rows,
   onApplyProfile,
   onEditProfiles,
+  usageByProviderId,
 }: {
   rows: AgentProfilePickerRowModel[];
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
+  usageByProviderId?: ReadonlyMap<string, ProviderUsage>;
 }) {
   const { t } = useTranslation();
   const handleApply = useCallback(
@@ -898,7 +910,12 @@ function AgentProfilesPickerSection({
         ) : null}
       </View>
       {rows.map((row) => (
-        <AgentProfilePickerRowView key={row.id} row={row} onApply={handleApply} />
+        <AgentProfilePickerRowView
+          key={row.id}
+          row={row}
+          onApply={handleApply}
+          usage={usageByProviderId?.get(row.provider)}
+        />
       ))}
     </View>
   );
@@ -929,10 +946,12 @@ function AgentProfilesPickerContent({
   rows,
   onApplyProfile,
   onEditProfiles,
+  usageByProviderId,
 }: {
   rows: AgentProfilePickerRowModel[];
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
+  usageByProviderId?: ReadonlyMap<string, ProviderUsage>;
 }) {
   if (rows.length === 0) {
     return onEditProfiles ? <CreateAgentProfileRow onPress={onEditProfiles} /> : null;
@@ -942,6 +961,7 @@ function AgentProfilesPickerContent({
       rows={rows}
       onApplyProfile={onApplyProfile}
       onEditProfiles={onEditProfiles}
+      usageByProviderId={usageByProviderId}
     />
   );
 }
@@ -949,9 +969,11 @@ function AgentProfilesPickerContent({
 function GroupProviderButton({
   provider,
   onDrillDown,
+  usage,
 }: {
   provider: ProviderSelectorProvider;
   onDrillDown: (providerId: string, providerLabel: string) => void;
+  usage?: ProviderUsage;
 }) {
   const { t } = useTranslation();
   const selection = provider.modelSelection;
@@ -1000,10 +1022,12 @@ function GroupProviderButton({
     ),
     [stateNode],
   );
+  const usageSummary = formatProviderUsageSummary(usage);
 
   return (
     <ModelBrowserRow
       label={provider.label}
+      description={usageSummary ?? undefined}
       leadingSlot={leadingSlot}
       trailingSlot={trailingSlot}
       tone="drillDown"
@@ -1017,16 +1041,22 @@ function GroupProviderButton({
 function GroupedProviderRows({
   providers,
   onDrillDown,
+  usageByProviderId,
 }: {
   providers: ProviderSelectorProvider[];
   onDrillDown: (providerId: string, providerLabel: string) => void;
+  usageByProviderId: ReadonlyMap<string, ProviderUsage>;
 }) {
   return (
     <View>
       {providers.map((provider, index) => (
         <View key={provider.id}>
           {index > 0 ? <View style={styles.separator} /> : null}
-          <GroupProviderButton provider={provider} onDrillDown={onDrillDown} />
+          <GroupProviderButton
+            provider={provider}
+            onDrillDown={onDrillDown}
+            usage={usageByProviderId.get(provider.id)}
+          />
         </View>
       ))}
     </View>
@@ -1340,6 +1370,7 @@ function ModelBrowserContent({
   searchQuery,
   isSearchFocused,
   profiles,
+  serverId,
   onSelect,
   onApplyProfile,
   onEditProfiles,
@@ -1355,6 +1386,16 @@ function ModelBrowserContent({
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
+  const { view: providerUsageView } = useProviderUsage(serverId);
+  const usageByProviderId = useMemo<ReadonlyMap<string, ProviderUsage>>(
+    () =>
+      new Map(
+        providerUsageView.kind === "ready"
+          ? providerUsageView.payload.providers.map((usage) => [usage.providerId, usage] as const)
+          : [],
+      ),
+    [providerUsageView],
+  );
   const profiledLookup = useMemo(
     () => groupProfilesByProviderModel(profiles?.rows ?? []),
     [profiles],
@@ -1435,6 +1476,7 @@ function ModelBrowserContent({
           rows={profiles.rows}
           onApplyProfile={onApplyProfile}
           onEditProfiles={onEditProfiles}
+          usageByProviderId={usageByProviderId}
         />
       ) : null}
       {rootBrowseContent ??
@@ -1445,7 +1487,11 @@ function ModelBrowserContent({
                 <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
               </View>
             ) : null}
-            <GroupedProviderRows providers={providers} onDrillDown={onDrillDown} />
+            <GroupedProviderRows
+              providers={providers}
+              onDrillDown={onDrillDown}
+              usageByProviderId={usageByProviderId}
+            />
           </View>
         ) : null)}
       {!hasResults ? <ModelSearchEmptyState /> : null}
@@ -1494,6 +1540,7 @@ export function ModelBrowser({
       searchQuery={state.searchQuery}
       isSearchFocused={state.isSearchFocused}
       profiles={state.profiles}
+      serverId={state.serverId}
       onSelect={onSelect}
       onApplyProfile={onApplyProfile}
       onEditProfiles={onEditProfiles}

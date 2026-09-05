@@ -160,11 +160,11 @@ interface ModelBrowserInput {
 }
 
 export interface ModelBrowserState {
+  serverId: string | null;
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
   profiles: AgentProfilePicker | null;
-  serverId: string | null;
   view: ModelBrowserView;
   searchQuery: string;
   isSearchFocused: boolean;
@@ -199,6 +199,7 @@ interface ModelBrowserProps {
 }
 
 interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "scrolling"> {
+  serverId: string | null;
   view: ModelBrowserView;
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
@@ -206,7 +207,6 @@ interface ModelBrowserContentProps extends Omit<ModelBrowserProps, "state" | "sc
   searchQuery: string;
   isSearchFocused: boolean;
   profiles: AgentProfilePicker | null;
-  serverId: string | null;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   scrolling: "sheet" | "independent";
   searchAllOnFocus: boolean;
@@ -217,14 +217,16 @@ type ProviderGlyphTone = "muted" | "foreground";
 
 export function ModelProviderGlyph({
   provider,
+  serverId,
   size,
   tone = "muted",
 }: {
   provider: string;
+  serverId?: string | null;
   size: number;
   tone?: ProviderGlyphTone;
 }) {
-  const Icon = getProviderIcon(provider);
+  const Icon = getProviderIcon(provider, serverId);
   const color =
     tone === "foreground" ? styles.providerIconForeground.color : styles.providerIconMuted.color;
   return <Icon size={size} color={color} />;
@@ -338,7 +340,12 @@ export function useModelBrowser({
     return {
       title: view.providerLabel,
       leading: (
-        <ModelProviderGlyph provider={view.providerId} size={ICON_SIZE.md} tone="foreground" />
+        <ModelProviderGlyph
+          provider={view.providerId}
+          serverId={serverId}
+          size={ICON_SIZE.md}
+          tone="foreground"
+        />
       ),
       back: singleProviderView ? undefined : { onPress: showAll },
       actions: (
@@ -397,11 +404,11 @@ export function useModelBrowser({
   );
 
   return {
+    serverId,
     providers,
     selectedProvider,
     selectedModel,
     profiles,
-    serverId,
     view,
     searchQuery,
     isSearchFocused,
@@ -675,6 +682,7 @@ function ModelRowProfileAction({
 
 function ModelRow({
   row,
+  serverId,
   isSelected,
   showProviderLabel = false,
   onPress,
@@ -684,6 +692,7 @@ function ModelRow({
   onEditProfiles,
 }: {
   row: ProviderSelectionModelRow;
+  serverId: string | null;
   isSelected: boolean;
   showProviderLabel?: boolean;
   onPress: () => void;
@@ -695,8 +704,8 @@ function ModelRow({
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const leadingSlot = useMemo(
-    () => <ModelProviderGlyph provider={row.provider} size={ICON_SIZE.sm} />,
-    [row.provider],
+    () => <ModelProviderGlyph provider={row.provider} serverId={serverId} size={ICON_SIZE.sm} />,
+    [row.provider, serverId],
   );
 
   const description = showProviderLabel ? buildProviderQualifiedDescription(row) : row.description;
@@ -835,6 +844,7 @@ function ModelRow({
 
 function SelectableModelRow({
   row,
+  serverId,
   isSelected,
   showProviderLabel,
   onSelect,
@@ -844,6 +854,7 @@ function SelectableModelRow({
   onEditProfiles,
 }: {
   row: ProviderSelectionModelRow;
+  serverId: string | null;
   isSelected: boolean;
   showProviderLabel?: boolean;
   onSelect: (provider: string, modelId: string) => void;
@@ -858,6 +869,7 @@ function SelectableModelRow({
   return (
     <ModelRow
       row={row}
+      serverId={serverId}
       isSelected={isSelected}
       showProviderLabel={showProviderLabel}
       onPress={handlePress}
@@ -988,10 +1000,12 @@ function AgentProfilesPickerContent({
 
 function GroupProviderButton({
   provider,
+  serverId,
   onDrillDown,
   usage,
 }: {
   provider: ProviderSelectorProvider;
+  serverId: string | null;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   usage?: ProviderUsage;
 }) {
@@ -1030,8 +1044,8 @@ function GroupProviderButton({
     );
   }, [selection, t]);
   const leadingSlot = useMemo(
-    () => <ModelProviderGlyph provider={provider.id} size={ICON_SIZE.sm} />,
-    [provider.id],
+    () => <ModelProviderGlyph provider={provider.id} serverId={serverId} size={ICON_SIZE.sm} />,
+    [provider.id, serverId],
   );
   const trailingSlot = useMemo(
     () => (
@@ -1061,10 +1075,12 @@ function GroupProviderButton({
 
 function GroupedProviderRows({
   providers,
+  serverId,
   onDrillDown,
   usageByProviderId,
 }: {
   providers: ProviderSelectorProvider[];
+  serverId: string | null;
   onDrillDown: (providerId: string, providerLabel: string) => void;
   usageByProviderId: ReadonlyMap<string, ProviderUsage>;
 }) {
@@ -1075,6 +1091,7 @@ function GroupedProviderRows({
           {index > 0 ? <View style={styles.separator} /> : null}
           <GroupProviderButton
             provider={provider}
+            serverId={serverId}
             onDrillDown={onDrillDown}
             usage={usageByProviderId.get(provider.id)}
           />
@@ -1162,6 +1179,7 @@ function IndependentProviderList({ children }: { children: React.ReactNode }) {
 
 function ModelRowList({
   rows,
+  serverId,
   selectedProvider,
   selectedModel,
   onSelect,
@@ -1174,6 +1192,7 @@ function ModelRowList({
   onEditProfiles,
 }: {
   rows: ProviderSelectionModelRow[];
+  serverId: string | null;
   selectedProvider: string;
   selectedModel: string;
   onSelect: (provider: string, modelId: string) => void;
@@ -1190,6 +1209,7 @@ function ModelRowList({
     ({ item }: { item: ProviderSelectionModelRow }) => (
       <SelectableModelRow
         row={item}
+        serverId={serverId}
         isSelected={item.provider === selectedProvider && item.modelId === selectedModel}
         showProviderLabel={showProviderLabel}
         onSelect={onSelect}
@@ -1207,6 +1227,7 @@ function ModelRowList({
       profiledLookup,
       selectedModel,
       selectedProvider,
+      serverId,
       showProviderLabel,
     ],
   );
@@ -1280,6 +1301,7 @@ function ModelSearchEmptyState() {
 }
 
 function ProviderModelBrowserContent({
+  serverId,
   view,
   provider,
   profiles,
@@ -1297,6 +1319,7 @@ function ProviderModelBrowserContent({
   isRetryingProvider,
   scrolling,
 }: {
+  serverId: string | null;
   view: Extract<ModelBrowserView, { kind: "provider" }>;
   provider: ProviderSelectorProvider | null;
   profiles: AgentProfilePicker | null;
@@ -1369,6 +1392,7 @@ function ProviderModelBrowserContent({
   }
   return (
     <ModelRowList
+      serverId={serverId}
       rows={visibleRows}
       selectedProvider={selectedProvider}
       selectedModel={selectedModel}
@@ -1384,6 +1408,7 @@ function ProviderModelBrowserContent({
 }
 
 function ModelBrowserContent({
+  serverId,
   view,
   providers,
   selectedProvider,
@@ -1391,7 +1416,6 @@ function ModelBrowserContent({
   searchQuery,
   isSearchFocused,
   profiles,
-  serverId,
   onSelect,
   onApplyProfile,
   onEditProfiles,
@@ -1442,6 +1466,7 @@ function ModelBrowserContent({
   if (view.kind === "provider") {
     return (
       <ProviderModelBrowserContent
+        serverId={serverId}
         view={view}
         provider={selectedViewProvider}
         profiles={profiles}
@@ -1476,6 +1501,7 @@ function ModelBrowserContent({
   if (allView.kind === "searchResults") {
     return (
       <ModelRowList
+        serverId={serverId}
         rows={allView.rows}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
@@ -1510,6 +1536,7 @@ function ModelBrowserContent({
             ) : null}
             <GroupedProviderRows
               providers={providers}
+              serverId={serverId}
               onDrillDown={onDrillDown}
               usageByProviderId={usageByProviderId}
             />
@@ -1554,6 +1581,7 @@ export function ModelBrowser({
 }: ModelBrowserProps) {
   return (
     <ModelBrowserContent
+      serverId={state.serverId}
       view={state.view}
       providers={state.providers}
       selectedProvider={state.selectedProvider}
@@ -1561,7 +1589,6 @@ export function ModelBrowser({
       searchQuery={state.searchQuery}
       isSearchFocused={state.isSearchFocused}
       profiles={state.profiles}
-      serverId={state.serverId}
       onSelect={onSelect}
       onApplyProfile={onApplyProfile}
       onEditProfiles={onEditProfiles}

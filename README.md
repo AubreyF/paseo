@@ -31,6 +31,9 @@
 
 <p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, and Pi agents.</p>
 
+> [!NOTE]
+> This is Aubrey's experimental branch of Paseo, focused on making it easy to work across multiple Codex subscriptions from one interface. You're welcome to try it, but expect rough edges. The multiplexing work is early, fast-moving, and still relatively brittle.
+
 <p align="center">
   <img src="https://paseo.sh/hero-mockup.png" alt="Paseo app screenshot" width="100%">
 </p>

@@ -33,6 +33,8 @@
 
 > [!NOTE]
 > This is Aubrey's experimental branch of Paseo, focused on making it easy to work across multiple Codex subscriptions from one interface. You're welcome to try it, but expect rough edges. The multiplexing work is early, fast-moving, and still relatively brittle.
+>
+> For a reusable self-hosted deployment, see the [multiplex container guide](docker/multiplex/README.md). The image contains the application and provider CLI, never account credentials or provider definitions.
 
 <p align="center">
   <img src="https://paseo.sh/hero-mockup.png" alt="Paseo app screenshot" width="100%">

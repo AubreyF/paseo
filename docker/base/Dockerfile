@@ -67,6 +67,15 @@ RUN set -eux; \
     printf '%s\n' "$server_entry" > /etc/paseo-server-entry; \
     node --check "$server_entry"
 
+# Fork and downstream images can add one agent package without copying this
+# Dockerfile or baking provider credentials into an image layer.
+ARG PASEO_EXTRA_NPM_PACKAGE=""
+RUN set -eux; \
+    if [ -n "$PASEO_EXTRA_NPM_PACKAGE" ]; then \
+      npm install -g "$PASEO_EXTRA_NPM_PACKAGE"; \
+      npm cache clean --force; \
+    fi
+
 RUN set -eux; \
     existing_group="$(getent group 1000 | cut -d: -f1 || true)"; \
     if [ -n "$existing_group" ] && [ "$existing_group" != "paseo" ]; then \

@@ -1,4 +1,4 @@
-import type { AgentAttachment } from "./messages.js";
+import type { AgentAttachment, AgentProfileLaunch } from "./messages.js";
 
 export type AgentProvider = string;
 
@@ -81,6 +81,10 @@ export interface AgentModelDefinition {
   isDefault?: boolean;
   metadata?: AgentMetadata;
   contextWindowMaxTokens?: number;
+  localEndpoint?: {
+    status: "reachable" | "unreachable";
+    checkedAt: string;
+  };
   thinkingOptions?: AgentSelectOption[];
   defaultThinkingOptionId?: string;
 }
@@ -499,6 +503,9 @@ export interface ToolPolicy {
 
 export interface AgentSessionConfig {
   provider: AgentProvider;
+  profileId?: string;
+  profileLaunch?: AgentProfileLaunch;
+  quotaPausedAt?: string;
   cwd: string;
   /**
    * Provider-agnostic system/developer instruction string.

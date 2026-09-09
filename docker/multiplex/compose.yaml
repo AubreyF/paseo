@@ -1,15 +1,26 @@
-name: paseo-multiplex
+name: ${PASEO_INSTANCE:-paseo-multiplex}
 
 services:
   paseo:
     image: ${PASEO_IMAGE:-ghcr.io/aubreyf/paseo-multiplex:edge}
-    container_name: paseo-multiplex
     restart: unless-stopped
+    init: true
+    pids_limit: 512
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: ${PASEO_MEMORY_LIMIT:-8g}
+    cpus: ${PASEO_CPU_LIMIT:-4}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${PASEO_PORT:-6767}:6767"
     environment:
       PASEO_PASSWORD: ${PASEO_PASSWORD:?Set PASEO_PASSWORD in .env}
       PASEO_HOSTNAMES: ${PASEO_HOSTNAMES:-}
+      MTPLX_API_KEY: ${MTPLX_API_KEY:-}
     volumes:
-      - ./data/home:/home/paseo
+      - ${PASEO_DATA_ROOT:-./data}/home:/home/paseo
       - ${PASEO_WORKSPACE_ROOT:-./workspace}:/workspace

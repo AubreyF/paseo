@@ -1971,7 +1971,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   buttonRow: {
     flexShrink: 0,
     flexDirection: "row",
-    alignItems: "flex-end",
+    alignItems: "center",
     justifyContent: "space-between",
     marginHorizontal: -6,
   },
@@ -1980,7 +1980,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexShrink: 1,
     flexGrow: 1,
     flexDirection: "row",
-    alignItems: "flex-end",
+    alignItems: "center",
     gap: theme.spacing[0],
   },
   rightButtonGroup: {

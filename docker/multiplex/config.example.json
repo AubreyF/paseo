@@ -1,0 +1,6 @@
+{
+  "daemon": {
+    "mcp": { "enabled": true, "injectIntoAgents": true },
+    "relay": { "enabled": false }
+  }
+}

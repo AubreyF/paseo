@@ -28,6 +28,7 @@ function providerEntry(): ProviderSnapshotEntry {
         label: "GPT A",
         description: "openai/gpt-a",
         metadata: { provider: "openai", modelId: "gpt-a" },
+        localEndpoint: { status: "reachable", checkedAt: "2026-09-09T06:00:00Z" },
         thinkingOptions: sharedThinking,
         defaultThinkingOptionId: "high",
       },

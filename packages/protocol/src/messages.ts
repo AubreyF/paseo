@@ -1,4 +1,12 @@
 import { z } from "zod";
+import {
+  ProviderResetReadRequestSchema,
+  ProviderResetPrepareRequestSchema,
+  ProviderResetConfirmRequestSchema,
+  ProviderResetReadResponseSchema,
+  ProviderResetPrepareResponseSchema,
+  ProviderResetConfirmResponseSchema,
+} from "./provider-reset.js";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
@@ -156,9 +164,8 @@ export type TerminalProfile = z.infer<typeof TerminalProfileSchema>;
  * otherwise set one control at a time. Field names mirror `AgentSessionConfig`
  * so applying a profile is a copy rather than a translation table.
  *
- * There is deliberately no system prompt here. `AgentSessionConfig.systemPrompt`
- * is creation-only, so a profile carrying one would apply when starting a new
- * agent and silently do nothing when applied to a running one.
+ * Instructions and worker selection are launch-only. Existing sessions retain
+ * their launch snapshot rather than resolving a mutable profile on resume.
  */
 export const AgentProfileSchema = z
   .object({
@@ -175,10 +182,19 @@ export const AgentProfileSchema = z
     featureValues: z.record(z.string(), z.unknown()).optional(),
     /** Free text, surfaced to orchestrating agents by the `list_profiles` MCP tool. */
     notes: z.string().optional(),
+    instructions: z.string().optional(),
+    workerProfileId: z.string().optional(),
+    maxWorkers: z.number().int().min(1).max(8).optional(),
   })
   .passthrough();
 
 export type AgentProfile = z.infer<typeof AgentProfileSchema>;
+
+export const AgentProfileLaunchSchema = z.object({
+  profile: AgentProfileSchema,
+  worker: AgentProfileSchema.optional(),
+});
+export type AgentProfileLaunch = z.infer<typeof AgentProfileLaunchSchema>;
 
 const MutableBrowserToolsConfigSchema = z
   .object({
@@ -253,6 +269,7 @@ export const MutableDaemonConfigSchema = z
 
 export const MutableDaemonConfigPatchSchema = z
   .object({
+    expectedAgentProfiles: z.array(AgentProfileSchema).optional(),
     relay: MutableRelayConfigSchema.partial().optional(),
     mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
@@ -362,6 +379,12 @@ const AgentModelDefinitionSchema = z.object({
   isDefault: z.boolean().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   contextWindowMaxTokens: z.number().optional(),
+  localEndpoint: z
+    .object({
+      status: z.enum(["reachable", "unreachable"]),
+      checkedAt: z.string(),
+    })
+    .optional(),
   thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
   defaultThinkingOptionId: z.string().optional(),
 }) satisfies z.ZodType<AgentModelDefinition>;
@@ -477,6 +500,7 @@ const ToolPolicySchema = z
 
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
+  profileId: z.string().optional(),
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
@@ -850,6 +874,8 @@ const AgentActiveTurnPayloadSchema = z.object({
 
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
+  profile: z.object({ id: z.string(), name: z.string() }).optional(),
+  quotaPausedAt: z.string().optional(),
   provider: AgentProviderSchema,
   cwd: z.string(),
   workspaceId: z.string().optional(),
@@ -3112,6 +3138,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   ProviderUsageListRequestMessageSchema,
+  ProviderResetReadRequestSchema,
+  ProviderResetPrepareRequestSchema,
+  ProviderResetConfirmRequestSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -3479,6 +3508,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceFileEditing: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
+        providerResetManagement: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
@@ -3545,6 +3575,7 @@ export const ServerInfoStatusPayloadSchema = z
         // agentProfiles to one is silently dropped. The client hides the feature
         // rather than letting a save appear to succeed.
         agentProfiles: z.boolean().optional(),
+        agentProfileLaunch: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
       })
@@ -5947,6 +5978,12 @@ export const ProviderUsageListResponseMessageSchema = z.object({
     requestId: z.string(),
     fetchedAt: z.string(),
     providers: z.array(ProviderUsageSchema),
+    workerActivity: z
+      .object({
+        checkedAt: z.string(),
+        runningByProvider: z.record(z.string(), z.number().int().nonnegative()),
+      })
+      .optional(),
   }),
 });
 
@@ -6573,6 +6610,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
+  ProviderResetReadResponseSchema,
+  ProviderResetPrepareResponseSchema,
+  ProviderResetConfirmResponseSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,

@@ -347,7 +347,29 @@ export class DaemonConfigStore {
   }
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
-    const parsedPatch = pickSupportedPatchFields(MutableDaemonConfigPatchSchema.parse(partial));
+    const parsed = MutableDaemonConfigPatchSchema.parse(partial);
+    if (
+      parsed.expectedAgentProfiles &&
+      !isEqualValue(parsed.expectedAgentProfiles, this.current.agentProfiles ?? [])
+    ) {
+      throw new Error("Profiles changed on another device. Reload the editor before saving.");
+    }
+    // Old clients replace the list without knowing launch-only fields. Preserve
+    // those fields when omitted; newer editors send empty strings to clear them.
+    if (parsed.agentProfiles) {
+      parsed.agentProfiles = parsed.agentProfiles.map((profile) => {
+        const previous = this.current.agentProfiles?.find((entry) => entry.id === profile.id);
+        return {
+          ...(previous?.instructions !== undefined ? { instructions: previous.instructions } : {}),
+          ...(previous?.workerProfileId !== undefined
+            ? { workerProfileId: previous.workerProfileId }
+            : {}),
+          ...(previous?.maxWorkers !== undefined ? { maxWorkers: previous.maxWorkers } : {}),
+          ...profile,
+        };
+      });
+    }
+    const parsedPatch = pickSupportedPatchFields(parsed);
     return this.applySupportedPatch(parsedPatch);
   }
 

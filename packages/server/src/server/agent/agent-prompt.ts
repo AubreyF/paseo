@@ -408,7 +408,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     permissionRequest?: AgentPermissionRequest,
   ): Promise<void> {
     const callerRecord = await agentStorage.get(callerAgentId);
-    if (callerRecord?.archivedAt) {
+    if (
+      callerRecord?.archivedAt ||
+      callerRecord?.config?.quotaPausedAt ||
+      agentManager.getAgent(callerAgentId)?.config.quotaPausedAt
+    ) {
       return;
     }
 

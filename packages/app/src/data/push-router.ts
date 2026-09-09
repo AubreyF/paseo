@@ -428,6 +428,9 @@ function applyDaemonConfigStatus(input: {
     daemonConfigQueryKey(input.serverId),
     payload.config,
   );
+  // A provider may now resolve to a different account. Clear the old display,
+  // cancel prior reads and let active observers read the configured account again.
+  void input.queryClient.resetQueries({ queryKey: ["providerReset", input.serverId] });
   void input.queryClient.invalidateQueries({
     queryKey: daemonPairingOfferQueryKey(input.serverId),
   });

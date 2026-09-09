@@ -70,9 +70,16 @@ RUN set -eux; \
 # Fork and downstream images can add one agent package without copying this
 # Dockerfile or baking provider credentials into an image layer.
 ARG PASEO_EXTRA_NPM_PACKAGE=""
+ARG PASEO_PI_PACKAGE=""
 RUN set -eux; \
     if [ -n "$PASEO_EXTRA_NPM_PACKAGE" ]; then \
       npm install -g "$PASEO_EXTRA_NPM_PACKAGE"; \
+      npm cache clean --force; \
+    fi
+
+RUN set -eux; \
+    if [ -n "$PASEO_PI_PACKAGE" ]; then \
+      npm install -g "$PASEO_PI_PACKAGE"; \
       npm cache clean --force; \
     fi
 

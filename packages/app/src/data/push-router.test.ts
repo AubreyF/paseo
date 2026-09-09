@@ -148,6 +148,10 @@ describe("server data push router", () => {
     const fake = createFakeClient();
     const serverId = "server-1";
     const pairingOfferKey = daemonPairingOfferQueryKey(serverId);
+    const resetKey = ["providerReset", serverId, "primary"];
+    const otherResetKey = ["providerReset", "other-host", "primary"];
+    queryClient.setQueryData(resetKey, { previousAccount: true });
+    queryClient.setQueryData(otherResetKey, { otherAccount: true });
     queryClient.setQueryData(pairingOfferKey, { relayEnabled: true, url: "https://pairing" });
     const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
 
@@ -163,6 +167,8 @@ describe("server data push router", () => {
       requestId: "providers_snapshot_update",
     });
     expect(queryClient.getQueryData(daemonConfigQueryKey(serverId))).toEqual(daemonConfig);
+    expect(queryClient.getQueryData(resetKey)).toBeUndefined();
+    expect(queryClient.getQueryData(otherResetKey)).toEqual({ otherAccount: true });
     expect(queryClient.getQueryState(pairingOfferKey)?.isInvalidated).toBe(true);
 
     unmount();

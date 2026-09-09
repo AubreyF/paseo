@@ -25,7 +25,7 @@ function toAgentUsage(stats: PiSessionStats): AgentUsage | undefined {
   const inputTokens = stats.tokens?.input ?? 0;
   const cachedInputTokens = stats.tokens?.cacheRead ?? 0;
   const outputTokens = stats.tokens?.output ?? 0;
-  const totalCostUsd = stats.cost ?? 0;
+  const totalCostUsd = stats.cost;
   const contextWindowMaxTokens = stats.contextUsage?.contextWindow ?? undefined;
   const contextWindowUsedTokens = stats.contextUsage?.tokens ?? undefined;
 
@@ -33,7 +33,7 @@ function toAgentUsage(stats: PiSessionStats): AgentUsage | undefined {
     inputTokens === 0 &&
     cachedInputTokens === 0 &&
     outputTokens === 0 &&
-    totalCostUsd === 0 &&
+    (totalCostUsd === undefined || totalCostUsd === 0) &&
     contextWindowMaxTokens === undefined &&
     contextWindowUsedTokens === undefined
   ) {

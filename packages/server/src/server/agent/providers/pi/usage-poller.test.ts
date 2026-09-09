@@ -93,7 +93,7 @@ describe("Pi usage poller", () => {
       inputTokens: 0,
       cachedInputTokens: 0,
       outputTokens: 0,
-      totalCostUsd: 0,
+      totalCostUsd: undefined,
       contextWindowMaxTokens: 200_000,
       contextWindowUsedTokens: 150,
     };

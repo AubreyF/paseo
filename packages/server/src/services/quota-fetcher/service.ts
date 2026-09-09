@@ -28,6 +28,13 @@ export class ProviderUsageService {
   private readonly now: () => number;
   private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
   private inFlight: Promise<ProviderUsageListResult> | null = null;
+  private generation = 0;
+
+  invalidate(): void {
+    this.generation += 1;
+    this.cached = null;
+    this.inFlight = null;
+  }
 
   constructor(options: ProviderUsageServiceOptions) {
     this.logger = options.logger.child({ module: "provider-usage-service" });
@@ -70,6 +77,7 @@ export class ProviderUsageService {
   }
 
   private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
+    const generation = this.generation;
     const fetchers = this.getFetchers();
     const settled = await Promise.allSettled(fetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
@@ -89,7 +97,7 @@ export class ProviderUsageService {
     });
 
     const result = { fetchedAt: new Date(nowMs).toISOString(), providers };
-    this.cached = { fetchedAtMs: nowMs, result };
+    if (generation === this.generation) this.cached = { fetchedAtMs: nowMs, result };
     return result;
   }
 }

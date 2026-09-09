@@ -43,6 +43,8 @@ tsconfig.tsbuildinfo
 coverage/
 
 # Playwright
+.playwright-cli/
+output/playwright/
 test-results/
 **/test-results/
 

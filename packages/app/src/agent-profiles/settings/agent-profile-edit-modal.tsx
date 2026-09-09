@@ -17,8 +17,10 @@ import { Switch } from "@/components/ui/switch";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { toErrorMessage } from "@/utils/error-messages";
 import { AgentProfileAppearanceField } from "./agent-profile-appearance-field";
+import { useAgentProfiles } from "../internal/use-agent-profiles";
 import type {
   AgentProfileFormModel,
+  AgentProfileFormState,
   AgentProfileFormOption,
   AgentProfileSeed,
   AgentProfileValue,
@@ -120,6 +122,91 @@ function toSelectOptions(options: AgentProfileFormOption[]): SelectFieldOption<s
     ...(option.description ? { description: option.description } : {}),
     testID: option.testID,
   }));
+}
+
+import { useVortonMode } from "@/vorton-mode";
+
+interface ProfileLaunchFieldsProps {
+  serverId: string;
+  profile?: AgentProfile;
+  model: AgentProfileFormModel;
+  state: AgentProfileFormState;
+  controlSize: FieldControlSize;
+}
+const WORKER_LIMIT_OPTIONS = [1, 2, 3, 4, 6, 8].map((count) => ({
+  id: String(count),
+  value: count,
+  label: String(count),
+}));
+
+function ProfileLaunchFields({
+  serverId,
+  profile,
+  model,
+  state,
+  controlSize,
+}: ProfileLaunchFieldsProps) {
+  const { profiles, supportsLaunch } = useAgentProfiles(serverId);
+  const vortonMode = useVortonMode();
+  const workerOptions = useMemo(
+    () => [
+      { id: "none", value: "", label: "No workers" },
+      ...(profiles ?? [])
+        .filter((entry) => entry.id !== profile?.id && !entry.workerProfileId)
+        .map((entry) => ({ id: entry.id, value: entry.id, label: entry.name })),
+    ],
+    [profiles, profile?.id],
+  );
+  const selectedLimit =
+    WORKER_LIMIT_OPTIONS.find((entry) => entry.value === state.maxWorkers) ?? null;
+  if (!supportsLaunch || !vortonMode) return null;
+  return (
+    <>
+      <Field
+        label="Launch instructions"
+        hint="Applied to new tasks only. Permissions are selected separately in the composer."
+      >
+        <FormTextInput
+          initialValue={profile?.instructions ?? ""}
+          onChangeText={model.setInstructions}
+          multiline
+          numberOfLines={4}
+          style={styles.notesInput}
+          editable={!state.isSubmitting}
+          size={controlSize}
+          accessibilityLabel="Launch instructions"
+          testID="agent-profile-instructions-input"
+        />
+      </Field>
+      <SelectField
+        label="Worker preset"
+        value={state.workerProfileId}
+        selectedDisplay={
+          workerOptions.find((entry) => entry.value === state.workerProfileId) ?? null
+        }
+        placeholder="No workers"
+        emptyText="Create a worker preset first"
+        options={workerOptions}
+        onChange={model.setWorkerProfileId}
+        disabled={state.isSubmitting}
+        size={controlSize}
+        testID="agent-profile-worker-field"
+      />
+      {state.workerProfileId ? (
+        <SelectField
+          label="Maximum concurrent workers"
+          value={state.maxWorkers}
+          selectedDisplay={selectedLimit}
+          placeholder="2"
+          emptyText="No limits available"
+          options={WORKER_LIMIT_OPTIONS}
+          onChange={model.setMaxWorkers}
+          disabled={state.isSubmitting}
+          size={controlSize}
+        />
+      ) : null}
+    </>
+  );
 }
 
 function OpenAgentProfileEditModal({
@@ -348,6 +435,13 @@ function OpenAgentProfileEditModal({
           </Field>
         ) : null}
 
+        <ProfileLaunchFields
+          serverId={serverId}
+          profile={profile}
+          model={model}
+          state={state}
+          controlSize={controlSize}
+        />
         <Field
           label={t("settings.host.agentProfiles.notesLabel")}
           hint={t("settings.host.agentProfiles.notesHint")}

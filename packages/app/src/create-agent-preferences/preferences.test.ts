@@ -9,6 +9,33 @@ import {
 import { FakeCreateAgentPreferenceStorage } from "./test-utils/fake-preference-storage";
 
 describe("create agent preferences", () => {
+  it("defaults Vorton Mode off, including installations with the legacy preset flag", () => {
+    expect(parseFormPreferences({}).vortonMode).not.toBe(true);
+    expect(parseFormPreferences({ presetMode: true }).vortonMode).not.toBe(true);
+  });
+  it("persists Vorton Mode without losing model or permission preferences", async () => {
+    const storage = new FakeCreateAgentPreferenceStorage();
+    const service = new CreateAgentPreferencesService(storage);
+    for (const vortonMode of [true, false, true]) {
+      const saving = service.update((current) => ({
+        ...mergeProviderPreferences({
+          preferences: current,
+          provider: "codex",
+          updates: { model: "gpt-5.5", mode: "auto-review" },
+        }),
+        vortonMode,
+      }));
+      await storage.nextWrite();
+      storage.finishOldestWrite();
+      await saving;
+      const reloaded = await new CreateAgentPreferencesService(storage).load();
+      expect(reloaded.vortonMode).toBe(vortonMode);
+      expect(reloaded.providerPreferences?.codex).toMatchObject({
+        model: "gpt-5.5",
+        mode: "auto-review",
+      });
+    }
+  });
   it("keeps the selected mode after saving model and thinking", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
     const preferences = new CreateAgentPreferencesService(storage);

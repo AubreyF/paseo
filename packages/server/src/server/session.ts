@@ -227,6 +227,7 @@ import {
 } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import type { ProviderUsageService } from "../services/quota-fetcher/service.js";
+import type { ProviderResetService } from "../services/quota-fetcher/reset-service.js";
 import {
   summarizeFetchWorkspacesEntries,
   workspaceIdsOnCheckout,
@@ -511,6 +512,7 @@ export interface SessionOptions {
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
+  providerResetService?: ProviderResetService;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
   serviceProxy?: ServiceProxySubsystem;
@@ -787,6 +789,7 @@ export class Session {
       terminalManager,
       providerSnapshotManager,
       providerUsageService,
+      providerResetService,
       serviceProxy,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
@@ -919,9 +922,11 @@ export class Session {
         supportsCompactProviderSnapshots: () => this.supports(CLIENT_CAPS.compactProviderSnapshots),
         listProviderAvailability: () => this.agentManager.listProviderAvailability(),
         listDraftFeatures: (config) => this.agentManager.listDraftFeatures(config),
+        listRunningWorkerCounts: () => this.agentManager.listRunningWorkerCounts(),
       },
       providerSnapshotManager,
       providerUsageService,
+      providerResetService,
       logger: this.sessionLogger,
     });
     this.agentConfigSession = new AgentConfigSession({
@@ -2644,6 +2649,10 @@ export class Session {
         return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
       case "provider.usage.list.request":
         return this.providerCatalogSession.handleProviderUsageListRequest(msg);
+      case "provider.reset.read.request":
+      case "provider.reset.prepare.request":
+      case "provider.reset.confirm.request":
+        return this.providerCatalogSession.handleProviderResetRequest(msg);
       default:
         return undefined;
     }
@@ -3591,6 +3600,7 @@ export class Session {
           paseoHome: this.paseoHome,
           worktreesRoot: this.worktreesRoot,
           providerSnapshotManager: this.providerSnapshotManager,
+          getAgentProfiles: () => this.daemonConfigStore.get().agentProfiles ?? [],
         },
         {
           kind: "session",

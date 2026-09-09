@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { countRunningWorkers } from "./worker-activity.js";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
@@ -52,6 +53,7 @@ import {
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
+import { ProviderQuotaExhaustedError } from "./quota-error.js";
 import {
   InMemoryAgentTimelineStore,
   type SeedAgentTimelineOptions,
@@ -177,6 +179,8 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   if (record.config.systemPrompt != null) {
     config.systemPrompt = record.config.systemPrompt;
   }
+  if (record.config.profileLaunch) config.profileLaunch = record.config.profileLaunch;
+  if (record.config.quotaPausedAt) config.quotaPausedAt = record.config.quotaPausedAt;
   if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
   return stripInternalPaseoMcpServer(config);
 }
@@ -685,6 +689,68 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
 }
 
 export class AgentManager {
+  private readonly pendingWorkerCreations = new Map<string, number>();
+
+  assertQuotaNotPaused(agentId: string): void {
+    const agent = this.requireAgent(agentId);
+    const parentId = agent.labels[PARENT_AGENT_ID_LABEL];
+    const parent = parentId ? this.agents.get(parentId) : undefined;
+    if (agent.config.quotaPausedAt || parent?.config.quotaPausedAt) {
+      throw new Error(
+        "Quota exhausted. This task is paused. Select a preset and explicitly start a successor task; no automatic retry will occur.",
+      );
+    }
+  }
+
+  private async quotaRootId(failed: ManagedAgent): Promise<string> {
+    const parentId = failed.labels[PARENT_AGENT_ID_LABEL];
+    if (!parentId) return failed.id;
+    const config =
+      this.agents.get(parentId)?.config ?? (await this.registry?.get(parentId))?.config;
+    return config?.profileLaunch?.worker ? parentId : failed.id;
+  }
+
+  private async pauseQuotaTeam(failed: ManagedAgent): Promise<void> {
+    const pausedAt = new Date().toISOString();
+    failed.config.quotaPausedAt = pausedAt;
+    const rootId = await this.quotaRootId(failed);
+    const team = this.listAgents().filter(
+      (agent) => agent.id === rootId || agent.labels[PARENT_AGENT_ID_LABEL] === rootId,
+    );
+    // Latch the entire team before persistence or cancellation can wake a parent.
+    for (const agent of team) {
+      agent.config.quotaPausedAt = pausedAt;
+      agent.lastError =
+        "Quota exhausted. Team paused; choose another preset to continue in a new task.";
+      this.emitState(agent);
+    }
+    // Idle children may have been unloaded. Persist their latch too so restart
+    // or a finish notification cannot revive part of a paused team.
+    const loadedIds = new Set(team.map((agent) => agent.id));
+    for (const record of (await this.registry?.list()) ?? []) {
+      const isTeammate = record.id === rootId || record.labels[PARENT_AGENT_ID_LABEL] === rootId;
+      if (!isTeammate || loadedIds.has(record.id)) continue;
+      await this.registry?.upsert({
+        ...record,
+        config: { ...record.config, quotaPausedAt: pausedAt },
+        lastError: "Quota exhausted. Team paused; choose another preset to continue in a new task.",
+      });
+    }
+    for (const agent of team) {
+      await this.registry?.applySnapshot(agent, { internal: agent.internal });
+      if (agent.id !== failed.id && (isAgentBusy(agent.lifecycle) || this.runs.hasRun(agent.id))) {
+        void this.cancelAgentRun(agent.id).catch((error) => {
+          this.logger.error(
+            { err: error, agentId: agent.id },
+            "Unable to interrupt quota-paused worker",
+          );
+          agent.lastError =
+            "Quota exhausted. Worker stop failed; inspect and stop this worker before handing off.";
+          this.emitState(agent);
+        });
+      }
+    }
+  }
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
@@ -939,6 +1005,17 @@ export class AgentManager {
     return this.subscribers.size;
   }
 
+  listRunningWorkerCounts(): Record<string, number> {
+    return countRunningWorkers(
+      this.listAgents().map((agent) => ({
+        provider: agent.provider,
+        lifecycle: agent.lifecycle,
+        parentId: agent.labels[PARENT_AGENT_ID_LABEL],
+        hasRun: this.runs.hasRun(agent.id),
+      })),
+    );
+  }
+
   listAgents(): ManagedAgent[] {
     return Array.from(this.agents.values())
       .filter((agent) => !agent.internal)
@@ -1177,11 +1254,37 @@ export class AgentManager {
     return this.providerSubagents.fetchTimeline(parentAgentId, subagentId, options);
   }
 
-  createAgent(
+  async createAgent(
     config: AgentSessionConfig,
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
+    const parentId = options.labels?.[PARENT_AGENT_ID_LABEL];
+    const parent = parentId ? this.agents.get(parentId) : undefined;
+    if (parent) this.assertQuotaNotPaused(parent.id);
+    if (parent?.config.profileLaunch?.worker) {
+      const pending = this.pendingWorkerCreations.get(parent.id) ?? 0;
+      const running = this.listAgents().filter(
+        (agent) =>
+          agent.labels[PARENT_AGENT_ID_LABEL] === parent.id &&
+          (isAgentBusy(agent.lifecycle) || this.runs.hasRun(agent.id)),
+      ).length;
+      if (pending + running >= (parent.config.profileLaunch.profile.maxWorkers ?? 2)) {
+        throw new Error(
+          "Worker limit reached. Wait for a worker to finish before creating another.",
+        );
+      }
+      this.pendingWorkerCreations.set(parent.id, pending + 1);
+      try {
+        return await this.trackAgentRegistrationOperation(
+          this.createAgentInternal(config, agentId, options),
+        );
+      } finally {
+        const remaining = (this.pendingWorkerCreations.get(parent.id) ?? 1) - 1;
+        if (remaining) this.pendingWorkerCreations.set(parent.id, remaining);
+        else this.pendingWorkerCreations.delete(parent.id);
+      }
+    }
     return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
   }
 
@@ -1214,6 +1317,9 @@ export class AgentManager {
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     await this.requireExternalMcpSupport(session, storedConfig);
+    const parentId = options.labels?.[PARENT_AGENT_ID_LABEL];
+    const pausedAt = parentId ? this.agents.get(parentId)?.config.quotaPausedAt : undefined;
+    if (pausedAt) storedConfig.quotaPausedAt = pausedAt;
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
       initialTitle: options.initialTitle,
@@ -1277,6 +1383,13 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
+    const parentId = options?.labels?.[PARENT_AGENT_ID_LABEL];
+    if (parentId) {
+      const parent = await this.registry?.get(parentId);
+      const pausedAt =
+        this.agents.get(parentId)?.config.quotaPausedAt ?? parent?.config?.quotaPausedAt;
+      if (pausedAt) mergedConfig.quotaPausedAt = pausedAt;
+    }
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       mergedConfig,
       resolvedAgentId,
@@ -2174,6 +2287,7 @@ export class AgentManager {
    * broadcast like normal timeline events.
    */
   tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
+    this.assertQuotaNotPaused(agentId);
     const agent = this.requireSessionAgent(agentId);
     const handler = agent.session.tryHandleOutOfBand?.(prompt);
     if (!handler) {
@@ -2273,6 +2387,7 @@ export class AgentManager {
         type: "turn_failed",
         provider: agent.provider,
         error: errorMsg,
+        ...(error instanceof ProviderQuotaExhaustedError ? { code: error.code } : {}),
       });
       this.finalizeForegroundTurn(agent);
       this.runs.settleForegroundRun(agentId, pendingRun.token);
@@ -2286,6 +2401,22 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
+    this.assertQuotaNotPaused(agentId);
+    const parentId = existingAgent.labels[PARENT_AGENT_ID_LABEL];
+    const parent = parentId ? this.agents.get(parentId) : undefined;
+    if (parent?.config.profileLaunch?.worker) {
+      const running = this.listAgents().filter(
+        (agent) =>
+          agent.id !== agentId &&
+          agent.labels[PARENT_AGENT_ID_LABEL] === parent.id &&
+          (isAgentBusy(agent.lifecycle) || this.runs.hasRun(agent.id)),
+      ).length;
+      if (running >= (parent.config.profileLaunch.profile.maxWorkers ?? 2)) {
+        throw new Error(
+          "Worker limit reached. Wait for a worker to finish before starting another.",
+        );
+      }
+    }
     this.logger.trace(
       {
         agentId,
@@ -2483,6 +2614,7 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     const snapshot = this.requireAgent(agentId);
+    this.assertQuotaNotPaused(agentId);
     if (
       snapshot.lifecycle !== "running" &&
       !snapshot.activeForegroundTurnId &&
@@ -2515,6 +2647,7 @@ export class AgentManager {
     options?: AgentSteerOptions,
   ): Promise<SteerResult> {
     const agent = this.requireSessionAgent(agentId);
+    this.assertQuotaNotPaused(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
     if (!expectedTurnId || !agent.session.steerActiveTurn) {
       return { status: "unavailable" };
@@ -4255,6 +4388,9 @@ export class AgentManager {
       "handleStreamEvent: turn_failed",
     );
     if (terminalDisposition === "stale") return;
+    if (event.code === "quota_exhausted" && !options?.fromHistory) {
+      await this.pauseQuotaTeam(agent);
+    }
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       agent.lifecycle = "error";
     }
@@ -4908,6 +5044,15 @@ export class AgentManager {
     const paseoToolPolicy = this.paseoToolsEnabled
       ? this.resolvePaseoToolPolicy(storedConfig.provider)
       : { enabled: false };
+    if (
+      storedConfig.profileLaunch?.worker &&
+      (!isPaseoToolPolicyEnabled(paseoToolPolicy) ||
+        paseoToolPolicy?.disabledTools?.includes("create_agent"))
+    ) {
+      throw new Error(
+        "This team preset requires Paseo agent tools. Enable daemon.mcp.injectIntoAgents and the provider's create_agent tool before launching.",
+      );
+    }
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,

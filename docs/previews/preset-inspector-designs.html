@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Paseo: usage-first inspector</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #171b19;
+      --panel: #202522;
+      --line: #343c36;
+      --text: #eef1ed;
+      --muted: #a6b0a8;
+      --accent: #9bcdb3;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font:
+        14px/1.5 system-ui,
+        sans-serif;
+    }
+    main {
+      max-width: 1120px;
+      padding: 36px 24px;
+      margin: auto;
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 500;
+      margin: 0 0 8px;
+    }
+    p {
+      color: var(--muted);
+      margin: 0 0 22px;
+    }
+    button,
+    input {
+      font: inherit;
+      color: inherit;
+    }
+    button {
+      cursor: pointer;
+      border: 0;
+      background: none;
+    }
+    button:focus-visible,
+    input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+    nav {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+    nav button {
+      padding: 10px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    nav button[aria-pressed="true"] {
+      background: var(--text);
+      color: var(--bg);
+    }
+    h2 {
+      font-size: 18px;
+      font-weight: 500;
+      margin: 0 0 6px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 24px 60px #0003;
+    }
+    .search {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+    }
+    input {
+      border: 0;
+      background: none;
+      width: 100%;
+      min-width: 0;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    }
+    .row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr);
+      gap: 14px;
+      text-align: left;
+      padding: 24px 22px;
+      border-bottom: 1px solid var(--line);
+      align-items: start;
+    }
+    .row:hover {
+      background: #ffffff04;
+    }
+    .row[aria-pressed="true"] {
+      background: #ffffff07;
+    }
+    .check {
+      color: var(--accent);
+      font-size: 20px;
+      line-height: 26px;
+    }
+    .name {
+      display: block;
+      font-size: 17px;
+      margin-bottom: 12px;
+    }
+    .usage {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      min-height: 26px;
+      flex-wrap: wrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .usage strong {
+      font-weight: 500;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+    .metric {
+      white-space: nowrap;
+    }
+    .meter {
+      display: inline-block;
+      height: 4px;
+      background: var(--line);
+      width: 64px;
+      overflow: hidden;
+      border-radius: 5px;
+      flex-shrink: 0;
+    }
+    .meter i {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+    }
+    .credit {
+      border-left: 1px solid #526056;
+      padding-left: 10px;
+    }
+    .credit.available {
+      color: var(--text);
+    }
+    .inspect {
+      padding: 28px;
+      border-left: 1px solid var(--line);
+      background: #171b1933;
+    }
+    .inspect h3 {
+      font-size: 22px;
+      font-weight: 500;
+      margin: 0 0 14px;
+    }
+    .inspect .usage {
+      margin-bottom: 30px;
+    }
+    .inspect .meter {
+      width: 78px;
+    }
+    .detail {
+      margin: 24px 0;
+    }
+    .detail dt {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    .detail dd {
+      margin: 0;
+      font-size: 14px;
+    }
+    .detail p {
+      color: var(--text);
+      margin: 0;
+    }
+    .local-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #d5b984;
+      display: inline-block;
+    }
+    .segments .usage {
+      display: grid;
+      grid-template-columns: minmax(94px, 1fr) auto auto;
+      gap: 0;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      overflow: hidden;
+      align-items: stretch;
+    }
+    .segments .part {
+      padding: 8px 10px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .segments .part + .part {
+      border-left: 1px solid var(--line);
+    }
+    .segments .part:first-child {
+      position: relative;
+      padding-bottom: 11px;
+    }
+    .segments .meter {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      border-radius: 0;
+    }
+    .segments .credit {
+      border: 0;
+      padding: 0;
+    }
+    .segments .usage.local {
+      display: flex;
+      border: 0;
+    }
+    .capsule .usage:not(.local) {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px 12px;
+      padding: 10px 12px;
+      background: #151a17;
+      border-radius: 9px;
+      border: 1px solid var(--line);
+    }
+    .capsule .meter {
+      grid-column: 1/-1;
+      grid-row: 2;
+      width: 100%;
+      height: 5px;
+    }
+    .capsule .credit {
+      border: 0;
+      padding: 0;
+    }
+    .capsule .time {
+      grid-column: 1;
+      grid-row: 3;
+    }
+    .capsule .credit {
+      grid-column: 2;
+      grid-row: 3;
+    }
+    .capsule .usage strong {
+      grid-column: 1/-1;
+    }
+    .muted {
+      color: var(--muted);
+    }
+    .empty {
+      padding: 28px;
+      color: var(--muted);
+    }
+    @media (max-width: 760px) {
+      main {
+        padding: 24px 12px;
+      }
+      .split {
+        grid-template-columns: 1fr;
+      }
+      .inspect {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+      .row {
+        padding: 20px 16px;
+      }
+      .segments .part {
+        padding-left: 8px;
+        padding-right: 8px;
+      }
+      .name {
+        font-size: 16px;
+      }
+    }
+    .segments .usage.local {
+      gap: 10px;
+    }
+    @media (max-width: 420px) {
+      .segments .usage:not(.local) {
+        grid-template-columns: 1fr auto;
+      }
+      .segments .part:last-child {
+        grid-column: 1/-1;
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+    }
+  </style>
+  <main>
+    <h1>List + Inspector, refined</h1>
+    <p>
+      Inline rail is implemented in the
+      <a href="/new" style="color: var(--accent)">live Paseo preview</a>. These comparisons use
+      sample data; they do not change accounts or redeem credits.
+    </p>
+    <nav aria-label="Variants">
+      <button data-style="rail" aria-pressed="true">1. Inline rail (selected)</button
+      ><button data-style="segments" aria-pressed="false">2. Instrument strip</button
+      ><button data-style="capsule" aria-pressed="false">3. Capacity panel</button>
+    </nav>
+    <h2 id="heading"></h2>
+    <p id="description"></p>
+    <section class="panel rail" id="panel">
+      <label class="search"
+        ><span aria-hidden="true">⌕</span
+        ><input id="search" placeholder="Search presets" aria-label="Search presets"
+      /></label>
+      <div class="split">
+        <div id="list"></div>
+        <aside class="inspect" id="inspector"></aside>
+      </div>
+    </section>
+  </main>
+  <script>
+    const data = [
+      {
+        id: "local",
+        name: "Local Qwen Fast",
+        local: true,
+        model: "Qwen 3.8 27B / Low",
+        account: "Studio Ultra / Pi / MTPLX",
+      },
+      {
+        id: "team",
+        name: "Frontier + Local Team",
+        left: 46,
+        days: 5,
+        resets: 0,
+        team: true,
+        model: "Astra / Medium",
+        account: "Codex 1",
+      },
+      {
+        id: "two",
+        name: "Codex 2 Astra Medium",
+        left: 40,
+        days: 5,
+        resets: 2,
+        model: "Astra / Medium",
+        account: "Codex 2",
+      },
+      {
+        id: "one",
+        name: "Codex 1 Astra Medium",
+        left: 46,
+        days: 5,
+        resets: 0,
+        model: "Astra / Medium",
+        account: "Codex 1",
+      },
+    ];
+    let style = "rail",
+      selected = "one";
+    const copy = {
+      rail: [
+        "Inline rail",
+        "A fine progress bar and three compact signals. The lightest treatment.",
+      ],
+      segments: [
+        "Instrument strip",
+        "Three aligned compartments for capacity, reset timing, and reset credits.",
+      ],
+      capsule: [
+        "Capacity panel",
+        "A full-width meter with more breathing room. Built for fast comparison.",
+      ],
+    };
+    function meter(p) {
+      return `<span class="meter" role="meter" aria-label="Usage remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p.left}"><i style="width:${p.left}%"></i></span>`;
+    }
+    function usage(p) {
+      if (p.local)
+        return '<span class="usage local"><span class="local-dot" aria-hidden="true"></span><span>Status stale</span><span class="metric">0 workers reported</span></span>';
+      const time = `<span class="metric time" title="Quota replenishes in ${p.days} days">↻ in ${p.days}d</span>`;
+      const credits = `<span class="metric credit ${p.resets ? "available" : ""}" title="${p.resets} manual quota-reset credits available">${p.resets} resets available</span>`;
+      return style === "segments"
+        ? `<span class="usage"><span class="part"><strong>${p.left}% left</strong>${meter(p)}</span><span class="part">${time}</span><span class="part">${credits}</span></span>`
+        : `<span class="usage"><strong>${p.left}% left</strong>${meter(p)}${time}${credits}</span>`;
+    }
+    function render() {
+      document.getElementById("panel").className = "panel " + style;
+      document.getElementById("heading").textContent = copy[style][0];
+      document.getElementById("description").textContent = copy[style][1];
+      document
+        .querySelectorAll("[data-style]")
+        .forEach((b) => b.setAttribute("aria-pressed", b.dataset.style === style));
+      const q = document.getElementById("search").value.toLowerCase();
+      const shown = data.filter((p) =>
+        [p.name, p.model, p.account].join(" ").toLowerCase().includes(q),
+      );
+      document.getElementById("list").innerHTML = shown.length
+        ? shown
+            .map(
+              (p) =>
+                `<button class="row" data-id="${p.id}" aria-pressed="${p.id === selected}"><span class="check" aria-hidden="true">${p.id === selected ? "✓" : ""}</span><span><span class="name">${p.name}</span>${usage(p)}</span></button>`,
+            )
+            .join("")
+        : '<div class="empty">No matching presets</div>';
+      const p = data.find((p) => p.id === selected);
+      document.getElementById("inspector").innerHTML =
+        `<h3>${p.name}</h3>${usage(p)}<dl><div class="detail"><dt>Model and reasoning</dt><dd>${p.model}</dd></div><div class="detail"><dt>${p.local ? "Host and runtime" : "Account"}</dt><dd>${p.account}${p.account === "Codex 1" ? '<br><span class="muted">Allowance shared with other Codex 1 presets.</span>' : ""}</dd></div><div class="detail"><dt>Execution</dt><dd>${p.local ? "Local inference through Pi and MTPLX." : p.team ? "Frontier supervisor with up to two local Pi workers." : "Direct frontier session. No local workers."}</dd></div><div class="detail"><dt>Instructions (illustrative)</dt><dd>${p.team ? "Delegate bounded tasks. Review worker diffs and independently verify the results." : "Stay within the assigned task. Ask before publishing changes."}</dd></div><div class="detail"><dt>On quota exhaustion</dt><dd>${p.local ? "Cloud subscription quota does not apply. Local capacity still limits concurrency." : "Stop and suggest another preset. Never switch automatically."}</dd></div></dl>`;
+      document.querySelectorAll("[data-id]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            selected = b.dataset.id;
+            render();
+          }),
+      );
+    }
+    document.querySelectorAll("[data-style]").forEach(
+      (b) =>
+        (b.onclick = () => {
+          style = b.dataset.style;
+          render();
+        }),
+    );
+    document.getElementById("search").oninput = render;
+    render();
+  </script>
+</html>

@@ -226,6 +226,26 @@ describe("toStoredAgentRecord", () => {
 });
 
 describe("toAgentPayload", () => {
+  it("marks a launch preset modified after a Classic model change without exposing instructions", () => {
+    const agent = createManagedAgent({
+      config: {
+        model: "different-model",
+        profileLaunch: {
+          profile: {
+            id: "saved",
+            name: "My preset",
+            provider: "claude",
+            model: "original-model",
+            instructions: "Private launch instructions",
+          },
+        },
+        quotaPausedAt: "2026-09-09T00:00:00Z",
+      },
+    });
+    const payload = toAgentPayload(agent);
+    expect(payload.profile).toEqual({ id: "saved", name: "My preset (modified)" });
+    expect(payload.quotaPausedAt).toBe("2026-09-09T00:00:00Z");
+  });
   it("serializes dates, clones arrays, and hides session", () => {
     const permissionA = createPermission({ id: "perm-a" });
     const permissionB = createPermission({

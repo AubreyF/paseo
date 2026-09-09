@@ -979,6 +979,12 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .describe("Create a new workspace for the agent."),
   ]);
   const commonCreateAgentFields = {
+    profileId: z
+      .string()
+      .optional()
+      .describe(
+        "Launch a saved preset, including instructions. A supervisor must use its configured worker preset.",
+      ),
     title: z
       .string()
       .trim()
@@ -1451,12 +1457,14 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           terminalManager,
           providerSnapshotManager,
           createPaseoWorktree: options.createPaseoWorktree,
+          getAgentProfiles: () => daemonConfigStore?.get().agentProfiles ?? [],
           ...(options.ensureWorkspaceForCreate
             ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
             : {}),
         },
         {
           kind: "mcp",
+          profileId: parsedArgs.profileId,
           provider: parsedArgs.provider,
           title: parsedArgs.title,
           initialPrompt: parsedArgs.initialPrompt,

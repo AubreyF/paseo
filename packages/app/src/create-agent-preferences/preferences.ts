@@ -13,6 +13,8 @@ export interface ProviderPreferences {
 export type LaunchTarget = { kind: "chat" } | { kind: "terminal"; profileId: string };
 
 export interface FormPreferences {
+  vortonMode?: boolean;
+  presetMode?: boolean;
   provider?: string;
   providerPreferences?: Record<string, ProviderPreferences>;
   favoriteModels?: Array<{ provider: string; modelId: string }>;
@@ -33,6 +35,8 @@ const launchTargetSchema: z.ZodType<LaunchTarget> = z.discriminatedUnion("kind",
 ]);
 
 export const FormPreferencesSchema = z.strictObject({
+  vortonMode: z.boolean().optional(),
+  presetMode: z.boolean().optional(),
   provider: z.string().optional(),
   providerPreferences: z.record(z.string(), providerPreferencesSchema).optional(),
   // COMPAT(agentProfileFavoriteMigration): favourites were removed in v0.3.2.

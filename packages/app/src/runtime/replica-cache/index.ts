@@ -605,6 +605,8 @@ function serializeAgent(agent: Agent): StoredAgent {
     pendingPermissions: [],
     persistence: null,
     ...(agent.lastError ? { lastError: agent.lastError } : {}),
+    profile: agent.profile,
+    quotaPausedAt: agent.quotaPausedAt,
     title: agent.title,
     labels: agent.labels,
     requiresAttention: agent.requiresAttention ?? false,

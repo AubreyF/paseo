@@ -2,6 +2,7 @@ import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 
 export function buildWorkspaceDraftAgentConfig(input: {
   provider: AgentSessionConfig["provider"];
+  profileId?: string;
   cwd: string;
   modeId?: string;
   model?: string;
@@ -10,6 +11,7 @@ export function buildWorkspaceDraftAgentConfig(input: {
 }): AgentSessionConfig {
   return {
     provider: input.provider,
+    ...(input.profileId ? { profileId: input.profileId } : {}),
     cwd: input.cwd,
     ...(input.modeId ? { modeId: input.modeId } : {}),
     ...(input.model ? { model: input.model } : {}),

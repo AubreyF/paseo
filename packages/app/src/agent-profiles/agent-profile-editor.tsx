@@ -47,6 +47,14 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
     async (value: AgentProfileValue) => {
       const current = profiles ?? [];
       const editing = request?.mode === "edit" ? request.profile : undefined;
+      if (
+        editing &&
+        JSON.stringify(current.find((entry) => entry.id === editing.id)) !== JSON.stringify(editing)
+      ) {
+        throw new Error(
+          "This preset changed while you were editing. Close and reopen it before saving.",
+        );
+      }
       const next: AgentProfile[] = editing
         ? current.map((entry) => (entry.id === editing.id ? { id: entry.id, ...value } : entry))
         : [...current, { id: generateAgentProfileId(), ...value }];

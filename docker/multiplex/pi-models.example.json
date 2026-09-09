@@ -1,0 +1,19 @@
+{
+  "providers": {
+    "local": {
+      "baseUrl": "http://host.docker.internal:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "$MTPLX_API_KEY",
+      "models": [
+        {
+          "id": "replace-with-your-served-model-id",
+          "name": "Local model",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 32768,
+          "maxTokens": 4096
+        }
+      ]
+    }
+  }
+}

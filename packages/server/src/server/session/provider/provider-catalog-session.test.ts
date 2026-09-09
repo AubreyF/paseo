@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ProviderResetService } from "../../../services/quota-fetcher/reset-service.js";
+import { ResetCreditStore } from "../../../services/quota-fetcher/reset-store.js";
 import pino from "pino";
 import {
   ProviderCatalogSession,
@@ -18,6 +23,7 @@ import { expandProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-cod
 type SnapshotChangeHandler = (entries: ProviderSnapshotEntry[], cwd: string) => void;
 
 interface MakeOptions {
+  reset?: ProviderResetService;
   visibleProviders?: Set<string>;
   supportsCustomModeIcons?: boolean;
   supportsCompactProviderSnapshots?: boolean;
@@ -67,6 +73,7 @@ function makeSubsystem(options: MakeOptions = {}) {
     host,
     providerSnapshotManager,
     providerUsageService: createStub<ProviderUsageService>(options.usage ?? {}),
+    providerResetService: options.reset,
     logger: pino({ level: "silent" }),
   });
   function pushSnapshotChange(
@@ -80,6 +87,81 @@ function makeSubsystem(options: MakeOptions = {}) {
 }
 
 describe("ProviderCatalogSession", () => {
+  it("correlates reset reads, preparation and explicit confirmation without consuming on read", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "paseo-reset-rpc-"));
+    try {
+      let mutations = 0;
+      let failRead = false;
+      const reset = new ProviderResetService({
+        store: new ResetCreditStore(directory),
+        logger: pino({ level: "silent" }),
+        refreshUsage: async () => {},
+        getClient: () => ({
+          openResetCreditSession: async () => ({
+            canRedeem: true,
+            read: async () => {
+              if (failRead) throw new Error("secret-provider-payload");
+              return {
+                status: "available",
+                accountId: "first",
+                accountLabel: null,
+                availableCount: 2,
+                credits: null,
+              };
+            },
+            consume: async () => {
+              mutations += 1;
+              return "reset";
+            },
+            dispose: async () => {},
+          }),
+        }),
+      });
+      const { subsystem, emitted } = makeSubsystem({ reset });
+      await subsystem.handleProviderResetRequest({
+        type: "provider.reset.read.request",
+        providerId: "codex",
+        requestId: "read",
+      });
+      expect(findByType(emitted, "provider.reset.read.response")?.payload.requestId).toBe("read");
+      await subsystem.handleProviderResetRequest({
+        type: "provider.reset.prepare.request",
+        providerId: "codex",
+        accountId: "first",
+        requestId: "prepare",
+      });
+      const operation = findByType(emitted, "provider.reset.prepare.response")?.payload.view
+        .operation;
+      if (!operation) throw new Error("Missing prepared operation");
+      expect(mutations).toBe(0);
+      await subsystem.handleProviderResetRequest({
+        type: "provider.reset.confirm.request",
+        providerId: "codex",
+        accountId: "first",
+        operationId: operation.operationId,
+        requestId: "confirm",
+      });
+      expect(findByType(emitted, "provider.reset.confirm.response")?.payload).toMatchObject({
+        requestId: "confirm",
+        outcome: "reset",
+      });
+      expect(mutations).toBe(1);
+      failRead = true;
+      await subsystem.handleProviderResetRequest({
+        type: "provider.reset.read.request",
+        providerId: "codex",
+        requestId: "failed",
+      });
+      expect(findByType(emitted, "rpc_error")?.payload).toMatchObject({
+        requestId: "failed",
+        code: "provider_reset_failed",
+      });
+      expect(JSON.stringify(emitted)).not.toContain("secret-provider-payload");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("PUSH gates invisible providers and downgrades unknown mode icons for legacy clients", () => {
     const { subsystem, emitted, pushSnapshotChange } = makeSubsystem({
       visibleProviders: new Set(["codex"]),
@@ -284,6 +366,27 @@ describe("ProviderCatalogSession", () => {
       cwd: undefined,
       providers: ["codex"],
     });
+  });
+
+  it("samples worker activity freshly without exposing hidden provider counts", async () => {
+    let workers = 1;
+    const { subsystem, emitted } = makeSubsystem({
+      usage: { listUsage: async () => ({ fetchedAt: "2026-01-01T00:00:00Z", providers: [] }) },
+      host: { listRunningWorkerCounts: () => ({ codex: workers, hidden: 8 }) },
+    });
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "first",
+    });
+    workers = 0;
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "second",
+    });
+    const responses = emitted.filter((message) => message.type === "provider.usage.list.response");
+    expect(responses[0]?.payload.workerActivity?.runningByProvider).toEqual({ codex: 1 });
+    expect(responses[1]?.payload.workerActivity?.runningByProvider).toEqual({ codex: 0 });
+    expect(responses[1]?.payload.workerActivity?.checkedAt).not.toBe("2026-01-01T00:00:00Z");
   });
 
   it("surfaces a usage-list failure as an rpc_error envelope", async () => {

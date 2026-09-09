@@ -765,6 +765,7 @@ type NewWorkspaceComposerState = NonNullable<
 >;
 
 interface WorkspaceDraftSubmissionConfig {
+  profileId?: string;
   cwd: string;
   provider: AgentProvider;
   modeId: string | null;
@@ -876,6 +877,7 @@ function buildWorkspaceDraftSetupFromComposer(input: {
   return {
     provider: input.provider,
     cwd: input.cwd,
+    profileId: input.composerState.selectedProfileId,
     modeId: input.composerState.selectedMode || null,
     model: input.composerState.effectiveModelId || null,
     thinkingOptionId: input.composerState.effectiveThinkingOptionId || null,
@@ -911,6 +913,7 @@ function buildComposerInitialValues(input: {
     return {
       workingDir: input.workingDir ?? input.initialSetup.cwd,
       provider: input.initialSetup.provider,
+      profileId: input.initialSetup.profileId,
       modeId: input.initialSetup.modeId,
       model: input.initialSetup.model,
       thinkingOptionId: input.initialSetup.thinkingOptionId,
@@ -1009,6 +1012,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
     return {
       cwd: initialSetup.cwd,
       provider: initialSetup.provider,
+      profileId: initialSetup.profileId,
       modeId: initialSetup.modeId,
       model: initialSetup.model,
       thinkingOptionId: initialSetup.thinkingOptionId,
@@ -1019,6 +1023,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   return {
     cwd: workspaceDirectory,
     provider,
+    profileId: composerState.selectedProfileId,
     modeId: composerState.selectedMode || null,
     model: composerState.effectiveModelId || null,
     thinkingOptionId: composerState.effectiveThinkingOptionId || null,
@@ -1074,6 +1079,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     attachments,
     cwd: submission.cwd,
     provider: submission.provider,
+    profileId: submission.profileId,
     clientMessageId,
     timestamp,
     ...(submission.modeId ? { modeId: submission.modeId } : {}),

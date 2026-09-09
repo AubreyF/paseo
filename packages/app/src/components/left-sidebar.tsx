@@ -1,5 +1,22 @@
 import { router } from "expo-router";
-import { FolderPlus, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
+import { VortonModeToggle } from "@/vorton-mode";
+import {
+  FolderPlus,
+  GitBranch,
+  Import,
+  Server,
+  Settings,
+  X,
+  MoreHorizontal,
+  CircleHelp,
+} from "lucide-react-native";
+import { useContainerWidth } from "@/hooks/use-container-width";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -8,7 +25,6 @@ import {
   Text,
   useWindowDimensions,
   View,
-  type PressableStateCallbackType,
 } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
@@ -266,6 +282,7 @@ function sidebarHostOptionTestID(serverId: string): string {
 }
 
 function FooterIconButton({
+  disabled = false,
   buttonRef,
   onPress,
   testID,
@@ -275,6 +292,7 @@ function FooterIconButton({
   shortcutKeys,
   theme,
 }: {
+  disabled?: boolean;
   onPress: () => void;
   testID: string;
   label: string;
@@ -289,6 +307,7 @@ function FooterIconButton({
       <TooltipTrigger asChild>
         <Pressable
           ref={buttonRef}
+          disabled={disabled}
           style={styles.footerIconButton}
           testID={testID}
           nativeID={testID}
@@ -313,70 +332,18 @@ function FooterIconButton({
   );
 }
 
-function footerAddProjectButtonStyle({
-  hovered,
-}: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.footerAddProjectButton, Boolean(hovered) && styles.footerAddProjectButtonHovered];
-}
-
-function FooterAddProjectButton({
-  onPress,
-  label,
-  shortcutKeys,
-  theme,
-}: {
-  onPress: () => void;
-  label: string;
-  shortcutKeys: ReturnType<typeof useShortcutKeys>;
-  theme: SidebarTheme;
-}) {
-  return (
-    <Tooltip delayDuration={300}>
-      <TooltipTrigger asChild>
-        <Pressable
-          style={footerAddProjectButtonStyle}
-          testID="sidebar-add-project"
-          nativeID="sidebar-add-project"
-          accessible
-          accessibilityLabel={label}
-          accessibilityRole="button"
-          onPress={onPress}
-        >
-          {({ hovered }) => {
-            const isHovered = Boolean(hovered);
-            return (
-              <>
-                <FolderPlus
-                  size={theme.iconSize.sm}
-                  color={isHovered ? theme.colors.foreground : theme.colors.foregroundMuted}
-                />
-                <Text
-                  numberOfLines={1}
-                  style={[
-                    styles.footerAddProjectLabel,
-                    isHovered && styles.footerAddProjectLabelHovered,
-                  ]}
-                >
-                  {label}
-                </Text>
-              </>
-            );
-          }}
-        </Pressable>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="center" offset={8}>
-        <IconTooltipContent label={label} shortcutKeys={shortcutKeys} />
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
 function SidebarHostPicker({
   theme,
   label,
   onAddHost,
   onOpenHostSettings,
+  hiddenTrigger = false,
+  controlledOpen,
+  onOpenChange,
 }: {
+  hiddenTrigger?: boolean;
+  controlledOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
   theme: SidebarTheme;
   label: string;
   onAddHost: () => void;
@@ -384,7 +351,9 @@ function SidebarHostPicker({
 }) {
   const hosts = useHosts();
   const triggerRef = useRef<View | null>(null);
-  const [isOpen, setIsOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const isOpen = controlledOpen ?? localOpen;
+  const setIsOpen = onOpenChange ?? setLocalOpen;
 
   const handleSelect = useCallback(
     (id: string) => {
@@ -393,7 +362,7 @@ function SidebarHostPicker({
     [onOpenHostSettings],
   );
 
-  const handleOpen = useCallback(() => setIsOpen(true), []);
+  const handleOpen = useCallback(() => setIsOpen(true), [setIsOpen]);
 
   return (
     <HostPicker
@@ -413,15 +382,18 @@ function SidebarHostPicker({
       addHostTestID="sidebar-host-add"
       hostOptionTestID={sidebarHostOptionTestID}
     >
-      <FooterIconButton
-        buttonRef={triggerRef}
-        onPress={handleOpen}
-        testID="sidebar-hosts-trigger"
-        label={label}
-        icon={Server}
-        iconSize={theme.iconSize.sm}
-        theme={theme}
-      />
+      <View style={hiddenTrigger ? styles.hiddenFooterTrigger : undefined}>
+        <FooterIconButton
+          buttonRef={triggerRef}
+          disabled={hiddenTrigger}
+          onPress={handleOpen}
+          testID="sidebar-hosts-trigger"
+          label={label}
+          icon={Server}
+          iconSize={theme.iconSize.sm}
+          theme={theme}
+        />
+      </View>
     </HostPicker>
   );
 }
@@ -466,38 +438,110 @@ function SidebarFooter({
 }) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const settingsKeys = useShortcutKeys("toggle-settings");
+  const { t } = useTranslation();
+  const { width, onLayout } = useContainerWidth();
+  const { width: toggleWidth, onLayout: measureToggle } = useContainerWidth();
+  const [hostsOpen, setHostsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // Overflow replaces a growing prefix of actions, from left to right.
+  const slots = Math.max(1, Math.floor((width - toggleWidth - 32 + 4) / 32));
+  const hiddenCount = slots >= 5 ? 0 : 5 - Math.max(0, slots - 1);
+  const openHosts = useCallback(() => setHostsOpen(true), []);
+  const openHelp = useCallback(() => setHelpOpen(true), []);
+  const actionIcons = useMemo(
+    () =>
+      [FolderPlus, Server, Import, CircleHelp, Settings].map((Icon) => (
+        <Icon
+          key={Icon.displayName}
+          size={theme.iconSize.md}
+          color={theme.colors.foregroundMuted}
+        />
+      )),
+    [theme.iconSize.md, theme.colors.foregroundMuted],
+  );
+  const actions = [
+    { label: labels.addProject, onSelect: handleOpenProject, icon: FolderPlus },
+    { label: labels.hosts, onSelect: openHosts, icon: Server },
+    { label: labels.importSession, onSelect: handleImportSession, icon: Import },
+    { label: t("sidebar.help.trigger"), onSelect: openHelp, icon: CircleHelp },
+    { label: labels.settings, onSelect: handleSettings, icon: Settings },
+  ];
 
   return (
-    <View style={styles.sidebarFooter}>
-      <FooterAddProjectButton
-        onPress={handleOpenProject}
-        label={labels.addProject}
-        shortcutKeys={newAgentKeys}
-        theme={theme}
-      />
+    <View style={styles.sidebarFooter} onLayout={onLayout}>
+      <View onLayout={measureToggle}>
+        <VortonModeToggle compact />
+      </View>
+      <View style={styles.footerGap} />
       <View style={styles.footerIconRow}>
+        {hiddenCount > 0 ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              style={styles.footerIconButton}
+              accessibilityLabel="More sidebar actions"
+              accessibilityRole="button"
+              testID="sidebar-footer-overflow"
+            >
+              <MoreHorizontal size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="end" width={220}>
+              {actions.slice(0, hiddenCount).map((action, index) => {
+                return (
+                  <DropdownMenuItem
+                    key={action.label}
+                    onSelect={action.onSelect}
+                    leading={actionIcons[index]}
+                  >
+                    {action.label}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+        {hiddenCount === 0 ? (
+          <FooterIconButton
+            testID="sidebar-add-project"
+            icon={FolderPlus}
+            onPress={handleOpenProject}
+            label={labels.addProject}
+            shortcutKeys={newAgentKeys}
+            theme={theme}
+          />
+        ) : null}
         <SidebarHostPicker
+          hiddenTrigger={hiddenCount > 1}
+          controlledOpen={hostsOpen}
+          onOpenChange={setHostsOpen}
           theme={theme}
           label={labels.hosts}
           onAddHost={handleAddHost}
           onOpenHostSettings={handleOpenHostSettings}
         />
-        <FooterIconButton
-          onPress={handleImportSession}
-          testID="sidebar-import-session"
-          label={labels.importSession}
-          icon={Import}
-          theme={theme}
+        {hiddenCount < 3 ? (
+          <FooterIconButton
+            onPress={handleImportSession}
+            testID="sidebar-import-session"
+            label={labels.importSession}
+            icon={Import}
+            theme={theme}
+          />
+        ) : null}
+        <SidebarHelpMenu
+          hiddenTrigger={hiddenCount > 3}
+          controlledOpen={helpOpen}
+          onOpenChange={setHelpOpen}
         />
-        <SidebarHelpMenu />
-        <FooterIconButton
-          onPress={handleSettings}
-          testID="sidebar-settings"
-          label={labels.settings}
-          icon={Settings}
-          shortcutKeys={settingsKeys}
-          theme={theme}
-        />
+        {hiddenCount < 5 ? (
+          <FooterIconButton
+            onPress={handleSettings}
+            testID="sidebar-settings"
+            label={labels.settings}
+            icon={Settings}
+            shortcutKeys={settingsKeys}
+            theme={theme}
+          />
+        ) : null}
       </View>
     </View>
   );
@@ -938,16 +982,24 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
   },
+  footerGap: { flex: 1 },
+  hiddenFooterTrigger: {
+    position: "absolute",
+    width: 0,
+    height: 0,
+    overflow: "hidden",
+    opacity: 0,
+  },
   footerIconRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.spacing[1],
     flexShrink: 0,
   },
   footerAddProjectButton: {
     minWidth: 0,
     minHeight: 32,
-    flex: 1,
+    width: 28,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],

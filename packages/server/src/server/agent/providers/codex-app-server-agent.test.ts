@@ -4714,6 +4714,28 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test.each([
+    { info: "usageLimitExceeded", expectedCode: "quota_exhausted" },
+    { info: "httpConnectionFailed", expectedCode: undefined },
+  ])(
+    "classifies structured quota errors without treating transport failures as exhaustion: $info",
+    async ({ info, expectedCode }) => {
+      const { appServer, session, events, terminalEvent } = await startCompactionTurnTest();
+      try {
+        appServer.completeTurn({
+          status: "failed",
+          error: { message: "Request failed", codexErrorInfo: info },
+        });
+        await terminalEvent;
+        const failure = events.find((event) => event.type === "turn_failed");
+        expect(failure?.type === "turn_failed" ? failure.code : null).toBe(expectedCode);
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("emits and dedupes Codex thread/compacted notifications", () => {
     const session = createSession();
     session.activeForegroundTurnId = null;

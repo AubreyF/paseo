@@ -5950,6 +5950,67 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
   });
 });
 
+test.each(["read", "prepare", "confirm"] as const)(
+  "correlates provider reset %s without resending the action",
+  async (operation) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "reset-test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen();
+    await connected;
+    let pending: Promise<unknown>;
+    switch (operation) {
+      case "read":
+        pending = client.readProviderReset("second");
+        break;
+      case "prepare":
+        pending = client.prepareProviderReset("second", "account-second");
+        break;
+      case "confirm":
+        pending = client.confirmProviderReset(
+          "second",
+          "account-second",
+          "00000000-0000-4000-8000-000000000001",
+        );
+        break;
+    }
+    const sent = JSON.parse(assertStr(mock.sent[0]));
+    expect(sent.message.type).toBe(`provider.reset.${operation}.request`);
+    expect(sent.message.providerId).toBe("second");
+    if (operation !== "read") expect(sent.message.accountId).toBe("account-second");
+    if (operation === "confirm")
+      expect(sent.message.operationId).toBe("00000000-0000-4000-8000-000000000001");
+    const view = {
+      providerId: "second",
+      fetchedAt: "2026-09-09T00:00:00Z",
+      snapshot: {
+        status: "available",
+        accountId: "account-second",
+        accountLabel: null,
+        availableCount: 2,
+        credits: null,
+      },
+      canRedeem: true,
+      operation: null,
+    };
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: `provider.reset.${operation}.response`,
+        payload: { requestId: sent.message.requestId, view, outcome: "reset", refreshError: null },
+      }),
+    );
+    await expect(pending).resolves.toMatchObject({ view });
+    expect(mock.sent).toHaveLength(1);
+  },
+);
+
 test("sends close_items_request and resolves close_items_response", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

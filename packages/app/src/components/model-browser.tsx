@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ProviderResetControl } from "@/provider-usage/reset-control";
 import {
   FlatList,
   Platform,
@@ -57,6 +58,7 @@ import {
 } from "@/provider-usage/compact-summary";
 import type { ProviderUsage } from "@/provider-usage/types";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
+import { useVortonMode } from "@/vorton-mode";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
   groupProfilesByProviderModel,
@@ -885,10 +887,12 @@ function AgentProfilePickerRowView({
   row,
   onApply,
   usage,
+  serverId,
 }: {
   row: AgentProfilePickerRowModel;
   onApply: (profileId: string) => void;
   usage?: ProviderUsage;
+  serverId: string | null;
 }) {
   const handlePress = useCallback(() => onApply(row.id), [onApply, row.id]);
   const leadingSlot = useMemo(
@@ -896,11 +900,16 @@ function AgentProfilePickerRowView({
     [row.color, row.icon],
   );
   const usageSummary = formatProviderUsageCompactSummary(usage);
+  const resetSlot = useMemo(
+    () => <ProviderResetControl serverId={serverId} providerId={row.provider} name={row.name} />,
+    [serverId, row.provider, row.name],
+  );
   return (
     <ModelBrowserRow
       label={row.name}
       description={row.summary || undefined}
       trailingSummary={usageSummary ?? undefined}
+      trailingSlot={resetSlot}
       textLayout="stacked"
       tone="elevated"
       onPress={handlePress}
@@ -920,11 +929,13 @@ function AgentProfilesPickerSection({
   onApplyProfile,
   onEditProfiles,
   usageByProviderId,
+  serverId,
 }: {
   rows: AgentProfilePickerRowModel[];
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
   usageByProviderId?: ReadonlyMap<string, ProviderUsage>;
+  serverId: string | null;
 }) {
   const { t } = useTranslation();
   const handleApply = useCallback(
@@ -947,6 +958,7 @@ function AgentProfilesPickerSection({
           row={row}
           onApply={handleApply}
           usage={usageByProviderId?.get(row.provider)}
+          serverId={serverId}
         />
       ))}
     </View>
@@ -979,17 +991,20 @@ function AgentProfilesPickerContent({
   onApplyProfile,
   onEditProfiles,
   usageByProviderId,
+  serverId,
 }: {
   rows: AgentProfilePickerRowModel[];
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
   usageByProviderId?: ReadonlyMap<string, ProviderUsage>;
+  serverId: string | null;
 }) {
   if (rows.length === 0) {
     return onEditProfiles ? <CreateAgentProfileRow onPress={onEditProfiles} /> : null;
   }
   return (
     <AgentProfilesPickerSection
+      serverId={serverId}
       rows={rows}
       onApplyProfile={onApplyProfile}
       onEditProfiles={onEditProfiles}
@@ -1050,11 +1065,12 @@ function GroupProviderButton({
   const trailingSlot = useMemo(
     () => (
       <View style={styles.drillDownTrailing}>
+        <ProviderResetControl serverId={serverId} providerId={provider.id} name={provider.label} />
         {stateNode}
         <ThemedChevronRight size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
       </View>
     ),
-    [stateNode],
+    [stateNode, serverId, provider.id, provider.label],
   );
   const usageSummary = formatProviderUsageSummary(usage);
 
@@ -1351,6 +1367,7 @@ function ProviderModelBrowserContent({
       normalizedQuery.length === 0 && showProfilesSection && profiles ? (
         <AgentProfilesPickerContent
           rows={providerProfileRows}
+          serverId={serverId}
           onApplyProfile={onApplyProfile}
           onEditProfiles={onEditProfiles}
         />
@@ -1361,6 +1378,7 @@ function ProviderModelBrowserContent({
       onEditProfiles,
       profiles,
       providerProfileRows,
+      serverId,
       showProfilesSection,
     ],
   );
@@ -1431,15 +1449,16 @@ function ModelBrowserContent({
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
-  const { view: providerUsageView } = useProviderUsage(serverId);
+  const vortonMode = useVortonMode();
+  const { view: providerUsageView } = useProviderUsage(serverId, { enabled: vortonMode });
   const usageByProviderId = useMemo<ReadonlyMap<string, ProviderUsage>>(
     () =>
       new Map(
-        providerUsageView.kind === "ready"
+        vortonMode && providerUsageView.kind === "ready"
           ? providerUsageView.payload.providers.map((usage) => [usage.providerId, usage] as const)
           : [],
       ),
-    [providerUsageView],
+    [providerUsageView, vortonMode],
   );
   const profiledLookup = useMemo(
     () => groupProfilesByProviderModel(profiles?.rows ?? []),
@@ -1521,6 +1540,7 @@ function ModelBrowserContent({
       {showProfilesSection && profiles ? (
         <AgentProfilesPickerContent
           rows={profiles.rows}
+          serverId={serverId}
           onApplyProfile={onApplyProfile}
           onEditProfiles={onEditProfiles}
           usageByProviderId={usageByProviderId}

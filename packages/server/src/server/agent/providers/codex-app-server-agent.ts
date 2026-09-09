@@ -39,6 +39,9 @@ import {
   type ResolveAgentDefaultModeInput,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import { ProviderQuotaExhaustedError } from "../quota-error.js";
+import { CodexResetCreditError, CodexResetCreditSession } from "./codex/reset-credits.js";
+import { probeResetRedemption } from "./codex/reset-capability.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
 
@@ -2122,6 +2125,7 @@ const TurnCompletedNotificationSchema = z
         error: z
           .object({
             message: z.string().optional(),
+            codexErrorInfo: z.unknown().optional(),
           })
           .passthrough()
           .nullable()
@@ -2411,6 +2415,7 @@ type ParsedCodexNotification =
       kind: "turn_completed";
       status: string;
       errorMessage: string | null;
+      errorInfo?: unknown;
       threadId: string | null;
     }
   | {
@@ -2563,6 +2568,7 @@ const CodexNotificationSchema = z.union([
         kind: "turn_completed",
         status: params.turn.status,
         errorMessage: params.turn.error?.message ?? null,
+        errorInfo: params.turn.error?.codexErrorInfo,
         threadId: params.threadId ?? null,
       }),
     ),
@@ -4229,6 +4235,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingForegroundTurnIdentification = null;
       this.activeForegroundTurnId = null;
       this.activeClientMessageId = null;
+      if (
+        error instanceof CodexAppServerRpcError &&
+        z.object({ codexErrorInfo: z.literal("usageLimitExceeded") }).safeParse(error.data).success
+      ) {
+        throw new ProviderQuotaExhaustedError(error.message);
+      }
       throw error;
     } finally {
       if (this.pendingForegroundStart === pendingStart) {
@@ -5901,6 +5913,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         type: "turn_failed",
         provider: CODEX_PROVIDER,
         error: parsed.errorMessage ?? "Codex turn failed",
+        ...(parsed.errorInfo === "usageLimitExceeded" ? { code: "quota_exhausted" } : {}),
       });
     } else if (parsed.status === "interrupted") {
       this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
@@ -7022,6 +7035,29 @@ export class CodexAppServerAgentClient implements AgentClient {
     );
     await session.connect();
     return session;
+  }
+
+  async openResetCreditSession(): Promise<CodexResetCreditSession> {
+    if (this.deps.customProvider && !this.runtimeSettings?.env?.CODEX_HOME?.trim()) {
+      throw new CodexResetCreditError(
+        "unavailable",
+        "Configure an explicit CODEX_HOME for this provider before managing account resets.",
+      );
+    }
+    const canRedeem = await probeResetRedemption(
+      await resolveCodexLaunchPrefix(this.runtimeSettings),
+      this.runtimeSettings,
+    );
+    const child = await this.spawnAppServer();
+    const client = new CodexAppServerClient(child, this.logger);
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams());
+      client.notify("initialized", {});
+      return new CodexResetCreditSession(client, canRedeem);
+    } catch (error) {
+      await client.dispose();
+      throw error;
+    }
   }
 
   async listImportableSessions(

@@ -85,6 +85,8 @@ import {
   type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
+import { ProviderResetService } from "../services/quota-fetcher/reset-service.js";
+import { ResetCreditStore } from "../services/quota-fetcher/reset-store.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
@@ -591,6 +593,7 @@ export class VoiceAssistantWebSocketServer {
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private readonly providerUsageService: ProviderUsageService;
+  private readonly providerResetService: ProviderResetService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
@@ -736,6 +739,19 @@ export class VoiceAssistantWebSocketServer {
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
       getProviderConfigs: () => this.daemonConfigStore.get().providers,
+    });
+    this.providerResetService = new ProviderResetService({
+      logger: this.logger,
+      store: new ResetCreditStore(join(paseoHome, "provider-reset-operations")),
+      getClient: (providerId) => {
+        const state = this.providerSnapshotManager.getAgentManagerProviderState();
+        if (state.providerDefinitions[providerId]?.enabled !== true) return null;
+        return state.clients[providerId] ?? null;
+      },
+      refreshUsage: async () => {
+        this.providerUsageService.invalidate();
+        await this.providerUsageService.listUsage();
+      },
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
@@ -1429,6 +1445,7 @@ export class VoiceAssistantWebSocketServer {
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
       providerUsageService: this.providerUsageService,
+      providerResetService: this.providerResetService,
       hubExecutionAgents: options.hubExecutionAgents,
       hubRelationships: options.hubRelationships,
       serviceProxy: this.serviceProxy ?? undefined,
@@ -1707,6 +1724,7 @@ export class VoiceAssistantWebSocketServer {
         workspaceFileEditing: true,
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: true,
+        providerResetManagement: true,
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: true,
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
@@ -1764,6 +1782,7 @@ export class VoiceAssistantWebSocketServer {
         checkoutDiscardChanges: true,
         // COMPAT(agentProfiles): added in v0.3.2, remove gate after 2027-02-11.
         agentProfiles: true,
+        agentProfileLaunch: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
       },

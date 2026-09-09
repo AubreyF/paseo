@@ -72,9 +72,9 @@ interface CodexQuotaProviderOptions {
 function codexWindow(
   window: CodexWindow | null | undefined,
 ): { usedPct: number; resetsAt: string | null } | null {
-  if (!window) return null;
+  if (!window || window.used_percent === undefined) return null;
   return {
-    usedPct: window.used_percent ?? 0,
+    usedPct: window.used_percent,
     resetsAt: window.reset_at != null ? new Date(window.reset_at * 1000).toISOString() : null,
   };
 }

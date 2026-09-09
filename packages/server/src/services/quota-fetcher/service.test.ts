@@ -1488,6 +1488,26 @@ describe("usage bars escalate as they fill", () => {
     expect(usage.windows).toEqual([expect.objectContaining({ id: "weekly", tone })]);
   });
 
+  it("does not invent unused quota when a Codex window omits utilization", async () => {
+    writeCodexAuth(codexHome, "synthetic-test-token");
+    const usage = await new CodexQuotaProvider({
+      logger: createLogger(),
+      codexHome,
+      fetch: mockFetch(
+        new Map([
+          [
+            "https://chatgpt.com/backend-api/wham/usage",
+            () =>
+              jsonResponse(
+                makeCodexResponse({ rate_limit: { primary_window: { reset_at: 1_748_812_800 } } }),
+              ),
+          ],
+        ]),
+      ),
+    }).fetchUsage();
+    expect(usage.windows).toEqual([]);
+  });
+
   it("a Codex window can reach danger, not just warning", async () => {
     writeCodexAuth(codexHome, "at_codex");
     const usage = await new CodexQuotaProvider({

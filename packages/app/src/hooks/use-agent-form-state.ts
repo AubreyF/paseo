@@ -52,6 +52,7 @@ export interface UseAgentFormStateOptions {
 }
 
 export interface UseAgentFormStateResult {
+  selectedProfileId?: string;
   selectedServerId: string | null;
   setSelectedServerId: (value: string | null) => void;
   setSelectedServerIdFromUser: (value: string | null) => void;
@@ -469,6 +470,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
       const action = {
         type: "APPLY_PROFILE_FROM_USER" as const,
+        profileId: profile.profileId,
         provider,
         modelId: profile.modelId,
         modeId: profile.modeId,
@@ -631,6 +633,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   return useMemo(
     () => ({
       selectedServerId: formState.serverId,
+      selectedProfileId: preferences.vortonMode === true ? formState.profileId : undefined,
       setSelectedServerId,
       setSelectedServerIdFromUser,
       selectedProvider: formState.provider,
@@ -670,6 +673,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       formState.modeId,
       formState.model,
       formState.thinkingOptionId,
+      formState.profileId,
+      preferences.vortonMode,
       formState.workingDir,
       setSelectedServerId,
       setSelectedServerIdFromUser,

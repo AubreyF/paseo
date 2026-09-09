@@ -91,6 +91,8 @@ import {
   type DraftAgentProfileControls,
 } from "@/agent-profiles";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
+import { PresetControls, activePresetPicker } from "@/agent-profiles/preset-controls";
+import { useAgentProfiles } from "@/agent-profiles/internal/use-agent-profiles";
 
 interface AgentControlOption {
   id: string;
@@ -133,6 +135,7 @@ interface ControlledAgentControlsProps {
 }
 
 export interface DraftAgentControlsProps {
+  selectedProfileId?: string;
   providerDefinitions: AgentProviderDefinition[];
   selectedProvider: AgentProvider | null;
   modeOptions: AgentMode[];
@@ -1534,13 +1537,38 @@ function ThinkingComboboxOption({
   );
 }
 
+function AgentProfileOverlays({
+  editor,
+  picker,
+}: {
+  editor: ReturnType<typeof useAgentProfileEditor>;
+  picker: AgentProfilePicker | null;
+}) {
+  return (
+    <>
+      {editor.element}
+      {picker?.handoffElement}
+    </>
+  );
+}
+
 export const AgentControls = memo(function AgentControls({
   agentId,
   serverId,
   onDropdownClose,
   isCompactLayout,
 }: AgentControlsProps) {
-  const { updatePreferences } = useFormPreferences();
+  const { preferences, updatePreferences } = useFormPreferences();
+  const { supportsLaunch } = useAgentProfiles(serverId);
+  const selectedProfileId = useSessionStore(
+    (state) => state.sessions[serverId]?.agents.get(agentId)?.profile?.id,
+  );
+  const selectedProfileName = useSessionStore(
+    (state) => state.sessions[serverId]?.agents.get(agentId)?.profile?.name,
+  );
+  const quotaPausedAt = useSessionStore(
+    (state) => state.sessions[serverId]?.agents.get(agentId)?.quotaPausedAt,
+  );
   const agent = useSessionStore(
     useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
   );
@@ -1632,9 +1660,15 @@ export const AgentControls = memo(function AgentControls({
     [handleSelectModel],
   );
 
-  // A running agent is one provider's process, so only that provider's profiles
-  // can apply to it.
-  const profileProviders = useMemo(() => (agentProvider ? [agentProvider] : []), [agentProvider]);
+  // New hosts create explicit successors; legacy hosts can only update the current provider.
+  const profileProviders = useMemo(() => {
+    if (supportsLaunch) {
+      return (snapshotEntries ?? [])
+        .filter((entry) => entry.enabled && entry.status === "ready")
+        .map((entry) => entry.provider);
+    }
+    return agentProvider ? [agentProvider] : [];
+  }, [agentProvider, snapshotEntries, supportsLaunch]);
   const profileModeIds = useMemo(
     () => resolveSnapshotModeIds(snapshotSelectedEntry),
     [snapshotSelectedEntry],
@@ -1649,6 +1683,11 @@ export const AgentControls = memo(function AgentControls({
     target: profileTarget,
   });
   const handleEditAgentProfiles = useEditAgentProfilesNavigation(serverId, agentProfiles !== null);
+  const presetPicker = activePresetPicker({
+    enabled: preferences.vortonMode,
+    supported: supportsLaunch,
+    picker: agentProfiles,
+  });
   const profileEditor = useAgentProfileEditor(serverId);
   const profileActions = resolveAgentProfileEditorActions(agentProfiles !== null, profileEditor);
 
@@ -1776,38 +1815,53 @@ export const AgentControls = memo(function AgentControls({
   return (
     <>
       {commandCenterRegistration}
-      {profileEditor.element}
-      <ControlledAgentControls
-        provider={agent.provider}
-        modelSelectorProviders={agentModelSelectorProviders}
-        modelOptions={modelOptions}
-        selectedModelId={modelSelection.activeModelId ?? undefined}
-        onSelectModel={handleSelectModel}
-        agentProfiles={agentProfiles}
-        onApplyAgentProfile={agentProfiles?.applyProfile}
-        onEditAgentProfiles={handleEditAgentProfiles}
-        onCreateAgentProfile={profileActions.create}
-        onEditAgentProfile={profileActions.edit}
-        thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
-        selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
-        onSelectThinkingOption={handleSelectThinkingOption}
-        features={agent.features}
-        onSetFeature={handleSetFeature}
-        isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
-        onModelSelectorOpen={handleModelSelectorOpen}
-        onRetryModelProvider={handleRetryModelProvider}
-        isRetryingModelProvider={snapshotIsRefreshing}
-        onDropdownClose={onDropdownClose}
-        disabled={!client}
-        modeControl={modeControl}
-        modelSelectorServerId={serverId}
-        isCompactLayout={isCompactLayout}
-      />
+      <AgentProfileOverlays editor={profileEditor} picker={agentProfiles} />
+      {presetPicker ? (
+        <PresetControls
+          serverId={serverId}
+          profiles={presetPicker}
+          selectedProfileId={selectedProfileId}
+          selectedProfileName={selectedProfileName}
+          quotaPausedAt={quotaPausedAt}
+          currentProvider={agent.provider}
+          modeControl={modeControl}
+          onEdit={handleEditAgentProfiles}
+          disabled={!client}
+        />
+      ) : (
+        <ControlledAgentControls
+          provider={agent.provider}
+          modelSelectorProviders={agentModelSelectorProviders}
+          modelOptions={modelOptions}
+          selectedModelId={modelSelection.activeModelId ?? undefined}
+          onSelectModel={handleSelectModel}
+          agentProfiles={agentProfiles}
+          onApplyAgentProfile={agentProfiles?.applyProfile}
+          onEditAgentProfiles={handleEditAgentProfiles}
+          onCreateAgentProfile={profileActions.create}
+          onEditAgentProfile={profileActions.edit}
+          thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
+          selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
+          onSelectThinkingOption={handleSelectThinkingOption}
+          features={agent.features}
+          onSetFeature={handleSetFeature}
+          isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
+          onModelSelectorOpen={handleModelSelectorOpen}
+          onRetryModelProvider={handleRetryModelProvider}
+          isRetryingModelProvider={snapshotIsRefreshing}
+          onDropdownClose={onDropdownClose}
+          disabled={!client}
+          modeControl={modeControl}
+          modelSelectorServerId={serverId}
+          isCompactLayout={isCompactLayout}
+        />
+      )}
     </>
   );
 });
 
 export function DraftAgentControls({
+  selectedProfileId,
   providerDefinitions,
   selectedProvider,
   modeOptions,
@@ -1834,6 +1888,8 @@ export function DraftAgentControls({
   modelSelectorServerId = null,
   isCompactLayout,
 }: DraftAgentControlsProps) {
+  const { preferences } = useFormPreferences();
+  const { supportsLaunch } = useAgentProfiles(modelSelectorServerId);
   const mappedThinkingOptions = useMemo<AgentControlOption[]>(() => {
     return toThinkingControlOptions(thinkingOptions);
   }, [thinkingOptions]);
@@ -1875,6 +1931,11 @@ export function DraftAgentControls({
     agentProfiles !== null,
   );
   const profileEditor = useAgentProfileEditor(modelSelectorServerId);
+  const presetPicker = activePresetPicker({
+    enabled: preferences.vortonMode,
+    supported: supportsLaunch,
+    picker: agentProfiles,
+  });
   const profileActions = resolveAgentProfileEditorActions(agentProfiles !== null, profileEditor);
 
   const modeControl = useMemo<AgentModeControlValue | null>(
@@ -1894,34 +1955,45 @@ export function DraftAgentControls({
 
   return (
     <>
-      {profileEditor.element}
-      <ControlledAgentControls
-        provider={selectedProvider ?? ""}
-        modelSelectorProviders={modelSelectorProviders}
-        modelOptions={modelOptions}
-        selectedModelId={selectedModel}
-        onSelectModel={onSelectModel}
-        onSelectProviderAndModel={onSelectProviderAndModel}
-        isModelLoading={isAllModelsLoading}
-        agentProfiles={agentProfiles}
-        onApplyAgentProfile={agentProfiles?.applyProfile}
-        onEditAgentProfiles={handleEditAgentProfiles}
-        onCreateAgentProfile={profileActions.create}
-        onEditAgentProfile={profileActions.edit}
-        thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
-        selectedThinkingOptionId={effectiveSelectedThinkingOption}
-        onSelectThinkingOption={onSelectThinkingOption}
-        features={features}
-        onSetFeature={onSetFeature}
-        onDropdownClose={onDropdownClose}
-        onModelSelectorOpen={onModelSelectorOpen}
-        onRetryModelProvider={onRetryModelProvider}
-        isRetryingModelProvider={isRetryingModelProvider}
-        disabled={disabled}
-        modeControl={modeControl}
-        modelSelectorServerId={modelSelectorServerId}
-        isCompactLayout={isCompactLayout}
-      />
+      <AgentProfileOverlays editor={profileEditor} picker={agentProfiles} />
+      {presetPicker ? (
+        <PresetControls
+          serverId={modelSelectorServerId}
+          profiles={presetPicker}
+          selectedProfileId={selectedProfileId}
+          modeControl={modeControl}
+          onEdit={handleEditAgentProfiles}
+          disabled={disabled}
+        />
+      ) : (
+        <ControlledAgentControls
+          provider={selectedProvider ?? ""}
+          modelSelectorProviders={modelSelectorProviders}
+          modelOptions={modelOptions}
+          selectedModelId={selectedModel}
+          onSelectModel={onSelectModel}
+          onSelectProviderAndModel={onSelectProviderAndModel}
+          isModelLoading={isAllModelsLoading}
+          agentProfiles={agentProfiles}
+          onApplyAgentProfile={agentProfiles?.applyProfile}
+          onEditAgentProfiles={handleEditAgentProfiles}
+          onCreateAgentProfile={profileActions.create}
+          onEditAgentProfile={profileActions.edit}
+          thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
+          selectedThinkingOptionId={effectiveSelectedThinkingOption}
+          onSelectThinkingOption={onSelectThinkingOption}
+          features={features}
+          onSetFeature={onSetFeature}
+          onDropdownClose={onDropdownClose}
+          onModelSelectorOpen={onModelSelectorOpen}
+          onRetryModelProvider={onRetryModelProvider}
+          isRetryingModelProvider={isRetryingModelProvider}
+          disabled={disabled}
+          modeControl={modeControl}
+          modelSelectorServerId={modelSelectorServerId}
+          isCompactLayout={isCompactLayout}
+        />
+      )}
     </>
   );
 }

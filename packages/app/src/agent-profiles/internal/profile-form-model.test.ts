@@ -71,6 +71,27 @@ function optionValues(options: readonly { value: string }[]): string[] {
 }
 
 describe("openAgentProfileForm", () => {
+  it("saves and explicitly clears launch-only settings", () => {
+    const model = openWithCatalog({
+      mode: "edit",
+      profile: {
+        id: "team",
+        name: "Team",
+        provider: "codex",
+        instructions: "Review diffs",
+        workerProfileId: "local",
+        maxWorkers: 3,
+      },
+    });
+    expect(model.getState().submitValue).toMatchObject({
+      instructions: "Review diffs",
+      workerProfileId: "local",
+      maxWorkers: 3,
+    });
+    model.setInstructions("");
+    model.setWorkerProfileId("");
+    expect(model.getState().submitValue).toMatchObject({ instructions: "", workerProfileId: "" });
+  });
   it("starts a create form empty and cannot submit", () => {
     const model = openWithCatalog({ mode: "create" });
     const state = model.getState();
@@ -155,6 +176,9 @@ describe("openAgentProfileForm", () => {
     // Codex declares no thinking options, so that key is genuinely absent —
     // model and mode are seeded, never left for the host to decide.
     expect(model.getState().submitValue).toEqual({
+      instructions: "",
+      workerProfileId: "",
+      maxWorkers: 2,
       name: "Cheap grunt",
       provider: "codex",
       model: "gpt-5.2-codex",

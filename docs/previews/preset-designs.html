@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Paseo preset picker: three directions</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #171b19;
+      --panel: #202522;
+      --hover: #2a302c;
+      --line: #343c36;
+      --text: #eef1ed;
+      --muted: #a6b0a8;
+      --accent: #9bcdb3;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font:
+        15px/1.45 system-ui,
+        sans-serif;
+    }
+    main {
+      max-width: 1080px;
+      margin: auto;
+      padding: 40px 24px;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 500;
+      margin: 0 0 8px;
+    }
+    p {
+      color: var(--muted);
+      margin: 0 0 24px;
+    }
+    nav {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+    button,
+    input {
+      font: inherit;
+      color: inherit;
+    }
+    button {
+      cursor: pointer;
+      border: 0;
+      background: transparent;
+    }
+    nav button {
+      padding: 10px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    nav button[aria-pressed="true"] {
+      background: var(--text);
+      color: var(--bg);
+    }
+    button:focus-visible,
+    input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    h2 {
+      font-size: 19px;
+      font-weight: 500;
+      margin: 0 0 6px;
+    }
+    .intro {
+      min-height: 74px;
+    }
+    .panel {
+      max-width: 780px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px #0003;
+    }
+    .search {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+    }
+    input {
+      background: transparent;
+      border: 0;
+      outline: 0;
+      width: 100%;
+      min-width: 0;
+    }
+    .row {
+      width: 100%;
+      text-align: left;
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) 164px;
+      align-items: center;
+      gap: 16px;
+      padding: 22px 24px;
+      border-bottom: 1px solid var(--line);
+    }
+    .row:hover {
+      background: var(--hover);
+    }
+    .row[aria-pressed="true"] {
+      background: #ffffff06;
+    }
+    .check {
+      color: var(--accent);
+      font-size: 21px;
+      width: 22px;
+    }
+    .name {
+      font-size: 17px;
+      display: block;
+      margin-bottom: 5px;
+    }
+    .meta {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .quota {
+      text-align: right;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .quota strong {
+      font-size: 17px;
+      color: var(--text);
+      font-weight: 500;
+    }
+    .meter {
+      height: 4px;
+      background: var(--line);
+      margin: 8px 0;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .meter i {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+    }
+    .foot {
+      padding: 14px 24px;
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .group-head {
+      padding: 18px 24px 14px;
+      background: #171b1955;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .group-head strong {
+      font-weight: 500;
+    }
+    .group-head .meta {
+      margin-top: 4px;
+    }
+    .grouped .row {
+      grid-template-columns: 22px minmax(0, 1fr);
+      padding: 15px 24px;
+    }
+    .grouped .name {
+      font-size: 16px;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+    .split .row {
+      grid-template-columns: 22px minmax(0, 1fr);
+      padding: 20px;
+    }
+    .inspect {
+      padding: 24px;
+      border-left: 1px solid var(--line);
+    }
+    .inspect h3 {
+      font-size: 21px;
+      font-weight: 500;
+      margin: 0 0 8px;
+    }
+    .inspect .quota {
+      text-align: left;
+      margin: 24px 0;
+    }
+    .inspect .quota strong {
+      font-size: 28px;
+    }
+    .detail {
+      margin: 22px 0;
+    }
+    .detail span {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .detail p {
+      font-size: 14px;
+      color: var(--text);
+      margin: 0;
+    }
+    .note {
+      margin-top: 18px;
+      font-size: 13px;
+      max-width: 780px;
+    }
+    .empty {
+      padding: 24px;
+      color: var(--muted);
+    }
+    @media (max-width: 600px) {
+      main {
+        padding: 24px 12px;
+      }
+      .row {
+        padding: 18px 14px;
+        gap: 10px;
+        grid-template-columns: 20px minmax(0, 1fr);
+      }
+      .row > .quota {
+        grid-column: 2;
+        text-align: left;
+        max-width: 220px;
+      }
+      .split {
+        grid-template-columns: 1fr;
+      }
+      .inspect {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+      .name {
+        font-size: 16px;
+      }
+      .intro {
+        min-height: 100px;
+      }
+    }
+  </style>
+  <main>
+    <h1>A better preset picker</h1>
+    <p>
+      Interactive design study. Sample usage from your screenshot, not live account data. Nothing
+      here launches a task or activates a reset.
+    </p>
+    <nav aria-label="Design variants">
+      <button data-variant="a" aria-pressed="true">A. Roomy list</button
+      ><button data-variant="b" aria-pressed="false">B. Account groups</button
+      ><button data-variant="c" aria-pressed="false">C. List + inspector</button>
+    </nav>
+    <div class="intro">
+      <h2 id="title"></h2>
+      <p id="description"></p>
+    </div>
+    <section class="panel">
+      <label class="search"
+        ><span aria-hidden="true">⌕</span
+        ><input id="search" aria-label="Search presets" placeholder="Search presets"
+      /></label>
+      <div id="content"></div>
+      <div class="foot">
+        <span>Permissions stay separate: Auto-review</span><span>Design preview only</span>
+      </div>
+    </section>
+    <p class="note" id="note"></p>
+  </main>
+  <script>
+    const presets = [
+      {
+        id: "local",
+        name: "Local Qwen Fast",
+        account: "Studio Ultra",
+        model: "Qwen 3.8 27B",
+        level: "Low",
+        runtime: "Pi / MTPLX",
+        local: true,
+      },
+      {
+        id: "team",
+        name: "Frontier + Local Team",
+        account: "Codex 1",
+        model: "Astra",
+        level: "Medium",
+        remaining: 46,
+        resets: 0,
+        team: true,
+      },
+      {
+        id: "two",
+        name: "Codex 2 Astra Medium",
+        account: "Codex 2",
+        model: "Astra",
+        level: "Medium",
+        remaining: 40,
+        resets: 2,
+      },
+      {
+        id: "one",
+        name: "Codex 1 Astra Medium",
+        account: "Codex 1",
+        model: "Astra",
+        level: "Medium",
+        remaining: 46,
+        resets: 0,
+      },
+    ];
+    let variant = "a",
+      selected = "one";
+    const titles = {
+      a: [
+        "Room to read, room to compare",
+        "A wider picker with consistent rows and a dedicated usage column.",
+        "Closest to Paseo today. Good for a short list. Shared account quota repeats across presets.",
+      ],
+      b: [
+        "Choose a configuration within an account",
+        "Account limits appear once. Presets sharing that allowance live together.",
+        "My recommendation for multiplexing. It makes the shared quota explicit and keeps long provider identifiers out of every row.",
+      ],
+      c: [
+        "A quiet list, with the details beside it",
+        "Select a preset to inspect its configuration and capacity before using it.",
+        "Best for supervisor setups and custom instructions. Takes more space; the inspector moves below the list on narrow screens.",
+      ],
+    };
+    function quota(p) {
+      return p.local
+        ? '<div class="quota"><strong>Status stale</strong><div>0 workers reported</div><div>Refresh needed</div></div>'
+        : `<div class="quota"><strong>${p.remaining}% left</strong><div class="meter"><i style="width:${p.remaining}%"></i></div><div>Resets in 5 days</div><div>${p.resets ? p.resets + " resets available" : "No resets available"}</div></div>`;
+    }
+    function row(p, withQuota) {
+      return `<button class="row" data-id="${p.id}" aria-pressed="${selected === p.id}"><span class="check" aria-hidden="true">${selected === p.id ? "✓" : ""}</span><span><span class="name">${p.name}</span><span class="meta">${p.local ? "Pi / MTPLX" : p.account} · ${p.model} · ${p.level}</span>${p.team ? '<span class="meta">Supervises local Pi workers</span>' : ""}</span>${withQuota ? quota(p) : ""}</button>`;
+    }
+    function render() {
+      const copy = titles[variant];
+      document.getElementById("title").textContent = copy[0];
+      document.getElementById("description").textContent = copy[1];
+      document.getElementById("note").textContent = copy[2];
+      document
+        .querySelectorAll("[data-variant]")
+        .forEach((b) => b.setAttribute("aria-pressed", b.dataset.variant === variant));
+      const query = document.getElementById("search").value.toLowerCase();
+      const shown = presets.filter((p) =>
+        [p.name, p.account, p.model, p.runtime].join(" ").toLowerCase().includes(query),
+      );
+      let html = "";
+      if (!shown.length) html = '<div class="empty">No matching presets</div>';
+      else if (variant === "a") html = shown.map((p) => row(p, true)).join("");
+      else if (variant === "b") {
+        html =
+          '<div class="grouped">' +
+          ["Codex 1", "Codex 2", "Studio Ultra"]
+            .map((account) => {
+              const ps = shown.filter((p) => p.account === account);
+              if (!ps.length) return "";
+              const p = ps[0];
+              return (
+                `<div class="group-head"><div><strong>${account}</strong><span class="meta">${p.local ? "Local inference" : "Shared allowance for all presets below"}</span></div><div class="quota">${p.local ? "Status stale · 0 workers" : `<strong>${p.remaining}% left</strong><div>Resets in 5 days · ${p.resets} resets available</div>`}</div></div>` +
+                ps.map((p) => row(p, false)).join("")
+              );
+            })
+            .join("") +
+          "</div>";
+      } else {
+        const p = shown.find((p) => p.id === selected) || shown[0];
+        html =
+          '<div class="split"><div>' +
+          shown.map((p) => row(p, false)).join("") +
+          `</div><aside class="inspect"><h3>${p.name}</h3><span class="meta">${p.account} / ${p.model} / ${p.level}</span>${quota(p)}<div class="detail"><span>Execution</span><p>${p.local ? "Pi connects to MTPLX on the Studio Ultra." : p.team ? "Frontier supervisor with up to two local Pi workers." : "Direct frontier session. No local workers."}</p></div><div class="detail"><span>Instruction preview (illustrative)</span><p>${p.team ? "Delegate bounded tasks. Review worker diffs and independently verify the results." : "Stay within the assigned task. Ask before publishing changes."}</p></div><div class="detail"><span>On quota exhaustion</span><p>Stop and suggest another preset. Never switch automatically.</p></div></aside></div>`;
+      }
+      document.getElementById("content").innerHTML = html;
+      document.querySelectorAll("[data-id]").forEach(
+        (b) =>
+          (b.onclick = () => {
+            selected = b.dataset.id;
+            render();
+          }),
+      );
+    }
+    document.querySelectorAll("[data-variant]").forEach(
+      (b) =>
+        (b.onclick = () => {
+          variant = b.dataset.variant;
+          render();
+        }),
+    );
+    document.getElementById("search").oninput = render;
+    render();
+  </script>
+</html>

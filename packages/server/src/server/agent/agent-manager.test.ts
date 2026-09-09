@@ -1477,6 +1477,129 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 
 const logger = createTestLogger();
 
+test("quota exhaustion persistently pauses the supervisor and managed workers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-quota-stop-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const sessions: SteeringTestSession[] = [];
+  class QuotaClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new SteeringTestSession(config);
+      sessions.push(session);
+      return session;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new QuotaClient() },
+    registry: storage,
+    logger,
+  });
+  const root = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      profileLaunch: {
+        profile: { id: "team", name: "Team", provider: "codex", maxWorkers: 1 },
+        worker: { id: "worker", name: "Worker", provider: "codex", model: "gpt-5.4" },
+      },
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+    labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+  });
+  const idleChild = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+    labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+  });
+  const childRun = manager.streamAgent(child.id, "work");
+  const consumeChild = (async () => {
+    for await (const _event of childRun) {
+      /* Drain the stream until the quota stop cancels it. */
+    }
+  })();
+  await vi.waitFor(() => expect(sessions[1].startCount).toBe(1));
+  expect(manager.listRunningWorkerCounts()).toEqual({ codex: 1 });
+  expect(() => manager.streamAgent(idleChild.id, "over capacity")).toThrow("limit");
+  await expect(
+    manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+    }),
+  ).rejects.toThrow("limit");
+  sessions[0].pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    code: "quota_exhausted",
+    error: "Quota exhausted",
+  });
+  await vi.waitFor(() => expect(manager.getAgent(child.id)?.config.quotaPausedAt).toBeTruthy());
+  await vi.waitFor(() => expect(sessions[1].interruptCount).toBe(1));
+  await consumeChild;
+  expect(manager.listRunningWorkerCounts()).toEqual({});
+  expect(manager.getAgent(idleChild.id)?.config.quotaPausedAt).toBeTruthy();
+  expect(() => manager.streamAgent(root.id, "resume")).toThrow("paused");
+  expect(() => manager.streamAgent(child.id, "continue")).toThrow("paused");
+  expect(() => manager.tryRunOutOfBand(root.id, "/compact")).toThrow("paused");
+  await expect(
+    manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+    }),
+  ).rejects.toThrow("paused");
+  await vi.waitFor(async () =>
+    expect((await storage.get(root.id))?.config?.quotaPausedAt).toBeTruthy(),
+  );
+  const resumed = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const record = await storage.get(root.id);
+  expect(record).toBeTruthy();
+  if (!record) throw new Error("Missing saved quota pause");
+  await ensureAgentLoaded(root.id, { agentManager: resumed, agentStorage: storage, logger });
+  expect(() => resumed.streamAgent(root.id, "after restart")).toThrow("paused");
+});
+
+test("reserves worker capacity during startup and preserves a quota pause that arrives while starting", async () => {
+  const rootClient = new SessionRecordingAgentClient();
+  const workerClient = new HeldAgentCreationClient();
+  const manager = new AgentManager({ clients: { codex: rootClient, pi: workerClient }, logger });
+  const root = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: process.cwd(),
+      profileLaunch: {
+        profile: { id: "team", name: "Team", provider: "codex", maxWorkers: 1 },
+        worker: { id: "worker", name: "Worker", provider: "pi", model: "local" },
+      },
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const options = { workspaceId: undefined, labels: { [PARENT_AGENT_ID_LABEL]: root.id } };
+  const starting = manager.createAgent({ provider: "pi", cwd: process.cwd() }, undefined, options);
+  await workerClient.waitForCreationToStart();
+  await expect(
+    manager.createAgent({ provider: "pi", cwd: process.cwd() }, undefined, options),
+  ).rejects.toThrow("limit");
+  rootClient.sessions[0].pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    code: "quota_exhausted",
+    error: "Quota exhausted",
+  });
+  await vi.waitFor(() => expect(manager.getAgent(root.id)?.config.quotaPausedAt).toBeTruthy());
+  workerClient.finishCreating();
+  const child = await starting;
+  expect(child.config.quotaPausedAt).toBeTruthy();
+  expect(() => manager.streamAgent(child.id, "continue")).toThrow("paused");
+  await manager.closeAgent(child.id);
+  await manager.closeAgent(root.id);
+});
+
 test("does not register a session that finishes starting after shutdown begins", async () => {
   const client = new HeldAgentCreationClient();
   const manager = new AgentManager({

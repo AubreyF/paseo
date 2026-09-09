@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useVortonMode } from "@/vorton-mode";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -66,6 +67,7 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 interface AutoSubmitConfig {
+  profileId?: string;
   provider: string;
   modeId: string | null;
   model: string | null;
@@ -75,6 +77,7 @@ interface AutoSubmitConfig {
 
 function resolveAutoSubmitConfig(
   pending: {
+    profileId?: string;
     provider: string;
     modeId?: string | null;
     model?: string | null;
@@ -85,6 +88,7 @@ function resolveAutoSubmitConfig(
   if (!pending) return null;
   return {
     provider: pending.provider,
+    profileId: pending.profileId,
     modeId: pending.modeId ?? null,
     model: pending.model ?? null,
     thinkingOptionId: pending.thinkingOptionId ?? null,
@@ -136,7 +140,17 @@ function resolveDraftModeId(input: {
   return null;
 }
 
+function resolveLaunchProfile(
+  vortonMode: boolean,
+  autoSubmitConfig: AutoSubmitConfig | null,
+  selectedProfileId?: string,
+) {
+  if (!vortonMode) return undefined;
+  return autoSubmitConfig ? autoSubmitConfig.profileId : selectedProfileId;
+}
+
 async function submitDraftCreateRequest(input: {
+  vortonMode: boolean;
   attempt: { clientMessageId: string };
   text: string;
   images?: UserMessageImageAttachment[];
@@ -148,6 +162,7 @@ async function submitDraftCreateRequest(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
     selectedProvider: string | null;
+    selectedProfileId?: string;
     selectedMode: string;
     modeOptions: readonly { id: string }[];
     effectiveModelId: string | null;
@@ -187,6 +202,11 @@ async function submitDraftCreateRequest(input: {
   });
   const config = buildWorkspaceDraftAgentConfig({
     provider,
+    profileId: resolveLaunchProfile(
+      input.vortonMode,
+      autoSubmitConfig,
+      composerState.selectedProfileId,
+    ),
     cwd,
     ...modeIdOverride,
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
@@ -338,6 +358,7 @@ export function WorkspaceDraftAgentTab({
   onOpenWorkspaceFile,
   onOpenImportSheet,
 }: WorkspaceDraftAgentTabProps) {
+  const vortonMode = useVortonMode();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const client = useHostRuntimeClient(serverId);
@@ -508,6 +529,7 @@ export function WorkspaceDraftAgentTab({
       }),
     createRequest: async ({ attempt, text, images, attachments, cwd }) =>
       submitDraftCreateRequest({
+        vortonMode,
         attempt,
         text,
         images,

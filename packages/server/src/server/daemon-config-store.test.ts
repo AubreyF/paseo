@@ -118,6 +118,24 @@ describe("DaemonConfigStore", () => {
 
     expect(changes).toEqual([true]);
     expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
+    const profile = {
+      id: "review",
+      name: "Review",
+      provider: "codex",
+      instructions: "Review all diffs",
+      workerProfileId: "local",
+    };
+    store.patch({ agentProfiles: [profile], expectedAgentProfiles: [] });
+    expect(() => store.patch({ agentProfiles: [], expectedAgentProfiles: [] })).toThrow(
+      "another device",
+    );
+    store.patch({ agentProfiles: [{ id: "review", name: "Renamed", provider: "codex" }] });
+    expect(store.get().agentProfiles?.[0]).toMatchObject({
+      instructions: profile.instructions,
+      workerProfileId: "local",
+    });
+    store.patch({ agentProfiles: [{ ...profile, instructions: "", workerProfileId: "" }] });
+    expect(store.get().agentProfiles?.[0].instructions).toBe("");
   });
 
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {

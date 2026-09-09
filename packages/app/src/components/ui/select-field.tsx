@@ -6,6 +6,8 @@ import {
   type NativeSyntheticEvent,
   type PressableStateCallbackType,
   type TargetedEvent,
+  type StyleProp,
+  type TextStyle,
 } from "react-native";
 import { ChevronDown } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -41,6 +43,7 @@ export interface SelectFieldRenderOptionInput<TValue> {
 }
 
 export interface SelectFieldProps<TValue> {
+  toolbar?: boolean;
   label: string;
   value: TValue | null;
   selectedDisplay: SelectFieldDisplay | null;
@@ -59,12 +62,16 @@ export interface SelectFieldProps<TValue> {
   getValueKey?: (value: TValue) => string;
   renderOption?: (input: SelectFieldRenderOptionInput<TValue>) => ReactElement;
   triggerLeading?: ReactNode;
+  triggerTextStyle?: StyleProp<TextStyle>;
   field?: boolean;
   testID?: string;
   triggerTestID?: string;
+  desktopPlacement?: "top-start" | "bottom-start";
 }
 
 export interface SelectFieldTriggerProps {
+  toolbar?: boolean;
+  textStyle?: StyleProp<TextStyle>;
   display?: SelectFieldDisplay | null;
   label?: string;
   isPlaceholder?: boolean;
@@ -116,8 +123,10 @@ function useVisibleSelectOptions<TValue>(
 }
 
 export function SelectFieldTrigger({
+  toolbar = false,
   display,
   label: explicitLabel,
+  textStyle: customTextStyle,
   isPlaceholder: explicitIsPlaceholder,
   placeholder,
   hovered = false,
@@ -144,14 +153,20 @@ export function SelectFieldTrigger({
         },
         { hovered, focused, active, disabled },
       ),
+      toolbar && styles.toolbar,
+      toolbar && (hovered || active) && styles.toolbarHover,
     ],
-    [active, disabled, focused, hovered, sizeStyle],
+    [active, disabled, focused, hovered, sizeStyle, toolbar],
   );
   const label = explicitLabel ?? display?.label ?? placeholder;
   const isPlaceholder = explicitIsPlaceholder ?? display == null;
   const textStyle = useMemo(
-    () => [isPlaceholder ? styles.placeholderText : styles.triggerText, textSizeStyle],
-    [isPlaceholder, textSizeStyle],
+    () => [
+      isPlaceholder ? styles.placeholderText : styles.triggerText,
+      textSizeStyle,
+      customTextStyle,
+    ],
+    [isPlaceholder, textSizeStyle, customTextStyle],
   );
 
   return (
@@ -171,6 +186,7 @@ export function SelectFieldTrigger({
 }
 
 export function SelectField<TValue>({
+  toolbar = false,
   label,
   value,
   selectedDisplay,
@@ -189,9 +205,11 @@ export function SelectField<TValue>({
   getValueKey,
   renderOption,
   triggerLeading,
+  triggerTextStyle,
   field = true,
   testID,
   triggerTestID,
+  desktopPlacement,
 }: SelectFieldProps<TValue>): ReactElement {
   const anchorRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
@@ -301,6 +319,7 @@ export function SelectField<TValue>({
         >
           {({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => (
             <SelectFieldTrigger
+              toolbar={toolbar}
               display={selectedDisplay}
               placeholder={placeholder}
               hovered={Boolean(hovered)}
@@ -309,6 +328,7 @@ export function SelectField<TValue>({
               disabled={disabled}
               loading={loading}
               leading={triggerLeading}
+              textStyle={triggerTextStyle}
               size={size}
             />
           )}
@@ -325,6 +345,7 @@ export function SelectField<TValue>({
         open={open}
         onOpenChange={setOpen}
         anchorRef={anchorRef}
+        desktopPlacement={desktopPlacement}
         renderOption={renderComboboxOption}
       />
     </>
@@ -345,6 +366,15 @@ const styles = StyleSheet.create((theme) => {
   const geometry = createControlGeometry(theme);
 
   return {
+    toolbar: {
+      backgroundColor: "transparent",
+      borderWidth: 0,
+      height: 28,
+      minHeight: 28,
+      paddingHorizontal: theme.spacing[2],
+      borderRadius: theme.borderRadius["2xl"],
+    },
+    toolbarHover: { backgroundColor: theme.colors.surface2 },
     trigger: {
       flexDirection: "row",
       alignItems: "center",

@@ -30,6 +30,21 @@ function outboundMessage(type: SessionOutboundMessage["type"]): SessionOutboundM
 }
 
 describe("SessionAuthorization", () => {
+  test("reset preparation and confirmation require management permission", () => {
+    const reader = new SessionAuthorization(["daemon.read"]);
+    const manager = new SessionAuthorization(["daemon.manage"]);
+    expect(reader.allowsInbound(inboundMessage("provider.reset.read.request"))).toBe(true);
+    for (const type of [
+      "provider.reset.prepare.request",
+      "provider.reset.confirm.request",
+    ] as const) {
+      expect(reader.allowsInbound(inboundMessage(type))).toBe(false);
+      expect(manager.allowsInbound(inboundMessage(type))).toBe(true);
+      expect(
+        new SessionAuthorization(["workspace.write"]).allowsInbound(inboundMessage(type)),
+      ).toBe(false);
+    }
+  });
   test("owner authority covers every session operation", () => {
     const authorization = new SessionAuthorization(OWNER_PERMISSIONS);
 

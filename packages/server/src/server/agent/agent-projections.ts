@@ -97,6 +97,22 @@ export function toStoredAgentRecord(
   } satisfies StoredAgentRecord;
 }
 
+function projectLaunchMetadata(
+  config: StoredAgentRecord["config"],
+): Pick<AgentSnapshotPayload, "profile" | "quotaPausedAt"> {
+  const profile = config?.profileLaunch?.profile;
+  if (!profile) return { quotaPausedAt: config?.quotaPausedAt };
+  const modelChanged = Boolean(profile.model && profile.model !== config?.model);
+  const thinkingChanged = Boolean(
+    profile.thinkingOptionId && profile.thinkingOptionId !== config?.thinkingOptionId,
+  );
+  const name = modelChanged || thinkingChanged ? `${profile.name} (modified)` : profile.name;
+  return {
+    profile: { id: profile.id, name },
+    quotaPausedAt: config?.quotaPausedAt,
+  };
+}
+
 export function toAgentPayload(
   agent: ManagedAgent,
   options?: ProjectionOptions,
@@ -110,6 +126,7 @@ export function toAgentPayload(
 
   const payload: AgentSnapshotPayload = {
     id: agent.id,
+    ...projectLaunchMetadata(agent.config),
     provider: agent.provider,
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
@@ -219,6 +236,7 @@ export function buildStoredAgentPayload(
 
   return {
     id: record.id,
+    ...projectLaunchMetadata(record.config),
     provider: record.provider,
     cwd: record.cwd,
     ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
@@ -335,6 +353,8 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   if (config.systemPrompt) {
     serializable.systemPrompt = config.systemPrompt;
   }
+  if (config.profileLaunch) serializable.profileLaunch = config.profileLaunch;
+  if (config.quotaPausedAt) serializable.quotaPausedAt = config.quotaPausedAt;
   if (config.mcpServers) {
     serializable.mcpServers = config.mcpServers;
   }

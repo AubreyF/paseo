@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { VortonModeToggle } from "@/vorton-mode";
 import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
@@ -401,6 +402,9 @@ function GeneralSection({
 
   return (
     <SettingsSection title={t("settings.general.title")}>
+      <View style={settingsStyles.card}>
+        <VortonModeToggle />
+      </View>
       <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>

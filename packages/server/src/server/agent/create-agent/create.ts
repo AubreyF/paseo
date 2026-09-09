@@ -26,6 +26,8 @@ import {
   emitLiveTimelineItemIfAgentKnown,
 } from "../timeline-append.js";
 import { resolveCreateAgentIntent } from "./intent.js";
+import { resolveProfileLaunch } from "./profile.js";
+import type { AgentProfile } from "@getpaseo/protocol/messages";
 
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
@@ -36,6 +38,7 @@ export interface CreateAgentSessionWorktreeResult {
 }
 
 export interface CreateAgentCommandDependencies {
+  getAgentProfiles?: () => readonly AgentProfile[];
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
@@ -78,6 +81,7 @@ export interface CreateAgentFromSessionInput {
 
 export interface CreateAgentFromMcpInput {
   kind: "mcp";
+  profileId?: string;
   provider: string;
   title: string;
   initialPrompt?: string;
@@ -233,7 +237,7 @@ async function resolveSessionCreateAgent(
     setupContinuation,
     createdWorkspaceId,
   } = await input.buildSessionConfig(
-    input.config,
+    resolveProfileLaunch(input.config, dependencies.getAgentProfiles?.() ?? []),
     input.git,
     input.worktreeName,
     input.firstAgentContext,
@@ -299,10 +303,50 @@ async function resolveSessionCreateAgent(
   };
 }
 
-async function resolveMcpCreateAgent(
+function resolveMcpProfileInput(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentFromMcpInput,
+): CreateAgentFromMcpInput {
+  const caller = input.callerAgentId
+    ? requireParentAgent(dependencies.agentManager, input.callerAgentId)
+    : null;
+  const worker = caller?.config.profileLaunch?.worker;
+  if (worker && input.profileId !== worker.id) {
+    throw new Error(`This supervisor must launch its configured worker preset: ${worker.id}`);
+  }
+  if (worker && input.detached)
+    throw new Error("Managed workers cannot be detached from their supervisor.");
+  if (input.profileId) {
+    const profiles = worker ? [worker] : (dependencies.getAgentProfiles?.() ?? []);
+    const resolved = resolveProfileLaunch(
+      {
+        ...input.config,
+        provider: input.provider,
+        cwd: input.cwd ?? "",
+        profileId: input.profileId,
+      },
+      profiles,
+    );
+    if (!resolved.model) throw new Error("MCP launches require a preset with an explicit model.");
+    if (resolveProviderModel(input.provider).provider !== resolved.provider) {
+      throw new Error("The requested provider must match the preset provider.");
+    }
+    input = {
+      ...input,
+      provider: `${resolved.provider}/${resolved.model}`,
+      config: resolved,
+      thinking: resolved.thinkingOptionId,
+      features: resolved.featureValues,
+    };
+  }
+  return input;
+}
+
+async function resolveMcpCreateAgent(
+  dependencies: CreateAgentCommandDependencies,
+  requestedInput: CreateAgentFromMcpInput,
 ): Promise<ResolvedCreateAgent> {
+  const input = resolveMcpProfileInput(dependencies, requestedInput);
   const resolvedProviderModel = resolveProviderModel(input.provider);
   const provider = resolvedProviderModel.provider;
   const parentAgent = input.callerAgentId

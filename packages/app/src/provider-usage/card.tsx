@@ -8,6 +8,7 @@ import { ProviderUsageBalanceBar } from "./balance-bar";
 import { formatAgo } from "./format";
 import type { ProviderUsage } from "./types";
 import { ProviderUsageWindowBar } from "./window-bar";
+import { ProviderResetControl } from "./reset-control";
 
 interface ProviderUsageIconProps {
   iconKey: string;
@@ -40,9 +41,11 @@ function footerText(usage: ProviderUsage): string | null {
 export function ProviderUsageCard({
   usage,
   compact = false,
+  serverId,
 }: {
   usage: ProviderUsage;
   compact?: boolean;
+  serverId?: string;
 }) {
   const status = statusText(usage);
   const footer = footerText(usage);
@@ -83,6 +86,13 @@ export function ProviderUsageCard({
         <Text style={styles.error} numberOfLines={3}>
           {usage.error}
         </Text>
+      ) : null}
+      {serverId ? (
+        <ProviderResetControl
+          serverId={serverId}
+          providerId={usage.providerId}
+          name={usage.displayName}
+        />
       ) : null}
 
       {usage.windows.length > 0 || balances.length > 0 ? (

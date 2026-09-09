@@ -3,6 +3,8 @@
 .debug
 .dev
 .playwright-mcp
+.playwright-cli
+output/playwright
 **/.playwright-mcp
 .paseo
 **/.paseo-provider-history
@@ -39,3 +41,7 @@ packages/desktop/release
 plan.*.log
 *.log
 CLAUDE.local.md
+docker/multiplex/data
+docker/multiplex/workspace
+**/auth.json
+**/.pi

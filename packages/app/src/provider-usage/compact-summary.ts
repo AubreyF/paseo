@@ -1,7 +1,7 @@
 import { formatAmount, formatPct, formatResetLabel } from "./format";
 import type { ProviderUsage } from "./types";
 
-function limitingWindow(usage: ProviderUsage | undefined) {
+export function limitingWindow(usage: ProviderUsage | undefined) {
   if (!usage || usage.status !== "available") return null;
   return (
     usage.windows

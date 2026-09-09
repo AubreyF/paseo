@@ -67,6 +67,7 @@ jobs:
           build-args: |
             PASEO_VERSION=${{ steps.image.outputs.version }}
             PASEO_EXTRA_NPM_PACKAGE=@openai/codex@0.153.4
+            PASEO_PI_PACKAGE=@earendil-works/pi-coding-agent@0.84.4
           tags: |
             ${{ steps.image.outputs.name }}:edge
             ${{ steps.image.outputs.name }}:sha-${{ steps.image.outputs.revision }}

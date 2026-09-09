@@ -27,6 +27,7 @@ describe("materializeAgentProfile", () => {
         }),
       ),
     ).toEqual({
+      profileId: "ui-work",
       provider: "claude",
       modelId: "claude-opus-5",
       modeId: "plan",
@@ -37,6 +38,7 @@ describe("materializeAgentProfile", () => {
 
   it("treats omitted and blank fields the same", () => {
     expect(materializeAgentProfile(profile({ model: "   ", modeId: "" }))).toEqual({
+      profileId: "ui-work",
       provider: "claude",
       modelId: "",
       modeId: "",

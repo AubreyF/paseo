@@ -79,10 +79,10 @@ export function AgentProfileRow({
         </View>
         <View style={settingsStyles.rowContent}>
           <View style={styles.titleLine}>
-            <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+            <Text style={settingsStyles.rowTitle} numberOfLines={2}>
               {profile.name}
             </Text>
-            <Text style={styles.summary} numberOfLines={1}>
+            <Text style={styles.summary} numberOfLines={2}>
               {summary}
             </Text>
           </View>
@@ -160,9 +160,9 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: 1,
   },
   titleLine: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: theme.spacing[2],
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: theme.spacing[1],
     minWidth: 0,
   },
   summary: {

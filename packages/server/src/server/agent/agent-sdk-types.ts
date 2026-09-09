@@ -5,7 +5,12 @@ import type {
   ProviderOptions,
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
-import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { AgentAttachment, AgentProfileLaunch } from "@getpaseo/protocol/messages";
+import type {
+  ProviderResetAttempt,
+  ProviderResetOutcome,
+  ProviderResetSnapshot,
+} from "@getpaseo/protocol/provider-reset";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type { AgentProviderNotice, AgentTaskItem };
@@ -87,6 +92,10 @@ export interface AgentModelDefinition {
   isDefault?: boolean;
   metadata?: AgentMetadata;
   contextWindowMaxTokens?: number;
+  localEndpoint?: {
+    status: "reachable" | "unreachable";
+    checkedAt: string;
+  };
   thinkingOptions?: AgentSelectOption[];
   defaultThinkingOptionId?: string;
 }
@@ -599,6 +608,9 @@ export interface ImportedProviderSession {
 
 export interface AgentSessionConfig {
   provider: AgentProvider;
+  profileId?: string;
+  profileLaunch?: AgentProfileLaunch;
+  quotaPausedAt?: string;
   cwd: string;
   /**
    * Provider-agnostic system/developer instruction string.
@@ -734,6 +746,13 @@ export interface ResolveAgentDefaultModeInput {
   signal?: AbortSignal;
 }
 
+export interface ProviderResetCreditSession {
+  readonly canRedeem: boolean;
+  read(): Promise<ProviderResetSnapshot>;
+  consume(attempt: ProviderResetAttempt): Promise<ProviderResetOutcome>;
+  dispose(): Promise<void>;
+}
+
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
@@ -780,6 +799,8 @@ export interface AgentClient {
    */
   isAvailable(signal?: AbortSignal): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
+  /** Account management only. Never attach this operation to the agent tool catalog. */
+  openResetCreditSession?(): Promise<ProviderResetCreditSession>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.

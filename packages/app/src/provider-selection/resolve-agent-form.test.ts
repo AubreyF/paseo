@@ -110,6 +110,20 @@ function makeProviderModelsByProvider(
 }
 
 describe("resolveDefaultModel", () => {
+  it("preserves the separate permission selection when applying a launch preset", () => {
+    const next = resolveAgentForm(makeState({ provider: "codex", modeId: "auto" }), {
+      type: "APPLY_PROFILE_FROM_USER",
+      profileId: "saved",
+      provider: "codex",
+      modelId: CODEX_MODELS[0].id,
+      thinkingOptionId: "low",
+      modeId: "full-access",
+      providerDef: TEST_CODEX_DEFINITION,
+      providerModels: CODEX_MODELS,
+    });
+    expect(next.form.profileId).toBe("saved");
+    expect(next.form.modeId).toBe("auto");
+  });
   it("returns null for empty or null input", () => {
     expect(resolveDefaultModel(null)).toBeNull();
     expect(resolveDefaultModel([])).toBeNull();

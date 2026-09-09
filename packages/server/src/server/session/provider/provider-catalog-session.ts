@@ -20,6 +20,11 @@ import {
 } from "../../agent/agent-sdk-types.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
 import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
+import {
+  ProviderResetServiceError,
+  type ProviderResetService,
+} from "../../../services/quota-fetcher/reset-service.js";
+import { ResetCreditStoreError } from "../../../services/quota-fetcher/reset-store.js";
 import { expandTilde } from "../../../utils/path.js";
 
 // COMPAT(customModeIcons): the only mode icons known to clients before v0.1.84. Any
@@ -49,12 +54,14 @@ export interface ProviderCatalogSessionHost {
   supportsCompactProviderSnapshots(): boolean;
   listProviderAvailability(): Promise<ProviderAvailability[]>;
   listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]>;
+  listRunningWorkerCounts?(): Record<string, number>;
 }
 
 export interface ProviderCatalogSessionOptions {
   host: ProviderCatalogSessionHost;
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
+  providerResetService?: ProviderResetService;
   logger: pino.Logger;
 }
 
@@ -82,6 +89,7 @@ export class ProviderCatalogSession {
   private readonly host: ProviderCatalogSessionHost;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly providerUsageService: ProviderUsageService;
+  private readonly providerResetService: ProviderResetService | undefined;
   private readonly logger: pino.Logger;
   private unsubscribeSnapshotEvents: (() => void) | null = null;
 
@@ -89,6 +97,7 @@ export class ProviderCatalogSession {
     this.host = options.host;
     this.providerSnapshotManager = options.providerSnapshotManager;
     this.providerUsageService = options.providerUsageService;
+    this.providerResetService = options.providerResetService;
     this.logger = options.logger;
   }
 
@@ -480,6 +489,68 @@ export class ProviderCatalogSession {
     }
   }
 
+  async handleProviderResetRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "provider.reset.read.request"
+          | "provider.reset.prepare.request"
+          | "provider.reset.confirm.request";
+      }
+    >,
+  ): Promise<void> {
+    try {
+      const service = this.providerResetService;
+      if (!service || !this.host.isProviderVisibleToClient(msg.providerId)) {
+        throw new ProviderResetServiceError(
+          "unavailable",
+          "Reset management is unavailable for this provider.",
+        );
+      }
+      switch (msg.type) {
+        case "provider.reset.read.request":
+          this.host.emit({
+            type: "provider.reset.read.response",
+            payload: { requestId: msg.requestId, view: await service.read(msg.providerId) },
+          });
+          break;
+        case "provider.reset.prepare.request":
+          this.host.emit({
+            type: "provider.reset.prepare.response",
+            payload: {
+              requestId: msg.requestId,
+              view: await service.prepare(msg.providerId, msg.accountId),
+            },
+          });
+          break;
+        case "provider.reset.confirm.request":
+          this.host.emit({
+            type: "provider.reset.confirm.response",
+            payload: {
+              requestId: msg.requestId,
+              ...(await service.confirm(msg.providerId, msg.accountId, msg.operationId)),
+            },
+          });
+          break;
+      }
+    } catch (error) {
+      const known =
+        error instanceof ProviderResetServiceError || error instanceof ResetCreditStoreError;
+      this.host.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          code: known ? error.code : "provider_reset_failed",
+          error: known
+            ? error.message
+            : "The account operation could not be verified. Refresh before explicitly retrying the same operation.",
+        },
+      });
+    }
+  }
+
   async handleProviderUsageListRequest(
     msg: Extract<SessionInboundMessage, { type: "provider.usage.list.request" }>,
   ): Promise<void> {
@@ -491,6 +562,18 @@ export class ProviderCatalogSession {
           requestId: msg.requestId,
           fetchedAt: usage.fetchedAt,
           providers: usage.providers,
+          ...(this.host.listRunningWorkerCounts
+            ? {
+                workerActivity: {
+                  checkedAt: new Date().toISOString(),
+                  runningByProvider: Object.fromEntries(
+                    Object.entries(this.host.listRunningWorkerCounts()).filter(([provider]) =>
+                      this.host.isProviderVisibleToClient(provider),
+                    ),
+                  ),
+                },
+              }
+            : {}),
         },
       });
     } catch (error) {

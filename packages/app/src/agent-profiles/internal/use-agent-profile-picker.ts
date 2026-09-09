@@ -1,4 +1,9 @@
-import { useCallback, useMemo } from "react";
+import { createElement, useCallback, useMemo, useRef, useState, type ReactElement } from "react";
+import { router } from "expo-router";
+import { buildHostAgentDetailRoute } from "@/utils/host-routes";
+import { createProfileSuccessor, readProfileHandoff } from "./successor";
+import { ProfileHandoffModal } from "../handoff-modal";
+import type { AgentProfile, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { useTranslation } from "react-i18next";
 import { mergeCreateAgentSelectionPreferences } from "@/create-agent-preferences/preferences";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
@@ -41,11 +46,23 @@ export interface AgentProfilePickerRow {
   name: string;
   /** "Claude Code · Opus 5 · Plan · Think hard" */
   summary: string;
+  localEndpoint?: { status: "reachable" | "unreachable"; checkedAt: string };
 }
 
 export interface AgentProfilePicker {
+  refreshStatus?: () => void;
+  isRefreshingStatus?: boolean;
+  handoffElement?: ReactElement | null;
+  isApplying?: boolean;
   rows: AgentProfilePickerRow[];
   applyProfile: (profileId: string) => void;
+}
+
+interface PendingHandoff {
+  source: AgentSnapshotPayload;
+  profile: AgentProfile;
+  context: string;
+  serverId: string;
 }
 
 export interface UseAgentProfilePickerInput {
@@ -71,14 +88,68 @@ export function useAgentProfilePicker(
 ): AgentProfilePicker | null {
   const { serverId, availableProviders, target } = input;
   const { t } = useTranslation();
-  const { profiles, isSupported } = useAgentProfiles(serverId);
+  const { profiles, isSupported, supportsLaunch: hostSupportsLaunch } = useAgentProfiles(serverId);
   // Profiles are host config, so their labels read from the host-wide catalog
   // rather than a workspace's. That is also the key the settings section uses,
   // so every composer on a host shares one query instead of adding its own.
-  const { entries } = useProvidersSnapshot(serverId, { cwd: null });
-  const { updatePreferences } = useFormPreferences();
+  const {
+    entries,
+    refresh: refreshProviders,
+    isRefreshing,
+  } = useProvidersSnapshot(serverId, { cwd: null });
+  const { preferences, updatePreferences } = useFormPreferences();
+  const supportsLaunch = hostSupportsLaunch && preferences.vortonMode === true;
   const client = useSessionStore((state) => state.sessions[serverId ?? ""]?.client ?? null);
   const toast = useToast();
+  const [isApplying, setIsApplying] = useState(false);
+  const applyingRef = useRef(false);
+  const [handoff, setHandoff] = useState<PendingHandoff | null>(null);
+  const closeHandoff = useCallback(() => setHandoff(null), []);
+  const confirmHandoff = useCallback(
+    async (context: string) => {
+      if (!client || !handoff || handoff.serverId !== serverId)
+        throw new Error("Reconnect to the original host before handing off.");
+      const successor = await createProfileSuccessor(
+        client,
+        handoff.source,
+        handoff.profile,
+        context,
+      );
+      setHandoff(null);
+      router.push(buildHostAgentDetailRoute(handoff.serverId, successor.id, successor.workspaceId));
+    },
+    [client, handoff, serverId],
+  );
+  const handoffElement = handoff
+    ? createElement(ProfileHandoffModal, {
+        key: `${handoff.source.id}:${handoff.profile.id}`,
+        name: handoff.profile.name,
+        initialContext: handoff.context,
+        onClose: closeHandoff,
+        onConfirm: confirmHandoff,
+      })
+    : null;
+  const createSuccessor = useCallback(
+    async (profileId: string) => {
+      if (target.kind !== "agent" || !client || !serverId || applyingRef.current) return;
+      const profile = profiles?.find((entry) => entry.id === profileId);
+      if (!profile) return;
+      applyingRef.current = true;
+      setIsApplying(true);
+      try {
+        const source = await client.fetchAgent(target.agentId);
+        if (!source) throw new Error("Source task not found.");
+        const context = await readProfileHandoff(client, source.agent);
+        setHandoff({ source: source.agent, profile, context, serverId });
+      } catch (error) {
+        toast.error(toErrorMessage(error));
+      } finally {
+        applyingRef.current = false;
+        setIsApplying(false);
+      }
+    },
+    [target, client, serverId, profiles, toast],
+  );
 
   const applicableProfiles = useMemo(() => {
     if (!isSupported || !profiles) {
@@ -105,13 +176,16 @@ export function useAgentProfilePicker(
         icon: profile.icon ?? "",
         color: profile.color ?? "",
         name: profile.name,
+        localEndpoint: entries
+          ?.find((entry) => entry.provider === profile.provider)
+          ?.models?.find((model) => model.id === profile.model?.trim())?.localEndpoint,
         summary: buildAgentProfilePickerSummary({
-          profile,
+          profile: supportsLaunch ? { ...profile, modeId: undefined } : profile,
           entries,
           formatFeatureCount,
         }),
       })),
-    [applicableProfiles, entries, formatFeatureCount],
+    [applicableProfiles, entries, formatFeatureCount, supportsLaunch],
   );
 
   const persistSelection = useCallback(
@@ -143,7 +217,21 @@ export function useAgentProfilePicker(
       const resolved = materializeAgentProfile(profile);
 
       if (target.kind === "draft") {
+        if (!supportsLaunch) {
+          if (profile.instructions || profile.workerProfileId) {
+            toast.error(
+              "Enable Vorton Mode on a supported host to launch a preset with instructions or workers.",
+            );
+            return;
+          }
+          delete resolved.profileId;
+        }
         target.controls.applyProfile(resolved);
+        return;
+      }
+
+      if (supportsLaunch) {
+        void createSuccessor(profile.id);
         return;
       }
 
@@ -163,11 +251,38 @@ export function useAgentProfilePicker(
           toast.error(toErrorMessage(error));
         });
     },
-    [applicableProfiles, client, persistSelection, target, toast],
+    [applicableProfiles, client, persistSelection, target, toast, supportsLaunch, createSuccessor],
   );
 
+  const refreshStatus = useCallback(() => {
+    const providers = [
+      ...new Set(rows.filter((row) => row.localEndpoint).map((row) => row.provider)),
+    ];
+    if (!providers.length) return;
+    void refreshProviders(providers).catch((error) => toast.error(toErrorMessage(error)));
+  }, [rows, refreshProviders, toast]);
+
   return useMemo(
-    () => (isSupported && profiles !== null ? { rows, applyProfile } : null),
-    [applyProfile, isSupported, profiles, rows],
+    () =>
+      isSupported && profiles !== null
+        ? {
+            rows,
+            applyProfile,
+            isApplying,
+            handoffElement,
+            refreshStatus,
+            isRefreshingStatus: isRefreshing,
+          }
+        : null,
+    [
+      applyProfile,
+      isSupported,
+      profiles,
+      rows,
+      isApplying,
+      handoffElement,
+      refreshStatus,
+      isRefreshing,
+    ],
   );
 }

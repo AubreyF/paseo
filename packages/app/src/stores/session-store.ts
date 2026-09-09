@@ -72,6 +72,8 @@ export interface AgentRuntimeInfo {
 }
 
 export interface Agent {
+  profile?: { id: string; name: string };
+  quotaPausedAt?: string;
   serverId: string;
   id: string;
   provider: AgentProvider;

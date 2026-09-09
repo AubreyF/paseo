@@ -8,6 +8,7 @@ import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
+import { AgentProfileLaunchSchema } from "@getpaseo/protocol/messages";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
@@ -27,6 +28,8 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
       .nullable()
       .optional(),
     systemPrompt: z.string().nullable().optional(),
+    profileLaunch: AgentProfileLaunchSchema.optional(),
+    quotaPausedAt: z.string().optional(),
     mcpServers: z.record(z.string(), z.any()).nullable().optional(),
   })
   .nullable()
@@ -86,6 +89,8 @@ export type SerializableAgentConfig = Pick<
   | "providerOptions"
   | "toolPolicy"
   | "systemPrompt"
+  | "profileLaunch"
+  | "quotaPausedAt"
   | "mcpServers"
 >;
 

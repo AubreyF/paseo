@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Vorton Mode: three switch studies</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #e6e8e7;
+      background: #171b19;
+      font-size: 14px;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 48px 32px;
+    }
+    main {
+      max-width: 1120px;
+      margin: auto;
+    }
+    h1 {
+      font-size: 30px;
+      font-weight: 500;
+      margin: 8px 0 12px;
+    }
+    p {
+      color: #969e99;
+      line-height: 1.6;
+      margin: 0;
+    }
+    a {
+      color: #a1d8bc;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 24px;
+      margin: 36px 0;
+    }
+    h2 {
+      font-size: 17px;
+      font-weight: 500;
+      margin: 0 0 8px;
+    }
+    .caption {
+      min-height: 70px;
+    }
+    .sidebar {
+      background: #111715;
+      border: 1px solid #303833;
+      border-radius: 14px;
+      overflow: hidden;
+      margin-top: 20px;
+    }
+    .nav {
+      height: 210px;
+      padding: 22px 18px;
+      color: #939c96;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .nav strong {
+      font-weight: 400;
+      color: #d5dcd7;
+    }
+    .footer {
+      height: 62px;
+      display: flex;
+      align-items: center;
+      padding: 12px 10px;
+      gap: 4px;
+      border-top: 1px solid #2b332e;
+      position: relative;
+    }
+    .spacer {
+      flex: 1;
+    }
+    button {
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      border: 0;
+      background: none;
+    }
+    button:focus-visible {
+      outline: 2px solid #98dab8;
+      outline-offset: 3px;
+    }
+    .icon {
+      width: 28px;
+      height: 28px;
+      color: #9aa39d;
+      padding: 5px;
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+    }
+    .icon:hover {
+      background: #29322d;
+      color: white;
+    }
+    svg {
+      width: 18px;
+      height: 18px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .mode {
+      height: 32px;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      transition:
+        background 0.15s,
+        color 0.15s,
+        box-shadow 0.15s;
+    }
+    .pill {
+      padding: 0 11px;
+      border-radius: 18px;
+      border: 1px solid #435149;
+      background: #202923;
+      color: #b5c3b9;
+    }
+    .pill .orb {
+      width: 8px;
+      height: 8px;
+      background: #66756c;
+      border-radius: 50%;
+      transition: all 0.15s;
+    }
+    .pill[aria-checked="true"] {
+      border-color: #3b7c59;
+      color: #c7f1d8;
+      background: #1b3225;
+      box-shadow: inset 0 1px #41624d;
+    }
+    .pill[aria-checked="true"] .orb {
+      background: #8de3b3;
+      box-shadow: 0 0 9px #62c88a90;
+    }
+    .segment {
+      padding: 3px;
+      background: #0c100e;
+      border: 1px solid #343d37;
+      border-radius: 9px;
+      gap: 0;
+    }
+    .segment span {
+      padding: 5px 8px;
+      border-radius: 6px;
+      color: #7d8881;
+    }
+    .segment[aria-checked="true"] span:last-child,
+    .segment[aria-checked="false"] span:first-child {
+      color: #e1eee5;
+      background: #31463a;
+      box-shadow: 0 1px 3px #0008;
+    }
+    .lever {
+      padding: 0 4px;
+      color: #bac5bd;
+    }
+    .track {
+      width: 36px;
+      height: 20px;
+      border-radius: 6px;
+      background: #111614;
+      border: 1px solid #465148;
+      padding: 2px;
+      box-shadow: inset 0 2px 4px #0008;
+    }
+    .knob {
+      display: block;
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      background: linear-gradient(#b9c3bd, #737e77);
+      box-shadow: 0 1px 3px #000;
+      transition: transform 0.15s;
+    }
+    .lever[aria-checked="true"] {
+      color: #d9e9de;
+    }
+    .lever[aria-checked="true"] .track {
+      background: #284833;
+      border-color: #578367;
+    }
+    .lever[aria-checked="true"] .knob {
+      transform: translateX(15px);
+      background: linear-gradient(#ecf7f0, #a7c4b0);
+    }
+    .state {
+      font-size: 12px;
+      color: #a7b1aa;
+      margin-top: 12px;
+    }
+    .menu {
+      position: absolute;
+      bottom: 56px;
+      right: 10px;
+      width: 210px;
+      background: #202622;
+      border: 1px solid #374139;
+      border-radius: 12px;
+      box-shadow: 0 12px 35px #0007;
+      padding: 6px;
+      z-index: 2;
+    }
+    .menu[hidden] {
+      display: none;
+    }
+    .menu button {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      padding: 10px;
+      border-radius: 7px;
+      text-align: left;
+      color: #dbe2dd;
+    }
+    .menu button:hover {
+      background: #303b33;
+    }
+    .menu svg {
+      color: #a4b8aa;
+    }
+    .note {
+      border-top: 1px solid #303833;
+      padding-top: 20px;
+    }
+    .badge {
+      font-size: 12px;
+      color: #a7c9b3;
+    }
+    @media (max-width: 900px) {
+      .grid {
+        grid-template-columns: 1fr;
+        max-width: 380px;
+      }
+      .caption {
+        min-height: 0;
+      }
+      body {
+        padding: 24px 18px;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        transition: none !important;
+      }
+    }
+  </style>
+  <main>
+    <span class="badge">Interactive design studies</span>
+    <h1>Vorton Mode, within reach.</h1>
+    <p>
+      Three treatments at actual sidebar scale. Click a toggle to compare on and off. These previews
+      do not change your settings.
+    </p>
+    <div class="grid">
+      <section>
+        <h2>1. Pilot light</h2>
+        <p class="caption">
+          A quiet status light in a compact pill. My pick for the everyday interface.
+        </p>
+        <div class="sidebar">
+          <div class="nav">
+            <strong>＋ New workspace</strong><span>History</span><span>Search</span
+            ><span>Workspaces</span>
+          </div>
+          <div class="footer">
+            <button class="mode pill" role="switch" aria-label="Vorton Mode" aria-checked="true">
+              <i class="orb"></i>Vorton Mode</button
+            ><i class="spacer"></i>
+          </div>
+        </div>
+        <p class="state">Vorton Mode on</p>
+      </section>
+      <section>
+        <h2>2. Mode selector</h2>
+        <p class="caption">
+          Two explicit destinations. No ambiguity about which experience is active.
+        </p>
+        <div class="sidebar">
+          <div class="nav">
+            <strong>＋ New workspace</strong><span>History</span><span>Search</span
+            ><span>Workspaces</span>
+          </div>
+          <div class="footer">
+            <button class="mode segment" role="switch" aria-label="Vorton Mode" aria-checked="true">
+              <span>Paseo</span><span>Vorton</span></button
+            ><i class="spacer"></i>
+          </div>
+        </div>
+        <p class="state">Vorton Mode on</p>
+      </section>
+      <section>
+        <h2>3. Instrument switch</h2>
+        <p class="caption">
+          A little mechanical tactility. A recessed track and a crisp sliding thumb.
+        </p>
+        <div class="sidebar">
+          <div class="nav">
+            <strong>＋ New workspace</strong><span>History</span><span>Search</span
+            ><span>Workspaces</span>
+          </div>
+          <div class="footer">
+            <button class="mode lever" role="switch" aria-label="Vorton Mode" aria-checked="true">
+              <span class="track"><i class="knob"></i></span>Vorton Mode</button
+            ><i class="spacer"></i>
+          </div>
+        </div>
+        <p class="state">Vorton Mode on</p>
+      </section>
+    </div>
+    <p class="note">
+      The three-dot menus also work. Settings always remains visible.
+      <a href="/new">Open the working Paseo preview</a>.
+    </p>
+  </main>
+  <script>
+    const paths = {
+      add: '<path d="M3 7V5h6l2 2h10v13H3z"/><path d="M12 11v6m-3-3h6"/>',
+      more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+      settings:
+        '<path d="m9 3 1-1h4l1 3 3 1 3 3-1 3 1 3-3 3-3 1-1 3h-4l-1-3-3-1-3-3 1-3-1-3 3-3 3-1z"/><circle cx="12" cy="12" r="3"/>',
+      host: '<rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6h.01M7 17h.01"/>',
+      import: '<path d="M12 3v12m-4-4 4 4 4-4M4 12v8h16v-8"/>',
+      help: '<circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 1 1 4 3l-1 1m0 4h.01"/>',
+    };
+    const svg = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[k]}</svg>`;
+    document.querySelectorAll(".footer").forEach((footer) => {
+      footer.insertAdjacentHTML(
+        "beforeend",
+        `<button class="icon" title="Add project" aria-label="Add project">${svg("add")}</button><button class="icon more" title="More actions" aria-label="More actions" aria-expanded="false">${svg("more")}</button><button class="icon" title="Settings" aria-label="Settings">${svg("settings")}</button><div class="menu" hidden>${[
+          ["host", "Hosts"],
+          ["import", "Import session"],
+          ["help", "Help and support"],
+        ]
+          .map(([k, v]) => `<button>${svg(k)}${v}</button>`)
+          .join("")}</div>`,
+      );
+      footer.querySelector(".more").onclick = () => {
+        const menu = footer.querySelector(".menu");
+        menu.hidden = !menu.hidden;
+        footer.querySelector(".more").setAttribute("aria-expanded", String(!menu.hidden));
+      };
+      footer.querySelectorAll(".menu button,.icon:not(.more)").forEach(
+        (b) =>
+          (b.onclick = () => {
+            footer.closest("section").querySelector(".state").textContent =
+              b.textContent.trim() || b.title;
+            footer.querySelector(".menu").hidden = true;
+          }),
+      );
+    });
+    document.querySelectorAll(".mode").forEach(
+      (b) =>
+        (b.onclick = () => {
+          const on = b.getAttribute("aria-checked") !== "true";
+          b.setAttribute("aria-checked", String(on));
+          b.closest("section").querySelector(".state").textContent =
+            `Vorton Mode ${on ? "on" : "off"}`;
+        }),
+    );
+  </script>
+</html>

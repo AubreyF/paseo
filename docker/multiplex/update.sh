@@ -13,9 +13,14 @@ docker pull "$image"
 
 echo "Starting Paseo from ${image}"
 PASEO_IMAGE="$image" docker compose up -d --remove-orphans paseo
+container_id="$(PASEO_IMAGE="$image" docker compose ps -q paseo)"
+if [ -z "$container_id" ]; then
+  echo "Paseo container was not created" >&2
+  exit 1
+fi
 
 for _ in $(seq 1 30); do
-  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' paseo-multiplex 2>/dev/null || true)"
+  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
   if [ "$health" = "healthy" ]; then
     echo "Paseo is healthy at ${image}"
     exit 0

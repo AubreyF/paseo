@@ -12,6 +12,7 @@ import {
 import { findModelByReference } from "./model-catalog";
 
 export interface FormInitialValues {
+  profileId?: string;
   serverId?: string | null;
   provider?: AgentProvider;
   modeId?: string | null;
@@ -21,6 +22,7 @@ export interface FormInitialValues {
 }
 
 export interface FormState {
+  profileId?: string;
   serverId: string | null;
   provider: AgentProvider | null;
   modeId: string;
@@ -89,6 +91,7 @@ export type AgentFormAction =
     }
   | {
       type: "APPLY_PROFILE_FROM_USER";
+      profileId?: string;
       provider: AgentProvider;
       modelId: string;
       modeId: string;
@@ -241,6 +244,7 @@ export function combineInitialValues(
 export function hasFormStateChanged(prev: FormState, next: FormState): boolean {
   return (
     prev.serverId !== next.serverId ||
+    prev.profileId !== next.profileId ||
     prev.provider !== next.provider ||
     prev.modeId !== next.modeId ||
     prev.model !== next.model ||
@@ -397,6 +401,8 @@ export function resolveFormState(
   allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>,
 ): FormState {
   const result = { ...currentState };
+  if (!userModified.provider && initialValues?.profileId)
+    result.profileId = initialValues.profileId;
 
   result.provider = resolveProvider({
     currentProvider: result.provider,
@@ -581,7 +587,10 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
   const normalizedModelId = resolveCanonicalModelId(action.providerModels, preferredModelId);
   const nextModelId = normalizedModelId || resolveDefaultModelId(action.providerModels);
   const availableModeIds = new Set(action.providerDef?.modes.map((mode) => mode.id) ?? []);
-  const preferredModeId = action.modeId || action.providerPrefs?.mode || "";
+  // Launch presets never silently replace the separate permission selection.
+  const preferredModeId = action.profileId
+    ? state.form.modeId
+    : action.modeId || action.providerPrefs?.mode || "";
   const defaultModeId = action.providerDef?.defaultModeId ?? "";
   let nextModeId = "";
   if (availableModeIds.has(preferredModeId)) {
@@ -600,6 +609,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
     ...state,
     form: {
       ...state.form,
+      profileId: action.profileId,
       provider: action.provider,
       model: nextModelId,
       modeId: nextModeId,
@@ -631,12 +641,12 @@ export function resolveAgentForm(
       return completeResolution(state, action);
 
     case "SET_SERVER_ID":
-      return { ...state, form: { ...state.form, serverId: action.value } };
+      return { ...state, form: { ...state.form, profileId: undefined, serverId: action.value } };
 
     case "SET_SERVER_ID_FROM_USER":
       return {
         ...state,
-        form: { ...state.form, serverId: action.value },
+        form: { ...state.form, profileId: undefined, serverId: action.value },
         userModified: { ...state.userModified, serverId: true },
       };
 
@@ -662,6 +672,7 @@ export function resolveAgentForm(
         ...state,
         form: {
           ...state.form,
+          profileId: undefined,
           provider: action.provider,
           model: nextModelId,
           modeId: nextModeId,
@@ -697,6 +708,7 @@ export function resolveAgentForm(
         ...state,
         form: {
           ...state.form,
+          profileId: undefined,
           model: nextModelId,
           thinkingOptionId: nextThinkingOptionId,
         },
@@ -709,6 +721,7 @@ export function resolveAgentForm(
         ...state,
         form: {
           ...state.form,
+          profileId: undefined,
           provider: null,
           model: "",
           modeId: "",
@@ -726,7 +739,7 @@ export function resolveAgentForm(
     case "SET_THINKING_OPTION_FROM_USER":
       return {
         ...state,
-        form: { ...state.form, thinkingOptionId: action.thinkingOptionId },
+        form: { ...state.form, profileId: undefined, thinkingOptionId: action.thinkingOptionId },
         userModified: { ...state.userModified, thinkingOptionId: true },
       };
 

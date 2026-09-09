@@ -21,6 +21,7 @@ import {
   type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
+  type TextStyle,
 } from "react-native";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -89,6 +90,8 @@ export interface ComboboxProps {
     onPress: () => void;
   }) => ReactElement;
   onSearchQueryChange?: (query: string) => void;
+  /** Lets an inspector follow keyboard navigation without applying a selection. */
+  onActiveOptionChange?: (id: string | undefined) => void;
   searchable?: boolean;
   placeholder?: string;
   searchPlaceholder?: string;
@@ -227,11 +230,16 @@ export function SearchInput({
 
 export interface ComboboxItemProps {
   label: string;
+  labelStyle?: StyleProp<TextStyle>;
+  style?: StyleProp<ViewStyle>;
+  descriptionSlot?: ReactNode;
   description?: string;
+  descriptionPlacement?: "inline" | "below";
   kind?: "directory" | "file";
   leadingSlot?: ReactNode;
   trailingSlot?: ReactNode;
   selected?: boolean;
+  selectionPlacement?: "leading" | "trailing";
   active?: boolean;
   disabled?: boolean;
   accessibilityLabel?: string;
@@ -243,11 +251,16 @@ export interface ComboboxItemProps {
 
 export function ComboboxItem({
   label,
+  labelStyle,
+  style,
+  descriptionSlot,
   description,
+  descriptionPlacement = "inline",
   kind,
   leadingSlot,
   trailingSlot,
   selected,
+  selectionPlacement = "trailing",
   active,
   disabled,
   accessibilityLabel,
@@ -281,13 +294,21 @@ export function ComboboxItem({
       pressed && (elevated ? styles.comboboxItemPressedElevated : styles.comboboxItemPressed),
       active && styles.comboboxItemActive,
       disabled && styles.comboboxItemDisabled,
+      style,
     ],
-    [elevated, active, disabled],
+    [elevated, active, disabled, style],
   );
 
   const itemContentStyle = useMemo(
-    () => [styles.comboboxItemContent, description && styles.comboboxItemContentInline],
-    [description],
+    () => [
+      styles.comboboxItemContent,
+      description && descriptionPlacement === "inline" && styles.comboboxItemContentInline,
+    ],
+    [description, descriptionPlacement],
+  );
+  const accessibilityState = useMemo(
+    () => ({ selected: Boolean(selected), disabled: Boolean(disabled) }),
+    [selected, disabled],
   );
 
   return (
@@ -298,23 +319,38 @@ export function ComboboxItem({
       style={itemPressableStyle}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityState={accessibilityState}
     >
+      {selectionPlacement === "leading" ? (
+        <View style={styles.comboboxItemLeadingSlot}>
+          {selected ? <Check size={16} color={theme.colors.foregroundMuted} /> : null}
+        </View>
+      ) : null}
       {leadingContent}
       <View style={itemContentStyle}>
-        <Text numberOfLines={1} style={styles.comboboxItemLabel}>
+        <Text
+          numberOfLines={descriptionPlacement === "below" ? 2 : 1}
+          style={[styles.comboboxItemLabel, labelStyle]}
+        >
           {label}
         </Text>
-        {description ? (
-          <Text numberOfLines={1} style={styles.comboboxItemDescription}>
-            {description}
-          </Text>
-        ) : null}
+        {descriptionSlot ??
+          (description ? (
+            <Text
+              numberOfLines={descriptionPlacement === "below" ? 2 : 1}
+              style={styles.comboboxItemDescription}
+            >
+              {description}
+            </Text>
+          ) : null)}
       </View>
-      {selected || trailingSlot ? (
+      {(selected && selectionPlacement === "trailing") || trailingSlot ? (
         <View style={styles.comboboxItemTrailingContainer}>
-          <View style={styles.comboboxItemTrailingSlot}>
-            {selected ? <Check size={16} color={theme.colors.foregroundMuted} /> : null}
-          </View>
+          {selectionPlacement === "trailing" ? (
+            <View style={styles.comboboxItemTrailingSlot}>
+              {selected ? <Check size={16} color={theme.colors.foregroundMuted} /> : null}
+            </View>
+          ) : null}
           {trailingSlot}
         </View>
       ) : null}
@@ -1271,12 +1307,17 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
   );
 }
 
+function activeOptionAt(options: ComboboxOption[], index: number): string | undefined {
+  return options[index]?.id;
+}
+
 export function Combobox({
   options,
   value,
   onSelect,
   renderOption,
   onSearchQueryChange,
+  onActiveOptionChange,
   searchable = true,
   placeholder,
   searchPlaceholder,
@@ -1489,6 +1530,11 @@ export function Combobox({
   );
 
   useDesktopOptionsPinToBottom(isOpen, orderedVisibleOptions, pinDesktopOptionsToBottom);
+
+  const activeOptionId = activeOptionAt(orderedVisibleOptions, activeIndex);
+  useEffect(() => {
+    if (isOpen) onActiveOptionChange?.(activeOptionId);
+  }, [isOpen, activeOptionId, onActiveOptionChange]);
 
   useDesktopFloatingUpdate(isOpen, isMobile, orderedVisibleOptions.length, searchQuery, update);
 

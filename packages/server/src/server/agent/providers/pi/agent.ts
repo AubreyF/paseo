@@ -43,6 +43,7 @@ import {
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
+import { localEndpointAddress, probeLocalEndpoint } from "./local-endpoint.js";
 import {
   checkProviderLaunchAvailable,
   resolveProviderLaunch,
@@ -2665,13 +2666,26 @@ export class PiRpcAgentClient implements AgentClient {
       });
       if (!runtimeSession) throw new Error("Pi catalog runtime did not start");
       const catalogSession = runtimeSession;
-      const models = transformPiModels(
-        (
-          await runProviderRefreshActivity(context, "get_available_models", () =>
-            catalogSession.getAvailableModels(null),
-          )
-        ).map((model) => mapPiModel(model, PI_PROVIDER)),
+      const available = await runProviderRefreshActivity(context, "get_available_models", () =>
+        catalogSession.getAvailableModels(null),
       );
+      const probes = new Map<string, ReturnType<typeof probeLocalEndpoint>>();
+      const mapped = await Promise.all(
+        available.map(async (model) => {
+          const mappedModel = mapPiModel(model, PI_PROVIDER);
+          const address = localEndpointAddress(model.baseUrl);
+          if (!address) return mappedModel;
+          const key = address.origin;
+          // Bound catalog side effects, and share one probe across models at an endpoint.
+          if (!probes.has(key) && probes.size < 16) {
+            probes.set(key, probeLocalEndpoint(address, context?.signal));
+          }
+          const probe = probes.get(key);
+          if (probe) mappedModel.localEndpoint = await probe;
+          return mappedModel;
+        }),
+      );
+      const models = transformPiModels(mapped);
       return { models, modes: [] };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);

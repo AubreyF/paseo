@@ -82,6 +82,9 @@ export interface AgentProfileFormState {
   icon: string;
   color: string;
   notes: string;
+  instructions: string;
+  workerProfileId: string;
+  maxWorkers: number;
   provider: string;
   modelId: string;
   modeId: string;
@@ -124,6 +127,9 @@ export interface AgentProfileFormModel {
   setName: (value: string) => void;
   setAppearance: (value: { icon: string; color: string }) => void;
   setNotes: (value: string) => void;
+  setInstructions: (value: string) => void;
+  setWorkerProfileId: (value: string) => void;
+  setMaxWorkers: (value: number) => void;
   setProvider: (providerId: string, display: AgentProfileFormDisplay) => void;
   setModel: (modelId: string, display: AgentProfileFormDisplay | null) => void;
   setMode: (modeId: string, display: AgentProfileFormDisplay | null) => void;
@@ -352,6 +358,9 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
     ...(Object.keys(state.featureValues).length > 0 ? { featureValues: state.featureValues } : {}),
     ...(notes ? { notes } : {}),
+    instructions: state.instructions.trim(),
+    workerProfileId: state.workerProfileId,
+    maxWorkers: state.maxWorkers,
   };
 }
 
@@ -388,6 +397,9 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     icon: profile.icon ?? "",
     color: profile.color ?? "",
     notes: profile.notes ?? "",
+    instructions: profile.instructions ?? "",
+    workerProfileId: profile.workerProfileId ?? "",
+    maxWorkers: profile.maxWorkers ?? 2,
     provider,
     modelId,
     modeId: profile.modeId ?? "",
@@ -554,6 +566,9 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
     setAppearance: (value) =>
       publish((current) => ({ ...current, icon: value.icon, color: value.color })),
     setNotes: (value) => publish((current) => ({ ...current, notes: value })),
+    setInstructions: (value) => publish((current) => ({ ...current, instructions: value })),
+    setWorkerProfileId: (value) => publish((current) => ({ ...current, workerProfileId: value })),
+    setMaxWorkers: (value) => publish((current) => ({ ...current, maxWorkers: value })),
     setProvider: (providerId, display) =>
       publish((current) => {
         if (current.provider === providerId) {

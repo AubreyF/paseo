@@ -1150,6 +1150,7 @@ export async function createPaseoDaemon(
   };
 
   const createAgentCommandDependencies: CreateAgentCommandDependencies = {
+    getAgentProfiles: () => daemonConfigStore.get().agentProfiles ?? [],
     agentManager,
     agentStorage,
     logger,

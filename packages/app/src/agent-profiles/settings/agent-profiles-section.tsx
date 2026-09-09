@@ -51,6 +51,14 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
     async (value: AgentProfileValue) => {
       const current = profiles ?? [];
       const editing = editTarget?.mode === "edit" ? editTarget.profile : undefined;
+      if (
+        editing &&
+        JSON.stringify(current.find((entry) => entry.id === editing.id)) !== JSON.stringify(editing)
+      ) {
+        throw new Error(
+          "This preset changed while you were editing. Close and reopen it before saving.",
+        );
+      }
       // The edited profile is replaced, not merged: `value` omits the fields the
       // user cleared, so spreading it over the stored record would silently keep
       // the old model, mode, thinking option or notes.

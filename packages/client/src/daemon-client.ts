@@ -4858,6 +4858,27 @@ export class DaemonClient {
     });
   }
 
+  async readProviderReset(providerId: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.reset.read.response">({
+      message: { type: "provider.reset.read.request", providerId },
+      timeout: 120_000,
+    });
+  }
+
+  async prepareProviderReset(providerId: string, accountId: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.reset.prepare.response">({
+      message: { type: "provider.reset.prepare.request", providerId, accountId },
+      timeout: 120_000,
+    });
+  }
+
+  async confirmProviderReset(providerId: string, accountId: string, operationId: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.reset.confirm.response">({
+      message: { type: "provider.reset.confirm.request", providerId, accountId, operationId },
+      timeout: 120_000,
+    });
+  }
+
   async listCommands(options: ListCommandsOptions): Promise<ListCommandsPayload>;
   async listCommands(agentId: string, requestId?: string): Promise<ListCommandsPayload>;
   async listCommands(

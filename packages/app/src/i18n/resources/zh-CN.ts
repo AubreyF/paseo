@@ -101,6 +101,7 @@ export const zhCN: TranslationResources = {
       focusHint: "{{shortcut}} 聚焦",
       addAttachment: "添加附件",
       interruptAgent: "中断 Agent",
+      insertNewline: "插入换行",
       queueMessage: "消息排队",
       sendAndInterrupt: "发送并中断",
       sendAndSteer: "发送并引导",

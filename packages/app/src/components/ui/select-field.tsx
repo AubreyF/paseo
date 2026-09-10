@@ -66,6 +66,7 @@ export interface SelectFieldProps<TValue> {
   field?: boolean;
   testID?: string;
   triggerTestID?: string;
+  accessibilityLabel?: string;
   desktopPlacement?: "top-start" | "bottom-start";
 }
 
@@ -209,6 +210,7 @@ export function SelectField<TValue>({
   field = true,
   testID,
   triggerTestID,
+  accessibilityLabel,
   desktopPlacement,
 }: SelectFieldProps<TValue>): ReactElement {
   const anchorRef = useRef<View>(null);
@@ -314,7 +316,7 @@ export function SelectField<TValue>({
           onBlur={handleTriggerBlur}
           disabled={disabled}
           accessibilityRole="button"
-          accessibilityLabel={`${label} (${displayLabel})`}
+          accessibilityLabel={accessibilityLabel ?? `${label} (${displayLabel})`}
           testID={triggerTestID}
         >
           {({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => (

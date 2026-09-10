@@ -43,12 +43,23 @@ export interface ResolveStructuredGenerationProvidersOptions {
 export async function resolveStructuredGenerationProviders(
   options: ResolveStructuredGenerationProvidersOptions,
 ): Promise<StructuredGenerationProvider[]> {
-  const configuredProviders = readConfiguredProviders(options.daemonConfig);
   const providerEntries = await options.providerSnapshotManager.listProviders({
     cwd: options.cwd,
     wait: true,
   });
-  const enabledEntries = providerEntries.filter((entry) => entry.enabled);
+  return resolveStructuredGenerationProvidersFromEntries({ ...options, providerEntries });
+}
+
+export function resolveStructuredGenerationProvidersFromEntries(
+  options: Pick<
+    ResolveStructuredGenerationProvidersOptions,
+    "daemonConfig" | "currentSelection"
+  > & {
+    providerEntries: ProviderSnapshotEntry[];
+  },
+): StructuredGenerationProvider[] {
+  const configuredProviders = readConfiguredProviders(options.daemonConfig);
+  const enabledEntries = options.providerEntries.filter((entry) => entry.enabled);
   const modelEntries = enabledEntries.filter((entry) => (entry.models?.length ?? 0) > 0);
   const entriesByProvider = new Map(enabledEntries.map((entry) => [entry.provider, entry]));
   const providers: StructuredGenerationProvider[] = [];

@@ -1,9 +1,11 @@
+import { useVortonMode } from "@/vorton-mode";
 import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Alert, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
+import { SelectField } from "@/components/ui/select-field";
 import { Button } from "@/components/ui/button";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -27,6 +29,7 @@ interface EditTarget {
 }
 
 export function AgentProfilesSection({ serverId }: { serverId: string }): ReactElement {
+  const vorton = useVortonMode();
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { profiles, isSupported, saveProfiles } = useAgentProfiles(serverId);
@@ -63,7 +66,11 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
       // user cleared, so spreading it over the stored record would silently keep
       // the old model, mode, thinking option or notes.
       const next: AgentProfile[] = editing
-        ? current.map((entry) => (entry.id === editing.id ? { id: entry.id, ...value } : entry))
+        ? current.map((entry) =>
+            entry.id === editing.id
+              ? { id: entry.id, isDefault: entry.isDefault, ...value }
+              : entry,
+          )
         : [...current, { id: generateAgentProfileId(), ...value }];
       await saveProfiles(next);
     },
@@ -128,6 +135,39 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
     [profiles, saveProfiles, t],
   );
 
+  const defaultOptions = useMemo(
+    () => [
+      { id: "none", value: "", label: "Require a selection" },
+      ...(profiles ?? []).map((profile) => ({
+        id: profile.id,
+        value: profile.id,
+        label: profile.name,
+      })),
+    ],
+    [profiles],
+  );
+  const defaultId = profiles?.find((profile) => profile.isDefault === true)?.id ?? "";
+  const [savingDefault, setSavingDefault] = useState(false);
+  const selectDefault = useCallback(
+    async (id: string | null) => {
+      if (!profiles) return;
+      setSavingDefault(true);
+      try {
+        await saveProfiles(
+          profiles.map((profile) => ({ ...profile, isDefault: profile.id === id })),
+        );
+      } catch (error) {
+        Alert.alert(
+          "Unable to save default configuration",
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setSavingDefault(false);
+      }
+    },
+    [profiles, saveProfiles],
+  );
+
   const addButton = useMemo(
     () => (
       <Button
@@ -169,6 +209,25 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
         trailing={addButton}
         testID="agent-profiles-section"
       >
+        {vorton ? (
+          <>
+            <SelectField
+              label="Default configuration"
+              value={defaultId}
+              selectedDisplay={defaultOptions.find((option) => option.value === defaultId) ?? null}
+              options={defaultOptions}
+              onChange={selectDefault}
+              disabled={!profiles || savingDefault}
+              placeholder="Require a selection"
+              emptyText="No configurations available"
+            />
+            <Text style={styles.emptyText}>
+              Used for new Vorton chats on this host. Existing chats and their accounts stay
+              unchanged. Without a default, select a configuration before typing or audio can launch
+              a chat.
+            </Text>
+          </>
+        ) : null}
         <View style={settingsStyles.card} testID="agent-profiles-card">
           {profiles && profiles.length > 0 ? (
             profiles.map((profile, index) => (

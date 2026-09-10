@@ -57,6 +57,7 @@ export type EnsureWorkspaceForCreate = (
 ) => Promise<string>;
 
 export interface CreateAgentFromSessionInput {
+  onCreated?: CreateAgentFromMcpInput["onCreated"];
   kind: "session";
   config: AgentSessionConfig;
   workspaceId: string;
@@ -183,11 +184,16 @@ export async function createAgentCommand(
       ? await resolveSessionCreateAgent(dependencies, input)
       : await resolveMcpCreateAgent(dependencies, input);
 
+  if (resolved.config.quotaReserve) {
+    await dependencies.agentManager.checkQuotaReserveLaunch(resolved.config);
+  }
+
   const snapshot = await dependencies.agentManager.createAgent(
     resolved.config,
     undefined,
     resolved.createOptions,
   );
+  input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
 
   resolved.setupContinuation?.startAfterAgentCreate({
     agentId: snapshot.id,
@@ -196,9 +202,6 @@ export async function createAgentCommand(
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
   let initialPromptError: unknown | null = null;
-  if (input.kind === "mcp") {
-    input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
-  }
   if (resolved.prompt !== undefined) {
     const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot);
     initialPromptStarted = sendResult.started;
@@ -497,6 +500,9 @@ async function sendInitialPrompt(
     const prompt = resolved.prompt;
     if (prompt === undefined) {
       return { started: false, liveSnapshot: snapshot };
+    }
+    if (resolved.config.quotaReserve) {
+      await dependencies.agentManager.prepareQuotaReserveAdmission(snapshot.id);
     }
     const liveSnapshot = await startCreatedAgentInitialPrompt({
       agentManager: dependencies.agentManager,

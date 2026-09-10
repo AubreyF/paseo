@@ -1,3 +1,4 @@
+import { useVortonTouch, VORTON_ACTION_SLOT } from "@/vorton-touch";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -425,7 +426,8 @@ function ProjectRowTrailingActions({
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
-  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  const vortonTouch = useVortonTouch();
+  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint || vortonTouch;
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -489,7 +491,7 @@ function ProjectKebabMenu({
       <DropdownMenuTrigger
         hitSlop={8}
         style={projectKebabStyle}
-        accessibilityRole={platformIsWeb ? undefined : "button"}
+        accessibilityRole="button"
         accessibilityLabel={t("sidebar.project.actions.menu")}
         testID={`sidebar-project-kebab-${projectViewKey}`}
       >
@@ -715,6 +717,7 @@ function NewWorktreeButton({
   showShortcutHint?: boolean;
 }) {
   const { t } = useTranslation();
+  const touch = useVortonTouch();
   const newWorktreeKeys = useShortcutKeys("new-worktree");
 
   const pressableStyle = useCallback(
@@ -735,14 +738,18 @@ function NewWorktreeButton({
   );
 
   return (
-    <View style={styles.projectTrailingControlSlot} pointerEvents={visible ? "auto" : "none"}>
+    <View
+      dataSet={VORTON_ACTION_SLOT}
+      style={styles.projectTrailingControlSlot}
+      pointerEvents={visible ? "auto" : "none"}
+    >
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
         <TooltipTrigger asChild disabled={!visible}>
           <Pressable
             style={pressableStyle}
             onPress={handlePress}
             disabled={loading}
-            accessibilityRole={platformIsWeb ? undefined : "button"}
+            accessibilityRole={touch || !platformIsWeb ? "button" : undefined}
             accessibilityLabel={t("sidebar.workspace.actions.createWorkspaceFor", {
               projectName: displayName,
             })}
@@ -811,7 +818,7 @@ function NewWorkspaceGhostRow({
 
   return (
     <Pressable
-      accessibilityRole={platformIsWeb ? undefined : "button"}
+      accessibilityRole="button"
       accessibilityLabel={t("sidebar.workspace.actions.createWorkspaceFor", {
         projectName: displayName,
       })}
@@ -868,6 +875,7 @@ function ProjectHeaderRow({
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const touch = useVortonTouch();
   const isMobileBreakpoint = useIsCompactFormFactor();
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
@@ -906,8 +914,8 @@ function ProjectHeaderRow({
   }, [interaction.didLongPressRef, onPress]);
 
   const handlePointerEnter = useCallback(() => {
-    if (!contextMenuOpen) setIsHovered(true);
-  }, [contextMenuOpen]);
+    if (!contextMenuOpen && !touch) setIsHovered(true);
+  }, [contextMenuOpen, touch]);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const handleContextMenuOpenChange = useCallback((open: boolean) => {
     setContextMenuOpen(open);
@@ -946,7 +954,7 @@ function ProjectHeaderRow({
           projectViewKey={project.viewKey}
           backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
           chevron={chevron}
-          showChevron={isHovered && chevron !== null}
+          showChevron={(isHovered || touch) && chevron !== null}
           isArchiving={isArchiving}
         />
 
@@ -1072,7 +1080,8 @@ function WorkspaceRowInner({
 }: WorkspaceRowInnerProps) {
   const isCompact = useIsCompactFormFactor();
   const [isPressed, setIsPressed] = useState(false);
-  const isTouchPlatform = platformIsNative || isCompact;
+  const vortonTouch = useVortonTouch();
+  const isTouchPlatform = platformIsNative || isCompact || vortonTouch;
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,

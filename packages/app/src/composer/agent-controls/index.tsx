@@ -1889,7 +1889,7 @@ export function DraftAgentControls({
   isCompactLayout,
 }: DraftAgentControlsProps) {
   const { preferences } = useFormPreferences();
-  const { supportsLaunch } = useAgentProfiles(modelSelectorServerId);
+  const { supportsLaunch, profiles: savedProfiles } = useAgentProfiles(modelSelectorServerId);
   const mappedThinkingOptions = useMemo<AgentControlOption[]>(() => {
     return toThinkingControlOptions(thinkingOptions);
   }, [thinkingOptions]);
@@ -1936,6 +1936,16 @@ export function DraftAgentControls({
     supported: supportsLaunch,
     picker: agentProfiles,
   });
+  const appliedDefaultRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!presetPicker || selectedProfileId) return;
+    const profile = savedProfiles?.find((entry) => entry.isDefault === true);
+    if (!profile || !presetPicker.rows.some((row) => row.id === profile.id)) return;
+    const key = `${modelSelectorServerId}:${profile.id}`;
+    if (appliedDefaultRef.current === key) return;
+    appliedDefaultRef.current = key;
+    presetPicker.applyProfile(profile.id);
+  }, [modelSelectorServerId, presetPicker, savedProfiles, selectedProfileId]);
   const profileActions = resolveAgentProfileEditorActions(agentProfiles !== null, profileEditor);
 
   const modeControl = useMemo<AgentModeControlValue | null>(

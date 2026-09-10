@@ -10,6 +10,8 @@ import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
+import { QuotaReservePolling } from "../quota-reserve/polling.js";
+import { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
 import type { ManagedAgent } from "../agent-manager.js";
 
 const logger = createTestLogger();
@@ -469,5 +471,133 @@ test("session create keeps an explicit title after the initial prompt settles", 
     expect(settled?.title).toBe(title);
   } finally {
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+async function reserveLaunchHarness(remaining: (read: number) => number | null) {
+  const workdir = mkdtempSync(join(tmpdir(), "reserve-launch-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const starts: unknown[] = [];
+  const agentManager = new AgentManager({
+    clients: createTestAgentClients({
+      onStartTurn: (prompt) => {
+        starts.push(prompt);
+      },
+    }),
+    registry: storage,
+    logger,
+  });
+  let reads = 0;
+  const usageService = new ProviderUsageService({
+    logger,
+    fetchers: [
+      {
+        providerId: "codex",
+        displayName: "Codex",
+        fetchUsage: async () => {
+          reads += 1;
+          return {
+            providerId: "codex",
+            displayName: "Codex",
+            status: "available",
+            planLabel: null,
+            windows: [{ id: "weekly", label: "Weekly", remainingPct: remaining(reads) }],
+            reserveWindowIds: ["weekly"],
+          };
+        },
+      },
+    ],
+  });
+  const polling = new QuotaReservePolling({ agentManager, usageService, logger });
+  agentManager.setQuotaReserveObservationReader((provider) => polling.readForAdmission(provider));
+  const created: string[] = [];
+  const launch = () =>
+    createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      },
+      {
+        kind: "session",
+        config: {
+          provider: "codex",
+          cwd: workdir,
+          quotaReservePolicy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+        },
+        workspaceId: "reserve-workspace",
+        labels: {},
+        provisionalTitle: null,
+        firstAgentContext: { attachments: [] },
+        initialPrompt: "First protected prompt",
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+        onCreated: ({ agentId }) => {
+          created.push(agentId);
+        },
+      },
+    );
+  return {
+    launch,
+    starts,
+    created,
+    storage,
+    agentManager,
+    reads: () => reads,
+    close: async () => {
+      await polling.stop();
+      await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+    },
+  };
+}
+
+test("reserve launch checks quota before creation and durably refreshes before the first prompt", async () => {
+  const harness = await reserveLaunchHarness(() => 50);
+  try {
+    const result = await harness.launch();
+    expect(result.initialPromptStarted).toBe(true);
+    expect(harness.reads()).toBe(2);
+    expect(harness.starts).toEqual(["First protected prompt"]);
+    expect(harness.created).toEqual([result.snapshot.id]);
+    expect((await harness.storage.get(result.snapshot.id))?.config?.quotaReserve?.state.kind).toBe(
+      "ready",
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+test.each([
+  { remaining: 14, message: "Cruise Reserve" },
+  { remaining: 15, message: "Cruise Reserve" },
+  { remaining: 10, message: "Redline" },
+  { remaining: null, message: "unavailable" },
+])(
+  "reserve launch at $remaining blocks before creating an agent",
+  async ({ remaining, message }) => {
+    const harness = await reserveLaunchHarness(() => remaining);
+    try {
+      await expect(harness.launch()).rejects.toThrow(message);
+      expect(harness.reads()).toBe(1);
+      expect(harness.starts).toEqual([]);
+      expect(harness.created).toEqual([]);
+      expect(harness.agentManager.listAgents()).toEqual([]);
+      expect(await harness.storage.list()).toEqual([]);
+    } finally {
+      await harness.close();
+    }
+  },
+);
+
+test("a quota drop during creation reports the created agent for cleanup and never sends its prompt", async () => {
+  const harness = await reserveLaunchHarness((read) => (read === 1 ? 50 : 14));
+  try {
+    await expect(harness.launch()).rejects.toThrow("Cruise Reserve");
+    expect(harness.starts).toEqual([]);
+    expect(harness.created).toHaveLength(1);
+    const stored = await harness.storage.get(harness.created[0]!);
+    expect(stored?.config?.quotaReserve?.state).toMatchObject({ kind: "held", reason: "cruise" });
+  } finally {
+    await harness.close();
   }
 });

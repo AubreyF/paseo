@@ -101,6 +101,7 @@ export const ptBR: TranslationResources = {
       focusHint: "{{shortcut}} para focar",
       addAttachment: "Adicionar anexo",
       interruptAgent: "Interromper agente",
+      insertNewline: "Inserir quebra de linha",
       queueMessage: "Enfileirar mensagem",
       sendAndInterrupt: "Enviar e interromper",
       sendAndSteer: "Enviar e orientar",

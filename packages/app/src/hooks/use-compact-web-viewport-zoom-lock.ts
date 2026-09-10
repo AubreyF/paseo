@@ -1,11 +1,14 @@
 import { useEffect } from "react";
 import { isWeb } from "@/constants/platform";
+import { useVortonMode } from "@/vorton-mode";
 
 const COMPACT_WEB_VIEWPORT_CONTENT =
   "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover";
 const DEFAULT_WEB_VIEWPORT_CONTENT = "width=device-width, initial-scale=1, viewport-fit=cover";
 
 export function useCompactWebViewportZoomLock(isCompactLayout: boolean) {
+  const vortonMode = useVortonMode();
+  const lockZoom = isCompactLayout && !vortonMode;
   useEffect(() => {
     if (!isWeb) {
       return;
@@ -24,7 +27,7 @@ export function useCompactWebViewportZoomLock(isCompactLayout: boolean) {
 
     viewportMeta.setAttribute(
       "content",
-      isCompactLayout ? COMPACT_WEB_VIEWPORT_CONTENT : DEFAULT_WEB_VIEWPORT_CONTENT,
+      lockZoom ? COMPACT_WEB_VIEWPORT_CONTENT : DEFAULT_WEB_VIEWPORT_CONTENT,
     );
 
     return () => {
@@ -36,5 +39,5 @@ export function useCompactWebViewportZoomLock(isCompactLayout: boolean) {
         viewportMeta.setAttribute("content", previousContent);
       }
     };
-  }, [isCompactLayout]);
+  }, [lockZoom]);
 }

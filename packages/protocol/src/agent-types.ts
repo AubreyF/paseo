@@ -1,4 +1,5 @@
 import type { AgentAttachment, AgentProfileLaunch } from "./messages.js";
+import type { QuotaReserveConfig, QuotaReserveLaunchPolicy } from "./quota-reserve.js";
 
 export type AgentProvider = string;
 
@@ -504,8 +505,10 @@ export interface ToolPolicy {
 export interface AgentSessionConfig {
   provider: AgentProvider;
   profileId?: string;
+  quotaReservePolicy?: QuotaReserveLaunchPolicy;
   profileLaunch?: AgentProfileLaunch;
   quotaPausedAt?: string;
+  quotaReserve?: QuotaReserveConfig;
   cwd: string;
   /**
    * Provider-agnostic system/developer instruction string.

@@ -56,7 +56,11 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
         );
       }
       const next: AgentProfile[] = editing
-        ? current.map((entry) => (entry.id === editing.id ? { id: entry.id, ...value } : entry))
+        ? current.map((entry) =>
+            entry.id === editing.id
+              ? { id: entry.id, isDefault: entry.isDefault, ...value }
+              : entry,
+          )
         : [...current, { id: generateAgentProfileId(), ...value }];
       await saveProfiles(next);
       setRequest(null);

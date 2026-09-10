@@ -31,6 +31,7 @@ const CodexAuthSchema = z.object({
 const CodexWindowSchema = z.object({
   used_percent: ApiNumberSchema.optional(),
   reset_at: ApiNumberSchema.optional(),
+  limit_window_seconds: ApiNumberSchema.positive().optional(),
 });
 
 const CodexUsageResponseSchema = z.object({
@@ -79,6 +80,16 @@ function codexWindow(
   };
 }
 
+function windowLabel(window: CodexWindow | null | undefined, fallback: string): string {
+  const seconds = window?.limit_window_seconds;
+  if (seconds === undefined) return fallback;
+  if (seconds === 604800) return "Weekly";
+  if (seconds % 86400 === 0) return `${seconds / 86400}-day`;
+  if (seconds % 3600 === 0) return `${seconds / 3600}-hour`;
+  if (seconds % 60 === 0) return `${seconds / 60}-minute`;
+  return `${seconds}-second`;
+}
+
 export class CodexQuotaProvider implements ProviderUsageFetcher {
   readonly providerId: string;
   readonly displayName: string;
@@ -120,12 +131,24 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
     const weekly = codexWindow(resp.rate_limit?.secondary_window);
     const codeReview = codexWindow(resp.code_review_rate_limit?.primary_window);
     const windows: ProviderUsageWindow[] = [];
+    const limits = resp.rate_limit;
+    const applicabilityKnown =
+      limits != null &&
+      limits.primary_window !== undefined &&
+      limits.secondary_window !== undefined;
+    let reserveWindowIds: string[] | undefined;
+    if (applicabilityKnown) {
+      reserveWindowIds = [];
+      if (limits.primary_window !== null) reserveWindowIds.push("session");
+      if (limits.secondary_window !== null) reserveWindowIds.push("weekly");
+    }
 
     if (session) {
       windows.push(
         windowFromUsedPct({
           id: "session",
-          label: "Session",
+          // Keep the existing window id stable; primary is not necessarily a session limit.
+          label: windowLabel(resp.rate_limit?.primary_window, "Session"),
           utilizationPct: session.usedPct,
           resetsAt: session.resetsAt,
           tone: toneFromUsedPct(session.usedPct),
@@ -136,7 +159,7 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
       windows.push(
         windowFromUsedPct({
           id: "weekly",
-          label: "Weekly",
+          label: windowLabel(resp.rate_limit?.secondary_window, "Weekly"),
           utilizationPct: weekly.usedPct,
           resetsAt: weekly.resetsAt,
           tone: toneFromUsedPct(weekly.usedPct),
@@ -172,6 +195,7 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
       status: "available",
       planLabel: resp.plan_type ?? null,
       windows,
+      ...(reserveWindowIds === undefined ? {} : { reserveWindowIds }),
       balances,
       details: [],
       error: null,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { QuotaReservePolicySchema, QuotaReserveLaunchPolicySchema } from "./quota-reserve.js";
 import {
   ProviderResetReadRequestSchema,
   ProviderResetPrepareRequestSchema,
@@ -171,6 +172,8 @@ export const AgentProfileSchema = z
   .object({
     id: z.string(),
     name: z.string(),
+    nickname: z.string().optional(),
+    quotaReservePolicy: QuotaReservePolicySchema.optional(),
     /** A key into the client's icon registry, not a glyph. Unknown keys draw the default. */
     icon: z.string().optional(),
     /** An identity colour name shared with host badges. Unknown values draw unthemed. */
@@ -183,6 +186,8 @@ export const AgentProfileSchema = z
     /** Free text, surfaced to orchestrating agents by the `list_profiles` MCP tool. */
     notes: z.string().optional(),
     instructions: z.string().optional(),
+    /** Selected automatically for new Vorton drafts on this host. */
+    isDefault: z.boolean().optional(),
     workerProfileId: z.string().optional(),
     maxWorkers: z.number().int().min(1).max(8).optional(),
   })
@@ -501,6 +506,7 @@ const ToolPolicySchema = z
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   profileId: z.string().optional(),
+  quotaReservePolicy: QuotaReserveLaunchPolicySchema.optional(),
   cwd: z.string(),
   modeId: z.string().optional(),
   model: z.string().optional(),
@@ -1029,6 +1035,23 @@ export const ProjectRemoveRequestSchema = z.object({
   type: z.literal("project.remove.request"),
   projectId: z.string(),
   requestId: z.string(),
+});
+
+export const WorkspaceTitleSuggestRequestSchema = z.object({
+  type: z.literal("workspace.title.suggest.request"),
+  workspaceId: z.string(),
+  regenerate: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+export const WorkspaceTitleSuggestResponseSchema = z.object({
+  type: z.literal("workspace.title.suggest.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    titles: z.array(z.string().min(1).max(80)).max(3),
+    error: z.string().nullable(),
+  }),
 });
 
 export const WorkspaceTitleSetRequestSchema = z.object({
@@ -3082,6 +3105,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRenameRequestSchema,
   ProjectIconSetRequestSchema,
   ProjectRemoveRequestSchema,
+  WorkspaceTitleSuggestRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
   WorkspaceLabelListRequestSchema,
@@ -3428,6 +3452,8 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
+        // COMPAT(workspaceTitleSuggestions): added in v0.7.2, remove gate after 2027-03-10.
+        workspaceTitleSuggestions: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
@@ -5967,6 +5993,9 @@ export const ProviderUsageSchema = z.object({
   fetchedAt: z.string().nullable().optional(),
   nextRefreshAt: z.string().nullable().optional(),
   windows: z.array(ProviderUsageWindowSchema),
+  // Provider-declared coding limits, including windows whose usage is missing.
+  // Omission means applicability is unknown; balances never establish reserve capacity.
+  reserveWindowIds: z.array(z.string()).optional(),
   balances: z.array(ProviderUsageBalanceSchema).optional(),
   details: z.array(ProviderUsageDetailSchema).optional(),
   error: z.string().nullable().optional(),
@@ -6544,6 +6573,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRenameResponseSchema,
   ProjectIconSetResponseSchema,
   ProjectRemoveResponseSchema,
+  WorkspaceTitleSuggestResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,

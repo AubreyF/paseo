@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { useVortonTouch } from "@/vorton-touch";
 import {
   View,
   Text,
@@ -21,7 +22,7 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
+import { ArrowUp, Mic, MicOff, CornerDownLeft, ListPlus, Plus, Square } from "lucide-react-native";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "@/components/dictation-controls";
 import { RealtimeVoiceOverlay } from "@/components/realtime-voice-overlay";
@@ -51,6 +52,9 @@ import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
+import { useVortonMode } from "@/vorton-mode";
+import { useSubmitModifier } from "./submit-modifier";
+import { supportsSubmitModifiers, resolveSubmitAction } from "./submit-action";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
@@ -83,6 +87,8 @@ import {
   stopRealtimeVoice,
 } from "./state";
 
+const NEWLINE_KEYS: ShortcutKey[][] = [["shift", "Enter"]];
+const ALTERNATE_SEND_KEYS: ShortcutKey[][] = [["mod", "Enter"]];
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
 const COMPOSER_INPUT_DATASET = { composerInput: "" } as const;
 
@@ -119,6 +125,7 @@ export interface MessageInputProps {
   submitButtonTestID?: string;
   submitIcon?: "arrow" | "return";
   isSubmitDisabled?: boolean;
+  submitDisabledReason?: string;
   isSubmitLoading?: boolean;
   /** When true, keep the grown input height after submit (text is preserved, not cleared). */
   preserveHeightOnSubmit?: boolean;
@@ -227,9 +234,14 @@ function AttachButtonIcon({
   onAttachButtonRef: ((node: View | null) => void) | undefined;
   buttonIconSize: number;
 }) {
+  const touch = useVortonTouch();
   const colorMapping = hovered ? iconForegroundMapping : iconForegroundMutedMapping;
   return (
-    <View ref={onAttachButtonRef} collapsable={false} style={styles.attachButtonAnchor}>
+    <View
+      ref={onAttachButtonRef}
+      collapsable={false}
+      style={[styles.attachButtonAnchor, touch && styles.touchButton]}
+    >
       <ThemedPlus size={buttonIconSize} uniProps={colorMapping} />
     </View>
   );
@@ -364,12 +376,18 @@ function SendButtonContent({
   buttonIconSize,
 }: {
   isSubmitLoading: boolean;
-  submitIcon: "arrow" | "return";
+  submitIcon: "arrow" | "return" | "queue" | "newline";
   submitLabel: string | undefined;
   buttonIconSize: number;
 }) {
   if (isSubmitLoading) {
     return <ThemedLoadingSpinner size="small" uniProps={iconAccentForegroundMapping} />;
+  }
+  if (submitIcon === "newline") {
+    return <ThemedCornerDownLeft size={buttonIconSize} uniProps={iconForegroundMapping} />;
+  }
+  if (submitIcon === "queue") {
+    return <ThemedListPlus size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
   }
   if (submitLabel) {
     return <Text style={styles.sendButtonLabel}>{submitLabel}</Text>;
@@ -384,6 +402,7 @@ interface DesktopKeyPressContext {
   onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
   input: ComposerKeyPressEvent["input"];
   submitOnEnter: boolean;
+  preferNewline: boolean;
   isAgentRunning: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
   isSubmitDisabled: boolean;
@@ -391,6 +410,7 @@ interface DesktopKeyPressContext {
   disabled: boolean;
   handleAlternateSendAction: () => void;
   handleDefaultSendAction: () => void;
+  handleInsertNewline: () => void;
 }
 
 function handleDesktopKeyPressImpl(
@@ -398,6 +418,12 @@ function handleDesktopKeyPressImpl(
   ctx: DesktopKeyPressContext,
 ): void {
   if (isImeComposingKeyboardEvent(event.nativeEvent)) return;
+  const isShiftEnter = event.nativeEvent.key === "Enter" && event.nativeEvent.shiftKey;
+  if (ctx.preferNewline && isShiftEnter) {
+    event.preventDefault();
+    if (!ctx.disabled) ctx.handleInsertNewline();
+    return;
+  }
 
   if (ctx.onKeyPressCallback) {
     const handled = ctx.onKeyPressCallback({
@@ -414,15 +440,12 @@ function handleDesktopKeyPressImpl(
   if (!ctx.submitOnEnter) return;
   if (shiftKey) return;
 
+  if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
+  event.preventDefault();
   if ((metaKey || ctrlKey) && ctx.isAgentRunning && ctx.onQueue) {
-    if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
-    event.preventDefault();
     ctx.handleAlternateSendAction();
     return;
   }
-
-  if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
-  event.preventDefault();
   ctx.handleDefaultSendAction();
 }
 
@@ -737,6 +760,7 @@ function VoiceButtonTooltip({
 }
 
 function SendButtonTooltip({
+  allowDisabledTooltip = false,
   shouldShow,
   canPressLoadingButton,
   onSubmitLoadingPress,
@@ -752,6 +776,7 @@ function SendButtonTooltip({
   sendKeys,
   sendTooltipLabel,
 }: {
+  allowDisabledTooltip?: boolean;
   shouldShow: boolean;
   canPressLoadingButton: boolean;
   onSubmitLoadingPress: (() => void) | undefined;
@@ -760,19 +785,25 @@ function SendButtonTooltip({
   submitAccessibilityLabel: string;
   sendButtonCombinedStyle: React.ComponentProps<typeof TooltipTrigger>["style"];
   isSubmitLoading: boolean;
-  submitIcon: "arrow" | "return";
+  submitIcon: "arrow" | "return" | "queue" | "newline";
   submitLabel: string | undefined;
   submitButtonTestID: string | undefined;
   buttonIconSize: number;
   sendKeys: ShortcutChord | null | undefined;
   sendTooltipLabel: string;
 }) {
+  const accessibilityState = useMemo(
+    () => ({ disabled: isSendButtonDisabled }),
+    [isSendButtonDisabled],
+  );
+  const enabledAction = canPressLoadingButton ? onSubmitLoadingPress : onDefaultSendAction;
   if (!shouldShow) return null;
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger
-        onPress={canPressLoadingButton ? onSubmitLoadingPress : onDefaultSendAction}
-        disabled={isSendButtonDisabled}
+        onPress={isSendButtonDisabled ? undefined : enabledAction}
+        disabled={isSendButtonDisabled && !allowDisabledTooltip}
+        accessibilityState={accessibilityState}
         accessibilityLabel={submitAccessibilityLabel}
         accessibilityRole="button"
         testID={submitButtonTestID}
@@ -793,6 +824,42 @@ function SendButtonTooltip({
 }
 
 type PrimaryActionKind = "send" | "active" | "none";
+
+interface SendButtonPresentation {
+  buttonIcon: "arrow" | "return" | "queue" | "newline";
+  buttonKeys: ShortcutKey[][];
+  buttonDisabled: boolean;
+  buttonKind: PrimaryActionKind;
+  submitAccessibilityLabel: string;
+  sendTooltipLabel: string;
+}
+
+function resolveModifiedSendButton(input: {
+  action: "default" | "alternate" | "newline";
+  queues: boolean;
+  disabled: boolean;
+  t: ReturnType<typeof useTranslation>["t"];
+  baseline: SendButtonPresentation;
+}): SendButtonPresentation {
+  const presentation = { ...input.baseline };
+  if (input.queues) presentation.buttonIcon = "queue";
+  if (input.action === "alternate") {
+    presentation.buttonKeys = ALTERNATE_SEND_KEYS;
+    presentation.submitAccessibilityLabel = input.t(
+      input.queues ? "composer.input.queueMessage" : "composer.input.sendMessage",
+    );
+    presentation.sendTooltipLabel = presentation.submitAccessibilityLabel;
+  }
+  if (input.action === "newline") {
+    presentation.buttonIcon = "newline";
+    presentation.buttonKeys = NEWLINE_KEYS;
+    presentation.buttonDisabled = input.disabled;
+    presentation.buttonKind = "send";
+    presentation.submitAccessibilityLabel = input.t("composer.input.insertNewline");
+    presentation.sendTooltipLabel = presentation.submitAccessibilityLabel;
+  }
+  return presentation;
+}
 
 function hasSendableComposerContent(input: {
   hasText: boolean;
@@ -1139,6 +1206,21 @@ function extractErrorMessage(error: unknown): string | null {
   return null;
 }
 
+function placeDictationButton(button: React.ReactNode, touch: boolean, showVoice: boolean) {
+  return {
+    top:
+      touch && showVoice ? (
+        <View style={styles.touchDictationSlot} testID="composer-dictation-slot">
+          {button}
+        </View>
+      ) : null,
+    bottom: touch ? null : button,
+  };
+}
+function showFocusHint(touch: boolean, focused: boolean, value: string) {
+  return isWeb && !touch && !focused && !value;
+}
+
 export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   function MessageInput(props, ref) {
     const {
@@ -1189,9 +1271,21 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const mode = resolveComposerInputMode(inputMode);
     const { t } = useTranslation();
     const isCompact = useIsCompactFormFactor();
+    const vortonMode = useVortonMode();
+    const touch = useVortonTouch();
+    const showSubmitModifiers = supportsSubmitModifiers({
+      vortonMode,
+      isWeb,
+      inputMode,
+      readOnly,
+      isSubmitLoading,
+    });
+    const submitModifier = useSubmitModifier(showSubmitModifiers);
+    const isNewlineAction = submitModifier === "newline";
+
     const { height: windowHeight } = useWindowDimensions();
     const maxInputHeight = resolveMaxInputHeight(windowHeight);
-    const buttonIconSize = isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
+    const buttonIconSize = touch || !isWeb ? ICON_SIZE.lg : ICON_SIZE.md;
     const toast = useToast();
     const voice = useVoiceOptional();
     const voiceMuteToggleKeys = useShortcutKeys("voice-mute-toggle");
@@ -1554,6 +1648,19 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       });
     }, [defaultSendBehavior, isAgentRunning, handleSendMessage, handleQueueMessage, onQueue]);
 
+    const handleInsertNewline = useCallback(() => {
+      const snapshot = getComposerInputSnapshot(
+        textInputRef.current,
+        valueRef.current,
+        selectionRef.current,
+      );
+      const { text, selection } = snapshot;
+      const nextText = text.slice(0, selection.start) + "\n" + text.slice(selection.end);
+      const cursor = selection.start + 1;
+      replaceText(nextText, { start: cursor, end: cursor });
+      textInputRef.current?.focus();
+    }, [replaceText]);
+
     const getWebTextArea = useCallback(
       (): TextAreaHandle | null => getWebTextAreaImpl(textInputRef.current),
       [],
@@ -1597,6 +1704,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           selectionRef.current,
         ),
         submitOnEnter: shouldSubmitOnEnter,
+        preferNewline: showSubmitModifiers,
         isAgentRunning,
         onQueue,
         isSubmitDisabled,
@@ -1604,6 +1712,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         disabled,
         handleAlternateSendAction,
         handleDefaultSendAction,
+        handleInsertNewline,
       });
     }
 
@@ -1647,16 +1756,48 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     });
 
     const voiceTooltipText = resolveVoiceTooltipText({
+      disabledReason: props.submitDisabledReason,
       isRealtimeVoiceForCurrentAgent,
       isMuted: Boolean(voice?.isMuted),
       t,
     });
 
     const sendTooltipLabel = resolveSendTooltipLabel({
+      disabledReason: props.submitDisabledReason,
       submitButtonAccessibilityLabel,
       defaultActionQueues,
       t,
     });
+
+    const submitAction = resolveSubmitAction({
+      enabled: showSubmitModifiers,
+      modifier: submitModifier,
+      isCompact,
+      isAgentRunning,
+      canQueue: Boolean(onQueue),
+      defaultActionQueues,
+    });
+    const buttonPresentation = resolveModifiedSendButton({
+      action: submitAction.action,
+      queues: submitAction.queues,
+      disabled,
+      t,
+      baseline: {
+        buttonIcon: submitIcon,
+        buttonKeys: DEFAULT_SEND_KEYS,
+        buttonDisabled: isSendButtonDisabled,
+        buttonKind: primaryActionKind,
+        submitAccessibilityLabel,
+        sendTooltipLabel,
+      },
+    });
+    const buttonActions = {
+      default: handleDefaultSendAction,
+      alternate: handleAlternateSendAction,
+      newline: handleInsertNewline,
+    };
+    const handleButtonAction = buttonActions[submitAction.action];
+    const { buttonIcon, buttonKeys, buttonDisabled, buttonKind } = buttonPresentation;
 
     const handleInputChange = useCallback(
       (nextValue: string) => {
@@ -1691,20 +1832,22 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const attachButtonStyle = useCallback(
       ({ hovered }: { hovered?: boolean }) => [
         styles.attachButton,
+        touch && styles.touchButton,
         Boolean(hovered) && styles.iconButtonHovered,
         (!isConnected || disabled) && styles.buttonDisabled,
       ],
-      [isConnected, disabled],
+      [isConnected, disabled, touch],
     );
 
     const voiceButtonStyle = useCallback(
       ({ hovered }: { hovered?: boolean }) => [
         styles.voiceButton,
+        touch && styles.touchDictationButton,
         Boolean(hovered) && !isDictating && styles.iconButtonHovered,
         !isDictationStartEnabled && styles.buttonDisabled,
         isDictating && styles.voiceButtonRecording,
       ],
-      [isDictating, isDictationStartEnabled],
+      [isDictating, isDictationStartEnabled, touch],
     );
 
     const handleRealtimeVoiceStop = useCallback(() => {
@@ -1726,8 +1869,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     // `fontFamily` here is silently dropped while every other property lands.
     // An inline style outranks both classes. See docs/unistyles.md.
     const textInputStyle = useMemo(
-      () => [styles.textInput, mode.isMonospace && styles.textInputMonospace, composerHeightStyle],
-      [composerHeightStyle, mode.isMonospace],
+      () => [
+        styles.textInput,
+        mode.isMonospace && styles.textInputMonospace,
+        composerHeightStyle,
+        touch && mode.showVoice && styles.touchTextInput,
+      ],
+      [composerHeightStyle, mode.isMonospace, mode.showVoice, touch],
     );
     // Static content has no textarea to mirror, so it grows with its own text
     // instead of the measured input height.
@@ -1738,10 +1886,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const sendButtonCombinedStyle = useMemo(
       () => [
         styles.sendButton,
+        touch && styles.touchButton,
         submitLabel ? styles.sendButtonLabeled : undefined,
-        isSendButtonDisabled && styles.buttonDisabled,
+        isNewlineAction && styles.sendButtonNewline,
+        buttonDisabled && styles.buttonDisabled,
       ],
-      [isSendButtonDisabled, submitLabel],
+      [buttonDisabled, isNewlineAction, submitLabel, touch],
     );
     const overlayContainerStyle = useMemo(
       () => [styles.overlayContainer, { opacity: surfacePresentation.overlay.opacity }],
@@ -1771,6 +1921,22 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [isDictating, isRealtimeVoiceForCurrentAgent, voice?.isMuted, buttonIconSize],
     );
 
+    const voiceButton = (
+      <VoiceButtonTooltip
+        visible={mode.showVoice}
+        onVoicePress={handleVoicePress}
+        isDictationStartEnabled={isDictationStartEnabled}
+        voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
+        voiceButtonStyle={voiceButtonStyle}
+        renderVoiceButtonIcon={renderVoiceButtonIcon}
+        voiceTooltipText={voiceTooltipText}
+        isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
+        voiceMuteToggleKeys={voiceMuteToggleKeys}
+        dictationToggleKeys={dictationToggleKeys}
+      />
+    );
+
+    const dictationPlacement = placeDictationButton(voiceButton, touch, mode.showVoice);
     return (
       <View
         ref={rootRef}
@@ -1790,6 +1956,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           pointerEvents={surfacePresentation.input.pointerEvents}
         >
           {attachmentSlot}
+          {dictationPlacement.top}
           {/* Text input */}
           <RenderProfile id="ComposerTextSurface">
             <ComposerTextSurface
@@ -1810,7 +1977,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               onSelectionChange={handleSelectionChange}
               onPasteImages={onPasteImages}
               onPasteError={handlePasteError}
-              focusHintVisible={isWeb && !isInputFocused && !value}
+              focusHintVisible={showFocusHint(touch, isInputFocused, value)}
               focusInputKeys={focusInputKeys}
               focusHintLabel={t("composer.input.focusHint", {
                 shortcut: focusInputKeys ? formatShortcut(focusInputKeys[0], getShortcutOs()) : "",
@@ -1837,36 +2004,26 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             {/* Right: voice button, contextual button (realtime/send/cancel) */}
             <View style={styles.rightButtonGroup}>
               {beforeVoiceContent}
-              <VoiceButtonTooltip
-                visible={mode.showVoice}
-                onVoicePress={handleVoicePress}
-                isDictationStartEnabled={isDictationStartEnabled}
-                voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
-                voiceButtonStyle={voiceButtonStyle}
-                renderVoiceButtonIcon={renderVoiceButtonIcon}
-                voiceTooltipText={voiceTooltipText}
-                isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
-                voiceMuteToggleKeys={voiceMuteToggleKeys}
-                dictationToggleKeys={dictationToggleKeys}
-              />
+              {dictationPlacement.bottom}
               {rightContent}
               <PrimaryAction
-                kind={primaryActionKind}
+                kind={buttonKind}
                 activeActionContent={activeActionContent}
                 shouldShow
                 canPressLoadingButton={canPressLoadingButton}
                 onSubmitLoadingPress={onSubmitLoadingPress}
-                onDefaultSendAction={handleDefaultSendAction}
-                isSendButtonDisabled={isSendButtonDisabled}
-                submitAccessibilityLabel={submitAccessibilityLabel}
+                onDefaultSendAction={handleButtonAction}
+                isSendButtonDisabled={buttonDisabled}
+                submitAccessibilityLabel={buttonPresentation.submitAccessibilityLabel}
                 sendButtonCombinedStyle={sendButtonCombinedStyle}
                 isSubmitLoading={isSubmitLoading}
-                submitIcon={submitIcon}
+                submitIcon={buttonIcon}
                 submitLabel={submitLabel}
                 submitButtonTestID={submitButtonTestID}
                 buttonIconSize={buttonIconSize}
-                sendKeys={DEFAULT_SEND_KEYS}
-                sendTooltipLabel={sendTooltipLabel}
+                sendKeys={buttonKeys}
+                allowDisabledTooltip={Boolean(props.submitDisabledReason)}
+                sendTooltipLabel={buttonPresentation.sendTooltipLabel}
               />
             </View>
           </View>
@@ -1968,6 +2125,18 @@ const styles = StyleSheet.create((theme: Theme) => ({
     minHeight: MIN_INPUT_HEIGHT,
     color: theme.colors.foregroundMuted,
   },
+  touchButton: { width: 44, height: 44, minWidth: 44, minHeight: 44 },
+  touchDictationButton: {
+    width: 44,
+    height: 44,
+    minWidth: 44,
+    minHeight: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
+  },
+  touchDictationSlot: { position: "absolute", top: 8, right: 12, zIndex: 1 },
+  touchTextInput: { paddingRight: 56, minHeight: 44 },
   buttonRow: {
     flexShrink: 0,
     flexDirection: "row",
@@ -2021,6 +2190,9 @@ const styles = StyleSheet.create((theme: Theme) => ({
     justifyContent: "center",
     marginLeft: theme.spacing[1],
   },
+  sendButtonNewline: {
+    backgroundColor: theme.colors.surface3,
+  },
   sendButtonLabeled: {
     width: "auto",
     minWidth: 28,
@@ -2064,6 +2236,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
 const ThemedPlus = withUnistyles(Plus);
 const ThemedMic = withUnistyles(Mic);
 const ThemedMicOff = withUnistyles(MicOff);
+const ThemedListPlus = withUnistyles(ListPlus);
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedCornerDownLeft = withUnistyles(CornerDownLeft);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);

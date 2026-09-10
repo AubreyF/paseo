@@ -1,4 +1,7 @@
+import { useVortonTouch } from "@/vorton-touch";
+import { useVortonMode } from "@/vorton-mode";
 import { router } from "expo-router";
+import { useVortonCompatibilityCallout } from "./vorton-compatibility-callout";
 import { VortonModeToggle } from "@/vorton-mode";
 import {
   FolderPlus,
@@ -120,6 +123,7 @@ interface DesktopSidebarProps extends SidebarSharedProps {
 }
 
 export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boolean }) {
+  useVortonCompatibilityCallout();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -444,8 +448,11 @@ function SidebarFooter({
   const [hostsOpen, setHostsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   // Overflow replaces a growing prefix of actions, from left to right.
-  const slots = Math.max(1, Math.floor((width - toggleWidth - 32 + 4) / 32));
-  const hiddenCount = slots >= 5 ? 0 : 5 - Math.max(0, slots - 1);
+  const touch = useVortonTouch();
+  const vorton = useVortonMode();
+  const slotSize = touch ? 48 : 32;
+  const slots = Math.max(1, Math.floor((width - toggleWidth - 32 + 4) / slotSize));
+  const hiddenCount = !vorton || slots >= 5 ? 0 : 5 - Math.max(0, slots - 1);
   const openHosts = useCallback(() => setHostsOpen(true), []);
   const openHelp = useCallback(() => setHelpOpen(true), []);
   const actionIcons = useMemo(

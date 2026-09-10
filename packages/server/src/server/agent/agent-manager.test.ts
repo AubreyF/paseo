@@ -14,6 +14,9 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
+import { cancelAgentRunCommand } from "./lifecycle-command.js";
+import { QuotaReservePolling } from "./quota-reserve/polling.js";
+import { ProviderUsageService } from "../../services/quota-fetcher/service.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
@@ -1476,6 +1479,983 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 }
 
 const logger = createTestLogger();
+
+test.each([
+  { target: "supervisor", targetIndex: 0, interrupts: [1, 1, 0], rootKind: "stopped" },
+  { target: "worker", targetIndex: 1, interrupts: [0, 1, 0], rootKind: "ready" },
+])(
+  "manual Stop on a protected $target is durable before cancellation",
+  async ({ targetIndex, interrupts, rootKind }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-manual-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const sessions: SteeringTestSession[] = [];
+    const reasonsAtInterrupt: Array<string | null> = [];
+    let targetId = "";
+    class ManualStopSession extends SteeringTestSession {
+      override async interrupt(): Promise<void> {
+        const state = (await new AgentStorage(join(workdir, "agents"), logger).get(targetId))
+          ?.config?.quotaReserve?.state;
+        reasonsAtInterrupt.push(state?.kind === "stopped" ? state.reason : null);
+        await super.interrupt();
+      }
+    }
+    const client = new (class extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        const session = new ManualStopSession(config);
+        sessions.push(session);
+        return session;
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      now: () => 1000,
+    });
+    try {
+      const root = await manager.createAgent(
+        {
+          provider: "codex",
+          cwd: workdir,
+          quotaReserve: {
+            policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+            state: { kind: "ready", revision: 0, changedAt: new Date(0).toISOString() },
+          },
+        },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const observation = {
+        windows: [{ id: "weekly", label: "Weekly", remainingPct: 50 }],
+        requiredWindowIds: ["weekly"],
+        observedAtMs: 1000,
+        nowMs: 1000,
+        maxAgeMs: 30000,
+      };
+      await manager.updateQuotaReserveState(root.id, { trigger: "observation", observation });
+      const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+        labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+      });
+      const ordinary = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      const team = [root, child, ordinary];
+      targetId = team[targetIndex]!.id;
+      const drains = team.map(async (agent) => {
+        for await (const _event of manager.streamAgent(agent.id, "work")) {
+          /* Drain. */
+        }
+      });
+      await vi.waitFor(() =>
+        expect(sessions.map((session) => session.startCount)).toEqual([1, 1, 1]),
+      );
+      await cancelAgentRunCommand({ agentManager: manager, logger }, targetId);
+      expect(sessions.map((session) => session.interruptCount)).toEqual(interrupts);
+      expect(reasonsAtInterrupt).toEqual(
+        Array(interrupts.reduce((sum, n) => sum + n, 0)).fill("manual"),
+      );
+      expect(manager.getAgent(root.id)?.config.quotaReserve?.state.kind).toBe(rootKind);
+      expect(manager.getAgent(ordinary.id)?.config.quotaReserve).toBeUndefined();
+      await manager.updateQuotaReserveState(targetId, { trigger: "observation", observation });
+      expect(() => manager.assertQuotaNotPaused(targetId)).toThrow("manually stopped");
+      expect(
+        (await new AgentStorage(join(workdir, "agents"), logger).get(targetId))?.config
+          ?.quotaReserve?.state,
+      ).toMatchObject({ kind: "stopped", reason: "manual" });
+      for (const agent of team) await manager.cancelAgentRun(agent.id);
+      await Promise.all(drains);
+    } finally {
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("manual Stop latches an idle reserve hold without changing an ordinary idle task", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-idle-stop-"));
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  try {
+    const held = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        quotaReserve: {
+          policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+          state: {
+            kind: "held",
+            reason: "cruise",
+            revision: 0,
+            changedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const ordinary = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await cancelAgentRunCommand({ agentManager: manager, logger }, held.id);
+    await cancelAgentRunCommand({ agentManager: manager, logger }, ordinary.id);
+    expect(() => manager.assertQuotaNotPaused(held.id)).toThrow("manually stopped");
+    expect(manager.getAgent(ordinary.id)?.config.quotaReserve).toBeUndefined();
+  } finally {
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { remainingPct: 50, age: 0, error: null },
+  { remainingPct: 15, age: 0, error: "cruise" },
+  { remainingPct: 10, age: 0, error: "redline" },
+  { remainingPct: 50, age: 101, error: "usage_unavailable" },
+])("reserve resume requires fresh recovery: %j", async ({ remainingPct, age, error }) => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-resume-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    now: () => 1000,
+  });
+  manager.setQuotaReserveObservationReader(async () => ({
+    windows: [{ id: "weekly", label: "Weekly", remainingPct }],
+    requiredWindowIds: ["weekly"],
+    observedAtMs: 1000 - age,
+    nowMs: 1000,
+    maxAgeMs: 100,
+  }));
+  try {
+    const agent = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        quotaReserve: {
+          policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+          state: {
+            kind: "stopped",
+            reason: "redline",
+            revision: 3,
+            changedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    if (error) {
+      await expect(manager.resumeQuotaReserve(agent.id, 3)).rejects.toMatchObject({
+        reason: error,
+      });
+      expect((await storage.get(agent.id))?.config?.quotaReserve?.state).toMatchObject({
+        kind: "stopped",
+        reason: "redline",
+        revision: 3,
+      });
+    } else {
+      const results = await Promise.allSettled([
+        manager.resumeQuotaReserve(agent.id, 3),
+        manager.resumeQuotaReserve(agent.id, 3),
+      ]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.find((result) => result.status === "rejected")).toMatchObject({
+        reason: { code: "conflict" },
+      });
+      expect((await storage.get(agent.id))?.config?.quotaReserve?.state).toMatchObject({
+        kind: "ready",
+        revision: 4,
+      });
+      expect(() => manager.assertQuotaNotPaused(agent.id)).not.toThrow();
+    }
+  } finally {
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["held", "stopped"] as const)(
+  "reserve resume cannot overwrite a manual stop during usage refresh from %s",
+  async (kind) => {
+    const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-resume-race-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+      now: () => 1000,
+    });
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const observation = {
+      windows: [{ id: "weekly", label: "Weekly", remainingPct: 50 }],
+      requiredWindowIds: ["weekly"],
+      observedAtMs: 1000,
+      nowMs: 1000,
+      maxAgeMs: 100,
+    };
+    manager.setQuotaReserveObservationReader(async () => {
+      started.resolve();
+      await release.promise;
+      return observation;
+    });
+    try {
+      const agent = await manager.createAgent(
+        {
+          provider: "codex",
+          cwd: workdir,
+          quotaReserve: {
+            policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+            state: {
+              kind: "held",
+              reason: "cruise",
+              revision: 3,
+              changedAt: new Date(0).toISOString(),
+            },
+          },
+        },
+        undefined,
+        { workspaceId: undefined },
+      );
+      if (kind === "stopped") {
+        await manager.updateQuotaReserveState(agent.id, { trigger: "manual_stop", observation });
+      }
+      const revision = kind === "held" ? 3 : 4;
+      const resume = manager.resumeQuotaReserve(agent.id, revision);
+      const rejected = expect(resume).rejects.toMatchObject({ code: "conflict" });
+      await started.promise;
+      await manager.updateQuotaReserveState(agent.id, { trigger: "manual_stop", observation });
+      release.resolve();
+      await rejected;
+      expect((await storage.get(agent.id))?.config?.quotaReserve?.state).toMatchObject({
+        kind: "stopped",
+        reason: "manual",
+        revision: revision + 1,
+      });
+      expect(() => manager.assertQuotaNotPaused(agent.id)).toThrow("manually stopped");
+    } finally {
+      release.resolve();
+      await manager.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("reserve polling reconciles an unloaded supervisor and stops its loaded worker", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-unloaded-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new (class extends TestAgentClient {
+    readonly sessions: SteeringTestSession[] = [];
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createdConfigs.push(config);
+      const session = new SteeringTestSession(config);
+      this.sessions.push(session);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const rootId = randomUUID();
+  let remainingPct = 14;
+  let fetchCount = 0;
+  const polling = new QuotaReservePolling({
+    agentManager: manager,
+    logger,
+    usageService: new ProviderUsageService({
+      logger,
+      fetchers: [
+        {
+          providerId: "codex",
+          displayName: "Codex",
+          fetchUsage: async () => {
+            fetchCount += 1;
+            return {
+              providerId: "codex",
+              displayName: "Codex",
+              status: "available",
+              planLabel: null,
+              windows: [{ id: "weekly", label: "Weekly", remainingPct }],
+              reserveWindowIds: ["weekly"],
+            };
+          },
+        },
+      ],
+    }),
+  });
+  try {
+    const record: StoredAgentRecord = {
+      id: rootId,
+      provider: "codex",
+      cwd: workdir,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      lastStatus: "idle",
+      labels: {},
+      config: {
+        quotaReserve: {
+          policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+          state: { kind: "ready", revision: 0, changedAt: new Date(0).toISOString() },
+        },
+      },
+    };
+    await storage.upsert(record);
+    const archivedId = randomUUID();
+    await storage.upsert({ ...record, id: archivedId, archivedAt: new Date(0).toISOString() });
+    const exhaustedId = randomUUID();
+    await storage.upsert({
+      ...record,
+      id: exhaustedId,
+      config: { ...record.config, quotaPausedAt: new Date(0).toISOString() },
+    });
+    await polling.poll();
+    expect(fetchCount).toBe(1);
+    expect(manager.listAgents()).toEqual([]);
+    expect(client.createdConfigs).toEqual([]);
+    expect((await storage.get(rootId))?.config?.quotaReserve?.state).toMatchObject({
+      kind: "held",
+      reason: "cruise",
+    });
+    expect((await storage.get(archivedId))?.config?.quotaReserve?.state.kind).toBe("ready");
+    expect((await storage.get(exhaustedId))?.config?.quotaReserve?.state.kind).toBe("ready");
+    remainingPct = 50;
+    await polling.poll();
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+      labels: { [PARENT_AGENT_ID_LABEL]: rootId },
+    });
+    const drain = (async () => {
+      for await (const _event of manager.streamAgent(child.id, "bounded work")) {
+        /* Drain. */
+      }
+    })();
+    await vi.waitFor(() => expect(client.sessions[0]?.startCount).toBe(1));
+    remainingPct = 10;
+    await polling.poll();
+    await drain;
+    expect(client.sessions[0]?.interruptCount).toBe(1);
+    expect(manager.getAgent(rootId)).toBeNull();
+    const reloaded = new AgentStorage(join(workdir, "agents"), logger);
+    expect((await reloaded.get(rootId))?.config?.quotaReserve?.state).toMatchObject({
+      kind: "stopped",
+      reason: "redline",
+    });
+    expect(() => manager.assertQuotaNotPaused(child.id)).toThrow("Redline");
+    remainingPct = 90;
+    await polling.poll();
+    expect(() => manager.assertQuotaNotPaused(child.id)).toThrow("Redline");
+  } finally {
+    await polling.stop();
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a session loading during a stored reserve transition retains the newer stop", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-loading-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      entered();
+      await gate;
+      return super.createSession(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    now: () => 1000,
+  });
+  const rootId = randomUUID();
+  try {
+    await storage.upsert({
+      id: rootId,
+      provider: "codex",
+      cwd: workdir,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      lastStatus: "idle",
+      labels: {},
+      config: {
+        quotaReserve: {
+          policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+          state: { kind: "ready", revision: 0, changedAt: new Date(0).toISOString() },
+        },
+      },
+    });
+    const staleRecord = await storage.get(rootId);
+    if (!staleRecord) throw new Error("Stored task missing");
+    const loading = ensureAgentLoaded(rootId, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await started;
+    await manager.updateQuotaReserveState(rootId, {
+      trigger: "observation",
+      observation: {
+        windows: [{ id: "weekly", label: "Weekly", remainingPct: 10 }],
+        requiredWindowIds: ["weekly"],
+        observedAtMs: 1000,
+        nowMs: 1000,
+        maxAgeMs: 100,
+      },
+    });
+    release();
+    await loading;
+    await manager.flush();
+    const loaded = manager.getAgent(rootId);
+    if (!loaded) throw new Error("Loaded task missing");
+    await storage.applySnapshot({
+      ...loaded,
+      config: {
+        ...loaded.config,
+        quotaReserve: {
+          policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+          state: { kind: "ready", revision: 0, changedAt: new Date(0).toISOString() },
+        },
+      },
+    });
+    await storage.upsert({ ...staleRecord, title: "Updated title" });
+    expect((await storage.get(rootId))?.title).toBe("Updated title");
+    expect(() => manager.assertQuotaNotPaused(rootId)).toThrow("Redline");
+    expect(manager.getAgent(rootId)?.config.quotaReserve?.state).toMatchObject({
+      kind: "stopped",
+      reason: "redline",
+      revision: 1,
+    });
+    expect(
+      (await new AgentStorage(join(workdir, "agents"), logger).get(rootId))?.config?.quotaReserve
+        ?.state,
+    ).toMatchObject({ kind: "stopped", reason: "redline", revision: 1 });
+  } finally {
+    release();
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reserve admission requires fresh durable usage on startup and after expiry", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-freshness-"));
+  let now = 1000;
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    now: () => now,
+  });
+  const resumedStorage = new AgentStorage(join(workdir, "agents"), logger);
+  const resumed = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: resumedStorage,
+    logger,
+    now: () => now,
+  });
+  const observation = {
+    windows: [{ id: "weekly", label: "Weekly", remainingPct: 50 }],
+    requiredWindowIds: ["weekly"],
+    observedAtMs: 1000,
+    nowMs: 1000,
+    maxAgeMs: 100,
+  };
+  try {
+    const root = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        quotaReserve: {
+          policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+          state: { kind: "ready", revision: 0, changedAt: new Date(0).toISOString() },
+        },
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    expect(() => manager.streamAgent(root.id, "before observation")).toThrow("unavailable");
+    await manager.updateQuotaReserveState(root.id, { trigger: "observation", observation });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+    });
+    expect(() => manager.assertQuotaNotPaused(child.id)).not.toThrow();
+    now = 1101;
+    expect(() => manager.streamAgent(root.id, "expired")).toThrow("unavailable");
+    expect(() => manager.tryRunOutOfBand(child.id, "/compact")).toThrow("unavailable");
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+        labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+      }),
+    ).rejects.toThrow("unavailable");
+    await manager.updateQuotaReserveState(root.id, {
+      trigger: "observation",
+      observation: {
+        ...observation,
+        observedAtMs: now,
+        nowMs: now,
+        windows: [{ id: "weekly", label: "Weekly", remainingPct: 15 }],
+      },
+    });
+    expect(() => manager.assertQuotaNotPaused(child.id)).toThrow("Cruise Reserve");
+    await manager.updateQuotaReserveState(root.id, {
+      trigger: "observation",
+      observation: { ...observation, observedAtMs: now, nowMs: now },
+    });
+    expect(() => manager.assertQuotaNotPaused(child.id)).not.toThrow();
+    await manager.flush();
+    await ensureAgentLoaded(child.id, {
+      agentManager: resumed,
+      agentStorage: resumedStorage,
+      logger,
+    });
+    expect(resumed.getAgent(root.id)).toBeNull();
+    expect(() => resumed.assertQuotaNotPaused(child.id)).toThrow("unavailable");
+    await ensureAgentLoaded(root.id, {
+      agentManager: resumed,
+      agentStorage: resumedStorage,
+      logger,
+    });
+    expect(() => resumed.assertQuotaNotPaused(root.id)).toThrow("unavailable");
+    await resumed.updateQuotaReserveState(root.id, {
+      trigger: "observation",
+      observation: { ...observation, observedAtMs: now, nowMs: now },
+    });
+    expect(() => resumed.assertQuotaNotPaused(root.id)).not.toThrow();
+    expect(() => resumed.assertQuotaNotPaused(child.id)).not.toThrow();
+    now = 1000;
+    expect(() => resumed.assertQuotaNotPaused(root.id)).toThrow("unavailable");
+  } finally {
+    await manager.flush();
+    await resumed.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("daemon reserve polling works without clients and honors unavailable usage and shutdown", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-poll-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  let remainingPct = 14;
+  let unavailable = false;
+  let fetchCount = 0;
+  const usageService = new ProviderUsageService({
+    logger,
+    fetchers: [
+      {
+        providerId: "codex",
+        displayName: "Codex",
+        fetchUsage: async () => {
+          fetchCount += 1;
+          if (unavailable) throw new Error("Usage unavailable");
+          return {
+            providerId: "codex",
+            displayName: "Codex",
+            status: "available",
+            planLabel: null,
+            windows: [{ id: "weekly", label: "Weekly", remainingPct }],
+            reserveWindowIds: ["weekly"],
+          };
+        },
+      },
+    ],
+  });
+  const polling = new QuotaReservePolling({
+    agentManager: manager,
+    usageService,
+    logger,
+    intervalMs: 60000,
+  });
+  try {
+    const root = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        quotaReserve: {
+          policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+          state: { kind: "ready", revision: 0, changedAt: new Date(0).toISOString() },
+        },
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const ordinary = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    polling.start();
+    await vi.waitFor(() =>
+      expect(manager.getAgent(root.id)?.config.quotaReserve?.state.kind).toBe("held"),
+    );
+    await polling.poll();
+    expect(fetchCount).toBeGreaterThan(0);
+    expect(manager.getAgent(ordinary.id)?.config.quotaReserve).toBeUndefined();
+    remainingPct = 50;
+    await polling.poll();
+    expect(() => manager.assertQuotaNotPaused(root.id)).not.toThrow();
+    unavailable = true;
+    await polling.poll();
+    expect(() => manager.assertQuotaNotPaused(root.id)).toThrow("unavailable");
+    unavailable = false;
+    remainingPct = 10;
+    await polling.poll();
+    expect(() => manager.assertQuotaNotPaused(root.id)).toThrow("Redline");
+    remainingPct = 90;
+    await polling.poll();
+    expect(() => manager.assertQuotaNotPaused(root.id)).toThrow("Redline");
+    expect(
+      (await new AgentStorage(join(workdir, "agents"), logger).get(root.id))?.config?.quotaReserve
+        ?.state,
+    ).toMatchObject({ kind: "stopped", reason: "redline" });
+    await polling.stop();
+    const before = fetchCount;
+    await polling.poll();
+    expect(fetchCount).toBe(before);
+  } finally {
+    await polling.stop();
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["cruise", "redline"] as const)(
+  "workers honor an unloaded supervisor's %s reserve state after restart",
+  async (reason) => {
+    const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-parent-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      now: () => 1001,
+      logger,
+    });
+    const resumedStorage = new AgentStorage(join(workdir, "agents"), logger);
+    const resumed = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: resumedStorage,
+      logger,
+    });
+    try {
+      const root = await manager.createAgent(
+        {
+          provider: "codex",
+          cwd: workdir,
+          quotaReserve: {
+            policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+            state: { kind: "ready", revision: 0, changedAt: new Date(0).toISOString() },
+          },
+        },
+        undefined,
+        { workspaceId: undefined },
+      );
+      await manager.updateQuotaReserveState(root.id, {
+        trigger: "observation",
+        observation: {
+          windows: [{ id: "weekly", label: "Weekly", remainingPct: 50 }],
+          requiredWindowIds: ["weekly"],
+          observedAtMs: 1000,
+          nowMs: 1001,
+          maxAgeMs: 30000,
+        },
+      });
+      const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+        labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+      });
+      await manager.updateQuotaReserveState(root.id, {
+        trigger: "observation",
+        observation: {
+          windows: [{ id: "weekly", label: "Weekly", remainingPct: reason === "cruise" ? 14 : 10 }],
+          requiredWindowIds: ["weekly"],
+          observedAtMs: 1000,
+          nowMs: 1001,
+          maxAgeMs: 30000,
+        },
+      });
+      await manager.flush();
+      await ensureAgentLoaded(child.id, {
+        agentManager: resumed,
+        agentStorage: resumedStorage,
+        logger,
+      });
+      expect(resumed.getAgent(root.id)).toBeNull();
+      expect(resumed.getAgent(child.id)?.config.quotaReserve).toBeUndefined();
+      const message = reason === "cruise" ? "Cruise Reserve" : "Redline";
+      expect(() => resumed.streamAgent(child.id, "continue worker")).toThrow(message);
+      expect(() => resumed.tryRunOutOfBand(child.id, "/compact")).toThrow(message);
+      await expect(
+        resumed.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+          workspaceId: undefined,
+          labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+        }),
+      ).rejects.toThrow(message);
+      expect(resumed.getAgent(root.id)).toBeNull();
+    } finally {
+      await manager.flush();
+      await resumed.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("reserve holds block turns and worker creation after an agent storage reload", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-admission-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const root = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        quotaReserve: {
+          policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+          state: {
+            kind: "held",
+            reason: "cruise",
+            revision: 1,
+            changedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    expect(() => manager.streamAgent(root.id, "continue")).toThrow("Cruise Reserve");
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+        labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+      }),
+    ).rejects.toThrow("Cruise Reserve");
+    await manager.flush();
+    const reloadedStorage = new AgentStorage(join(workdir, "agents"), logger);
+    const resumed = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: reloadedStorage,
+      logger,
+    });
+    await ensureAgentLoaded(root.id, {
+      agentManager: resumed,
+      agentStorage: reloadedStorage,
+      logger,
+    });
+    expect(() => resumed.streamAgent(root.id, "after restart")).toThrow("Cruise Reserve");
+    await resumed.flush();
+  } finally {
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reserve transitions serialize durable recovery and block admission during writes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-transition-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    now: () => 1001,
+    logger,
+  });
+  try {
+    const root = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        quotaReserve: {
+          policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+          state: { kind: "ready", revision: 0, changedAt: new Date(0).toISOString() },
+        },
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.updateQuotaReserveState(root.id, {
+      trigger: "observation",
+      observation: {
+        windows: [{ id: "weekly", label: "Weekly", remainingPct: 50 }],
+        requiredWindowIds: ["weekly"],
+        observedAtMs: 1000,
+        nowMs: 1001,
+        maxAgeMs: 30000,
+      },
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+    });
+    await manager.flush();
+    const observation = {
+      windows: [{ id: "weekly", label: "Weekly", remainingPct: 14 }],
+      requiredWindowIds: ["weekly"],
+      observedAtMs: 1000,
+      nowMs: 1001,
+      maxAgeMs: 30000,
+    };
+    const hold = manager.updateQuotaReserveState(root.id, { trigger: "observation", observation });
+    expect(() => manager.streamAgent(root.id, "race the write")).toThrow("unavailable");
+    expect(() => manager.streamAgent(child.id, "race the parent write")).toThrow("unavailable");
+    const recovery = manager.updateQuotaReserveState(root.id, {
+      trigger: "observation",
+      observation: {
+        ...observation,
+        windows: [{ id: "weekly", label: "Weekly", remainingPct: 50 }],
+      },
+    });
+    await Promise.all([hold, recovery]);
+    expect(() => manager.assertQuotaNotPaused(root.id)).not.toThrow();
+    const reloaded = new AgentStorage(join(workdir, "agents"), logger);
+    expect((await reloaded.get(root.id))?.config?.quotaReserve?.state).toMatchObject({
+      kind: "ready",
+      revision: 2,
+    });
+
+    const writeFailure = vi
+      .spyOn(storage, "applySnapshot")
+      .mockRejectedValueOnce(new Error("disk full"));
+    await expect(
+      manager.updateQuotaReserveState(root.id, { trigger: "observation", observation }),
+    ).rejects.toThrow("disk full");
+    expect(() => manager.assertQuotaNotPaused(root.id)).toThrow("unavailable");
+    expect(() => manager.assertQuotaNotPaused(child.id)).toThrow("unavailable");
+    writeFailure.mockRestore();
+    await manager.updateQuotaReserveState(root.id, { trigger: "observation", observation });
+    expect(() => manager.assertQuotaNotPaused(root.id)).toThrow("Cruise Reserve");
+    expect(
+      (await new AgentStorage(join(workdir, "agents"), logger).get(root.id))?.config?.quotaReserve
+        ?.state,
+    ).toMatchObject({
+      kind: "held",
+      reason: "cruise",
+      revision: 3,
+    });
+  } finally {
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("Redline persists before interrupting the team while Cruise Reserve lets turns finish", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-cancel-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const sessions: SteeringTestSession[] = [];
+  const statesAtInterrupt: string[] = [];
+  let rootId = "";
+  class ReserveSession extends SteeringTestSession {
+    override async interrupt(): Promise<void> {
+      const disk = new AgentStorage(join(workdir, "agents"), logger);
+      const state = (await disk.get(rootId))?.config?.quotaReserve?.state;
+      statesAtInterrupt.push(state?.kind ?? "missing");
+      await super.interrupt();
+    }
+  }
+  class ReserveClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new ReserveSession(config);
+      sessions.push(session);
+      return session;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ReserveClient() },
+    registry: storage,
+    now: () => 1001,
+    logger,
+  });
+  try {
+    const root = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        quotaReserve: {
+          policy: { kind: "protected", cruisePct: 15, redlinePct: 10 },
+          state: { kind: "ready", revision: 0, changedAt: new Date(0).toISOString() },
+        },
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    rootId = root.id;
+    await manager.updateQuotaReserveState(root.id, {
+      trigger: "observation",
+      observation: {
+        windows: [{ id: "weekly", label: "Weekly", remainingPct: 50 }],
+        requiredWindowIds: ["weekly"],
+        observedAtMs: 1000,
+        nowMs: 1001,
+        maxAgeMs: 30000,
+      },
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+      labels: { [PARENT_AGENT_ID_LABEL]: rootId },
+    });
+    const unrelated = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const drains = [root, child, unrelated].map(async (agent) => {
+      for await (const _event of manager.streamAgent(agent.id, "work")) {
+        /* Drain active turns. */
+      }
+    });
+    await vi.waitFor(() =>
+      expect(sessions.map((session) => session.startCount)).toEqual([1, 1, 1]),
+    );
+    const observation = {
+      windows: [{ id: "weekly", label: "Weekly", remainingPct: 14 }],
+      requiredWindowIds: ["weekly"],
+      observedAtMs: 1000,
+      nowMs: 1001,
+      maxAgeMs: 30000,
+    };
+    await manager.updateQuotaReserveState(rootId, { trigger: "observation", observation });
+    expect(sessions.map((session) => session.interruptCount)).toEqual([0, 0, 0]);
+    expect(() => manager.assertQuotaNotPaused(child.id)).toThrow("Cruise Reserve");
+    await manager.updateQuotaReserveState(rootId, {
+      trigger: "observation",
+      observation: {
+        ...observation,
+        windows: [{ id: "weekly", label: "Weekly", remainingPct: 10 }],
+      },
+    });
+    await Promise.all(drains.slice(0, 2));
+    expect(statesAtInterrupt).toEqual(["stopped", "stopped"]);
+    expect(sessions.map((session) => session.interruptCount)).toEqual([1, 1, 0]);
+    expect(() => manager.assertQuotaNotPaused(child.id)).toThrow("Redline");
+    await manager.updateQuotaReserveState(rootId, {
+      trigger: "observation",
+      observation: {
+        ...observation,
+        windows: [{ id: "weekly", label: "Weekly", remainingPct: 90 }],
+      },
+    });
+    expect(() => manager.assertQuotaNotPaused(rootId)).toThrow("Redline");
+    expect(sessions.map((session) => session.interruptCount)).toEqual([1, 1, 0]);
+    await manager.cancelAgentRun(unrelated.id);
+    await drains[2];
+  } finally {
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 test("quota exhaustion persistently pauses the supervisor and managed workers", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "paseo-quota-stop-"));
@@ -10768,4 +11748,44 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
   await manager.runAgent(snapshot.id, { text: "merge it" });
 
   expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
+});
+
+test("confirmed reset unlocks the same provider durably without restarting work", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "paseo-reset-recovery-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const before = "2026-09-10T01:00:00.000Z";
+  const resetAt = "2026-09-10T02:00:00.000Z";
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, quotaPausedAt: before },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const newer = await manager.createAgent(
+      { provider: "codex", cwd: workdir, quotaPausedAt: "2026-09-10T03:00:00.000Z" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const stale = await storage.get(agent.id);
+    if (!stale) throw new Error("Missing task");
+    await manager.recoverQuotaAfterReset("other-account", resetAt);
+    expect(() => manager.assertQuotaNotPaused(agent.id)).toThrow("paused");
+    await manager.recoverQuotaAfterReset("codex", resetAt);
+    expect(() => manager.assertQuotaNotPaused(agent.id)).not.toThrow();
+    expect(() => manager.assertQuotaNotPaused(newer.id)).toThrow("paused");
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    await storage.upsert(stale);
+    const reloaded = new AgentStorage(join(workdir, "agents"), logger);
+    expect((await reloaded.get(agent.id))?.config?.quotaPausedAt).toBeUndefined();
+    await manager.recoverQuotaAfterReset("codex", resetAt);
+    expect(() => manager.assertQuotaNotPaused(newer.id)).toThrow("paused");
+  } finally {
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });

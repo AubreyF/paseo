@@ -38,10 +38,12 @@ export function resolveVoiceAccessibilityLabel(input: {
 }
 
 export function resolveVoiceTooltipText(input: {
+  disabledReason?: string;
   isRealtimeVoiceForCurrentAgent: boolean;
   isMuted: boolean;
   t: TFunction;
 }): string {
+  if (input.disabledReason) return input.disabledReason;
   if (input.isRealtimeVoiceForCurrentAgent) {
     return input.isMuted
       ? input.t("composer.voice.unmuteVoice")
@@ -51,10 +53,12 @@ export function resolveVoiceTooltipText(input: {
 }
 
 export function resolveSendTooltipLabel(input: {
+  disabledReason?: string;
   submitButtonAccessibilityLabel: string | undefined;
   defaultActionQueues: boolean;
   t: TFunction;
 }): string {
+  if (input.disabledReason) return input.disabledReason;
   if (input.submitButtonAccessibilityLabel) return input.submitButtonAccessibilityLabel;
   return input.defaultActionQueues
     ? input.t("composer.input.queue")

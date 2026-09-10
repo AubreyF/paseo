@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -22,6 +22,7 @@ export interface AdaptiveRenameModalProps {
   validate?: (value: string) => string | null;
   maxLength?: number;
   testID?: string;
+  renderSuggestions?: (select: (title: string) => void, disabled: boolean) => ReactNode;
 }
 
 export function AdaptiveRenameModal({
@@ -35,6 +36,7 @@ export function AdaptiveRenameModal({
   validate,
   maxLength,
   testID,
+  renderSuggestions,
 }: AdaptiveRenameModalProps) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState(initialValue);
@@ -77,6 +79,16 @@ export function AdaptiveRenameModal({
     setDraft(value);
     setError(null);
   }, []);
+
+  const selectSuggestion = useCallback(
+    (value: string) => {
+      if (isPending) return;
+      inputRef.current?.replaceText(value);
+      handleChange(value);
+      inputRef.current?.focus();
+    },
+    [handleChange, isPending],
+  );
 
   const handleSubmit = useCallback(async () => {
     if (isPending) return;
@@ -142,6 +154,7 @@ export function AdaptiveRenameModal({
             {error}
           </Text>
         ) : null}
+        {renderSuggestions?.(selectSuggestion, isPending)}
         <View style={styles.actions}>
           <Button
             variant="secondary"

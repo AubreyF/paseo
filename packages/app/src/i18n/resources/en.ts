@@ -98,6 +98,7 @@ export const en = {
       focusHint: "{{shortcut}} to focus",
       addAttachment: "Add attachment",
       interruptAgent: "Interrupt agent",
+      insertNewline: "Insert newline",
       queueMessage: "Queue message",
       sendAndInterrupt: "Send and interrupt",
       sendAndSteer: "Send and steer",

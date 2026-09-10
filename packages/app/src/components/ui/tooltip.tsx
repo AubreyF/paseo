@@ -1,3 +1,4 @@
+import { useVortonTouch } from "@/vorton-touch";
 import {
   Children,
   cloneElement,
@@ -47,6 +48,7 @@ interface TooltipContextValue {
   triggerRef: React.RefObject<View | null>;
   enabled: boolean;
   openOnPress: boolean;
+  touch: boolean;
   delayDuration: number;
 }
 
@@ -248,7 +250,25 @@ export function Tooltip({
   });
 
   const isCompact = useIsCompactFormFactor();
-  const enabled = isCompact ? enabledOnMobile : enabledOnDesktop;
+  const touch = useVortonTouch();
+  const useTouchInteraction = isCompact || touch;
+  const enabled = useTouchInteraction ? enabledOnMobile : enabledOnDesktop;
+
+  useEffect(() => {
+    if (!isWeb || !touch || !enabled || !isOpen) return;
+    const dismissOutside = (event: PointerEvent) => {
+      const trigger: unknown = triggerRef.current;
+      if (
+        trigger instanceof HTMLElement &&
+        event.target instanceof Node &&
+        trigger.contains(event.target)
+      )
+        return;
+      setIsOpen(false);
+    };
+    document.addEventListener("pointerdown", dismissOutside, true);
+    return () => document.removeEventListener("pointerdown", dismissOutside, true);
+  }, [touch, enabled, isOpen, setIsOpen]);
 
   const value = useMemo<TooltipContextValue>(
     () => ({
@@ -256,10 +276,11 @@ export function Tooltip({
       setOpen: setIsOpen,
       triggerRef,
       enabled,
-      openOnPress: isCompact,
+      openOnPress: useTouchInteraction,
+      touch,
       delayDuration,
     }),
-    [isOpen, setIsOpen, enabled, isCompact, delayDuration],
+    [isOpen, setIsOpen, enabled, useTouchInteraction, delayDuration, touch],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -317,17 +338,17 @@ export function TooltipTrigger({
   const handleHoverIn = useCallback(
     (e?: unknown) => {
       if (isCallable(onHoverIn)) onHoverIn(e);
-      scheduleOpen();
+      if (!ctx.touch) scheduleOpen();
     },
-    [onHoverIn, scheduleOpen],
+    [onHoverIn, scheduleOpen, ctx.touch],
   );
 
   const handleHoverOut = useCallback(
     (e?: unknown) => {
       if (isCallable(onHoverOut)) onHoverOut(e);
-      close();
+      if (!ctx.touch) close();
     },
-    [onHoverOut, close],
+    [onHoverOut, close, ctx.touch],
   );
 
   const handleFocus = useCallback(
@@ -357,7 +378,7 @@ export function TooltipTrigger({
       }
       if (ctx.openOnPress) {
         clearOpenTimer();
-        ctx.setOpen(true);
+        ctx.setOpen(ctx.touch ? !ctx.open : true);
         return;
       }
       close();

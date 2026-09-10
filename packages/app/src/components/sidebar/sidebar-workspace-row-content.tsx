@@ -1,3 +1,4 @@
+import { useVortonTouch, VORTON_ACTION_SLOT } from "@/vorton-touch";
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -55,11 +56,12 @@ export function SidebarWorkspaceRowFrame({
     hoverHandlers: { onPointerEnter: () => void; onPointerLeave: () => void };
   }) => ReactNode;
 }) {
+  const touch = useVortonTouch();
   const [isHovered, setIsHovered] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const handlePointerEnter = useCallback(() => {
-    if (!contextMenuOpen) setIsHovered(true);
-  }, [contextMenuOpen]);
+    if (!contextMenuOpen && !touch) setIsHovered(true);
+  }, [contextMenuOpen, touch]);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const handleContextMenuOpenChange = useCallback((open: boolean) => {
     setContextMenuOpen(open);
@@ -78,7 +80,7 @@ export function SidebarWorkspaceRowFrame({
       disabled={contextMenuOpen}
     >
       {children({
-        isHovered: isHovered && !contextMenuOpen && !isDragging,
+        isHovered: isHovered && !contextMenuOpen && !isDragging && !touch,
         contextMenuOpen,
         onContextMenuOpenChange: handleContextMenuOpenChange,
         hoverHandlers,
@@ -402,6 +404,7 @@ export function SidebarWorkspaceTrailingActionSlot({
 }) {
   return (
     <View
+      dataSet={VORTON_ACTION_SLOT}
       style={
         reserveWidth
           ? sidebarWorkspaceRowStyles.trailingActionSlotReserved

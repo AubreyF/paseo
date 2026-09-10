@@ -1,4 +1,5 @@
 import type pino from "pino";
+import { WorkspaceTitleSuggestions } from "./workspace-title-suggestions.js";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
@@ -40,6 +41,7 @@ interface ScheduleContext {
 }
 
 export class WorkspaceAutoName {
+  readonly titleSuggestions: WorkspaceTitleSuggestions;
   private readonly agentManager: AgentManager;
   private readonly workspaceRegistry: Pick<WorkspaceRegistry, "update">;
   private readonly workspaceGitService: WorkspaceGitService;
@@ -52,6 +54,7 @@ export class WorkspaceAutoName {
   private readonly generateWorkspaceName: WorkspaceNameGenerator;
 
   constructor(options: WorkspaceAutoNameOptions) {
+    this.titleSuggestions = new WorkspaceTitleSuggestions(options);
     this.agentManager = options.agentManager;
     this.workspaceRegistry = options.workspaceRegistry;
     this.workspaceGitService = options.workspaceGitService;

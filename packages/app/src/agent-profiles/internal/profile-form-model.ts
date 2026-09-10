@@ -80,6 +80,7 @@ export interface AgentProfileFormState {
   mode: "create" | "edit";
   name: string;
   icon: string;
+  nickname: string;
   color: string;
   notes: string;
   instructions: string;
@@ -125,6 +126,7 @@ export interface AgentProfileFormModel {
   /** Resolve a request that produced no usable features (provider error). */
   applyFeaturesUnavailable: (requestKey: string) => void;
   setName: (value: string) => void;
+  setNickname: (value: string) => void;
   setAppearance: (value: { icon: string; color: string }) => void;
   setNotes: (value: string) => void;
   setInstructions: (value: string) => void;
@@ -350,6 +352,7 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
   }
   return {
     name,
+    nickname: state.nickname.trim(),
     ...(state.icon ? { icon: state.icon } : {}),
     ...(state.color ? { color: state.color } : {}),
     provider: state.provider,
@@ -394,6 +397,7 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
   return {
     mode: snapshot.mode,
     name,
+    nickname: profile.nickname ?? "",
     icon: profile.icon ?? "",
     color: profile.color ?? "",
     notes: profile.notes ?? "",
@@ -563,6 +567,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       publish((current) => current);
     },
     setName: (value) => publish((current) => ({ ...current, name: value })),
+    setNickname: (value) => publish((current) => ({ ...current, nickname: value })),
     setAppearance: (value) =>
       publish((current) => ({ ...current, icon: value.icon, color: value.color })),
     setNotes: (value) => publish((current) => ({ ...current, notes: value })),

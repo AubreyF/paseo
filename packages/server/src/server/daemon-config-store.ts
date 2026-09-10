@@ -9,6 +9,7 @@ import {
   MutableDaemonConfigPatchSchema,
 } from "@getpaseo/protocol/messages";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
+import { parseQuotaReservePolicy } from "@getpaseo/protocol/quota-reserve";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
@@ -358,13 +359,19 @@ export class DaemonConfigStore {
     // those fields when omitted; newer editors send empty strings to clear them.
     if (parsed.agentProfiles) {
       parsed.agentProfiles = parsed.agentProfiles.map((profile) => {
+        if (profile.quotaReservePolicy) parseQuotaReservePolicy(profile.quotaReservePolicy);
         const previous = this.current.agentProfiles?.find((entry) => entry.id === profile.id);
         return {
+          // COMPAT(quotaReserveProfile): added in v0.7.2, remove after 2027-03-10 once editors preserve reserve defaults.
+          ...(previous?.quotaReservePolicy !== undefined
+            ? { quotaReservePolicy: previous.quotaReservePolicy }
+            : {}),
           ...(previous?.instructions !== undefined ? { instructions: previous.instructions } : {}),
           ...(previous?.workerProfileId !== undefined
             ? { workerProfileId: previous.workerProfileId }
             : {}),
           ...(previous?.maxWorkers !== undefined ? { maxWorkers: previous.maxWorkers } : {}),
+          ...(previous?.isDefault !== undefined ? { isDefault: previous.isDefault } : {}),
           ...profile,
         };
       });

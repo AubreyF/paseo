@@ -1,3 +1,4 @@
+import { useVortonTouch } from "@/vorton-touch";
 import {
   useCallback,
   useEffect,
@@ -112,7 +113,8 @@ export function WorkspaceHoverCard({
 }: PropsWithChildren<WorkspaceHoverCardProps>): ReactNode {
   const isCompact = useIsCompactFormFactor();
 
-  if (!isWeb || isCompact) {
+  const touch = useVortonTouch();
+  if (!isWeb || isCompact || touch) {
     return children;
   }
 

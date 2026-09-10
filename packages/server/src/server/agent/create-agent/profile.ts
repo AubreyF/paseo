@@ -1,5 +1,9 @@
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import type { AgentSessionConfig } from "../agent-sdk-types.js";
+import {
+  DEFAULT_QUOTA_RESERVE_POLICY,
+  parseQuotaReservePolicy,
+} from "@getpaseo/protocol/quota-reserve";
 
 export class ProfileLaunchError extends Error {
   constructor(
@@ -27,7 +31,7 @@ function resolveWorkerProfile(profile: AgentProfile, profiles: readonly AgentPro
 }
 
 /** Resolve only explicit launches. Resumes already contain their frozen instructions. */
-export function resolveProfileLaunch(
+function resolveProfileConfiguration(
   config: AgentSessionConfig,
   profiles: readonly AgentProfile[],
 ): AgentSessionConfig {
@@ -57,5 +61,27 @@ export function resolveProfileLaunch(
     featureValues: profile.featureValues ?? {},
     systemPrompt: instructions.filter(Boolean).join("\n\n") || undefined,
     profileLaunch: { profile, ...(worker ? { worker: structuredClone(worker) } : {}) },
+  };
+}
+
+export function resolveProfileLaunch(
+  config: AgentSessionConfig,
+  profiles: readonly AgentProfile[],
+  nowMs = Date.now(),
+): AgentSessionConfig {
+  const { quotaReservePolicy: requested, ...launchConfig } = config;
+  if (!requested) return resolveProfileConfiguration(config, profiles);
+  if (config.quotaReserve) throw new Error("Use task controls to change a frozen reserve policy.");
+  const resolved = resolveProfileConfiguration(launchConfig, profiles);
+  const policy =
+    requested.kind === "profile"
+      ? (resolved.profileLaunch?.profile.quotaReservePolicy ?? DEFAULT_QUOTA_RESERVE_POLICY)
+      : requested;
+  return {
+    ...resolved,
+    quotaReserve: {
+      policy: parseQuotaReservePolicy(policy),
+      state: { kind: "ready", revision: 0, changedAt: new Date(nowMs).toISOString() },
+    },
   };
 }

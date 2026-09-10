@@ -101,6 +101,7 @@ export const ja: TranslationResources = {
       focusHint: "{{shortcut}}でフォーカス",
       addAttachment: "添付ファイルを追加",
       interruptAgent: "エージェントを中断",
+      insertNewline: "改行を挿入",
       queueMessage: "メッセージをキューに追加",
       sendAndInterrupt: "送信して中断",
       sendAndSteer: "送信して指示を追加",

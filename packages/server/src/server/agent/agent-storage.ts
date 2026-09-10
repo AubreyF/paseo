@@ -9,6 +9,11 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentProfileLaunchSchema } from "@getpaseo/protocol/messages";
+import {
+  QuotaReserveConfigSchema,
+  parseQuotaReservePolicy,
+  type QuotaReserveConfig,
+} from "@getpaseo/protocol/quota-reserve";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
@@ -30,6 +35,8 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     systemPrompt: z.string().nullable().optional(),
     profileLaunch: AgentProfileLaunchSchema.optional(),
     quotaPausedAt: z.string().optional(),
+    quotaResetAt: z.string().optional(),
+    quotaReserve: QuotaReserveConfigSchema.optional(),
     mcpServers: z.record(z.string(), z.any()).nullable().optional(),
   })
   .nullable()
@@ -91,12 +98,18 @@ export type SerializableAgentConfig = Pick<
   | "systemPrompt"
   | "profileLaunch"
   | "quotaPausedAt"
+  | "quotaResetAt"
+  | "quotaReserve"
   | "mcpServers"
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
-  return STORED_AGENT_SCHEMA.parse(value);
+  const record = STORED_AGENT_SCHEMA.parse(value);
+  if (record.config?.quotaReserve) {
+    parseQuotaReservePolicy(record.config.quotaReserve.policy);
+  }
+  return record;
 }
 
 export class AgentStorage {
@@ -128,6 +141,13 @@ export class AgentStorage {
 
   async get(agentId: string): Promise<StoredAgentRecord | null> {
     await this.load();
+    return this.getLoadedRecord(agentId);
+  }
+
+  // Synchronous admission must consult the initialized store without yielding
+  // between checking a supervisor's stop state and admitting its worker.
+  getLoadedRecord(agentId: string): StoredAgentRecord | null {
+    if (!this.loaded) throw new Error("Agent storage has not been initialized.");
     return this.cache.get(agentId) ?? null;
   }
 
@@ -160,13 +180,29 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
+  async updateQuotaReserve(
+    agentId: string,
+    update: (current: QuotaReserveConfig) => QuotaReserveConfig,
+  ): Promise<QuotaReserveConfig | null> {
+    await this.load();
+    let committed: QuotaReserveConfig | null = null;
+    await this.queueRecordMutation(agentId, (record) => {
+      if (!record || record.archivedAt || record.config?.quotaPausedAt) return null;
+      const current = record.config?.quotaReserve;
+      if (!current) throw new Error("This task has no quota reserve policy.");
+      committed = update(current);
+      return { ...record, config: { ...record.config, quotaReserve: committed } };
+    });
+    return committed;
+  }
+
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
     return this.queueRecordMutation(record.id, () => record);
   }
 
   private queueRecordMutation(
     agentId: string,
-    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
+    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord | null,
   ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
@@ -174,7 +210,30 @@ export class AgentStorage {
         return undefined;
       }
 
-      const record = mutate(this.cache.get(agentId) ?? null);
+      const existing = this.cache.get(agentId) ?? null;
+      const record = mutate(existing);
+      if (!record) return undefined;
+      // Loading sessions and metadata writers can hold snapshots from before
+      // a reserve transition. All writes preserve the newest durable revision.
+      const reserve = existing?.config?.quotaReserve;
+      if (
+        reserve &&
+        reserve.state.revision >= (record.config?.quotaReserve?.state.revision ?? -1)
+      ) {
+        record.config = { ...record.config, quotaReserve: reserve };
+      }
+
+      // Stale snapshots cannot restore a stop cleared by a confirmed reset.
+      const resetAt = [existing?.config?.quotaResetAt, record.config?.quotaResetAt]
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .at(-1);
+      if (resetAt) {
+        record.config = { ...record.config, quotaResetAt: resetAt };
+        if (record.config.quotaPausedAt && record.config.quotaPausedAt <= resetAt) {
+          delete record.config.quotaPausedAt;
+        }
+      }
       await this.writeRecord(record);
       return undefined;
     });

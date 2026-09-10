@@ -101,6 +101,7 @@ export const ru: TranslationResources = {
       focusHint: "{{shortcut}}, для фокуса",
       addAttachment: "Добавить вложение",
       interruptAgent: "Прервать агента",
+      insertNewline: "Вставить перенос строки",
       queueMessage: "Сообщение в очередь",
       sendAndInterrupt: "Отправить и прервать",
       sendAndSteer: "Отправить и направить",

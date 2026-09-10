@@ -20,7 +20,7 @@ This is lifecycle coordination, not a new security sandbox. Pi has no native sel
 
 ## Quota stops and explicit successors
 
-The Codex adapter maps structured `usageLimitExceeded` errors to a provider-neutral `quota_exhausted` event. Transport errors do not imply exhausted quota. The manager persists `quotaPausedAt`, blocks subsequent turns and worker creation, cancels active managed teammates, and suppresses completion-triggered wakeups. A reset does not clear the latch automatically. Interrupted edits are not rolled back.
+The Codex adapter maps structured `usageLimitExceeded` errors to a provider-neutral `quota_exhausted` event. Transport errors do not imply exhausted quota. The manager persists `quotaPausedAt`, blocks subsequent turns and worker creation, cancels active managed teammates, and suppresses completion-triggered wakeups. A confirmed account reset clears earlier quota-exhaustion locks for that provider so you can send the next message in the same thread. It does not send a prompt or clear a reserve stop. Interrupted edits are not rolled back.
 
 Selecting a preset for an existing task opens an editable handoff review and creates a separate successor only after confirmation. It initially copies at most 30 recent text messages and 50,000 characters without making an inference request to the old account. Active managed workers block the handoff. It preserves the selected permission mode and rejects incompatible modes. Attachments, tool outputs, and provider-private state are not copied automatically. The original task remains available for review. Model or reasoning changes made through Classic controls mark the original preset label as modified.
 
@@ -42,7 +42,7 @@ Reset management uses separate account-scoped RPCs so older hosts and clients ca
 
 Aliases for the same account share a persistent operation record under the Paseo home. An interrupted confirmation retains its operation key across daemon restarts. Explicit retry reconciles that same operation, including when the available count has already fallen to zero. It does not allocate a new key to resolve uncertainty. Back up these records together with the person's Paseo home.
 
-Results distinguish applied, already redeemed, no credit, and nothing to reset. A failed balance refresh does not turn a confirmed result into an unknown redemption. Redemption neither buys credits nor switches accounts, clears quota-stop state, or resumes tasks. Continuing an exhausted task still requires an explicit successor handoff. Grant schedules and availability remain provider-controlled.
+Results distinguish applied, already redeemed, no credit, and nothing to reset. A failed balance refresh does not turn a confirmed result into an unknown redemption. Redemption neither buys credits nor switches accounts or resumes work. A successful reset unlocks earlier quota-stopped threads on the selected provider. Newer quota stops remain locked, and duplicate confirmation uses the original operation cutoff. Grant schedules and availability remain provider-controlled.
 
 ## Review boundaries
 
@@ -64,7 +64,7 @@ Approved September 10, 2026. Cruise Reserve defaults to 15 percent remaining; Re
 
 Below Cruise Reserve, let already-running turns finish and block new turns and managed workers. At or below Redline, request immediate cancellation of active turns and managed workers. Cancellation and usage-reporting latency can consume allowance beyond Redline; it cannot guarantee a retained balance.
 
-Evaluate every applicable rolling window separately. Only fresh observations with all required windows above Cruise Reserve can automatically continue work paused by that policy. Equality retains an existing pause. Missing or stale usage blocks admission and automatic recovery but does not fabricate a Redline crossing. A Redline stop requires explicit continuation after recovery. Actual quota exhaustion retains the reviewed-successor requirement. Completed, manually stopped, archived, and exhausted tasks never wake automatically.
+Evaluate every applicable rolling window separately. Only fresh observations with all required windows above Cruise Reserve can automatically continue work paused by that policy. Equality retains an existing pause. Missing or stale usage blocks admission and automatic recovery but does not fabricate a Redline crossing. A Redline stop requires explicit continuation after recovery. Actual quota exhaustion requires a confirmed account reset or a reviewed successor. Completed, manually stopped, archived, and exhausted tasks never wake automatically.
 
 Keep policy state separate from `quotaPausedAt`. Persist stop reason and continuation eligibility before effects, serialize admission against policy transitions, and reconcile interrupted work on daemon startup before permitting continuation. Enforce the policy with every browser closed. Share observations by verified account and quota scope; task thresholds remain independent. Purchased credits and unrelated code-review limits do not establish coding-task capacity.
 

@@ -75,6 +75,8 @@ export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSe
     systemPrompt: record.config?.systemPrompt ?? undefined,
     profileLaunch: record.config?.profileLaunch,
     quotaPausedAt: record.config?.quotaPausedAt,
+    quotaResetAt: record.config?.quotaResetAt,
+    quotaReserve: record.config?.quotaReserve,
     mcpServers: record.config?.mcpServers ?? undefined,
   });
 }
@@ -99,6 +101,8 @@ export function buildSessionConfig(
     systemPrompt: overrides.systemPrompt,
     profileLaunch: overrides.profileLaunch,
     quotaPausedAt: overrides.quotaPausedAt,
+    quotaResetAt: overrides.quotaResetAt,
+    quotaReserve: overrides.quotaReserve,
     mcpServers: overrides.mcpServers,
   });
 }

@@ -7,6 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ProviderUsageTooltipSection } from "@/provider-usage/tooltip-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { formatTokenCount } from "./context-window-meter.utils";
+import { useVortonTouch } from "@/vorton-touch";
 
 interface ContextWindowMeterProps {
   maxTokens: number | null;
@@ -108,6 +109,7 @@ export function ContextWindowMeter({
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  const touch = useVortonTouch();
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
   const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(
     serverId ?? null,
@@ -176,9 +178,9 @@ export function ContextWindowMeter({
     >
       <TooltipTrigger asChild triggerRefProp="ref">
         <Pressable
-          style={containerStyle}
+          style={[containerStyle, touch && styles.touchTarget]}
           testID="context-window-meter"
-          accessibilityRole="image"
+          accessibilityRole={touch ? "button" : "image"}
           accessibilityLabel={t("contextWindow.accessibility", {
             percentage: roundedPercentage,
           })}
@@ -241,6 +243,7 @@ export function ContextWindowMeter({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  touchTarget: { minWidth: 44, minHeight: 44 },
   container: {
     width: 28,
     height: 28,

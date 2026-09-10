@@ -1,3 +1,4 @@
+import { useVortonTouch } from "@/vorton-touch";
 import {
   forwardRef,
   useCallback,
@@ -20,6 +21,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
+const touchTriggerStyle = { minHeight: 44, minWidth: 44, justifyContent: "center" as const };
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const chevronColorMapping = (theme: Theme) => ({
@@ -49,15 +51,14 @@ export const ComboboxTrigger = forwardRef<View, ComboboxTriggerProps>(function C
   { children, chevron, style, block = false, onFocus, onBlur, ...props },
   ref,
 ): ReactElement {
+  const touch = useVortonTouch();
   const [focused, setFocused] = useState(false);
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
-      if (typeof style === "function") {
-        return style({ pressed, hovered, focused });
-      }
-      return style;
+      const resolved = typeof style === "function" ? style({ pressed, hovered, focused }) : style;
+      return touch ? [resolved, touchTriggerStyle] : resolved;
     },
-    [focused, style],
+    [focused, style, touch],
   );
   const handleFocus = useCallback(
     (event: NativeSyntheticEvent<TargetedEvent>) => {
@@ -84,6 +85,7 @@ export const ComboboxTrigger = forwardRef<View, ComboboxTriggerProps>(function C
       onFocus={handleFocus}
       onBlur={handleBlur}
       {...props}
+      accessibilityRole={props.accessibilityRole ?? (touch ? "button" : undefined)}
     >
       <View style={rowStyle}>
         {children}

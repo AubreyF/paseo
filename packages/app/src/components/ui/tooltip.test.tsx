@@ -4,6 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { Pressable, Text } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+const touchState = vi.hoisted(() => ({ enabled: false }));
+vi.mock("@/vorton-touch", () => ({ useVortonTouch: () => touchState.enabled }));
 import { Tooltip, TooltipTrigger } from "./tooltip";
 
 vi.mock("@/constants/platform", () => ({
@@ -41,6 +43,7 @@ let root: Root | null = null;
 let container: HTMLElement | null = null;
 
 beforeEach(() => {
+  touchState.enabled = false;
   const dom = new JSDOM("<!doctype html><html><body></body></html>");
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -96,6 +99,38 @@ function pressTrigger(): void {
 }
 
 describe("TooltipTrigger", () => {
+  it("opens an informational tooltip by tapping on a wide touch screen", () => {
+    touchState.enabled = true;
+    const changed = vi.fn();
+    act(() =>
+      root?.render(
+        <Tooltip enabledOnMobile onOpenChange={changed}>
+          <TooltipTrigger asChild>
+            <Pressable testID="trigger">
+              <Text>Context usage</Text>
+            </Pressable>
+          </TooltipTrigger>
+        </Tooltip>,
+      ),
+    );
+    pressTrigger();
+    expect(changed).toHaveBeenLastCalledWith(true);
+    act(() => {
+      container
+        ?.querySelector('[data-testid="trigger"]')
+        ?.dispatchEvent(new window.MouseEvent("pointerout", { bubbles: true }));
+    });
+    expect(changed).toHaveBeenLastCalledWith(true);
+    pressTrigger();
+    expect(changed).toHaveBeenLastCalledWith(false);
+  });
+  it("activates a Vorton touch control with one tap", () => {
+    touchState.enabled = true;
+    const onPress = vi.fn();
+    renderTrigger({ childDisabled: false, onPress });
+    pressTrigger();
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
   it("keeps an asChild trigger disabled when the child is disabled", () => {
     const onPress = vi.fn();
 

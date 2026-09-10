@@ -101,6 +101,7 @@ export const ko: TranslationResources = {
       focusHint: "{{shortcut}}로 포커스",
       addAttachment: "첨부 추가",
       interruptAgent: "에이전트 중단",
+      insertNewline: "줄바꿈 삽입",
       queueMessage: "메시지 대기열에 추가",
       sendAndInterrupt: "보내고 중단",
       sendAndSteer: "보내고 지시 추가",

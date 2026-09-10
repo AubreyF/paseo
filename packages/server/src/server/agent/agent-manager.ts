@@ -14,6 +14,19 @@ import {
   PARENT_AGENT_ID_LABEL,
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
+import {
+  evaluateQuotaReserve,
+  type QuotaReserveEvaluationInput,
+} from "./quota-reserve/evaluate.js";
+import {
+  assertQuotaReserveAdmission,
+  QuotaReserveAdmissionError,
+  QuotaReserveControlError,
+} from "./quota-reserve/admission.js";
+import {
+  advanceQuotaReserve,
+  type QuotaReserveTransitionInput,
+} from "./quota-reserve/transition.js";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
@@ -181,6 +194,8 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   }
   if (record.config.profileLaunch) config.profileLaunch = record.config.profileLaunch;
   if (record.config.quotaPausedAt) config.quotaPausedAt = record.config.quotaPausedAt;
+  if (record.config.quotaResetAt) config.quotaResetAt = record.config.quotaResetAt;
+  if (record.config.quotaReserve) config.quotaReserve = record.config.quotaReserve;
   if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
   return stripInternalPaseoMcpServer(config);
 }
@@ -293,6 +308,7 @@ export interface AgentManagerOptions {
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
+  now?: () => number;
   registry?: AgentStorage;
   onAgentAttention?: AgentAttentionCallback;
   onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
@@ -690,16 +706,320 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
 
 export class AgentManager {
   private readonly pendingWorkerCreations = new Map<string, number>();
+  private readonly pendingReserveWrites = new Map<string, number>();
+  private readonly failedReserveWrites = new Set<string>();
+  // Deliberately not persisted: a saved ready state is not evidence of current capacity.
+  private readonly reserveObservations = new Map<
+    string,
+    { observedAtMs: number; maxAgeMs: number }
+  >();
+  private readonly now: () => number;
+  private quotaReserveObservationReader:
+    | ((
+        provider: AgentProvider,
+      ) => Promise<Omit<QuotaReserveEvaluationInput, "policy" | "recovering">>)
+    | null = null;
+
+  setQuotaReserveObservationReader(
+    reader: NonNullable<AgentManager["quotaReserveObservationReader"]>,
+  ): void {
+    this.quotaReserveObservationReader = reader;
+  }
+
+  private async readQuotaReserveObservation(provider: AgentProvider) {
+    if (!this.quotaReserveObservationReader)
+      throw new QuotaReserveAdmissionError("usage_unavailable");
+    try {
+      return await this.quotaReserveObservationReader(provider);
+    } catch (error) {
+      this.logger.warn({ err: error, provider }, "Quota reserve admission observation failed");
+      throw new QuotaReserveAdmissionError("usage_unavailable");
+    }
+  }
+
+  async checkQuotaReserveLaunch(config: AgentSessionConfig): Promise<void> {
+    this.assertAcceptingAgentRegistrations();
+    if (config.quotaReserve?.policy.kind !== "protected") return;
+    const observation = await this.readQuotaReserveObservation(config.provider);
+    const result = evaluateQuotaReserve({
+      ...observation,
+      policy: config.quotaReserve.policy,
+      recovering: true,
+    });
+    if (result.kind === "ready") return;
+    if (result.kind === "redline" || result.kind === "cruise")
+      throw new QuotaReserveAdmissionError(result.kind);
+    throw new QuotaReserveAdmissionError("usage_unavailable");
+  }
+
+  async prepareQuotaReserveAdmission(agentId: string): Promise<void> {
+    this.assertAcceptingAgentRegistrations();
+    const agent = this.requireAgent(agentId);
+    if (agent.config.quotaReserve?.policy.kind === "protected") {
+      const observation = await this.readQuotaReserveObservation(agent.provider);
+      this.assertAcceptingAgentRegistrations();
+      await this.updateQuotaReserveState(agentId, { trigger: "observation", observation });
+    }
+    this.assertQuotaNotPaused(agentId);
+  }
+
+  async resumeQuotaReserve(agentId: string, expectedRevision: number) {
+    this.assertAcceptingAgentRegistrations();
+    await this.requireRegistry().get(agentId);
+    const record = this.validateQuotaReserveResume(agentId);
+    const config = record.config?.quotaReserve;
+    if (!config)
+      throw new QuotaReserveControlError("no_policy", "This task has no reserve policy.");
+    const observation =
+      config.policy.kind === "protected"
+        ? await this.readQuotaReserveObservation(record.provider)
+        : {
+            windows: [],
+            requiredWindowIds: [],
+            observedAtMs: null,
+            nowMs: this.now(),
+            maxAgeMs: 0,
+          };
+    const resumed = await this.updateQuotaReserveState(agentId, {
+      trigger: "resume",
+      expectedRevision,
+      observation,
+    });
+    if (!resumed)
+      throw new QuotaReserveControlError("archived", "This task can no longer be resumed.");
+    return resumed;
+  }
+
+  private validateQuotaReserveResume(agentId: string): StoredAgentRecord {
+    this.assertAcceptingAgentRegistrations();
+    const record = this.requireRegistry().getLoadedRecord(agentId);
+    if (!record) throw new QuotaReserveControlError("missing", "Task not found.");
+    if (record.archivedAt)
+      throw new QuotaReserveControlError("archived", "Archived tasks cannot resume.");
+    if (record.config?.quotaPausedAt)
+      throw new QuotaReserveControlError(
+        "exhausted",
+        "Quota exhausted. Start a reviewed successor task.",
+      );
+    const parentId = record.labels[PARENT_AGENT_ID_LABEL];
+    if (parentId) this.assertQuotaNotPaused(parentId);
+    const active = this.listAgents().some(
+      (agent) =>
+        (agent.id === agentId || agent.labels[PARENT_AGENT_ID_LABEL] === agentId) &&
+        this.hasInFlightRun(agent.id),
+    );
+    if (active)
+      throw new QuotaReserveControlError(
+        "active",
+        "Wait for the task and its workers to stop before resuming.",
+      );
+    return record;
+  }
+
+  async updateQuotaReserveState(
+    agentId: string,
+    input: Omit<QuotaReserveTransitionInput, "config">,
+  ) {
+    this.requireRegistry();
+    this.pendingReserveWrites.set(agentId, (this.pendingReserveWrites.get(agentId) ?? 0) + 1);
+    try {
+      return await this.runForegroundMutation(agentId, async () => {
+        let next;
+        try {
+          next = await this.persistQuotaReserveTransition(agentId, input);
+        } catch (error) {
+          if (
+            !(error instanceof QuotaReserveControlError) &&
+            !(error instanceof QuotaReserveAdmissionError)
+          ) {
+            this.failedReserveWrites.add(agentId);
+          }
+          throw error;
+        }
+        if (!next) return null;
+        const agent = this.agents.get(agentId);
+        if (agent) agent.config.quotaReserve = next;
+        this.failedReserveWrites.delete(agentId);
+        this.reserveObservations.delete(agentId);
+        if (next.state.kind === "ready" && input.observation.observedAtMs !== null) {
+          this.reserveObservations.set(agentId, {
+            observedAtMs: input.observation.observedAtMs,
+            maxAgeMs: input.observation.maxAgeMs,
+          });
+        }
+        if (agent) this.emitState(agent, { persist: false });
+        if (next.state.kind === "stopped") {
+          await this.interruptReserveTeam(agentId);
+        }
+        return next;
+      });
+    } finally {
+      const remaining = (this.pendingReserveWrites.get(agentId) ?? 1) - 1;
+      if (remaining === 0) this.pendingReserveWrites.delete(agentId);
+      else this.pendingReserveWrites.set(agentId, remaining);
+    }
+  }
+
+  private async persistQuotaReserveTransition(
+    agentId: string,
+    input: Omit<QuotaReserveTransitionInput, "config">,
+  ) {
+    const registry = this.requireRegistry();
+    if (input.trigger === "resume") {
+      return registry.updateQuotaReserve(agentId, (config) => {
+        this.validateQuotaReserveResume(agentId);
+        const observation = { ...input.observation, nowMs: this.now() };
+        const next = advanceQuotaReserve({ ...input, config, observation, requireRecovery: true });
+        if (next.state.kind !== "ready") {
+          const result = evaluateQuotaReserve({
+            ...observation,
+            policy: config.policy,
+            recovering: true,
+          });
+          const reason =
+            result.kind === "redline" || result.kind === "cruise"
+              ? result.kind
+              : "usage_unavailable";
+          throw new QuotaReserveAdmissionError(reason);
+        }
+        return next;
+      });
+    }
+    const agent = this.agents.get(agentId);
+    const advance = (config: NonNullable<AgentSessionConfig["quotaReserve"]>) =>
+      advanceQuotaReserve({
+        ...input,
+        config,
+        requireRecovery: !this.hasFreshReserveObservation(agentId),
+      });
+    if (!agent) return registry.updateQuotaReserve(agentId, advance);
+    this.restoreLatestQuotaReserve(agentId, agent.config);
+    const previous = agent.config.quotaReserve;
+    if (!previous) throw new Error("This task has no quota reserve policy.");
+    agent.config.quotaReserve = advance(previous);
+    try {
+      await this.persistSnapshot(agent);
+      return agent.config.quotaReserve;
+    } catch (error) {
+      agent.config.quotaReserve = previous;
+      throw error;
+    }
+  }
+
+  private restoreLatestQuotaReserve(agentId: string, config: AgentSessionConfig): void {
+    const saved = this.registry?.getLoadedRecord(agentId)?.config?.quotaReserve;
+    if (saved && saved.state.revision >= (config.quotaReserve?.state.revision ?? -1)) {
+      config.quotaReserve = saved;
+    }
+  }
+
+  async listQuotaReserveTargets(): Promise<Array<{ id: string; provider: AgentProvider }>> {
+    const records = await this.requireRegistry().list();
+    const byId = new Map(records.map((record) => [record.id, record]));
+    const targets = new Map<string, { id: string; provider: AgentProvider }>();
+    for (const agent of [...records, ...this.listAgents()]) {
+      if (byId.get(agent.id)?.archivedAt) continue;
+      if (agent.config?.quotaReserve?.policy.kind !== "protected" || agent.config.quotaPausedAt) {
+        targets.delete(agent.id);
+        continue;
+      }
+      targets.set(agent.id, { id: agent.id, provider: agent.provider });
+    }
+    return [...targets.values()];
+  }
+
+  private async interruptReserveTeam(rootId: string): Promise<void> {
+    const team = this.listAgents().filter((agent) => {
+      const belongsToTeam = agent.id === rootId || agent.labels[PARENT_AGENT_ID_LABEL] === rootId;
+      const hasActiveRun = agent.lifecycle === "running" || this.runs.hasRun(agent.id);
+      return belongsToTeam && hasActiveRun;
+    });
+    const results = await Promise.allSettled(
+      team.map(async (agent) => {
+        // The root already owns its foreground mutation slot. Queue workers
+        // independently so every interruption is attempted even if one fails.
+        const result = await (agent.id === rootId
+          ? this.cancelAgentRunNow(agent.id)
+          : this.cancelAgentRun(agent.id));
+        if (result.status === "refused") {
+          throw new Error(`Quota reserve interruption was refused for task ${agent.id}.`);
+        }
+      }),
+    );
+    const failures = results.filter((result) => result.status === "rejected");
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures.map((result) => result.reason),
+        "Quota reserve stop is saved, but some tasks could not be interrupted.",
+      );
+    }
+  }
+
+  async recoverQuotaAfterReset(providerId: string, resetAt: string): Promise<void> {
+    const registry = this.requireRegistry();
+    for (const record of await registry.list()) {
+      if (
+        record.provider !== providerId ||
+        record.archivedAt ||
+        !record.config?.quotaPausedAt ||
+        record.config.quotaPausedAt > resetAt
+      )
+        continue;
+      await this.runForegroundMutation(record.id, async () => {
+        const current = await registry.get(record.id);
+        const agent = this.agents.get(record.id);
+        const pausedAt = agent?.config.quotaPausedAt ?? current?.config?.quotaPausedAt;
+        if (!current || current.archivedAt || !pausedAt || pausedAt > resetAt) return;
+        const config = { ...current.config, quotaResetAt: resetAt };
+        delete config.quotaPausedAt;
+        await registry.upsert({ ...current, config, lastError: null });
+        if (agent && agent.config.quotaPausedAt === pausedAt) {
+          delete agent.config.quotaPausedAt;
+          agent.config.quotaResetAt = resetAt;
+          agent.lastError = undefined;
+          this.emitState(agent, { persist: false });
+        }
+      });
+    }
+  }
 
   assertQuotaNotPaused(agentId: string): void {
-    const agent = this.requireAgent(agentId);
+    const agent = this.agents.get(agentId) ?? this.registry?.getLoadedRecord(agentId);
+    if (!agent) throw new Error(`Agent ${agentId} not found.`);
     const parentId = agent.labels[PARENT_AGENT_ID_LABEL];
-    const parent = parentId ? this.agents.get(parentId) : undefined;
-    if (agent.config.quotaPausedAt || parent?.config.quotaPausedAt) {
+    const parent = parentId
+      ? (this.agents.get(parentId) ?? this.registry?.getLoadedRecord(parentId))
+      : undefined;
+    const scopes = parentId ? [agentId, parentId] : [agentId];
+    if (
+      scopes.some((id) => this.pendingReserveWrites.has(id) || this.failedReserveWrites.has(id))
+    ) {
+      throw new QuotaReserveAdmissionError("usage_unavailable");
+    }
+    if (agent.config?.quotaPausedAt || parent?.config?.quotaPausedAt) {
       throw new Error(
         "Quota exhausted. This task is paused. Select a preset and explicitly start a successor task; no automatic retry will occur.",
       );
     }
+    assertQuotaReserveAdmission(agent.config?.quotaReserve);
+    assertQuotaReserveAdmission(parent?.config?.quotaReserve);
+    this.assertFreshReserveObservation(agent);
+    this.assertFreshReserveObservation(parent);
+  }
+
+  private assertFreshReserveObservation(
+    scope: ManagedAgent | StoredAgentRecord | null | undefined,
+  ): void {
+    if (scope?.config?.quotaReserve?.policy.kind !== "protected") return;
+    if (!this.hasFreshReserveObservation(scope.id)) {
+      throw new QuotaReserveAdmissionError("usage_unavailable");
+    }
+  }
+
+  private hasFreshReserveObservation(agentId: string): boolean {
+    const observation = this.reserveObservations.get(agentId);
+    const age = observation ? this.now() - observation.observedAtMs : Number.NaN;
+    return Number.isFinite(age) && age >= 0 && age <= (observation?.maxAgeMs ?? -1);
   }
 
   private async quotaRootId(failed: ManagedAgent): Promise<string> {
@@ -791,8 +1111,9 @@ export class AgentManager {
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
-    this.idFactory = options?.idFactory ?? (() => randomUUID());
-    this.registry = options?.registry;
+    this.now = options.now ?? Date.now;
+    this.idFactory = options.idFactory ?? (() => randomUUID());
+    this.registry = options.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
@@ -1203,6 +1524,36 @@ export class AgentManager {
     await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
   }
 
+  async getFirstWorkspacePrompt(
+    workspaceId: string,
+  ): Promise<{ sourceId: string; prompt: string } | null> {
+    const stored = (await this.registry?.listByWorkspace(workspaceId)) ?? [];
+    const agents = new Map(
+      stored.map((record) => [
+        record.id,
+        { id: record.id, createdAt: Date.parse(record.createdAt) },
+      ]),
+    );
+    for (const agent of this.listAgents()) {
+      if (agent.workspaceId === workspaceId)
+        agents.set(agent.id, { id: agent.id, createdAt: agent.createdAt.getTime() });
+    }
+    const ordered = [...agents.values()].sort(
+      (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
+    );
+    for (const agent of ordered) {
+      // Read durable history directly so closed/archived sessions need not be resumed.
+      const rows = this.durableTimelineStore
+        ? await this.durableTimelineStore.getCommittedRows(agent.id)
+        : this.timelineStore.getRows(agent.id);
+      const first = rows.find((row) => row.item.type === "user_message" && row.item.text.trim());
+      if (first?.item.type === "user_message") {
+        return { sourceId: agent.id + ":" + first.seq, prompt: first.item.text.trim() };
+      }
+    }
+    return null;
+  }
+
   getTimeline(id: string): AgentTimelineItem[] {
     this.requireAgent(id);
     return this.timelineStore.getItems(id);
@@ -1260,9 +1611,11 @@ export class AgentManager {
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
     const parentId = options.labels?.[PARENT_AGENT_ID_LABEL];
-    const parent = parentId ? this.agents.get(parentId) : undefined;
+    const parent = parentId
+      ? (this.agents.get(parentId) ?? (await this.registry?.get(parentId)))
+      : undefined;
     if (parent) this.assertQuotaNotPaused(parent.id);
-    if (parent?.config.profileLaunch?.worker) {
+    if (parent?.config?.profileLaunch?.worker) {
       const pending = this.pendingWorkerCreations.get(parent.id) ?? 0;
       const running = this.listAgents().filter(
         (agent) =>
@@ -2953,8 +3306,41 @@ export class AgentManager {
     }
   }
 
-  async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
+  async cancelAgentRun(
+    agentId: string,
+    options?: { reason: "manual" },
+  ): Promise<AgentRunCancellationResult> {
+    if (options?.reason === "manual") {
+      const hadRun = this.hasInFlightRun(agentId);
+      if (await this.stopQuotaReserveManually(agentId)) {
+        return { status: hadRun ? "settled" : "not_running" };
+      }
+      if (!hadRun) return { status: "not_running" };
+    }
     return this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
+  }
+
+  private async stopQuotaReserveManually(agentId: string): Promise<boolean> {
+    const agent = this.requireAgent(agentId);
+    const parentId = agent.labels[PARENT_AGENT_ID_LABEL];
+    const parent = parentId
+      ? (this.agents.get(parentId) ?? this.registry?.getLoadedRecord(parentId))
+      : undefined;
+    if (!agent.config.quotaReserve && parent?.config?.quotaReserve?.policy.kind !== "protected") {
+      return false;
+    }
+    const nowMs = this.now();
+    // A worker without its own quota scope still needs a durable manual stop.
+    // Off avoids inventing subscription windows for a local provider.
+    agent.config.quotaReserve ??= {
+      policy: { kind: "off" },
+      state: { kind: "ready", revision: 0, changedAt: new Date(nowMs).toISOString() },
+    };
+    await this.updateQuotaReserveState(agentId, {
+      trigger: "manual_stop",
+      observation: { windows: [], requiredWindowIds: [], observedAtMs: null, nowMs, maxAgeMs: 0 },
+    });
+    return true;
   }
 
   private async cancelAgentRunNow(agentId: string): Promise<AgentRunCancellationResult> {
@@ -3426,6 +3812,7 @@ export class AgentManager {
       });
 
       this.assertAcceptingAgentRegistrations();
+      this.restoreLatestQuotaReserve(resolvedAgentId, managed.config);
       this.agents.set(resolvedAgentId, managed);
       registered = true;
       // Initialize previousStatus to track transitions

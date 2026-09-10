@@ -101,7 +101,8 @@ function projectLaunchMetadata(
   config: StoredAgentRecord["config"],
 ): Pick<AgentSnapshotPayload, "profile" | "quotaPausedAt"> {
   const profile = config?.profileLaunch?.profile;
-  if (!profile) return { quotaPausedAt: config?.quotaPausedAt };
+  const quota = config?.quotaPausedAt ? { quotaPausedAt: config.quotaPausedAt } : {};
+  if (!profile) return quota;
   const modelChanged = Boolean(profile.model && profile.model !== config?.model);
   const thinkingChanged = Boolean(
     profile.thinkingOptionId && profile.thinkingOptionId !== config?.thinkingOptionId,
@@ -109,7 +110,7 @@ function projectLaunchMetadata(
   const name = modelChanged || thinkingChanged ? `${profile.name} (modified)` : profile.name;
   return {
     profile: { id: profile.id, name },
-    quotaPausedAt: config?.quotaPausedAt,
+    ...quota,
   };
 }
 
@@ -355,6 +356,8 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   }
   if (config.profileLaunch) serializable.profileLaunch = config.profileLaunch;
   if (config.quotaPausedAt) serializable.quotaPausedAt = config.quotaPausedAt;
+  if (config.quotaResetAt) serializable.quotaResetAt = config.quotaResetAt;
+  if (config.quotaReserve) serializable.quotaReserve = config.quotaReserve;
   if (config.mcpServers) {
     serializable.mcpServers = config.mcpServers;
   }

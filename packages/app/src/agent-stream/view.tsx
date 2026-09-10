@@ -1,3 +1,5 @@
+import { useVortonMode } from "@/vorton-mode";
+import { isQuotaExhaustionMessage } from "./quota-notice";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   forwardRef,
@@ -721,8 +723,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [context.capabilities, agentId, client, pendingClientMessageIds, resolvedServerId],
     );
 
+    const vortonMode = useVortonMode();
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
+        if (vortonMode && isQuotaExhaustionMessage(item.text)) {
+          return (
+            <Notification
+              level="warning"
+              message="Account usage limit reached. Open the preset picker to reset utilization, then send your next message here. You can also choose another preset to continue in a new task."
+            />
+          );
+        }
         return (
           <AssistantFileLinkResolverProvider
             client={client}
@@ -744,7 +755,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AssistantFileLinkResolverProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot, vortonMode],
     );
 
     const renderThoughtItem = useCallback(

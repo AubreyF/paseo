@@ -184,3 +184,13 @@ The app runs on iOS, Android, web (browser), and web (Electron desktop). Code is
 ## Debugging
 
 Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log
+
+## Vorton customization contract
+
+All fork-specific interface behavior must be gated by the existing Vorton toggle, which defaults off. Paseo mode retains standard controls, appearance, interactions, and navigation. The mode selector itself remains available so users can enable Vorton. Do not use host capability, browser width, or the presence of saved profiles as a substitute for this mode gate.
+
+Use `useVortonMode` for custom UI and `useVortonTouch` for touch enhancements. Gate styles as well as rendering and event handlers. Switching back to Paseo must restore baseline appearance without overwriting saved settings, deleting profiles, changing accounts, or interrupting tasks. Account state and server capability support remain persistent; the toggle controls use and presentation, not credentials or daemon lifetime.
+
+Every interface request requires an off/on comparison, focused tests, and publishing a tested web export to the private preview instance. Follow docs/instance-continuity.md. Localhost development changes alone are not delivery. Verify the served release and assets, preserve active sessions, and ask for physical device confirmation where emulation cannot prove behavior. Never launch macOS Playwright WebKit.
+
+For Vorton touch layouts, detect touch capability independently of screen width. Essential actions must be visible without hover, primary targets should be at least 44 CSS pixels, and hover cards must not intercept a touch intended for navigation. Keep pinch zoom, keyboard focus indicators, scrolling, and independently selectable permissions.

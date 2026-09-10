@@ -122,8 +122,10 @@ describe("DaemonConfigStore", () => {
       id: "review",
       name: "Review",
       provider: "codex",
+      isDefault: true,
       instructions: "Review all diffs",
       workerProfileId: "local",
+      quotaReservePolicy: { kind: "protected" as const, cruisePct: 15, redlinePct: 10 },
     };
     store.patch({ agentProfiles: [profile], expectedAgentProfiles: [] });
     expect(() => store.patch({ agentProfiles: [], expectedAgentProfiles: [] })).toThrow(
@@ -131,11 +133,24 @@ describe("DaemonConfigStore", () => {
     );
     store.patch({ agentProfiles: [{ id: "review", name: "Renamed", provider: "codex" }] });
     expect(store.get().agentProfiles?.[0]).toMatchObject({
+      isDefault: true,
       instructions: profile.instructions,
       workerProfileId: "local",
+      quotaReservePolicy: profile.quotaReservePolicy,
     });
     store.patch({ agentProfiles: [{ ...profile, instructions: "", workerProfileId: "" }] });
     expect(store.get().agentProfiles?.[0].instructions).toBe("");
+    store.patch({ agentProfiles: [{ ...profile, isDefault: false }] });
+    expect(store.get().agentProfiles?.[0].isDefault).toBe(false);
+    expect(() =>
+      store.patch({
+        agentProfiles: [
+          { ...profile, quotaReservePolicy: { kind: "protected", cruisePct: 10, redlinePct: 15 } },
+        ],
+      }),
+    ).toThrow("Redline must be lower");
+    store.patch({ agentProfiles: [{ ...profile, quotaReservePolicy: { kind: "off" } }] });
+    expect(store.get().agentProfiles?.[0].quotaReservePolicy).toEqual({ kind: "off" });
   });
 
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {

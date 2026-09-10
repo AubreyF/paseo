@@ -1,3 +1,4 @@
+import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -20,6 +21,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useVortonTouch } from "@/vorton-touch";
 import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
@@ -299,8 +301,11 @@ function renderContextWindowMeter(
 function resolveContextWindowPlacement(
   meter: ReactElement | null,
   reserveSlot: boolean,
+  touch: boolean,
 ): ReactNode {
-  return reserveSlot ? <View style={styles.contextWindowMeterSlot}>{meter}</View> : null;
+  return reserveSlot ? (
+    <View style={[styles.contextWindowMeterSlot, touch && styles.touchMeterSlot]}>{meter}</View>
+  ) : null;
 }
 
 interface RenderLeftContentArgs {
@@ -1213,6 +1218,7 @@ function ComposerContentImpl({
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
   const isCompactFormFactor = useIsCompactFormFactor();
+  const touch = useVortonTouch();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
@@ -1277,6 +1283,16 @@ function ComposerContentImpl({
     workspaceId,
     agentId,
   });
+  const { preferences: formPreferences } = useFormPreferences();
+  const configurationRequired = Boolean(
+    mode.showAgentControls &&
+    agentControls &&
+    formPreferences.vortonMode &&
+    !agentControls.selectedProfileId,
+  );
+  const submitDisabledReason = configurationRequired
+    ? "Select a configuration before submitting."
+    : undefined;
   const isComposerLocked = resolveIsComposerLocked(submitBehavior, isSubmitLoading);
   const keyboardHandlerIdRef = useRef(
     `message-input:${serverId}:${agentId}:${Math.random().toString(36).slice(2)}`,
@@ -1573,7 +1589,9 @@ function ComposerContentImpl({
         isAgentRunning,
         // Parent-managed submits are still valid submit paths even when the
         // transport is disconnected, because the parent decides the failure mode.
-        canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
+        canSubmit:
+          !configurationRequired &&
+          Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
         queueMessage: ({ message: queuedText, attachments: queuedAttachments }) => {
           queueMessage(queuedText, queuedAttachments);
         },
@@ -1602,6 +1620,7 @@ function ComposerContentImpl({
     },
     [
       allowEmptySubmit,
+      configurationRequired,
       beginSubmit,
       clearDraft,
       completeSubmit,
@@ -2022,8 +2041,8 @@ function ComposerContentImpl({
     ],
   );
   const beforeVoiceContent = useMemo(
-    () => resolveContextWindowPlacement(contextWindowMeter, hasAgent),
-    [contextWindowMeter, hasAgent],
+    () => resolveContextWindowPlacement(contextWindowMeter, hasAgent, touch),
+    [contextWindowMeter, hasAgent, touch],
   );
 
   const hasGithubAttachment = useMemo(
@@ -2267,7 +2286,9 @@ function ComposerContentImpl({
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
   const isSubmitDisabled =
-    isSubmitLoadingVisible || (waitForForgeAutoAttachOnSubmit && forgeAutoAttach.isResolving);
+    configurationRequired ||
+    isSubmitLoadingVisible ||
+    (waitForForgeAutoAttachOnSubmit && forgeAutoAttach.isResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2346,6 +2367,7 @@ function ComposerContentImpl({
                   submitButtonTestID={submitButtonTestID}
                   submitIcon={submitIcon}
                   isSubmitDisabled={isSubmitDisabled}
+                  submitDisabledReason={submitDisabledReason}
                   isSubmitLoading={isSubmitLoadingVisible}
                   preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
                   attachments={selectedAttachments}
@@ -2355,7 +2377,7 @@ function ComposerContentImpl({
                   onAddImages={addImages}
                   onPasteImages={handleNativePasteImages}
                   client={client}
-                  isReadyForDictation={isDictationReady}
+                  isReadyForDictation={isDictationReady && !configurationRequired}
                   placeholder={messagePlaceholder}
                   autoFocus={messageInputAutoFocus}
                   autoFocusKey={`${serverId}:${agentId}:${autoFocusKey ?? ""}`}
@@ -2473,6 +2495,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  touchMeterSlot: { width: 44, height: 44 },
   realtimeVoiceButton: {
     width: 28,
     height: 28,

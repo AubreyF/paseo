@@ -101,6 +101,7 @@ export const es: TranslationResources = {
       focusHint: "{{shortcut}}para enfocar",
       addAttachment: "Agregar archivo adjunto",
       interruptAgent: "agente de interrupción",
+      insertNewline: "Insertar salto de línea",
       queueMessage: "mensaje de cola",
       sendAndInterrupt: "Enviar e interrumpir",
       sendAndSteer: "Enviar y orientar",

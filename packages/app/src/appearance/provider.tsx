@@ -1,3 +1,7 @@
+import { vortonAppearance } from "./vorton-appearance";
+import { useVortonTouch } from "@/vorton-touch";
+import { useFormPreferences } from "@/hooks/use-form-preferences";
+import { applyVortonWeb } from "./vorton-web";
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from "react";
 import { UnistylesRuntime } from "react-native-unistyles";
 import { DEFAULT_THEME_PREFERENCE, useAppSettings, type AppSettings } from "@/hooks/use-settings";
@@ -44,6 +48,10 @@ function applyTheme({ preference, contributedTheme }: ApplyThemeInput): void {
 
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const { settings, updateSettings, isLoading } = useAppSettings();
+  const touch = useVortonTouch();
+  const { preferences } = useFormPreferences();
+  const vorton = preferences.vortonMode === true;
+  useEffect(() => applyVortonWeb(vorton, touch), [vorton, touch]);
   const options = usePluginThemeCatalog();
   const selected = useMemo(() => {
     if (settings.theme !== PLUGIN_THEME_PREFERENCE) return null;
@@ -53,16 +61,22 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isLoading) return;
     applyTheme({ preference: settings.theme, contributedTheme: selected });
-    applyAppearance({
-      uiFontFamily: settings.uiFontFamily,
-      monoFontFamily: settings.monoFontFamily,
-      uiBaseFontSize: settings.uiBaseFontSize,
-      contentFontSize: settings.contentFontSize,
-      codeFontSize: settings.codeFontSize,
-      syntaxTheme: settings.syntaxTheme,
-    });
+    applyAppearance(
+      vortonAppearance(
+        {
+          uiFontFamily: settings.uiFontFamily,
+          monoFontFamily: settings.monoFontFamily,
+          uiBaseFontSize: settings.uiBaseFontSize,
+          contentFontSize: settings.contentFontSize,
+          codeFontSize: settings.codeFontSize,
+          syntaxTheme: settings.syntaxTheme,
+        },
+        touch,
+      ),
+    );
   }, [
     isLoading,
+    touch,
     selected,
     settings.theme,
     settings.uiFontFamily,

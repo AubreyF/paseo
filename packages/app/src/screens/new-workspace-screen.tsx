@@ -2047,6 +2047,9 @@ export function NewWorkspaceScreen({
     async (payload: MessagePayload) => {
       try {
         setErrorMessage(null);
+        if (formPreferences.vortonMode && !composerState?.selectedProfileId) {
+          throw new Error("Select a configuration before starting a Vorton chat.");
+        }
         await composerState?.persistFormPreferences();
         await updateFormPreferences({ launchTarget });
         if (isEmptyWorkspaceSubmission(payload)) {
@@ -2087,6 +2090,7 @@ export function NewWorkspaceScreen({
       composerState,
       draftId,
       chatDraft.clear,
+      formPreferences.vortonMode,
       ensureWorkspace,
       forkDraftSetup,
       launchTarget,

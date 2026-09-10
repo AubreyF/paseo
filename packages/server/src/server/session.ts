@@ -1,3 +1,4 @@
+import { WorkspaceTitleSuggestionError } from "./workspace-title-suggestions.js";
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
@@ -2548,6 +2549,8 @@ export class Session {
         return this.handleWorkspaceCreateRequest(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
+      case "workspace.title.suggest.request":
+        return this.handleWorkspaceTitleSuggestRequest(msg);
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
@@ -3313,6 +3316,54 @@ export class Session {
     }
   }
 
+  private async handleWorkspaceTitleSuggestRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.title.suggest.request" }>,
+  ): Promise<void> {
+    const { workspaceId, requestId } = request;
+    try {
+      const workspace = await this.workspaceRegistry.get(workspaceId);
+      if (!workspace) {
+        this.emit({
+          type: "workspace.title.suggest.response",
+          payload: {
+            workspaceId,
+            requestId,
+            titles: [],
+            error: "Workspace not found",
+          },
+        });
+        return;
+      }
+      const titles = await this.workspaceAutoName.titleSuggestions.suggest({
+        workspaceId,
+        cwd: workspace.cwd,
+        regenerate: request.regenerate === true,
+      });
+      this.emit({
+        type: "workspace.title.suggest.response",
+        payload: {
+          workspaceId,
+          requestId,
+          titles,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.title.suggest.response",
+        payload: {
+          workspaceId,
+          requestId,
+          titles: [],
+          error:
+            error instanceof WorkspaceTitleSuggestionError
+              ? error.message
+              : "Could not generate title suggestions. Check the host's metadata provider and try again.",
+        },
+      });
+    }
+  }
+
   private async handleWorkspaceTitleSetRequest(
     workspaceId: string,
     title: string | null,
@@ -3605,6 +3656,9 @@ export class Session {
         {
           kind: "session",
           config: resolvedIntent.config,
+          onCreated: ({ agentId }) => {
+            createdAgentId = agentId;
+          },
           workspaceId: resolvedIntent.intent.workspaceId,
           worktreeName,
           initialPrompt,

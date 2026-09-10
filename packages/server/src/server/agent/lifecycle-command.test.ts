@@ -31,6 +31,7 @@ class FakeLifecycleAgentStorage implements LifecycleAgentStorage {
 class FakeLifecycleAgentManager implements LifecycleAgentManager {
   readonly liveAgents = new Map<string, LifecycleAgentSnapshot>();
   readonly cancelledAgentIds: string[] = [];
+  readonly cancellationReasons: Array<"manual" | undefined> = [];
   readonly clearedAttentionAgentIds: string[] = [];
   readonly archivedAgentIds: string[] = [];
   readonly closedAgentIds: string[] = [];
@@ -56,8 +57,9 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
     return this.inFlightAgentIds.has(agentId);
   }
 
-  async cancelAgentRun(agentId: string) {
+  async cancelAgentRun(agentId: string, options?: { reason: "manual" }) {
     this.cancelledAgentIds.push(agentId);
+    this.cancellationReasons.push(options?.reason);
     if (this.settledDuringCancellationAgentIds.delete(agentId)) {
       this.inFlightAgentIds.delete(agentId);
       return { status: "not_running" } as const;
@@ -164,7 +166,7 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
 const logger = createTestLogger();
 
 describe("agent lifecycle commands", () => {
-  test("cancels only when the agent has an in-flight run", async () => {
+  test("passes explicit Stop intent to the manager", async () => {
     const storage = new FakeLifecycleAgentStorage();
     const manager = new FakeLifecycleAgentManager(storage);
     manager.liveAgents.set("agent-1", managedAgent("agent-1", "running"));
@@ -177,6 +179,16 @@ describe("agent lifecycle commands", () => {
       cancelled: true,
     });
     expect(manager.cancelledAgentIds).toEqual(["agent-1"]);
+    expect(manager.cancellationReasons).toEqual(["manual"]);
+  });
+
+  test("passes Stop intent for an idle task so its reserve hold can be latched", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+    manager.liveAgents.set("agent-1", managedAgent("agent-1", "idle"));
+    const result = await cancelAgentRunCommand({ agentManager: manager, logger }, "agent-1");
+    expect(result.cancelled).toBe(false);
+    expect(manager.cancellationReasons).toEqual(["manual"]);
   });
 
   test("accepts a stop when the run settles during cancellation", async () => {

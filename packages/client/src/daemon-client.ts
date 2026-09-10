@@ -2688,6 +2688,16 @@ export class DaemonClient {
     return { removedWorkspaceIds: payload.removedWorkspaceIds };
   }
 
+  async suggestWorkspaceTitles(workspaceId: string, regenerate = false): Promise<string[]> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      message: { type: "workspace.title.suggest.request", workspaceId, regenerate },
+      responseType: "workspace.title.suggest.response",
+      timeout: 120_000,
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload.titles;
+  }
+
   async setWorkspaceTitle(
     workspaceId: string,
     title: string | null,

@@ -651,6 +651,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    providerUsageService?: ProviderUsageService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -736,10 +737,12 @@ export class VoiceAssistantWebSocketServer {
       });
     });
 
-    this.providerUsageService = new ProviderUsageService({
-      logger: this.logger,
-      getProviderConfigs: () => this.daemonConfigStore.get().providers,
-    });
+    this.providerUsageService =
+      providerUsageService ??
+      new ProviderUsageService({
+        logger: this.logger,
+        getProviderConfigs: () => this.daemonConfigStore.get().providers,
+      });
     this.providerResetService = new ProviderResetService({
       logger: this.logger,
       store: new ResetCreditStore(join(paseoHome, "provider-reset-operations")),
@@ -748,6 +751,8 @@ export class VoiceAssistantWebSocketServer {
         if (state.providerDefinitions[providerId]?.enabled !== true) return null;
         return state.clients[providerId] ?? null;
       },
+      onResetApplied: (providerId, resetAt) =>
+        this.agentManager.recoverQuotaAfterReset(providerId, resetAt),
       refreshUsage: async () => {
         this.providerUsageService.invalidate();
         await this.providerUsageService.listUsage();
@@ -1646,6 +1651,8 @@ export class VoiceAssistantWebSocketServer {
       desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
+        // COMPAT(workspaceTitleSuggestions): added in v0.7.2, remove gate after 2027-03-10.
+        workspaceTitleSuggestions: this.workspaceAutoName.titleSuggestions.isAvailable(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.

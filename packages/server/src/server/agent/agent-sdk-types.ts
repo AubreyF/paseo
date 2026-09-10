@@ -7,6 +7,10 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment, AgentProfileLaunch } from "@getpaseo/protocol/messages";
 import type {
+  QuotaReserveConfig,
+  QuotaReserveLaunchPolicy,
+} from "@getpaseo/protocol/quota-reserve";
+import type {
   ProviderResetAttempt,
   ProviderResetOutcome,
   ProviderResetSnapshot,
@@ -609,8 +613,11 @@ export interface ImportedProviderSession {
 export interface AgentSessionConfig {
   provider: AgentProvider;
   profileId?: string;
+  quotaReservePolicy?: QuotaReserveLaunchPolicy;
   profileLaunch?: AgentProfileLaunch;
   quotaPausedAt?: string;
+  quotaResetAt?: string;
+  quotaReserve?: QuotaReserveConfig;
   cwd: string;
   /**
    * Provider-agnostic system/developer instruction string.

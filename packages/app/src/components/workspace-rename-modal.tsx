@@ -1,6 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
+import { useVortonMode } from "@/vorton-mode";
+import { WorkspaceTitleSuggestions } from "@/components/workspace-title-suggestions";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
@@ -35,7 +37,45 @@ export function WorkspaceRenameModal({
   onClose,
   testID,
 }: WorkspaceRenameModalProps) {
+  const vortonMode = useVortonMode();
+  if (vortonMode) {
+    return visible ? (
+      <WorkspaceRenameDialog
+        key={workspace.workspaceId}
+        visible
+        workspace={workspace}
+        onClose={onClose}
+        testID={testID}
+        suggestions
+      />
+    ) : null;
+  }
+  return (
+    <WorkspaceRenameDialog
+      visible={visible}
+      workspace={workspace}
+      onClose={onClose}
+      testID={testID}
+      suggestions={false}
+    />
+  );
+}
+
+function WorkspaceRenameDialog({
+  visible,
+  workspace,
+  onClose,
+  testID,
+  suggestions,
+}: WorkspaceRenameModalProps & { suggestions: boolean }) {
   const { t } = useTranslation();
+  const [openingTitle] = useState(workspace.title ?? workspace.name);
+  const renderSuggestions = useCallback(
+    (select: (title: string) => void, disabled: boolean) => (
+      <WorkspaceTitleSuggestions workspace={workspace} onSelect={select} disabled={disabled} />
+    ),
+    [workspace],
+  );
 
   const renameMutation = useMutation({
     mutationFn: async (title: string) => {
@@ -59,12 +99,13 @@ export function WorkspaceRenameModal({
     <AdaptiveRenameModal
       visible={visible}
       title={t("sidebar.workspace.rename.title")}
-      initialValue={workspace.title ?? workspace.name}
+      initialValue={suggestions ? openingTitle : (workspace.title ?? workspace.name)}
       placeholder={workspace.name}
       submitLabel={t("sidebar.workspace.rename.submit")}
       onClose={onClose}
       onSubmit={handleSubmit}
       testID={testID}
+      renderSuggestions={suggestions ? renderSuggestions : undefined}
     />
   );
 }

@@ -1374,6 +1374,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       provider: "codex",
       currentModeId: "full-access",
@@ -3062,6 +3063,7 @@ describe("create_agent MCP tool", () => {
     await mkdir(subdir, { recursive: true });
     spies.agentManager.getAgent.mockReturnValue({
       id: "voice-agent",
+      config: {},
       cwd: baseDir,
       workspaceId: "wks_voice",
       provider: "codex",
@@ -3116,6 +3118,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "codex",
@@ -3162,6 +3165,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "codex",
@@ -3207,6 +3211,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "codex",
@@ -3259,6 +3264,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "claude",
@@ -3573,6 +3579,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "claude",
@@ -3625,6 +3632,7 @@ describe("create_agent MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "claude",
@@ -3671,6 +3679,7 @@ describe("send_agent_prompt MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "codex",
@@ -3766,6 +3775,7 @@ describe("send_agent_prompt MCP tool", () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const parentAgent = {
       id: "parent-agent",
+      config: {},
       cwd: existingCwd,
       workspaceId: "wks_parent",
       provider: "codex",

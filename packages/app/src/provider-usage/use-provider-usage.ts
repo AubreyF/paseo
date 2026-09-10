@@ -21,6 +21,7 @@ async function fetchProviderUsage(client: ProviderUsageClient): Promise<Provider
 interface UseProviderUsageOptions {
   enabled?: boolean;
   pollActivity?: boolean;
+  pollUsage?: boolean;
 }
 
 export function useProviderUsage(
@@ -40,6 +41,9 @@ export function useProviderUsage(
   const queryKey = useMemo(() => providerUsageQueryKey(serverId), [serverId]);
   const canFetch = Boolean(serverId && client && isConnected && supportsProviderUsage);
   const enabled = Boolean((options.enabled ?? true) && canFetch);
+  let refetchInterval: number | false = false;
+  if (enabled && options.pollUsage) refetchInterval = 60_000;
+  if (enabled && options.pollActivity) refetchInterval = 15_000;
 
   const queryFn = useCallback(async () => {
     if (!client) {
@@ -56,7 +60,7 @@ export function useProviderUsage(
     refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
-    refetchInterval: enabled && options.pollActivity ? 15_000 : false,
+    refetchInterval,
   });
 
   const refresh = useCallback(async () => {

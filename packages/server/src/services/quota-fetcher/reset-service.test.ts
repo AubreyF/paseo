@@ -166,3 +166,39 @@ test("zero credits and unverified capabilities cannot prepare a new reset", asyn
   await expect(service.prepare("primary", "first")).rejects.toMatchObject({ code: "unavailable" });
   expect(await store.read("first")).toBeNull();
 });
+
+test.each(["reset", "alreadyRedeemed", "noCredit", "nothingToReset"] as const)(
+  "only confirmed recovery outcomes unlock tasks: %s",
+  async (outcome) => {
+    const directory = await mkdtemp(join(tmpdir(), "paseo-reset-unlock-"));
+    directories.push(directory);
+    const unlocked: string[] = [];
+    const service = new ProviderResetService({
+      store: new ResetCreditStore(directory),
+      logger: pino({ level: "silent" }),
+      refreshUsage: async () => {},
+      onResetApplied: async (providerId) => {
+        unlocked.push(providerId);
+      },
+      getClient: () => ({
+        openResetCreditSession: async () => ({
+          canRedeem: true,
+          read: async () => ({
+            status: "available",
+            accountId: "account",
+            accountLabel: null,
+            availableCount: 1,
+            credits: null,
+          }),
+          consume: async () => outcome,
+          dispose: async () => {},
+        }),
+      }),
+    });
+    const prepared = await service.prepare("codex", "account");
+    expect(unlocked).toEqual([]);
+    if (!prepared.operation) throw new Error("Missing operation");
+    await service.confirm("codex", "account", prepared.operation.operationId);
+    expect(unlocked).toEqual(outcome === "reset" || outcome === "alreadyRedeemed" ? ["codex"] : []);
+  },
+);

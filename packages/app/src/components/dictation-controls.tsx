@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { VolumeMeter } from "./volume-meter";
 import { FOOTER_HEIGHT } from "@/constants/layout";
 import type { DictationStatus } from "@/hooks/use-dictation";
+import { useVortonTouch } from "@/vorton-touch";
 
 interface DictationControlsProps {
   volume: number;
@@ -152,6 +153,7 @@ export function DictationOverlay({
   onDiscard,
 }: Omit<DictationControlsProps, "onStart" | "disabled" | "transcript"> & { errorText?: string }) {
   const { theme } = useUnistyles();
+  const touch = useVortonTouch();
   const { t } = useTranslation();
   const isFailed = status === "failed";
   const showActiveState = isRecording || isProcessing || isFailed;
@@ -159,15 +161,20 @@ export function DictationOverlay({
   const handleCancel = isFailed && onDiscard ? onDiscard : onCancel;
 
   const containerStyle = useMemo(
-    () => [overlayStyles.container, { backgroundColor: theme.colors.accent }],
-    [theme.colors.accent],
+    () => [
+      overlayStyles.container,
+      touch && overlayStyles.touchContainer,
+      { backgroundColor: theme.colors.accent },
+    ],
+    [theme.colors.accent, touch],
   );
   const overlayCancelButtonStyle = useMemo(
     () => [
       overlayStyles.cancelButton,
+      touch && overlayStyles.touchCancel,
       actionsDisabled && !isFailed && overlayStyles.buttonDisabled,
     ],
-    [actionsDisabled, isFailed],
+    [actionsDisabled, isFailed, touch],
   );
   const overlayTimerTextStyle = useMemo(
     () => [overlayStyles.timerText, { color: theme.colors.accentForeground }],
@@ -178,8 +185,12 @@ export function DictationOverlay({
     [theme.colors.accentForeground],
   );
   const overlayRetryButtonStyle = useMemo(
-    () => [overlayStyles.actionButton, { backgroundColor: theme.colors.accentForeground }],
-    [theme.colors.accentForeground],
+    () => [
+      overlayStyles.actionButton,
+      touch && overlayStyles.touchSubmit,
+      { backgroundColor: theme.colors.accentForeground },
+    ],
+    [theme.colors.accentForeground, touch],
   );
   const overlayConfirmButtonStyle = overlayRetryButtonStyle;
 
@@ -188,7 +199,7 @@ export function DictationOverlay({
   }
 
   return (
-    <View style={containerStyle}>
+    <View style={containerStyle} testID="dictation-overlay">
       <Pressable
         onPress={handleCancel}
         disabled={actionsDisabled && !isFailed}
@@ -199,7 +210,10 @@ export function DictationOverlay({
         <X size={theme.iconSize.lg} color={theme.colors.accentForeground} strokeWidth={2.5} />
       </Pressable>
 
-      <View style={overlayStyles.centerContainer}>
+      <View
+        pointerEvents={touch ? "none" : "auto"}
+        style={[overlayStyles.centerContainer, touch && overlayStyles.touchCenter]}
+      >
         <View style={overlayStyles.meterRow}>
           <VolumeMeter
             volume={volume}
@@ -219,9 +233,9 @@ export function DictationOverlay({
         ) : null}
       </View>
 
-      <View style={overlayStyles.actionButtonsContainer}>
+      <View style={[overlayStyles.actionButtonsContainer, touch && overlayStyles.touchActions]}>
         {actionsDisabled ? (
-          <View style={overlayStyles.loadingContainer}>
+          <View style={[overlayStyles.loadingContainer, touch && overlayStyles.touchSubmit]}>
             <LoadingSpinner size="small" color={theme.colors.accentForeground} />
           </View>
         ) : null}
@@ -241,7 +255,11 @@ export function DictationOverlay({
               onPress={onAccept}
               accessibilityRole="button"
               accessibilityLabel={t("message.dictation.insert")}
-              style={[overlayStyles.actionButton, OVERLAY_ACCEPT_BUTTON_BG]}
+              style={[
+                overlayStyles.actionButton,
+                OVERLAY_ACCEPT_BUTTON_BG,
+                touch && overlayStyles.touchEdit,
+              ]}
             >
               <Pencil
                 size={theme.iconSize.lg}
@@ -335,6 +353,22 @@ const OVERLAY_BUTTON_SIZE = 44;
 const OVERLAY_VERTICAL_PADDING = (FOOTER_HEIGHT - OVERLAY_BUTTON_SIZE) / 2;
 
 const overlayStyles = StyleSheet.create((theme) => ({
+  // The hidden composer still owns the footprint. Fill it rather than replacing
+  // a multiline draft with FOOTER_HEIGHT. Match its border + padding offsets.
+  touchContainer: { height: "100%", paddingHorizontal: 0, paddingVertical: 0 },
+  touchCancel: {
+    position: "absolute",
+    left: { xs: theme.spacing[3] + 1 - 6, md: theme.spacing[4] + 1 - 6 },
+    bottom: { xs: theme.spacing[2] + 1, md: theme.spacing[4] + 1 },
+  },
+  touchSubmit: {
+    position: "absolute",
+    right: { xs: theme.spacing[3] + 1 - 6, md: theme.spacing[4] + 1 - 6 },
+    bottom: { xs: theme.spacing[2] + 1, md: theme.spacing[4] + 1 },
+  },
+  touchEdit: { position: "absolute", top: 9, right: 13 },
+  touchActions: { position: "static" },
+  touchCenter: { alignSelf: "stretch", paddingHorizontal: 56, paddingTop: 8, paddingBottom: 52 },
   container: {
     flexDirection: "row",
     alignItems: "center",

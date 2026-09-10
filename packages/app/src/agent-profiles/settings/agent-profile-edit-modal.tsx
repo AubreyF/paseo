@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { toErrorMessage } from "@/utils/error-messages";
 import { AgentProfileAppearanceField } from "./agent-profile-appearance-field";
+import { generatedPresetNickname } from "../nickname";
 import { useAgentProfiles } from "../internal/use-agent-profiles";
 import type {
   AgentProfileFormModel,
@@ -162,6 +163,16 @@ function ProfileLaunchFields({
   if (!supportsLaunch || !vortonMode) return null;
   return (
     <>
+      <Field label="Nickname" hint="Leave blank to generate from the preset name.">
+        <FormTextInput
+          initialValue={state.nickname}
+          onChangeText={model.setNickname}
+          placeholder={generatedPresetNickname(state.name)}
+          accessibilityLabel="Preset nickname"
+          testID="agent-profile-nickname-input"
+          size={controlSize}
+        />
+      </Field>
       <Field
         label="Launch instructions"
         hint="Applied to new tasks only. Permissions are selected separately in the composer."

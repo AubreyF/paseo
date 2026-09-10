@@ -14,6 +14,7 @@ interface ResetServiceOptions {
   store: ResetCreditStore;
   getClient(providerId: string): Pick<AgentClient, "openResetCreditSession"> | null;
   refreshUsage(): Promise<void>;
+  onResetApplied?(providerId: string, resetAt: string): Promise<void>;
   logger: Logger;
 }
 
@@ -88,6 +89,17 @@ export class ProviderResetService {
         await this.options.refreshUsage();
       } catch {
         refreshError = "The reset result is saved, but usage could not be refreshed.";
+      }
+      if (outcome === "reset" || outcome === "alreadyRedeemed") {
+        try {
+          const operation = await this.options.store.read(accountId);
+          if (operation?.state === "completed") {
+            await this.options.onResetApplied?.(providerId, operation.createdAt);
+          }
+        } catch {
+          refreshError =
+            "The reset succeeded, but threads could not be unlocked. Retry this same reset operation; no additional credit will be spent.";
+        }
       }
       return { outcome, view, refreshError };
     });

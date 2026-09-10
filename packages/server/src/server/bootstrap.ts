@@ -130,6 +130,9 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import { reconcileQuotaReserveStartup } from "./agent/quota-reserve/reconcile-startup.js";
+import { QuotaReservePolling } from "./agent/quota-reserve/polling.js";
+import { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -936,6 +939,20 @@ export async function createPaseoDaemon(
     agentStorage,
   );
   await agentStorage.initialize();
+  const reserveRecoveryStops = await reconcileQuotaReserveStartup(agentStorage);
+  logger.info({ reserveRecoveryStops }, "Quota reserve startup reconciliation completed");
+  const providerUsageService = new ProviderUsageService({
+    logger,
+    getProviderConfigs: () => daemonConfigStore.get().providers,
+  });
+  const quotaReservePolling = new QuotaReservePolling({
+    agentManager,
+    usageService: providerUsageService,
+    logger,
+  });
+  agentManager.setQuotaReserveObservationReader((provider) =>
+    quotaReservePolling.readForAdmission(provider),
+  );
   logger.info({ elapsed: elapsed() }, "Agent storage initialized");
   await bootstrapWorkspaceRegistries({
     serverId,
@@ -1329,6 +1346,7 @@ export async function createPaseoDaemon(
     createPaseoWorktreeWorkspace: createSchedulePaseoWorktreeExternal,
     archiveWorkspace: archiveScheduleWorkspaceExternal,
   });
+  quotaReservePolling.start();
   await scheduleService.start();
   agentManager.setAgentArchivedCallback(async (agentId) => {
     try {
@@ -1707,6 +1725,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              providerUsageService,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
@@ -1754,6 +1773,7 @@ export async function createPaseoDaemon(
       scriptHealthMonitor.start();
     } catch (error) {
       unsubscribePluginProviders();
+      await quotaReservePolling.stop();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       await agentProviderRuntime.shutdown().catch(() => undefined);
@@ -1774,6 +1794,7 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
+    await quotaReservePolling.stop();
     await closeAllAgents(logger, agentManager);
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();

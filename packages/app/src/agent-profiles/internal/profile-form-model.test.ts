@@ -54,6 +54,26 @@ const DISABLED: ProviderSnapshotEntry = {
 
 const ENTRIES = [CLAUDE, CODEX, DISABLED];
 
+it("preserves nickname edits separately from the full name and supports clearing the override", () => {
+  const model = openAgentProfileForm({
+    mode: "edit",
+    profile: {
+      id: "secondary",
+      name: "Codex 2 Astra Medium",
+      nickname: "C2-AM",
+      provider: "codex",
+    },
+  });
+  expect(model.getState().nickname).toBe("C2-AM");
+  model.setNickname("  My coder  ");
+  expect(model.getState().submitValue).toMatchObject({
+    name: "Codex 2 Astra Medium",
+    nickname: "My coder",
+  });
+  model.setNickname("");
+  expect(model.getState().submitValue?.nickname).toBe("");
+});
+
 function openWithCatalog(
   snapshot: Parameters<typeof openAgentProfileForm>[0],
 ): AgentProfileFormModel {
@@ -180,6 +200,7 @@ describe("openAgentProfileForm", () => {
       workerProfileId: "",
       maxWorkers: 2,
       name: "Cheap grunt",
+      nickname: "",
       provider: "codex",
       model: "gpt-5.2-codex",
       modeId: "read-only",

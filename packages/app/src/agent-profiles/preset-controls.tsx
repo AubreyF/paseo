@@ -4,9 +4,9 @@ import { Text, ScrollView, View, useWindowDimensions } from "react-native";
 import { EditingTextInput } from "@/components/ui/text-input";
 import { StyleSheet } from "react-native-unistyles";
 import { SelectField } from "@/components/ui/select-field";
+import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { Button } from "@/components/ui/button";
-import { Combobox, ComboboxItem } from "@/components/ui/combobox";
-import { suggestPreset } from "./internal/recommendation";
+import { Combobox, ComboboxItem, SearchInput } from "@/components/ui/combobox";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import {
   formatLocalEndpointSummary,
@@ -17,6 +17,13 @@ import type { AgentModeControlValue } from "@/composer/agent-controls/mode-contr
 import { useAgentProfiles } from "./internal/use-agent-profiles";
 import { PresetUsageRail } from "./preset-usage-rail";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useVortonMode } from "@/vorton-mode";
+import { useVortonTouch } from "@/vorton-touch";
+import { useCompactPermission } from "./use-compact-permission";
+import { presetNickname } from "./nickname";
+import { permissionCaption } from "./permission-caption";
+import { RemainingRing } from "@/provider-usage/remaining-ring";
+import { selectedPresetPresentation } from "./selected-preset-presentation";
 
 interface PresetControlsProps {
   serverId: string | null;
@@ -42,12 +49,20 @@ export function PresetControls({
   selectedProfileId,
   selectedProfileName,
   currentProvider,
-  quotaPausedAt,
   modeControl,
   onEdit,
   disabled,
 }: PresetControlsProps) {
   const [open, setOpen] = useState(false);
+  const vortonMode = useVortonMode();
+  const touch = useVortonTouch();
+  const controlsRef = useRef<View>(null);
+  const fullPermissionCaption = permissionCaption(
+    modeControl?.modeOptions.find((entry) => entry.id === modeControl.selectedModeId)?.label ??
+      "Permissions",
+    vortonMode,
+  );
+  const triggerAccessibilityState = useMemo(() => ({ expanded: open }), [open]);
   const [query, setQuery] = useState("");
   const [inspectedId, setInspectedId] = useState<string>();
   const [now, setNow] = useState(Date.now);
@@ -56,7 +71,11 @@ export function PresetControls({
   const { width } = useWindowDimensions();
   const { profiles: definitions } = useAgentProfiles(serverId);
   const hasLocalEndpoint = profiles.rows.some((row) => Boolean(row.localEndpoint));
-  const { view } = useProviderUsage(serverId, { enabled: open, pollActivity: open });
+  const { view } = useProviderUsage(serverId, {
+    enabled: vortonMode && (open || Boolean(selectedProfileId)),
+    pollActivity: open,
+    pollUsage: Boolean(selectedProfileId),
+  });
   // Probe only while open; changing snapshots must not restart the refresh loop.
   const refreshRef = useRef(profiles.refreshStatus);
   refreshRef.current = profiles.refreshStatus;
@@ -64,11 +83,16 @@ export function PresetControls({
   refreshingRef.current = profiles.isRefreshingStatus;
   const lastRefresh = useRef(0);
   useEffect(() => {
-    if (!open) return;
+    if (!vortonMode || (!open && !selectedProfileId)) return;
     const tick = () => {
       const timestamp = Date.now();
       setNow(timestamp);
-      if (hasLocalEndpoint && !refreshingRef.current && timestamp - lastRefresh.current >= 60_000) {
+      if (
+        open &&
+        hasLocalEndpoint &&
+        !refreshingRef.current &&
+        timestamp - lastRefresh.current >= 60_000
+      ) {
         lastRefresh.current = timestamp;
         refreshRef.current?.();
       }
@@ -76,27 +100,46 @@ export function PresetControls({
     tick();
     const timer = setInterval(tick, 15_000);
     return () => clearInterval(timer);
-  }, [open, hasLocalEndpoint, serverId]);
-  const options = useMemo(
+  }, [open, hasLocalEndpoint, serverId, selectedProfileId, vortonMode]);
+  const visibleRows = useMemo(
     () =>
-      profiles.rows
-        .filter((row) => `${row.name} ${row.summary}`.toLowerCase().includes(query.toLowerCase()))
-        .map((row) => ({ id: row.id, label: row.name })),
-    [profiles.rows, query],
+      profiles.rows.filter((row) => {
+        const nickname = presetNickname({
+          name: row.name,
+          nickname: definitions?.find((entry) => entry.id === row.id)?.nickname,
+        });
+        return `${row.name} ${row.summary} ${nickname}`.toLowerCase().includes(query.toLowerCase());
+      }),
+    [profiles.rows, query, definitions],
   );
-  const visibleRows = profiles.rows.filter((row) =>
-    `${row.name} ${row.summary}`.toLowerCase().includes(query.toLowerCase()),
+  const options = useMemo(
+    () => visibleRows.map((row) => ({ id: row.id, label: row.name })),
+    [visibleRows],
   );
   const inspected =
     profiles.rows.find((row) => row.id === (inspectedId ?? selectedProfileId)) ?? visibleRows[0];
   const definition = definitions?.find((row) => row.id === inspected?.id);
   const worker = definitions?.find((row) => row.id === definition?.workerProfileId);
   const selected = profiles.rows.find((row) => row.id === selectedProfileId);
-  const triggerLabel = selectedProfileName ?? selected?.name ?? "Custom configuration";
-  const suggestion =
-    quotaPausedAt && view.kind === "ready"
-      ? suggestPreset(profiles.rows, currentProvider, view.payload.providers)
-      : undefined;
+  const { triggerLabel, showRing, remaining, accessibilityLabel } = selectedPresetPresentation({
+    selectedProfileId,
+    selectedProfileName,
+    currentProvider,
+    selected,
+    definitions,
+    vortonMode,
+    view,
+    now,
+  });
+  const compactPermission = useCompactPermission(
+    controlsRef,
+    touch,
+    fullPermissionCaption,
+    triggerLabel,
+  );
+  const permissionControl = (
+    <PresetPermissions modeControl={modeControl} disabled={disabled} compact={compactPermission} />
+  );
   const show = useCallback(() => {
     setInspectedId(selectedProfileId);
     setQuery("");
@@ -141,27 +184,30 @@ export function PresetControls({
     />
   );
   return (
-    <View style={styles.controls}>
-      {quotaPausedAt ? (
-        <Text style={styles.notice} accessibilityRole="alert">
-          Quota exhausted. New turns are blocked.{" "}
-          {suggestion ? `Suggested preset: ${suggestion.name}.` : "Choose another preset."} Confirm
-          a new task to continue.
-        </Text>
-      ) : null}
+    <View
+      ref={controlsRef}
+      style={[styles.controls, touch && styles.touchControls]}
+      testID="preset-controls"
+    >
       <View ref={anchorRef} collapsable={false} style={styles.trigger}>
-        <Button
-          variant="ghost"
+        <ComboboxTrigger
           style={styles.toolbarTrigger}
-          textStyle={styles.toolbarText}
-          size="sm"
+          accessibilityRole="button"
+          accessibilityState={triggerAccessibilityState}
           onPress={show}
           disabled={disabled || profiles.isApplying}
-          accessibilityLabel={`Preset (${triggerLabel})`}
+          accessibilityLabel={accessibilityLabel}
           testID="agent-preset-selector"
         >
-          {triggerLabel} ⌄
-        </Button>
+          {showRing ? (
+            <View style={styles.ring}>
+              <RemainingRing remaining={remaining} />
+            </View>
+          ) : null}
+          <Text style={styles.toolbarText} numberOfLines={1}>
+            {triggerLabel}
+          </Text>
+        </ComboboxTrigger>
       </View>
       <Combobox
         options={options}
@@ -180,19 +226,31 @@ export function PresetControls({
       >
         <View style={isCompact || width < 760 ? styles.stacked : styles.split}>
           <View style={styles.list}>
-            <EditingTextInput
-              initialValue={query}
-              onChangeText={setQuery}
-              placeholder="Search presets"
-              accessibilityLabel="Search presets"
-              style={styles.search}
-              autoFocus
-            />
+            {vortonMode ? (
+              <SearchInput placeholder="Search presets" onChangeText={setQuery} autoFocus />
+            ) : (
+              <EditingTextInput
+                initialValue={query}
+                onChangeText={setQuery}
+                placeholder="Search presets"
+                accessibilityLabel="Search presets"
+                style={styles.search}
+                autoFocus
+              />
+            )}
             <ScrollView style={styles.rows} keyboardShouldPersistTaps="handled">
               {visibleRows.map((row) => (
                 <PresetRow
                   key={row.id}
                   row={row}
+                  nickname={
+                    vortonMode
+                      ? presetNickname({
+                          name: row.name,
+                          nickname: definitions?.find((entry) => entry.id === row.id)?.nickname,
+                        })
+                      : undefined
+                  }
                   rail={renderRail(row)}
                   selected={row.id === selectedProfileId}
                   active={row.id === inspected?.id}
@@ -202,7 +260,7 @@ export function PresetControls({
               ))}
               {!visibleRows.length ? <Text style={styles.meta}>No matching presets</Text> : null}
             </ScrollView>
-            <View style={styles.manage}>{footer}</View>
+            <View style={[styles.manage, vortonMode && styles.manageVorton]}>{footer}</View>
           </View>
           {inspected ? (
             <PresetInspector
@@ -214,29 +272,42 @@ export function PresetControls({
           ) : null}
         </View>
       </Combobox>
-      <PresetPermissions modeControl={modeControl} disabled={disabled} />
+      {touch ? <View style={styles.touchPermissions}>{permissionControl}</View> : permissionControl}
     </View>
   );
 }
 function PresetPermissions({
   modeControl,
   disabled,
+  compact,
 }: {
   modeControl: AgentModeControlValue | null;
   disabled: boolean;
+  compact: boolean;
 }) {
+  const vortonMode = useVortonMode();
+  const selectedMode = modeControl?.modeOptions.find(
+    (entry) => entry.id === modeControl.selectedModeId,
+  );
+  const selectedDisplay = useMemo(
+    () =>
+      selectedMode
+        ? { ...selectedMode, label: permissionCaption(selectedMode.label, vortonMode, compact) }
+        : null,
+    [selectedMode, vortonMode, compact],
+  );
   return modeControl ? (
     <SelectField
       label="Permissions"
+      accessibilityLabel={`Permissions (${selectedMode?.label ?? "Permissions"})`}
+      triggerTestID="preset-permission-trigger"
       toolbar
       triggerTextStyle={styles.toolbarText}
       size="sm"
       desktopPlacement="top-start"
       field={false}
       value={modeControl.selectedModeId ?? null}
-      selectedDisplay={
-        modeControl.modeOptions.find((entry) => entry.id === modeControl.selectedModeId) ?? null
-      }
+      selectedDisplay={selectedDisplay}
       options={modeControl.modeOptions.map((entry) => ({
         id: entry.id,
         value: entry.id,
@@ -253,6 +324,7 @@ function PresetPermissions({
 }
 function PresetRow({
   row,
+  nickname,
   rail,
   selected,
   active,
@@ -260,6 +332,7 @@ function PresetRow({
   onSelect,
 }: {
   row: AgentProfilePicker["rows"][number];
+  nickname?: string;
   rail: ReactNode;
   selected: boolean;
   active: boolean;
@@ -271,7 +344,7 @@ function PresetRow({
     <ComboboxItem
       style={styles.row}
       labelStyle={styles.text}
-      label={row.name}
+      label={nickname ? `${nickname} · ${row.name}` : row.name}
       descriptionPlacement="below"
       descriptionSlot={rail}
       selectionPlacement="leading"
@@ -297,8 +370,12 @@ function PresetInspector({
   if (row.localEndpoint) execution = "Local inference through Pi.";
   if (worker)
     execution = `Supervises ${worker.name}. Up to ${definition?.maxWorkers ?? 2} local workers.`;
+  const vortonMode = useVortonMode();
   return (
-    <ScrollView style={styles.inspector} contentContainerStyle={styles.inspectorContent}>
+    <ScrollView
+      style={[styles.inspector, vortonMode && styles.inspectorVorton]}
+      contentContainerStyle={styles.inspectorContent}
+    >
       <Text style={styles.title}>{row.name}</Text>
       {rail}
       <Text style={styles.label}>Configuration</Text>
@@ -321,6 +398,8 @@ function PresetInspector({
   );
 }
 const styles = StyleSheet.create((theme) => ({
+  touchControls: { flex: 1, flexWrap: "nowrap" },
+  touchPermissions: { flexShrink: 0 },
   controls: {
     minWidth: 0,
     flexShrink: 1,
@@ -338,6 +417,7 @@ const styles = StyleSheet.create((theme) => ({
   toolbarTrigger: {
     height: 28,
     minHeight: 28,
+    justifyContent: "center",
     paddingHorizontal: theme.spacing[2],
     borderWidth: 0,
     borderRadius: theme.borderRadius["2xl"],
@@ -366,6 +446,9 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     backgroundColor: theme.colors.surface2,
   },
+  ring: { marginRight: theme.spacing[1] },
+  manageVorton: { padding: theme.spacing[3] },
+  inspectorVorton: { backgroundColor: theme.colors.surface1 },
   inspectorContent: {
     padding: theme.spacing[4],
     gap: theme.spacing[2],

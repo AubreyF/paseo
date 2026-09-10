@@ -16,6 +16,36 @@ function createDeferredPromise<T>() {
 }
 
 describe("submitAgentInput", () => {
+  it.each([false, true])(
+    "blocks audio confirmation and force-send without a configuration (force=%s)",
+    async (forceSend) => {
+      const submitMessage = vi.fn();
+      const queueMessage = vi.fn();
+      const clearDraft = vi.fn();
+      const setUserInput = vi.fn();
+      const result = await submitAgentInput({
+        message: "Dictated request",
+        attachments: [],
+        canSubmit: false,
+        allowEmptySubmit: true,
+        forceSend,
+        isAgentRunning: false,
+        submitMessage,
+        queueMessage,
+        clearDraft,
+        setUserInput,
+        setAttachments: vi.fn(),
+        setSendError: vi.fn(),
+        setIsProcessing: vi.fn(),
+      });
+      expect(result).toBe("noop");
+      expect(submitMessage).not.toHaveBeenCalled();
+      expect(queueMessage).not.toHaveBeenCalled();
+      expect(clearDraft).not.toHaveBeenCalled();
+      expect(setUserInput).not.toHaveBeenCalled();
+    },
+  );
+
   it("clears the composer before an in-flight submit resolves", async () => {
     const deferred = createDeferredPromise<void>();
     const queueMessage = vi.fn();

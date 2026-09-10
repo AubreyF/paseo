@@ -48,6 +48,26 @@ Results distinguish applied, already redeemed, no credit, and nothing to reset. 
 
 Vorton Mode defaults off and is saved per device. General settings and the sidebar's Paseo/Vorton selector control the same preference. Enabling it exposes named launch presets, usage rails, reset controls, and supervisor configuration. Disabling it restores standard composer controls without deleting accounts or presets or stopping running tasks. Manage presets lives inside the preset picker.
 
-A configurable remaining-quota reserve with automatic pause and resume is requested but not implemented. The current quota-exhaustion stop is not an automatic reserve scheduler. The interruption policy for active turns still needs an explicit decision.
+The approved reserve policy is described below. Its daemon enforcement and controls are not implemented yet. The current quota-exhaustion stop does not enforce it.
 
 The Docker recipe is optional. Upstream core does not require Docker, MTPLX, a particular account naming scheme, or an inference gateway. Keep deployment changes reviewable separately from profile UI, launch resolution, and quota lifecycle changes. Local builds must be reviewed before any upstream publication.
+
+## Default configuration
+
+Manage presets in host settings includes Default configuration. The selected profile stores `isDefault: true` in the host's profile list. The settings control writes false on other profiles so only one is selected. Require a selection disables the default. Removing the default does not silently choose another account. Both profile editors retain this marker when editing a profile.
+
+New Vorton drafts visibly apply an available default. Otherwise submission and audio start are blocked until a profile is selected. The new-workspace creation handler also rejects a missing Vorton profile. Existing chats are not changed. Standard Paseo behavior is unchanged.
+
+## Quota reserve implementation contract
+
+Approved September 10, 2026. Cruise Reserve defaults to 15 percent remaining; Redline defaults to 10 percent. Profiles provide defaults, tasks freeze the effective policy at launch, and an explicit task override can disable reserve enforcement. Actual provider quota exhaustion remains enforced with reserve Off. Do not attach the new policy to existing tasks automatically.
+
+Below Cruise Reserve, let already-running turns finish and block new turns and managed workers. At or below Redline, request immediate cancellation of active turns and managed workers. Cancellation and usage-reporting latency can consume allowance beyond Redline; it cannot guarantee a retained balance.
+
+Evaluate every applicable rolling window separately. Only fresh observations with all required windows above Cruise Reserve can automatically continue work paused by that policy. Equality retains an existing pause. Missing or stale usage blocks admission and automatic recovery but does not fabricate a Redline crossing. A Redline stop requires explicit continuation after recovery. Actual quota exhaustion retains the reviewed-successor requirement. Completed, manually stopped, archived, and exhausted tasks never wake automatically.
+
+Keep policy state separate from `quotaPausedAt`. Persist stop reason and continuation eligibility before effects, serialize admission against policy transitions, and reconcile interrupted work on daemon startup before permitting continuation. Enforce the policy with every browser closed. Share observations by verified account and quota scope; task thresholds remain independent. Purchased credits and unrelated code-review limits do not establish coding-task capacity.
+
+The third borderless composer control follows permissions and shows both thresholds. Gate presentation and new launch policy attachment on Vorton and a daemon capability. Turning Vorton off does not change policies already attached to tasks. New protocol fields stay optional; unsupported hosts require an update rather than browser-only enforcement.
+
+Acceptance includes threshold equality, multiple windows, stale data, manual stops, worker completion races, restart recovery, and duplicate wake prevention. Deploy through the [instance continuity workflow](instance-continuity.md); source and web publication alone cannot activate daemon enforcement.

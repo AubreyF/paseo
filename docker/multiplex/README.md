@@ -25,15 +25,43 @@ Start the service:
 ./update.sh
 ```
 
-The Compose file binds Paseo to host loopback. Keep that default and place Tailscale Serve, Caddy, or another authenticated HTTPS proxy in front of `http://127.0.0.1:6767`.
+## Private HTTPS with Tailscale
 
-For Tailscale Serve:
+Run Tailscale natively on the host. Install it on your iPhone, iPad, and development machines too, then sign in to the intended tailnet. On macOS, complete the installer and approve its network extension. See the [official installation guide](https://tailscale.com/docs/install/mac).
+
+Keep Compose's loopback binding and `PASEO_PASSWORD`. Serve the container's bundled UI and API together. The example below uses port 6768 for an experimental instance alongside an existing daemon on 6767; substitute your instance's `PASEO_PORT`.
+
+First inspect existing Serve configuration so you do not overwrite another service:
 
 ```bash
-tailscale serve https / http://127.0.0.1:6767
+tailscale status
+tailscale serve status
 ```
 
-Set `PASEO_HOSTNAMES` in `.env` to the exact Tailscale DNS name if Paseo rejects the forwarded host header.
+On the standalone macOS app, the CLI is available at `/Applications/Tailscale.app/Contents/MacOS/Tailscale` if `tailscale` is not on your PATH. With HTTPS port 443 unused in Serve, configure:
+
+```bash
+tailscale serve --bg --https=443 http://127.0.0.1:6768
+tailscale serve status
+```
+
+Follow the HTTPS enablement link if Tailscale supplies one. Record the actual `https://<machine>.<tailnet>.ts.net` address it reports. Use **Serve**, which is private to your tailnet, rather than Funnel, which publishes a service to the internet. See the [current Serve documentation](https://tailscale.com/docs/reference/tailscale-cli/serve).
+
+Review tailnet access rules before admitting other people. Default or existing broad grants may allow more devices than intended. Restrict the host's HTTPS endpoint to its intended users; adding a narrow grant does not cancel broader existing grants. Keep each person's application password distinct. See [Tailscale access controls](https://tailscale.com/docs/features/access-control/grants).
+
+If Paseo rejects the proxy hostname or WebSocket origin, add only the exact reported DNS name to `PASEO_HOSTNAMES` and the exact HTTPS origin to `daemon.cors.allowedOrigins` in this instance's persistent configuration. Apply any required restart only after checking its active tasks and obtaining permission for a production daemon. Do not allow every origin or expose the container port on all interfaces.
+
+Verify before calling access ready:
+
+1. Open the HTTPS address on a connected development machine. Confirm the browser uses the intended daemon and requires its password for authenticated access.
+2. On your iPhone, turn Wi-Fi off, connect Tailscale, and open the same address in Safari. Confirm the workspace loads and a harmless task can be read.
+3. Disconnect Tailscale on that client and verify that a fresh connection cannot reach the private service.
+4. Verify the WebSocket remains connected, the narrow layout works, and dictation receives microphone permission and produces text. HTTPS alone does not configure speech recognition.
+5. Test host startup and reconnect behavior during a planned maintenance window. `--bg` preserves Serve configuration, but does not make a sleeping Mac or stopped Docker instance available.
+
+Do not forward the development preview on port 8081. Remote devices should receive the bundled UI from the same reviewed deployment as the daemon. Local edits require a new reviewed build before they appear there.
+
+To remove only this HTTPS endpoint, use `tailscale serve --https=443 off`. Do not use a blanket Serve reset on a shared host.
 
 ## Configure provider instances
 

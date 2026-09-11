@@ -12,3 +12,8 @@ pre-commit:
       run: npm run lint -- {staged_files}
     - name: typecheck
       run: npm run typecheck
+
+pre-push:
+  jobs:
+    - name: secrets
+      run: npm run security:secrets

@@ -1,8 +1,7 @@
 # "Vorton Mode" for Paseo
 
-[Paseo](https://github.com/getpaseo/paseo) is the ultimate open source visual control plane for human-supervised software development. 
+[Paseo](https://github.com/getpaseo/paseo) is the ultimate open source visual control plane for human-supervised software development.
 Aubrey's experimental fork here adds frontier provider account multiplexing and utilization monitoring, frontier subscription reset management, named agent configurations, improved mobile/tablet ux, and bounded local workers. Normal Paseo remains functional in this fork. Activate **Vorton** in the sidebar to take your dev fleet to the next level.
-
 
 ## What you can do
 
@@ -32,7 +31,7 @@ Use **Tailscale Serve** to put the container's bundled web interface behind priv
 
 Follow the [remote access setup and verification steps](docker/multiplex/README.md#private-https-with-tailscale). On an iPhone or iPad, connect Tailscale and open the resulting HTTPS address in Safari. Use that address on your other development machines too. The remote browser connects to the hosted daemon, so its project paths refer to the host's container.
 
-Serve the bundled web interface rather than the development preview on port 8081. Updating source files does not update a running image. For this installation, publish a tested web export using the persistent web workflow below. Server changes still require a reviewed server build and coordinated deployment.
+Serve the bundled web interface rather than the development preview on port 8081. Updating source files does not update a running image. For an existing installation, publish a tested web export using the persistent web workflow below. Server changes still require a reviewed server build and coordinated deployment.
 
 Remote availability depends on the Mac staying awake, Docker running, and Tailscale staying connected. Verify startup and recovery before treating the machine as unattended infrastructure.
 

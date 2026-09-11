@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+unset BASH_ENV ENV PYTHONPATH PYTHONHOME
+umask 077
+install -d -m 0700 /var/lib/tailscale /run/tailscale /run/personal-tailscale
+# Initialize only an empty disposable home. Never recursively change owner data.
+if ! /usr/bin/setpriv --reuid=paseo --regid=paseo --clear-groups \
+  --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs \
+  /usr/bin/test -d /home/paseo/.paseo; then
+  install -d -o paseo -g paseo -m 0700 /home/paseo/.paseo
+  chown paseo:paseo /home/paseo
+fi
+exec /usr/bin/supervisord -n -c /etc/personal-tailscale/supervisord.conf

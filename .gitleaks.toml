@@ -1,0 +1,54 @@
+title = "Repository secret detection"
+[extend]
+useDefault = true
+
+# These are public low-order peer-key test vectors, not private keys.
+[[allowlists]]
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)packages/relay/src/crypto\.test\.ts$''']
+regexes = ['''^(?:e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800|5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157)$''']
+
+# Historical generated JavaScript contains this identifier expression.
+[[allowlists]]
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "match"
+paths = ['''(^|/)packages/app/src/source-editor/codemirror/webview-html\.ts$''']
+regexes = ['''^defaultKeymapLength\s*=\s*defaultKeymap2\.length;?$''']
+
+# Persistent credentials are private even when their contents use an unknown format.
+[[rules]]
+id = "credential-state-file"
+description = "Credential or environment state must stay outside Git"
+path = '''(^|/)(auth\.json|hosts\.yml|tailscaled\.state|\.credentials\.json|credentials\.json|\.env|\.env\.local|\.env\.production)$'''
+regex = '''(?s).+'''
+
+[[rules]]
+id = "private-tailnet-address"
+description = "Use placeholders instead of installation tailnet addresses"
+regex = '''(?i)\b[a-z0-9][a-z0-9-]*\.tail[0-9a-f]{6}\.ts\.net\b'''
+
+[[rules.allowlists]]
+condition = "AND"
+commits = ["85e4e9ddaa5440a2226906b10323f4d6c83a7924"]
+paths = ['''^packages/voice\-mobile/hooks/use\-settings\.ts$''']
+description = "Pre-existing upstream example address; only this historical file and commit"
+
+[[rules.allowlists]]
+condition = "AND"
+commits = ["c3049b8fa0b7d4c7ffc00d813f7922bb890bcc0c"]
+paths = ['''^packages/voice\-assistant/src/server/index\.ts$''']
+description = "Pre-existing upstream example address; only this historical file and commit"
+
+[[rules.allowlists]]
+condition = "AND"
+commits = ["fee0f4fd285d2549ddad8d265fd4df69d1740bd0"]
+paths = ['''^packages/web/MCP_INTEGRATION\.md$''']
+description = "Pre-existing upstream example address; only this historical file and commit"
+
+[[rules.allowlists]]
+condition = "AND"
+commits = ["fee0f4fd285d2549ddad8d265fd4df69d1740bd0"]
+paths = ['''^packages/web/REALTIME_API_CONFIGURATION\.md$''']
+description = "Pre-existing upstream example address; only this historical file and commit"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+unset BASH_ENV ENV PYTHONPATH PYTHONHOME
+while IFS= read -r name; do
+  case "$name" in TS_*|TAILSCALE_*) unset "$name" ;; esac
+done < <(compgen -e)
+exec /usr/bin/setpriv --reuid=paseo --regid=paseo --init-groups \
+  --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs \
+  /bin/bash /usr/local/bin/paseo-docker-entrypoint

@@ -45,3 +45,15 @@ docker/multiplex/data
 docker/multiplex/workspace
 **/auth.json
 **/.pi
+
+# Private installation material belongs outside the source checkout.
+**/private-deployment/
+**/private-source/
+**/tailscaled.state
+**/tailscale-state/
+**/hosts.yml
+**/auth.json
+**/.credentials.json
+**/credentials.json
+**/__pycache__/
+**/*.pyc

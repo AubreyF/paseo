@@ -118,7 +118,8 @@
     "release:promote": "npm run release:check && npm run version:all:promote && npm run release:publish && npm run release:push",
     "release:patch": "npm run release:check && npm run version:all:patch && npm run release:publish && npm run release:push",
     "release:minor": "npm run release:check && npm run version:all:minor && npm run release:publish && npm run release:push",
-    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push"
+    "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push",
+    "security:secrets": "gitleaks git . --config .gitleaks.toml --log-opts=\"--all --full-history\" --redact --ignore-gitleaks-allow --gitleaks-ignore-path .git/no-gitleaks-ignore --max-archive-depth 3 --no-banner"
   },
   "devDependencies": {
     "@types/ws": "^8.5.14",

@@ -57,3 +57,13 @@ docker/multiplex/workspace
 **/credentials.json
 **/__pycache__/
 **/*.pyc
+
+# Legacy local recipes and authentication directories are not publication inputs.
+/docker/personal-tailscale/
+**/.ssh/
+**/.config/gh/
+**/id_rsa
+**/id_ed25519
+**/*.p12
+**/*.pfx
+**/*.key

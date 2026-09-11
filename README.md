@@ -1,6 +1,8 @@
-# Vorton Mode for Paseo
+# "Vorton Mode" for Paseo
 
-This experimental fork adds named agent configurations, account utilization, explicit reset management, and bounded local workers to [Paseo](https://github.com/getpaseo/paseo). Normal Paseo remains the default. Enable **Vorton** in the sidebar to use the additional controls.
+[Paseo](https://github.com/getpaseo/paseo) is the ultimate open source visual control plane for human-supervised software development. 
+Aubrey's experimental fork here adds frontier provider account multiplexing and utilization monitoring, frontier subscription reset management, named agent configurations, improved mobile/tablet ux, and bounded local workers. Normal Paseo remains functional in this fork. Activate **Vorton** in the sidebar to take your dev fleet to the next level.
+
 
 ## What you can do
 

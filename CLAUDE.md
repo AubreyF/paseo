@@ -60,6 +60,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/android.md](docs/android.md)                                   | App variants, local/cloud builds, EAS workflows, version codes, F-Droid source builds and store metadata                       |
 | [docs/docker.md](docs/docker.md)                                     | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
 | [docs/container-tailscale.md](docs/container-tailscale.md)           | Reusable single-container Tailscale architecture and private installation boundaries                                           |
+| [docs/publication-hygiene.md](docs/publication-hygiene.md)           | Public source boundaries, secret checks and history cleanup                                                                    |
 | [docs/release.md](docs/release.md)                                   | Release playbook, draft releases, completion checklist                                                                         |
 | [docs/terminal-activity.md](docs/terminal-activity.md)               | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
 | [SECURITY.md](SECURITY.md)                                           | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |

@@ -259,7 +259,11 @@ export function DictationOverlay({
 
       <View
         pointerEvents={touch ? "none" : "auto"}
-        style={[overlayStyles.centerContainer, touch && overlayStyles.touchCenter]}
+        style={[
+          overlayStyles.centerContainer,
+          touch && overlayStyles.touchCenter,
+          mobileComposer.enabled && overlayStyles.mobileCenter,
+        ]}
       >
         <View style={overlayStyles.meterRow}>
           <VolumeMeter
@@ -434,6 +438,9 @@ const overlayStyles = StyleSheet.create((theme) => ({
   },
   touchActions: { position: "static" },
   touchCenter: { alignSelf: "stretch", paddingHorizontal: 56, paddingVertical: 8 },
+  // The full-width background extends 9px above and 16px below the field.
+  // Offset its contents by half that difference to center in the visible green area.
+  mobileCenter: { paddingTop: 15 },
   container: {
     flexDirection: "row",
     alignItems: "center",

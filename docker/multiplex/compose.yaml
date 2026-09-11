@@ -5,7 +5,7 @@ services:
     image: ${PASEO_IMAGE:-ghcr.io/aubreyf/paseo-multiplex:edge}
     restart: unless-stopped
     init: true
-    pids_limit: 512
+    pids_limit: 2048
     logging:
       driver: json-file
       options:

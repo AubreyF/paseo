@@ -296,30 +296,36 @@ function PresetPermissions({
         : null,
     [selectedMode, vortonMode, compact],
   );
-  return modeControl ? (
+  const selectMode = useCallback(
+    (modeId: string) => modeControl?.onSelectMode(modeId),
+    [modeControl],
+  );
+  return (
     <SelectField
       label="Permissions"
-      accessibilityLabel={`Permissions (${selectedMode?.label ?? "Permissions"})`}
+      accessibilityLabel={
+        modeControl
+          ? `Permissions (${selectedMode?.label ?? "Permissions"})`
+          : "Permission modes unavailable"
+      }
       triggerTestID="preset-permission-trigger"
       toolbar
       triggerTextStyle={styles.toolbarText}
       size="sm"
       desktopPlacement="top-start"
       field={false}
-      value={modeControl.selectedModeId ?? null}
+      value={modeControl?.selectedModeId ?? null}
       selectedDisplay={selectedDisplay}
-      options={modeControl.modeOptions.map((entry) => ({
+      options={(modeControl?.modeOptions ?? []).map((entry) => ({
         id: entry.id,
         value: entry.id,
         label: entry.label,
       }))}
-      onChange={modeControl.onSelectMode}
-      disabled={disabled}
-      placeholder="Permissions"
+      onChange={selectMode}
+      disabled={disabled || !modeControl || modeControl.disabled}
+      placeholder={permissionCaption("Permissions", vortonMode, compact)}
       emptyText="No permission modes"
     />
-  ) : (
-    <Text style={styles.meta}>No provider permission modes</Text>
   );
 }
 function PresetRow({

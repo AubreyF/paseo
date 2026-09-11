@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AgentMode } from "@getpaseo/protocol/agent-types";
-import { resolveAgentControlsMode, resolveNextAgentModeId } from "./mode";
+import type { AgentMode, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
+import { resolveAgentControlsMode, resolveLiveAgentModes, resolveNextAgentModeId } from "./mode";
 
 const PLAN_MODE = { id: "plan", label: "Plan" } satisfies AgentMode;
 
@@ -65,5 +65,51 @@ describe("resolveNextAgentModeId", () => {
   it("returns null when there are fewer than two modes", () => {
     expect(resolveNextAgentModeId({ modeOptions: [], selectedMode: "" })).toBeNull();
     expect(resolveNextAgentModeId({ modeOptions: [PLAN_MODE], selectedMode: "plan" })).toBeNull();
+  });
+});
+
+const snapshotEntries: ProviderSnapshotEntry[] = [
+  { provider: "codex-secondary", status: "ready", enabled: true, modes: MODES },
+];
+const cachedModeInput = {
+  vortonMode: true,
+  availableModes: [],
+  supportsDynamicModes: false,
+  provider: "codex-secondary",
+  snapshotEntries,
+};
+
+describe("resolveLiveAgentModes", () => {
+  it("restores fixed permission choices from the configured host catalog in Vorton", () => {
+    expect(resolveLiveAgentModes(cachedModeInput)).toBe(MODES);
+    expect(resolveLiveAgentModes({ ...cachedModeInput, vortonMode: false })).toEqual([]);
+  });
+  it("keeps session modes authoritative and never substitutes dynamic session choices", () => {
+    const availableModes = [PLAN_MODE];
+    expect(resolveLiveAgentModes({ ...cachedModeInput, availableModes })).toBe(availableModes);
+    expect(resolveLiveAgentModes({ ...cachedModeInput, supportsDynamicModes: true })).toEqual([]);
+  });
+  it("does not borrow another account's modes or invent modes before discovery", () => {
+    expect(resolveLiveAgentModes({ ...cachedModeInput, provider: "codex-primary" })).toEqual([]);
+    expect(resolveLiveAgentModes({ ...cachedModeInput, snapshotEntries: undefined })).toEqual([]);
+  });
+  it.each(["loading", "error", "unavailable"] as const)(
+    "ignores a %s provider catalog",
+    (status) => {
+      expect(
+        resolveLiveAgentModes({
+          ...cachedModeInput,
+          snapshotEntries: [{ ...snapshotEntries[0]!, status }],
+        }),
+      ).toEqual([]);
+    },
+  );
+  it("ignores disabled providers", () => {
+    expect(
+      resolveLiveAgentModes({
+        ...cachedModeInput,
+        snapshotEntries: [{ ...snapshotEntries[0]!, enabled: false }],
+      }),
+    ).toEqual([]);
   });
 });

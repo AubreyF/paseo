@@ -1,5 +1,5 @@
 import type { DraftAgentControlsProps } from "@/composer/agent-controls";
-import type { AgentMode } from "@getpaseo/protocol/agent-types";
+import type { AgentMode, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 
 export function resolveNextAgentModeId({
   modeOptions,
@@ -18,4 +18,21 @@ export function resolveNextAgentModeId({
 
 export function resolveAgentControlsMode(agentControls?: DraftAgentControlsProps) {
   return agentControls ? "draft" : "ready";
+}
+
+export function resolveLiveAgentModes(input: {
+  vortonMode: boolean;
+  availableModes: AgentMode[];
+  supportsDynamicModes: boolean;
+  provider: string;
+  snapshotEntries: ProviderSnapshotEntry[] | undefined;
+}): AgentMode[] {
+  if (!input.vortonMode || input.availableModes.length > 0 || input.supportsDynamicModes) {
+    return input.availableModes;
+  }
+  // Cached and stored agents omit session modes. Fixed-mode providers can use
+  // the host's catalog until the session snapshot arrives; dynamic modes cannot.
+  const entry = input.snapshotEntries?.find((candidate) => candidate.provider === input.provider);
+  if (entry?.status !== "ready" || !entry.enabled) return input.availableModes;
+  return entry.modes ?? input.availableModes;
 }

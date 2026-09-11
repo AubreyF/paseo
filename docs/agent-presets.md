@@ -54,9 +54,9 @@ The Docker recipe is optional. Upstream core does not require Docker, MTPLX, a p
 
 ## Default configuration
 
-Manage presets in host settings includes Default configuration. The selected profile stores `isDefault: true` in the host's profile list. The settings control writes false on other profiles so only one is selected. Require a selection disables the default. Removing the default does not silently choose another account. Both profile editors retain this marker when editing a profile.
+Manage presets in host settings includes Default configuration. The selected profile stores `isDefault: true` in the host's profile list. The settings control writes false on other profiles so only one is selected. Vorton uses the first configuration when no default exists and persists that choice on the next profile save. Removing the default selects the first remaining configuration. Both profile editors retain this marker when editing a profile.
 
-New Vorton drafts visibly apply an available default. Otherwise submission and audio start are blocked until a profile is selected. The new-workspace creation handler also rejects a missing Vorton profile. Existing chats are not changed. Standard Paseo behavior is unchanged.
+New Vorton drafts visibly apply the available default, or the first available configuration when the default is unavailable. An existing draft selection is retained. Submission and audio start remain blocked while no configuration is available. The new-workspace creation handler also rejects a missing Vorton profile. Existing chats are not changed. Standard Paseo behavior is unchanged.
 
 ## Quota reserve implementation contract
 

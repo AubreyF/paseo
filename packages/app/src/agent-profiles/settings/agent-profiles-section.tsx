@@ -18,6 +18,7 @@ import { generateAgentProfileId } from "../internal/profile-id";
 import type { AgentProfileValue } from "../internal/profile-form-model";
 import { AgentProfileEditModal } from "./agent-profile-edit-modal";
 import { AgentProfileRow } from "./agent-profile-row";
+import { defaultProfile } from "../internal/default-profile";
 
 const ThemedPlus = withUnistyles(Plus);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -136,21 +137,19 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
   );
 
   const defaultOptions = useMemo(
-    () => [
-      { id: "none", value: "", label: "Require a selection" },
-      ...(profiles ?? []).map((profile) => ({
+    () =>
+      (profiles ?? []).map((profile) => ({
         id: profile.id,
         value: profile.id,
         label: profile.name,
       })),
-    ],
     [profiles],
   );
-  const defaultId = profiles?.find((profile) => profile.isDefault === true)?.id ?? "";
+  const defaultId = defaultProfile(profiles)?.id ?? "";
   const [savingDefault, setSavingDefault] = useState(false);
   const selectDefault = useCallback(
     async (id: string | null) => {
-      if (!profiles) return;
+      if (!profiles?.some((profile) => profile.id === id)) return;
       setSavingDefault(true);
       try {
         await saveProfiles(
@@ -217,14 +216,13 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
               selectedDisplay={defaultOptions.find((option) => option.value === defaultId) ?? null}
               options={defaultOptions}
               onChange={selectDefault}
-              disabled={!profiles || savingDefault}
-              placeholder="Require a selection"
+              disabled={!profiles?.length || savingDefault}
+              placeholder="No configurations available"
               emptyText="No configurations available"
             />
             <Text style={styles.emptyText}>
               Used for new Vorton chats on this host. Existing chats and their accounts stay
-              unchanged. Without a default, select a configuration before typing or audio can launch
-              a chat.
+              unchanged. The first available configuration is selected when no default is set.
             </Text>
           </>
         ) : null}

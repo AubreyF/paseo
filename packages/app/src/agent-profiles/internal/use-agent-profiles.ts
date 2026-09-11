@@ -3,6 +3,8 @@ import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useSessionStore } from "@/stores/session-store";
 import { supportsAgentProfiles } from "./capabilities";
+import { useVortonMode } from "@/vorton-mode";
+import { ensureDefaultProfile } from "./default-profile";
 
 export interface UseAgentProfilesResult {
   /** `null` until the daemon config has arrived. */
@@ -15,6 +17,7 @@ export interface UseAgentProfilesResult {
 }
 
 export function useAgentProfiles(serverId: string | null): UseAgentProfilesResult {
+  const vorton = useVortonMode();
   const { config, patchConfig } = useDaemonConfig(serverId);
   const supportsLaunch = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.agentProfileLaunch === true,
@@ -26,11 +29,11 @@ export function useAgentProfiles(serverId: string | null): UseAgentProfilesResul
   const saveProfiles = useCallback(
     async (next: AgentProfile[]) => {
       await patchConfig({
-        agentProfiles: next,
+        agentProfiles: vorton ? ensureDefaultProfile(next) : next,
         ...(supportsLaunch ? { expectedAgentProfiles: config?.agentProfiles ?? [] } : {}),
       });
     },
-    [patchConfig, config, supportsLaunch],
+    [patchConfig, config, supportsLaunch, vorton],
   );
 
   return {

@@ -1,3 +1,4 @@
+import { defaultProfile } from "@/agent-profiles/internal/default-profile";
 import {
   memo,
   useCallback,
@@ -1939,7 +1940,10 @@ export function DraftAgentControls({
   const appliedDefaultRef = useRef<string | null>(null);
   useEffect(() => {
     if (!presetPicker || selectedProfileId) return;
-    const profile = savedProfiles?.find((entry) => entry.isDefault === true);
+    const available = savedProfiles?.filter((entry) =>
+      presetPicker.rows.some((row) => row.id === entry.id),
+    );
+    const profile = defaultProfile(available);
     if (!profile || !presetPicker.rows.some((row) => row.id === profile.id)) return;
     const key = `${modelSelectorServerId}:${profile.id}`;
     if (appliedDefaultRef.current === key) return;

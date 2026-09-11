@@ -582,6 +582,7 @@ function MobileSidebar({
   insetsBottom,
   closeSidebar,
 }: MobileSidebarProps) {
+  const touch = useVortonTouch();
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
 
@@ -592,10 +593,12 @@ function MobileSidebar({
   const mobileSidebarInsetStyle = useMemo(
     () => ({
       paddingTop: insetsTop,
-      paddingBottom: insetsBottom,
+      // The footer already supplies 12px. Use one 16px mobile edge margin
+      // instead of stacking a second empty safe-area strip beneath it.
+      paddingBottom: touch ? theme.spacing[1] : insetsBottom,
       backgroundColor: theme.colors.surfaceSidebar,
     }),
-    [insetsTop, insetsBottom, theme.colors.surfaceSidebar],
+    [insetsTop, insetsBottom, theme.colors.surfaceSidebar, theme.spacing, touch],
   );
 
   return (

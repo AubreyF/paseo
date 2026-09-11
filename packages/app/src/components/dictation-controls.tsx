@@ -200,6 +200,15 @@ export function DictationOverlay({
     [theme.colors.accentForeground, touch, mobileComposer.enabled, mobileComposer.bottomPadding],
   );
   const overlayConfirmButtonStyle = overlayRetryButtonStyle;
+  const overlayEditButtonStyle = useMemo(
+    () => [
+      overlayStyles.actionButton,
+      OVERLAY_ACCEPT_BUTTON_BG,
+      touch && overlayStyles.touchEdit,
+      mobileComposer.enabled && overlayStyles.mobileEdit,
+    ],
+    [touch, mobileComposer.enabled],
+  );
   const overlayLoadingStyle = useMemo(
     () => [
       overlayStyles.loadingContainer,
@@ -306,11 +315,7 @@ export function DictationOverlay({
               onPress={onAccept}
               accessibilityRole="button"
               accessibilityLabel={t("message.dictation.insert")}
-              style={[
-                overlayStyles.actionButton,
-                OVERLAY_ACCEPT_BUTTON_BG,
-                touch && overlayStyles.touchEdit,
-              ]}
+              style={overlayEditButtonStyle}
             >
               <Pencil
                 size={theme.iconSize.lg}
@@ -437,7 +442,8 @@ const overlayStyles = StyleSheet.create((theme) => ({
     right: COMPOSER_CORNER_INSET + 1,
   },
   touchActions: { position: "static" },
-  touchCenter: { alignSelf: "stretch", paddingHorizontal: 56, paddingVertical: 8 },
+  mobileEdit: { top: 16 },
+  touchCenter: { alignSelf: "stretch", paddingHorizontal: 56, paddingTop: 8, paddingBottom: 8 },
   // The full-width background extends 9px above and 16px below the field.
   // Offset its contents by half that difference to center in the visible green area.
   mobileCenter: { paddingTop: 15 },

@@ -1202,11 +1202,19 @@ function extractErrorMessage(error: unknown): string | null {
   return null;
 }
 
-function placeDictationButton(button: React.ReactNode, touch: boolean, showVoice: boolean) {
+function placeDictationButton(
+  button: React.ReactNode,
+  touch: boolean,
+  showVoice: boolean,
+  mobile: boolean,
+) {
   return {
     top:
       touch && showVoice ? (
-        <View style={styles.touchDictationSlot} testID="composer-dictation-slot">
+        <View
+          style={[styles.touchDictationSlot, mobile && styles.mobileDictationSlot]}
+          testID="composer-dictation-slot"
+        >
           {button}
         </View>
       ) : null,
@@ -1985,7 +1993,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       () => (showMobileQueue ? handleAcceptAndQueueRecording : undefined),
       [showMobileQueue, handleAcceptAndQueueRecording],
     );
-    const dictationPlacement = placeDictationButton(voiceButton, touch, mode.showVoice);
+    const dictationPlacement = placeDictationButton(
+      voiceButton,
+      touch,
+      mode.showVoice,
+      mobileComposer.enabled,
+    );
     return (
       <View
         ref={rootRef}
@@ -2218,6 +2231,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     zIndex: 1,
   },
   touchTextInput: { paddingRight: 56, minHeight: 44 },
+  mobileDictationSlot: { top: 15 },
   buttonRow: {
     flexShrink: 0,
     flexDirection: "row",

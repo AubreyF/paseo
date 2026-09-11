@@ -21,6 +21,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useVortonMode } from "@/vorton-mode";
 import { useVortonTouch } from "@/vorton-touch";
 import { useCompactPermission } from "./use-compact-permission";
+import { useCompactProfileName } from "./use-compact-profile-name";
 import { presetNickname } from "./nickname";
 import { permissionCaption } from "./permission-caption";
 import { RemainingRing } from "@/provider-usage/remaining-ring";
@@ -141,8 +142,10 @@ export function PresetControls({
   const definition = definitions?.find((row) => row.id === inspected?.id);
   const worker = definitions?.find((row) => row.id === definition?.workerProfileId);
   const selected = profiles.rows.find((row) => row.id === selectedProfileId);
+  const compactName = useCompactProfileName(controlsRef, isCompact);
   const { triggerLabel, showRing, remaining, accessibilityLabel } = selectedPresetPresentation({
     selectedProfileId,
+    compactName,
     selectedProfileName,
     currentProvider,
     selected,
@@ -182,7 +185,7 @@ export function PresetControls({
     () =>
       onEdit ? (
         <Button variant="ghost" size="sm" textStyle={styles.meta} onPress={edit}>
-          Manage presets
+          Manage profiles
         </Button>
       ) : null,
     [onEdit, edit],
@@ -331,6 +334,7 @@ function PresetPermissions({
     (modeId: string) => modeControl?.onSelectMode(modeId),
     [modeControl],
   );
+  if (vortonMode) return null;
   return (
     <SelectField
       label="Permissions"

@@ -110,7 +110,7 @@ function makeProviderModelsByProvider(
 }
 
 describe("resolveDefaultModel", () => {
-  it("preserves the separate permission selection when applying a launch preset", () => {
+  it("applies profile permissions when applying a launch profile", () => {
     const next = resolveAgentForm(makeState({ provider: "codex", modeId: "auto" }), {
       type: "APPLY_PROFILE_FROM_USER",
       profileId: "saved",
@@ -122,6 +122,19 @@ describe("resolveDefaultModel", () => {
       providerModels: CODEX_MODELS,
     });
     expect(next.form.profileId).toBe("saved");
+    expect(next.form.modeId).toBe("full-access");
+  });
+  it("uses provider defaults instead of inherited permissions for an unset profile mode", () => {
+    const next = resolveAgentForm(makeState({ provider: "codex", modeId: "full-access" }), {
+      type: "APPLY_PROFILE_FROM_USER",
+      profileId: "saved",
+      provider: "codex",
+      modelId: CODEX_MODELS[0].id,
+      thinkingOptionId: "low",
+      modeId: "",
+      providerDef: TEST_CODEX_DEFINITION,
+      providerModels: CODEX_MODELS,
+    });
     expect(next.form.modeId).toBe("auto");
   });
   it("returns null for empty or null input", () => {

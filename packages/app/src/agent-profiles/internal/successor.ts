@@ -48,7 +48,7 @@ export async function createProfileSuccessor(
   if (!current || current.agent.activeTurn || current.agent.updatedAt !== source.updatedAt) {
     throw new Error("The source task changed. Review it and retry the handoff.");
   }
-  const modeId = source.currentModeId;
+  const modeId = profile.modeId;
   return client.createAgent({
     config: {
       provider: profile.provider,

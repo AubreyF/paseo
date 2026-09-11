@@ -587,9 +587,9 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
   const normalizedModelId = resolveCanonicalModelId(action.providerModels, preferredModelId);
   const nextModelId = normalizedModelId || resolveDefaultModelId(action.providerModels);
   const availableModeIds = new Set(action.providerDef?.modes.map((mode) => mode.id) ?? []);
-  // Launch presets never silently replace the separate permission selection.
+  // Vorton profiles own permissions; an unset mode uses the provider default.
   const preferredModeId = action.profileId
-    ? state.form.modeId
+    ? action.modeId
     : action.modeId || action.providerPrefs?.mode || "";
   const defaultModeId = action.providerDef?.defaultModeId ?? "";
   let nextModeId = "";

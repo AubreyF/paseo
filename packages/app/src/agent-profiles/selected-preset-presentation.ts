@@ -10,6 +10,7 @@ interface SelectionInput {
   selected?: { name: string; provider: string };
   definitions: AgentProfile[] | null;
   vortonMode: boolean;
+  compactName?: boolean;
   view: ProviderUsageView;
   now: number;
 }
@@ -17,7 +18,7 @@ export function selectedPresetPresentation(input: SelectionInput) {
   const fullName = input.selectedProfileName ?? input.selected?.name ?? "Select configuration";
   const definition = input.definitions?.find((row) => row.id === input.selectedProfileId);
   const triggerLabel =
-    input.vortonMode && input.selectedProfileId
+    input.vortonMode && input.compactName !== false && input.selectedProfileId
       ? presetNickname({ name: fullName, nickname: definition?.nickname })
       : fullName;
   const providerId = input.currentProvider ?? input.selected?.provider;
@@ -33,7 +34,7 @@ export function selectedPresetPresentation(input: SelectionInput) {
     input.view.kind === "ready"
       ? remainingRingValue(usage, input.view.payload.fetchedAt, input.now)
       : null;
-  let accessibilityLabel = `Preset (${fullName}, ${triggerLabel})`;
+  let accessibilityLabel = `Profile (${fullName}, ${triggerLabel})`;
   if (showRing)
     accessibilityLabel +=
       remaining === null ? ", usage unavailable" : `, ${Math.round(remaining)} percent remaining`;

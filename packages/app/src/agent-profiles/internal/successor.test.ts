@@ -13,7 +13,12 @@ const source = {
   activeTurn: null,
   updatedAt: "2026-09-09T00:00:00Z",
 } as AgentSnapshotPayload;
-const profile = { id: "other", name: "Other account", provider: "codex-two" };
+const profile = {
+  id: "other",
+  name: "Other account",
+  provider: "codex-two",
+  modeId: "full-access",
+};
 function client() {
   return {
     fetchAgents: vi.fn().mockResolvedValue({ entries: [] }),
@@ -29,7 +34,7 @@ function client() {
   };
 }
 describe("explicit preset handoff", () => {
-  it("copies bounded recorded text and preserves permissions without waking the old task", async () => {
+  it("copies bounded recorded text and uses the selected profile permissions without waking the old task", async () => {
     const api = client();
     const context = await readProfileHandoff(api, source);
     await createProfileSuccessor(api, source, profile, context);
@@ -38,7 +43,7 @@ describe("explicit preset handoff", () => {
     expect(request.config).toMatchObject({
       profileId: "other",
       provider: "codex-two",
-      modeId: "auto-review",
+      modeId: "full-access",
     });
     expect(request.labels).toEqual({ "paseo:continued-from": "source" });
     expect(request.initialPrompt).toContain("First step completed");

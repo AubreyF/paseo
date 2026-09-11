@@ -175,7 +175,7 @@ function ProfileLaunchFields({
       </Field>
       <Field
         label="Launch instructions"
-        hint="Applied to new tasks only. Permissions are selected separately in the composer."
+        hint="Applied to new tasks together with this profile’s permissions."
       >
         <FormTextInput
           initialValue={profile?.instructions ?? ""}

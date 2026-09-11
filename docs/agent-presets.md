@@ -4,11 +4,13 @@ Launch presets extend the existing `daemon.agentProfiles` collection. There is n
 
 For the experimental fork's host migration, pending work and destination acceptance checks, read [the host handoff](host-handoff.md).
 
+Wide Vorton composers show the full profile name. Mobile and composers narrower than 640 CSS pixels show its nickname. Permissions are edited in the profile, not in a separate Vorton composer control.
+
 ## Configuration and compatibility
 
 A profile can include `instructions`, `workerProfileId`, and `maxWorkers` in addition to its existing provider, model, reasoning and feature values. Worker profiles require an explicit model and cannot reference another worker. Names and model IDs remain user configuration.
 
-New hosts advertise `agentProfileLaunch`. A launch request carries `profileId`; the server resolves the current profile and freezes its instructions and worker configuration into the stored session. Later profile edits affect new tasks, not resumed tasks. The separate composer permission selection takes precedence over legacy profile mode fields. Classic mode remains available.
+New hosts advertise `agentProfileLaunch`. A launch request carries `profileId`; the server resolves the current profile and freezes its instructions and worker configuration into the stored session. Later profile edits affect new tasks, not resumed tasks. The Vorton client applies the profile permission mode to drafts and sends it explicitly on handoff launches. Profiles without a mode use the provider default. Classic mode remains available.
 
 New editors send `expectedAgentProfiles` for stale-write detection. The server preserves omitted instruction and worker fields from older editors. Empty strings explicitly clear instructions and worker references. An older host does not expose these launch-only controls.
 
@@ -46,7 +48,7 @@ Results distinguish applied, already redeemed, no credit, and nothing to reset. 
 
 ## Review boundaries
 
-Vorton Mode defaults off and is saved per device. General settings and the sidebar's Paseo/Vorton selector control the same preference. Enabling it exposes named launch presets, usage rails, reset controls, and supervisor configuration. Disabling it restores standard composer controls without deleting accounts or presets or stopping running tasks. Manage presets lives inside the preset picker.
+Vorton Mode defaults off and is saved per device. General settings and the sidebar's Paseo/Vorton selector control the same preference. Enabling it exposes named launch presets, usage rails, reset controls, and supervisor configuration. Disabling it restores standard composer controls without deleting accounts or presets or stopping running tasks. Manage profiles lives inside the preset picker.
 
 The approved reserve policy is described below. Its daemon enforcement and controls are not implemented yet. The current quota-exhaustion stop does not enforce it.
 
@@ -54,7 +56,7 @@ The Docker recipe is optional. Upstream core does not require Docker, MTPLX, a p
 
 ## Default configuration
 
-Manage presets in host settings includes Default configuration. The selected profile stores `isDefault: true` in the host's profile list. The settings control writes false on other profiles so only one is selected. Vorton uses the first configuration when no default exists and persists that choice on the next profile save. Removing the default selects the first remaining configuration. Both profile editors retain this marker when editing a profile.
+Manage profiles in host settings includes Default configuration. The selected profile stores `isDefault: true` in the host's profile list. The settings control writes false on other profiles so only one is selected. Vorton uses the first configuration when no default exists and persists that choice on the next profile save. Removing the default selects the first remaining configuration. Both profile editors retain this marker when editing a profile.
 
 New Vorton drafts visibly apply the available default, or the first available configuration when the default is unavailable. An existing draft selection is retained. Submission and audio start remain blocked while no configuration is available. The new-workspace creation handler also rejects a missing Vorton profile. Existing chats are not changed. Standard Paseo behavior is unchanged.
 

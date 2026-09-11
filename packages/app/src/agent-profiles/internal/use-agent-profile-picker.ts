@@ -187,12 +187,12 @@ export function useAgentProfilePicker(
           ?.find((entry) => entry.provider === profile.provider)
           ?.models?.find((model) => model.id === profile.model?.trim())?.localEndpoint,
         summary: buildAgentProfilePickerSummary({
-          profile: supportsLaunch ? { ...profile, modeId: undefined } : profile,
+          profile,
           entries,
           formatFeatureCount,
         }),
       })),
-    [applicableProfiles, availableProviders, entries, formatFeatureCount, supportsLaunch],
+    [applicableProfiles, availableProviders, entries, formatFeatureCount],
   );
 
   const persistSelection = useCallback(

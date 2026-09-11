@@ -15,12 +15,10 @@ const titles = [
 const logger = pino({ level: "silent" });
 function fixture() {
   const manager = new AgentManager({ clients: {}, logger });
-  const source = vi
-    .spyOn(manager, "getFirstWorkspacePrompt")
-    .mockResolvedValue({
-      sourceId: "agent:1",
-      prompt: "Please fix keyboard focus after closing the workspace rename dialog.",
-    });
+  const source = vi.spyOn(manager, "getFirstWorkspacePrompt").mockResolvedValue({
+    sourceId: "agent:1",
+    prompt: "Please fix keyboard focus after closing the workspace rename dialog.",
+  });
   const generate = vi
     .mocked(generateStructuredAgentResponseWithFallback)
     .mockReset()

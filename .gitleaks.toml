@@ -7,7 +7,9 @@ useDefault = true
 targetRules = ["generic-api-key"]
 condition = "AND"
 paths = ['''(^|/)packages/relay/src/crypto\.test\.ts$''']
-regexes = ['''^(?:e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800|5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157)$''']
+regexes = [
+  '''^(?:e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800|5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157)$''',
+]
 
 # Historical generated JavaScript contains this identifier expression.
 [[allowlists]]

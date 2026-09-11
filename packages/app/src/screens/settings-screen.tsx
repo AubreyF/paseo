@@ -1167,9 +1167,17 @@ function SettingsSidebar({
           >
             {sidebarBody}
           </ScrollView>
+          <View style={sidebarStyles.modeFooter} testID="settings-mode-footer">
+            <VortonModeToggle compact />
+          </View>
         </View>
       ) : (
-        sidebarBody
+        <>
+          {sidebarBody}
+          <View style={sidebarStyles.modeFooter} testID="settings-mode-footer">
+            <VortonModeToggle compact />
+          </View>
+        </>
       )}
     </View>
   );
@@ -1754,6 +1762,12 @@ const sidebarStyles = StyleSheet.create((theme) => ({
   },
   scrollBody: {
     flex: 1,
+  },
+  modeFooter: {
+    alignItems: "flex-start",
+    padding: theme.spacing[4],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
   },
   sidebarDragArea: {
     position: "relative",

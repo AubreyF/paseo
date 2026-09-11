@@ -40,6 +40,7 @@ export interface AgentProfilePickerRow {
   provider: string;
   /** Empty when the profile names no model. */
   modelId: string;
+  unavailable?: boolean;
   /** Icon registry key and identity colour; either may be empty for the default glyph. */
   icon: string;
   color: string;
@@ -52,6 +53,7 @@ export interface AgentProfilePickerRow {
 export interface AgentProfilePicker {
   refreshStatus?: () => void;
   isRefreshingStatus?: boolean;
+  isLoadingStatus?: boolean;
   handoffElement?: ReactElement | null;
   isApplying?: boolean;
   rows: AgentProfilePickerRow[];
@@ -96,6 +98,7 @@ export function useAgentProfilePicker(
     entries,
     refresh: refreshProviders,
     isRefreshing,
+    isLoading,
   } = useProvidersSnapshot(serverId, { cwd: null });
   const { preferences, updatePreferences } = useFormPreferences();
   const supportsLaunch = hostSupportsLaunch && preferences.vortonMode === true;
@@ -156,8 +159,11 @@ export function useAgentProfilePicker(
       return [];
     }
     const available = new Set(availableProviders);
-    return profiles.filter((profile) => available.has(profile.provider));
-  }, [availableProviders, isSupported, profiles]);
+    // Keep configured launch rows in place while provider catalogs load or refresh.
+    return supportsLaunch
+      ? profiles
+      : profiles.filter((profile) => available.has(profile.provider));
+  }, [availableProviders, isSupported, profiles, supportsLaunch]);
 
   const formatFeatureCount = useCallback(
     (count: number) =>
@@ -171,6 +177,7 @@ export function useAgentProfilePicker(
     () =>
       applicableProfiles.map((profile) => ({
         id: profile.id,
+        unavailable: !availableProviders.includes(profile.provider),
         provider: profile.provider,
         modelId: profile.model?.trim() ?? "",
         icon: profile.icon ?? "",
@@ -185,7 +192,7 @@ export function useAgentProfilePicker(
           formatFeatureCount,
         }),
       })),
-    [applicableProfiles, entries, formatFeatureCount, supportsLaunch],
+    [applicableProfiles, availableProviders, entries, formatFeatureCount, supportsLaunch],
   );
 
   const persistSelection = useCallback(
@@ -211,7 +218,7 @@ export function useAgentProfilePicker(
   const applyProfile = useCallback(
     (profileId: string) => {
       const profile = applicableProfiles.find((entry) => entry.id === profileId);
-      if (!profile) {
+      if (!profile || !availableProviders.includes(profile.provider)) {
         return;
       }
       const resolved = materializeAgentProfile(profile);
@@ -251,7 +258,16 @@ export function useAgentProfilePicker(
           toast.error(toErrorMessage(error));
         });
     },
-    [applicableProfiles, client, persistSelection, target, toast, supportsLaunch, createSuccessor],
+    [
+      applicableProfiles,
+      availableProviders,
+      client,
+      persistSelection,
+      target,
+      toast,
+      supportsLaunch,
+      createSuccessor,
+    ],
   );
 
   const refreshStatus = useCallback(() => {
@@ -261,6 +277,17 @@ export function useAgentProfilePicker(
     if (!providers.length) return;
     void refreshProviders(providers).catch((error) => toast.error(toErrorMessage(error)));
   }, [rows, refreshProviders, toast]);
+
+  const isLoadingStatus =
+    isLoading ||
+    Boolean(
+      entries?.some(
+        (entry) =>
+          entry.enabled &&
+          entry.status === "loading" &&
+          profiles?.some((profile) => profile.provider === entry.provider),
+      ),
+    );
 
   return useMemo(
     () =>
@@ -272,6 +299,7 @@ export function useAgentProfilePicker(
             handoffElement,
             refreshStatus,
             isRefreshingStatus: isRefreshing,
+            isLoadingStatus,
           }
         : null,
     [
@@ -283,6 +311,7 @@ export function useAgentProfilePicker(
       handoffElement,
       refreshStatus,
       isRefreshing,
+      isLoadingStatus,
     ],
   );
 }

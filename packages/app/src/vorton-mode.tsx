@@ -7,6 +7,8 @@ import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { settingsStyles } from "@/styles/settings";
 
+const COMPACT_MODE_SEGMENT = { vortonCompactMode: "true" };
+
 export function useVortonMode() {
   const { preferences } = useFormPreferences();
   return preferences.vortonMode === true;
@@ -90,6 +92,7 @@ function ModeSegment({
       onPress={onPress}
       disabled={saving}
       accessibilityRole="button"
+      dataSet={COMPACT_MODE_SEGMENT}
       accessibilityLabel={mode ? "Vorton mode" : "Paseo mode"}
       accessibilityState={state}
       style={[styles.segment, enabled === mode && styles.selectedSegment]}

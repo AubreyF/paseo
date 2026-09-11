@@ -1,3 +1,4 @@
+import { useVortonTouch } from "@/vorton-touch";
 import { useCallback, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import {
   Pressable,
@@ -213,6 +214,7 @@ export function SelectField<TValue>({
   accessibilityLabel,
   desktopPlacement,
 }: SelectFieldProps<TValue>): ReactElement {
+  const touch = useVortonTouch();
   const anchorRef = useRef<View>(null);
   const [open, setOpen] = useState(false);
   const [triggerFocused, setTriggerFocused] = useState(false);
@@ -311,6 +313,7 @@ export function SelectField<TValue>({
     <>
       <View ref={anchorRef} collapsable={false}>
         <Pressable
+          style={touch && toolbar && styles.touchToolbar}
           onPress={handlePress}
           onFocus={handleTriggerFocus}
           onBlur={handleTriggerBlur}
@@ -368,6 +371,7 @@ const styles = StyleSheet.create((theme) => {
   const geometry = createControlGeometry(theme);
 
   return {
+    touchToolbar: { minHeight: 44, justifyContent: "center" },
     toolbar: {
       backgroundColor: "transparent",
       borderWidth: 0,

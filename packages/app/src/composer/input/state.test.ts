@@ -166,6 +166,33 @@ describe("dictation keyboard behavior", () => {
 });
 
 describe("dictation transcript behavior", () => {
+  it.each([true, false])(
+    "queues an explicitly queued recording even if running=%s at completion",
+    (isAgentRunning) => {
+      const queue = vi.fn();
+      const submit = vi.fn();
+      const replaceText = vi.fn();
+      applyDictationTranscript("spoken prompt", {
+        value: "typed context",
+        defaultSendBehavior: "steer",
+        isAgentRunning,
+        onQueue: queue,
+        onSubmit: submit,
+        replaceText,
+        attachments: [],
+        cwd: "/repo",
+        autoSend: true,
+        queueRequested: true,
+      });
+      expect(queue).toHaveBeenCalledWith({
+        text: "typed context spoken prompt",
+        attachments: [],
+        cwd: "/repo",
+      });
+      expect(submit).not.toHaveBeenCalled();
+      expect(replaceText).toHaveBeenLastCalledWith("");
+    },
+  );
   it("publishes an auto-sent transcript to the composer before submitting it", () => {
     const actions: string[] = [];
 

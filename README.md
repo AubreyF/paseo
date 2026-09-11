@@ -52,6 +52,21 @@ Research findings below are from source inspection on September 10, 2026. Unchec
 - [ ] Deploy the tested account-window labeling fix and outstanding daemon fixes through a coordinated daemon update. Preserve each installation's configured default.
 - [ ] Complete supervisor/Pi, missing-worker-skill, physical-device, dictation, accessibility, performance, and CI acceptance work tracked in [instance continuity](docs/instance-continuity.md).
 
+### Open an independent agent session from a conversation — deferred
+
+Deferred on September 10, 2026: record the proposal only; implementation and shipping are not scheduled.
+
+Paseo already supports parallel agent-scoped `create_agent` calls, completion notifications, opening subagents, and manual detach. The advertised tool creates a subagent and requires an initial prompt. A legacy compatibility path accepts detached creation, but new work must not depend on that path. See [agent lifecycle](docs/agent-lifecycle.md#relationships) and the [tool implementation](packages/server/src/server/agent/tools/paseo-tools.ts). These findings describe the checkout; the running private instance was not verified.
+
+- [ ] Add an explicit `open_agent_session` tool for requests such as “open a new thread to investigate X.” Reuse the creation pipeline to create a root session, retaining an origin reference for navigation without parent archive ownership. Keep ordinary `create_agent` behavior unchanged.
+- [ ] Start with the requested task and fresh history; use the existing fork-context mechanism only when history copying is requested. Support a literally blank session by leaving it idle without issuing a provider turn.
+- [ ] Default to the source session's actual provider/account and supported settings. Validate explicit profile overrides without silently switching accounts. Default to its workspace; use existing workspace/worktree creation for requested isolation.
+- [ ] Persist a launch request ID and reconcile retries to the same session. Surface initial execution failures on that session. Carry originating-client identity so only that client opens a background tab, preserving focus and unsent input; other devices discover the session without forced navigation. Reconnect must not duplicate sessions or reopen dismissed tabs.
+- [ ] Add a session-started result with an Open action. Gate new interface behavior behind Vorton and daemon capability support, preserving Paseo mode. Keep wire additions optional and use dotted names for new RPCs.
+- [ ] Verify parallel execution, independent source archive/stop, normal workspace archive behavior, account selection, duplicate prevention, reconnect, and Vorton off/on behavior. Run required checks and publish a tested private web export when implementation is authorized; coordinate daemon deployment and obtain physical-device confirmation for touch behavior.
+
+Planning estimate: **18–32 machine-hours; budget 24**. Breakdown: tool/configuration 2–4, creation/lifecycle/retries 4–7, protocol/device targeting 3–5, client presentation 3–5, focused tests 4–7, checks/private preview verification 2–4. Machine-hours mean cumulative active coding-agent time, including builds and debugging; human review, device confirmation, and approval waits are excluded. Existing parallel subagent creation needs no implementation; a smaller usability pass around that flow is estimated at 3–6 machine-hours.
+
 ### Cross-device message queues
 
 Queued composer messages currently live only in the originating client's memory. They are not visible on another device and are lost on a full reload. Unsent drafts are persisted locally; submitted messages and accepted steering enter the daemon timeline. See [queue actions](packages/app/src/composer/actions.ts) and [client queue draining](packages/app/src/runtime/host-runtime.ts).

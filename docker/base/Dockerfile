@@ -49,13 +49,15 @@ RUN set -eux; \
       bash \
       ca-certificates \
       curl \
+      gh \
       git \
       gosu \
       lbzip2 \
       openssh-client \
       procps \
       tini; \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*; \
+    gh --version
 
 COPY --from=source-pack /tmp/paseo-packs /tmp/paseo-packs
 RUN set -eux; \

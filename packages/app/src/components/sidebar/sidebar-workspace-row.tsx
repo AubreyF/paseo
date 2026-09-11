@@ -252,9 +252,9 @@ function WorkspaceRowBody({
       }
       if (isDragging) return;
       onPress();
-      if (isWorkspaceRenamePress(event, vortonMode && !vortonTouch)) onRename?.();
+      if (isWorkspaceRenamePress(event, vortonMode)) onRename?.();
     },
-    [interaction.didLongPressRef, onPress, onRename, isDragging, vortonMode, vortonTouch],
+    [interaction.didLongPressRef, onPress, onRename, isDragging, vortonMode],
   );
   const handleWorkspacePressIn = useCallback(
     (event: GestureResponderEvent) => {

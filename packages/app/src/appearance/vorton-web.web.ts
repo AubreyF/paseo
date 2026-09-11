@@ -8,7 +8,7 @@ const CSS = `
 @media (display-mode: standalone) {
   html[data-vorton-mode="true"], html[data-vorton-mode="true"] body { height: 100vh; }
 }
-html[data-vorton-touch="true"] :is(button, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [role="option"], [role="combobox"], [role="switch"]) {
+html[data-vorton-touch="true"] :is(button, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [role="option"], [role="combobox"], [role="switch"]):not([data-vorton-compact-mode]) {
   min-height: 44px !important;
   min-width: 44px !important;
   touch-action: manipulation;

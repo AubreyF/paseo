@@ -1,3 +1,6 @@
+import { useVortonMode } from "@/vorton-mode";
+import { DiffStat } from "@/components/diff-stat";
+import { aggregateProjectTasks, type ProjectTaskSummary } from "./sidebar/project-task-summary";
 import { useVortonTouch, VORTON_ACTION_SLOT } from "@/vorton-touch";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
@@ -240,6 +243,7 @@ interface SidebarWorkspaceListProps {
 }
 
 interface ProjectHeaderRowProps {
+  taskSummary?: ProjectTaskSummary;
   project: SidebarProjectEntry;
   displayName: string;
   iconDataUri: string | null;
@@ -410,6 +414,7 @@ function ProjectRowTrailingActions({
   isHovered,
   isMobileBreakpoint,
   isProjectActive,
+  expanded,
   onBeginWorkspaceSetup,
   onRemoveProject,
   removeProjectStatus,
@@ -422,14 +427,18 @@ function ProjectRowTrailingActions({
   isHovered: boolean;
   isMobileBreakpoint: boolean;
   isProjectActive: boolean;
+  expanded: boolean;
   onBeginWorkspaceSetup: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const vortonTouch = useVortonTouch();
-  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint || vortonTouch;
+  const vorton = useVortonMode();
+  const persistActions = vorton && expanded;
+  const actionsVisible =
+    persistActions || isHovered || platformIsNative || isMobileBreakpoint || vortonTouch;
   return (
-    <View style={styles.projectTrailingActions}>
+    <View style={[styles.projectTrailingActions, vorton && styles.projectTrailingActionsVorton]}>
       {worktreeTarget ? (
         <NewWorktreeButton
           displayName={displayName}
@@ -851,6 +860,7 @@ function NewWorkspaceGhostRow({
 }
 
 function ProjectHeaderRow({
+  taskSummary,
   project,
   displayName,
   iconDataUri,
@@ -964,19 +974,37 @@ function ProjectHeaderRow({
           </Text>
         </View>
       </View>
-      <ProjectRowTrailingActions
-        projectViewKey={project.viewKey}
-        displayName={displayName}
-        worktreeTarget={worktreeTarget}
-        settingsTarget={settingsTarget}
-        projectPath={projectPath}
-        isHovered={isHovered}
-        isMobileBreakpoint={isMobileBreakpoint}
-        isProjectActive={isProjectActive}
-        onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
-        onRemoveProject={onRemoveProject}
-        removeProjectStatus={removeProjectStatus}
-      />
+      {taskSummary ? (
+        <View
+          style={styles.projectTaskSummary}
+          testID={`sidebar-project-summary-${project.viewKey}`}
+        >
+          <DiffStat additions={taskSummary.additions} deletions={taskSummary.deletions} />
+          <View style={styles.projectTaskCountBadge}>
+            <Text
+              style={styles.projectTaskCount}
+              accessibilityLabel={`${taskSummary.count} open tasks`}
+            >
+              {taskSummary.count}
+            </Text>
+          </View>
+        </View>
+      ) : (
+        <ProjectRowTrailingActions
+          projectViewKey={project.viewKey}
+          displayName={displayName}
+          worktreeTarget={worktreeTarget}
+          settingsTarget={settingsTarget}
+          projectPath={projectPath}
+          isHovered={isHovered}
+          isMobileBreakpoint={isMobileBreakpoint}
+          isProjectActive={isProjectActive}
+          expanded={chevron === "collapse"}
+          onBeginWorkspaceSetup={handleBeginWorkspaceSetup}
+          onRemoveProject={onRemoveProject}
+          removeProjectStatus={removeProjectStatus}
+        />
+      )}
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.projectShortcutBadgeOverlay} pointerEvents="none">
           <SidebarWorkspaceShortcutBadge number={shortcutNumber} />
@@ -1583,6 +1611,12 @@ function ProjectBlock({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
+  const vorton = useVortonMode();
+  const taskSummary = useMemo(
+    () => aggregateProjectTasks(project.viewKey, workspaceEntriesByKey),
+    [project.viewKey, workspaceEntriesByKey],
+  );
+  const showTaskSummary = vorton && collapsed;
   const {
     visibleItems: visibleWorkspaces,
     expanded: workspacesExpanded,
@@ -1786,6 +1820,7 @@ function ProjectBlock({
       style={projectChildren ? styles.projectBlockExpanded : undefined}
     >
       <ProjectHeaderRow
+        taskSummary={showTaskSummary ? taskSummary : undefined}
         project={project}
         displayName={displayName}
         iconDataUri={iconDataUri}
@@ -2634,6 +2669,27 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectIconActionButtonHidden: {
     opacity: 0,
+  },
+  projectTaskSummary: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flexShrink: 0,
+  },
+  projectTaskCountBadge: {
+    backgroundColor: theme.colors.surface2,
+    borderRadius: theme.borderRadius.md,
+    minWidth: 20,
+    paddingHorizontal: theme.spacing[1],
+    alignItems: "center",
+  },
+  projectTaskCount: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  projectTrailingActionsVorton: {
+    flexDirection: "row-reverse",
+    marginRight: 0,
   },
   projectTrailingActions: {
     flexDirection: "row",

@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
-import { Text, ScrollView, View, useWindowDimensions } from "react-native";
+import { ActivityIndicator, Text, ScrollView, View, useWindowDimensions } from "react-native";
 import { EditingTextInput } from "@/components/ui/text-input";
 import { StyleSheet } from "react-native-unistyles";
 import { SelectField } from "@/components/ui/select-field";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { Button } from "@/components/ui/button";
 import { Combobox, ComboboxItem, SearchInput } from "@/components/ui/combobox";
-import { useProviderUsage } from "@/provider-usage/use-provider-usage";
+import { useRetainedPanelActive } from "@/components/retained-panel";
+import { usePresetData } from "./use-preset-data";
 import {
   formatLocalEndpointSummary,
   formatWorkerActivity,
@@ -54,6 +55,8 @@ export function PresetControls({
   disabled,
 }: PresetControlsProps) {
   const [open, setOpen] = useState(false);
+  const [waitingToOpen, setWaitingToOpen] = useState(false);
+  const panelActive = useRetainedPanelActive();
   const vortonMode = useVortonMode();
   const touch = useVortonTouch();
   const controlsRef = useRef<View>(null);
@@ -62,37 +65,40 @@ export function PresetControls({
       "Permissions",
     vortonMode,
   );
-  const triggerAccessibilityState = useMemo(() => ({ expanded: open }), [open]);
+  const triggerAccessibilityState = useMemo(
+    () => ({ expanded: open, busy: waitingToOpen }),
+    [open, waitingToOpen],
+  );
   const [query, setQuery] = useState("");
   const [inspectedId, setInspectedId] = useState<string>();
   const [now, setNow] = useState(Date.now);
   const anchorRef = useRef<View>(null);
   const isCompact = useIsCompactFormFactor();
+  const controlsStyle = useMemo(
+    () => [
+      styles.controls,
+      touch && styles.touchControls,
+      touch && isCompact && styles.centerControls,
+    ],
+    [touch, isCompact],
+  );
   const { width } = useWindowDimensions();
   const { profiles: definitions } = useAgentProfiles(serverId);
   const hasLocalEndpoint = profiles.rows.some((row) => Boolean(row.localEndpoint));
-  const { view } = useProviderUsage(serverId, {
-    enabled: vortonMode && (open || Boolean(selectedProfileId)),
-    pollActivity: open,
-    pollUsage: Boolean(selectedProfileId),
-  });
-  // Probe only while open; changing snapshots must not restart the refresh loop.
+  const active = vortonMode && panelActive;
+  const { view, ready } = usePresetData(serverId, profiles, active);
+  // Warm every row before opening; changing snapshots must not restart the refresh loop.
   const refreshRef = useRef(profiles.refreshStatus);
   refreshRef.current = profiles.refreshStatus;
   const refreshingRef = useRef(profiles.isRefreshingStatus);
   refreshingRef.current = profiles.isRefreshingStatus;
   const lastRefresh = useRef(0);
   useEffect(() => {
-    if (!vortonMode || (!open && !selectedProfileId)) return;
+    if (!active) return;
     const tick = () => {
       const timestamp = Date.now();
       setNow(timestamp);
-      if (
-        open &&
-        hasLocalEndpoint &&
-        !refreshingRef.current &&
-        timestamp - lastRefresh.current >= 60_000
-      ) {
+      if (hasLocalEndpoint && !refreshingRef.current && timestamp - lastRefresh.current >= 60_000) {
         lastRefresh.current = timestamp;
         refreshRef.current?.();
       }
@@ -100,7 +106,17 @@ export function PresetControls({
     tick();
     const timer = setInterval(tick, 15_000);
     return () => clearInterval(timer);
-  }, [open, hasLocalEndpoint, serverId, selectedProfileId, vortonMode]);
+  }, [active, hasLocalEndpoint, serverId]);
+  useEffect(() => {
+    if (waitingToOpen && ready) {
+      setWaitingToOpen(false);
+      setOpen(true);
+    }
+  }, [waitingToOpen, ready]);
+  useEffect(() => {
+    setWaitingToOpen(false);
+    setOpen(false);
+  }, [serverId, active]);
   const visibleRows = useMemo(
     () =>
       profiles.rows.filter((row) => {
@@ -118,6 +134,10 @@ export function PresetControls({
   );
   const inspected =
     profiles.rows.find((row) => row.id === (inspectedId ?? selectedProfileId)) ?? visibleRows[0];
+  const inspectorRow = useMemo(
+    () => (touch && isCompact ? undefined : inspected),
+    [touch, isCompact, inspected],
+  );
   const definition = definitions?.find((row) => row.id === inspected?.id);
   const worker = definitions?.find((row) => row.id === definition?.workerProfileId);
   const selected = profiles.rows.find((row) => row.id === selectedProfileId);
@@ -143,8 +163,9 @@ export function PresetControls({
   const show = useCallback(() => {
     setInspectedId(selectedProfileId);
     setQuery("");
-    setOpen(true);
-  }, [selectedProfileId]);
+    setWaitingToOpen(!ready && !waitingToOpen);
+    setOpen(ready);
+  }, [selectedProfileId, ready, waitingToOpen]);
   const select = useCallback(
     (id: string) => {
       if (disabled || profiles.isApplying) return;
@@ -175,7 +196,13 @@ export function PresetControls({
       }
       localStatus={
         row.localEndpoint
-          ? `${formatLocalEndpointSummary(row.localEndpoint, now)} · ${formatWorkerActivity(view.kind === "ready" ? view.payload.workerActivity : undefined, row.provider, now)}`
+          ? `${formatLocalEndpointSummary(row.localEndpoint, now)?.replace("Local endpoint", "Local")} · ${formatWorkerActivity(
+              view.kind === "ready" ? view.payload.workerActivity : undefined,
+              row.provider,
+              now,
+            )
+              .replace("running provider workers", "workers running")
+              .replace("running provider worker", "worker running")}`
           : undefined
       }
       serverId={serverId}
@@ -184,11 +211,7 @@ export function PresetControls({
     />
   );
   return (
-    <View
-      ref={controlsRef}
-      style={[styles.controls, touch && styles.touchControls]}
-      testID="preset-controls"
-    >
+    <View ref={controlsRef} style={controlsStyle} testID="preset-controls">
       <View ref={anchorRef} collapsable={false} style={styles.trigger}>
         <ComboboxTrigger
           style={styles.toolbarTrigger}
@@ -199,7 +222,8 @@ export function PresetControls({
           accessibilityLabel={accessibilityLabel}
           testID="agent-preset-selector"
         >
-          {showRing ? (
+          {waitingToOpen ? <ActivityIndicator size="small" style={styles.pendingRing} /> : null}
+          {!waitingToOpen && showRing ? (
             <View style={styles.ring}>
               <RemainingRing remaining={remaining} />
             </View>
@@ -220,14 +244,21 @@ export function PresetControls({
         onActiveOptionChange={setInspectedId}
         desktopPlacement="top-start"
         desktopMinWidth={Math.min(760, width - 32)}
-        desktopFixedHeight={380}
+        desktopFixedHeight={440}
+        desktopPreventInitialFlash
+        desktopLockWidth
         desktopChildrenScrollEnabled={false}
         keepOpenOnSelect
       >
         <View style={isCompact || width < 760 ? styles.stacked : styles.split}>
           <View style={styles.list}>
             {vortonMode ? (
-              <SearchInput placeholder="Search presets" onChangeText={setQuery} autoFocus />
+              <SearchInput
+                placeholder="Search presets"
+                onChangeText={setQuery}
+                containerStyle={styles.presetSearch}
+                autoFocus
+              />
             ) : (
               <EditingTextInput
                 initialValue={query}
@@ -254,7 +285,7 @@ export function PresetControls({
                   rail={renderRail(row)}
                   selected={row.id === selectedProfileId}
                   active={row.id === inspected?.id}
-                  disabled={disabled || profiles.isApplying}
+                  disabled={disabled || profiles.isApplying || row.unavailable}
                   onSelect={select}
                 />
               ))}
@@ -262,12 +293,12 @@ export function PresetControls({
             </ScrollView>
             <View style={[styles.manage, vortonMode && styles.manageVorton]}>{footer}</View>
           </View>
-          {inspected ? (
+          {inspectorRow ? (
             <PresetInspector
-              row={inspected}
+              row={inspectorRow}
               definition={definition}
               worker={worker}
-              rail={renderRail(inspected)}
+              rail={renderRail(inspectorRow)}
             />
           ) : null}
         </View>
@@ -349,7 +380,9 @@ function PresetRow({
   return (
     <ComboboxItem
       style={styles.row}
-      labelStyle={styles.text}
+      labelStyle={styles.presetTitle}
+      labelNumberOfLines={1}
+      testID={`preset-row-${row.id}`}
       label={nickname ? `${nickname} · ${row.name}` : row.name}
       descriptionPlacement="below"
       descriptionSlot={rail}
@@ -405,6 +438,7 @@ function PresetInspector({
 }
 const styles = StyleSheet.create((theme) => ({
   touchControls: { flex: 1, flexWrap: "nowrap" },
+  centerControls: { justifyContent: "center", marginHorizontal: 8 },
   touchPermissions: { flexShrink: 0 },
   controls: {
     minWidth: 0,
@@ -430,15 +464,23 @@ const styles = StyleSheet.create((theme) => ({
   },
   split: { flex: 1, minHeight: 0, flexDirection: "row", alignItems: "stretch" },
   row: {
-    paddingVertical: theme.spacing[3],
+    paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
     minHeight: 68,
+    height: Math.max(68, Math.ceil(theme.fontSize.base * 1.4) * 2 + 24),
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
   stacked: { flex: 1, flexDirection: "column" },
   list: { flex: 1, minWidth: 0, borderRightWidth: 1, borderRightColor: theme.colors.border },
   rows: { flex: 1, minHeight: 0 },
+  presetSearch: { backgroundColor: theme.colors.surface0 },
+  presetTitle: {
+    fontSize: theme.fontSize.base,
+    lineHeight: Math.ceil(theme.fontSize.base * 1.4),
+    marginBottom: 2,
+    color: theme.colors.foreground,
+  },
   search: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
@@ -452,6 +494,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     backgroundColor: theme.colors.surface2,
   },
+  pendingRing: { width: 28, height: 28, marginRight: theme.spacing[1] },
   ring: { marginRight: theme.spacing[1] },
   manageVorton: { padding: theme.spacing[3] },
   inspectorVorton: { backgroundColor: theme.colors.surface1 },

@@ -1,3 +1,4 @@
+import { useMobileComposerLayout } from "@/composer/mobile-layout";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -1627,6 +1628,7 @@ function ActiveAgentComposer({
   onMessageSent: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const mobileComposer = useMobileComposerLayout();
   const isCompactFormFactor = useIsCompactFormFactor();
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
     COMPACT_FORM_FACTOR_WIDTH,
@@ -1702,8 +1704,11 @@ function ActiveAgentComposer({
   );
 
   const inputAreaStyle = useMemo(
-    () => [animatedStaticStyles.inputAreaWrapper, { paddingBottom: insets.bottom }],
-    [insets.bottom],
+    () => [
+      animatedStaticStyles.inputAreaWrapper,
+      { paddingBottom: mobileComposer.enabled ? 0 : insets.bottom },
+    ],
+    [insets.bottom, mobileComposer.enabled],
   );
 
   return (

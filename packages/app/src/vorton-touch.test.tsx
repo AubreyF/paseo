@@ -25,6 +25,18 @@ beforeEach(() => {
   }));
 });
 describe("Vorton touch gate", () => {
+  it("keeps the compact mode selector at its authored height while enlarging other actions", () => {
+    const segment = document.createElement("button");
+    segment.dataset.vortonCompactMode = "true";
+    const action = document.createElement("button");
+    document.body.append(segment, action);
+    const stop = applyVortonWeb(true, true);
+    expect(getComputedStyle(segment).minHeight).toBe("");
+    expect(getComputedStyle(action).minHeight).toBe("44px");
+    stop();
+    segment.remove();
+    action.remove();
+  });
   it("keeps wide touch devices standard until explicitly enabled and restores on disable", () => {
     const { result, rerender, unmount } = renderHook(useVortonTouch);
     expect(result.current).toBe(false);

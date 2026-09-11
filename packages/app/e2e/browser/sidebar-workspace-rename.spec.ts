@@ -73,3 +73,38 @@ test.describe("Sidebar workspace rename", () => {
     }
   });
 });
+
+test.describe("Vorton workspace double-click rename", () => {
+  // A touchscreen laptop or iPad with a trackpad still receives mouse clicks.
+  test.use({ hasTouch: true });
+
+  test("preserves single-click navigation and gates double-click rename by mode", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-double-click-" });
+    try {
+      await gotoAppShell(page);
+      const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      const input = page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "input"));
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await page.getByLabel("Paseo mode", { exact: true }).click();
+      await row.dblclick();
+      await expect(input).toHaveCount(0);
+      await page.getByLabel("Vorton mode", { exact: true }).click();
+      await row.click();
+      await expect(page).toHaveURL(new RegExp(`/workspace/${workspace.workspaceId}`));
+      await expect(input).toHaveCount(0);
+      await row.dblclick();
+      await expect(input).toBeVisible();
+      await expect(input).toHaveValue("main");
+      await input.fill("Unsaved suggestion draft");
+      await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "cancel")).click();
+      await expect(row).toContainText("main");
+      await page.getByLabel("Paseo mode", { exact: true }).click();
+      await row.dblclick();
+      await expect(input).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});

@@ -6,6 +6,8 @@ import { DictationOverlay } from "./dictation-controls";
 
 const mode = vi.hoisted(() => ({ touch: false }));
 vi.mock("@/vorton-touch", () => ({ useVortonTouch: () => mode.touch }));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 34 }) }));
+vi.mock("@/constants/layout", () => ({ FOOTER_HEIGHT: 75, useIsCompactFormFactor: () => true }));
 vi.mock("./volume-meter", () => ({ VolumeMeter: () => null }));
 vi.mock("@/components/ui/loading-spinner", () => ({ LoadingSpinner: () => null }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -34,6 +36,7 @@ it.each([false, true])("keeps edit, submit and cancel independent with touch=%s"
   const edit = vi.fn();
   const send = vi.fn();
   const cancel = vi.fn();
+  const queue = vi.fn();
   act(() =>
     root.render(
       <DictationOverlay
@@ -45,6 +48,7 @@ it.each([false, true])("keeps edit, submit and cancel independent with touch=%s"
         onCancel={cancel}
         onAccept={edit}
         onAcceptAndSend={send}
+        onAcceptAndQueue={queue}
       />,
     ),
   );
@@ -56,6 +60,15 @@ it.each([false, true])("keeps edit, submit and cancel independent with touch=%s"
   expect(send).toHaveBeenCalledTimes(1);
   act(() => button("cancel").click());
   expect(cancel).toHaveBeenCalledTimes(1);
+  const queueButton = host.querySelector<HTMLElement>('[aria-label="Queue recorded message"]');
+  if (touch) {
+    expect(queueButton).not.toBeNull();
+    act(() => queueButton?.click());
+    expect(queue).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  } else {
+    expect(queueButton).toBeNull();
+  }
 });
 it.each([false, true])("prevents duplicate actions while processing with touch=%s", (touch) => {
   mode.touch = touch;

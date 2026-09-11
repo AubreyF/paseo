@@ -11,16 +11,19 @@ import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { providerUsageQueryKey } from "./use-provider-usage";
 import { currentResetPreparation, resetCountLabel, resetPresentation } from "./reset-state";
+import { providerResetQueryOptions } from "./reset-query";
 import { prepareResetForView, reconcileResetResult, resetResultNotice } from "./reset-result";
 
 function useResetControl({
   serverId,
   providerId,
   name,
+  preloaded = false,
 }: {
   serverId: string | null;
   providerId: string;
   name: string;
+  preloaded?: boolean;
 }) {
   const client = useHostRuntimeClient(serverId ?? "");
   const connected = useHostRuntimeIsConnected(serverId ?? "");
@@ -34,27 +37,24 @@ function useResetControl({
   const clientGeneration = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.clientGeneration,
   );
-  const key = useMemo(
-    () => ["providerReset", serverId, providerId, clientGeneration],
-    [serverId, providerId, clientGeneration],
+  const queryOptions = useMemo(
+    () =>
+      providerResetQueryOptions({
+        serverId,
+        providerId,
+        clientGeneration,
+        client,
+        enabled: Boolean(client && connected && supported && !preloaded),
+      }),
+    [serverId, providerId, clientGeneration, client, connected, supported, preloaded],
   );
+  const key = queryOptions.queryKey;
   const [open, setOpen] = useState(false);
   const [preparation, setPrepared] = useState<ProviderResetView | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const query = useFetchQuery({
-    queryKey: key,
-    queryFn: async () => {
-      if (!client) throw new Error("Host unavailable");
-      return (await client.readProviderReset(providerId)).view;
-    },
-    enabled: Boolean(client && connected && supported),
-    dataShape: "value",
-    staleTimeMs: 60_000,
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  const query = useFetchQuery(queryOptions);
   const prepared = currentResetPreparation(preparation, query.data);
   const view = prepared ?? query.data;
   const snapshot = view?.snapshot;
@@ -100,7 +100,8 @@ function useResetControl({
           available.accountId,
           prepared.operation.operationId,
         );
-        setPrepared(null);
+        // Keep the confirmed key available if reconciliation needs another attempt.
+        if (!result.refreshError) setPrepared(null);
         setNotice(resetResultNotice(result));
         if (result.view && cache.getQueryData(key) === viewed) cache.setQueryData(key, result.view);
         setNotice(
@@ -187,6 +188,9 @@ function CreditDetails({
 }
 
 export function ProviderResetControl(props: {
+  critical?: boolean;
+  compact?: boolean;
+  preloaded?: boolean;
   serverId: string | null;
   providerId: string;
   name: string;
@@ -208,26 +212,41 @@ export function ProviderResetControl(props: {
     notice,
   } = useResetControl(props);
   const { name, providerId } = props;
-  const { visible, badge, pending, enabled } = resetPresentation({
+  const criticalTextStyle = useMemo(
+    () => (props.critical ? styles.critical : undefined),
+    [props.critical],
+  );
+  const { visible, showBadge, badge, pending, enabled } = resetPresentation({
     supported,
     connected,
     open,
     current: query.data,
     displayed: view,
+    readFailed: query.isError,
+    positiveOnly: props.compact,
   });
   if (!visible) return null;
   return (
     <>
-      <Button
-        variant="ghost"
-        size="sm"
-        onPress={show}
-        accessibilityLabel={`${name}: ${badge}`}
-        textStyle={styles.text}
-        testID={`provider-reset-${providerId}`}
-      >
-        {badge}
-      </Button>
+      {showBadge ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          onPress={show}
+          accessibilityLabel={`${name}: ${badge}`}
+          style={props.compact ? styles.compactBadge : undefined}
+          textStyle={[styles.text, criticalTextStyle]}
+          testID={`provider-reset-${providerId}`}
+        >
+          {props.compact ? (
+            <Text numberOfLines={1} style={criticalTextStyle}>
+              {badge}
+            </Text>
+          ) : (
+            badge
+          )}
+        </Button>
+      ) : null}
       {open ? (
         <AdaptiveModalSheet
           visible
@@ -299,6 +318,16 @@ export function ProviderResetControl(props: {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  critical: { color: theme.colors.destructive },
+  compactBadge: {
+    position: "absolute",
+    right: 0,
+    top: (Math.ceil(theme.fontSize.base * 1.4) - 44) / 2,
+    height: 44,
+    minHeight: 44,
+    paddingHorizontal: 0,
+    maxWidth: "100%",
+  },
   body: { padding: theme.spacing[4], gap: theme.spacing[3] },
   text: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.base },
   credit: { gap: theme.spacing[1], paddingVertical: theme.spacing[2] },

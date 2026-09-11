@@ -1,3 +1,4 @@
+import { useMobileComposerLayout } from "@/composer/mobile-layout";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useVortonMode } from "@/vorton-mode";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
@@ -361,6 +362,7 @@ export function WorkspaceDraftAgentTab({
   const vortonMode = useVortonMode();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const mobileComposer = useMobileComposerLayout();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
@@ -646,8 +648,11 @@ export function WorkspaceDraftAgentTab({
   }, []);
 
   const inputAreaWrapperStyle = useMemo(
-    () => [animatedStaticStyles.inputAreaWrapper, { paddingBottom: insets.bottom }],
-    [insets.bottom],
+    () => [
+      animatedStaticStyles.inputAreaWrapper,
+      { paddingBottom: mobileComposer.enabled ? 0 : insets.bottom },
+    ],
+    [insets.bottom, mobileComposer.enabled],
   );
 
   const handleDropdownCloseFocus = useCallback(() => {

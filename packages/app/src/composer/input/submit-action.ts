@@ -1,6 +1,30 @@
 import type { SubmitModifier } from "./submit-modifier";
 import type { ComposerInputMode } from "@/composer/input-mode";
 
+export type PrimaryActionKind = "send" | "active" | "none";
+
+export function resolvePrimaryAction(input: {
+  hasSendableContent: boolean;
+  allowEmptySubmit: boolean;
+  isAgentRunning: boolean;
+  isSubmitLoading: boolean;
+  isSubmitDisabled: boolean;
+  vortonMode: boolean;
+  inputMode: ComposerInputMode;
+  readOnly: boolean;
+}): { kind: PrimaryActionKind; isSubmitDisabled: boolean } {
+  const showEmptySubmit = input.vortonMode && input.inputMode === "chat" && !input.readOnly;
+  const hasSubmission = input.hasSendableContent || input.allowEmptySubmit;
+  const disableEmptySubmit = showEmptySubmit && !hasSubmission && !input.isSubmitLoading;
+  const isSubmitDisabled = input.isSubmitDisabled || disableEmptySubmit;
+  if (hasSubmission) return { kind: "send", isSubmitDisabled };
+  if (input.isAgentRunning) {
+    return { kind: "active", isSubmitDisabled };
+  }
+  if (input.isSubmitLoading || showEmptySubmit) return { kind: "send", isSubmitDisabled };
+  return { kind: "none", isSubmitDisabled };
+}
+
 export function supportsSubmitModifiers(input: {
   vortonMode: boolean;
   isWeb: boolean;

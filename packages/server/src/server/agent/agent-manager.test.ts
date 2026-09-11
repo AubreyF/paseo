@@ -11779,6 +11779,9 @@ test("confirmed reset unlocks the same provider durably without restarting work"
     expect(() => manager.assertQuotaNotPaused(agent.id)).not.toThrow();
     expect(() => manager.assertQuotaNotPaused(newer.id)).toThrow("paused");
     expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    const sessionId = manager.getAgent(agent.id)?.session.id;
+    await manager.runAgent(agent.id, { text: "Continue after reset" });
+    expect(manager.getAgent(agent.id)?.session.id).toBe(sessionId);
     await storage.upsert(stale);
     const reloaded = new AgentStorage(join(workdir, "agents"), logger);
     expect((await reloaded.get(agent.id))?.config?.quotaPausedAt).toBeUndefined();

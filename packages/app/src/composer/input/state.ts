@@ -64,6 +64,7 @@ interface DictationTranscriptContext {
   attachments: MessagePayload["attachments"];
   cwd: string;
   autoSend: boolean;
+  queueRequested?: boolean;
 }
 
 export function applyDictationTranscript(text: string, ctx: DictationTranscriptContext): void {
@@ -78,7 +79,10 @@ export function applyDictationTranscript(text: string, ctx: DictationTranscriptC
 
   ctx.replaceText(nextValue);
 
-  if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
+  if (
+    ctx.onQueue &&
+    (ctx.queueRequested || (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning))
+  ) {
     ctx.onQueue({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });
     ctx.replaceText("");
     return;

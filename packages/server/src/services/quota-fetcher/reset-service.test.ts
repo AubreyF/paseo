@@ -202,3 +202,45 @@ test.each(["reset", "alreadyRedeemed", "noCredit", "nothingToReset"] as const)(
     expect(unlocked).toEqual(outcome === "reset" || outcome === "alreadyRedeemed" ? ["codex"] : []);
   },
 );
+
+test("retrying a saved reset repairs recovery without spending another credit", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "paseo-reset-retry-"));
+  directories.push(directory);
+  let consumes = 0;
+  let recoveryAttempts = 0;
+  const service = new ProviderResetService({
+    store: new ResetCreditStore(directory),
+    logger: pino({ level: "silent" }),
+    refreshUsage: async () => {},
+    onResetApplied: async () => {
+      recoveryAttempts += 1;
+      if (recoveryAttempts === 1) throw new Error("Disk unavailable");
+    },
+    getClient: () => ({
+      openResetCreditSession: async () => ({
+        canRedeem: true,
+        read: async () => ({
+          status: "available",
+          accountId: "account",
+          accountLabel: null,
+          availableCount: 1 - consumes,
+          credits: null,
+        }),
+        consume: async () => {
+          consumes += 1;
+          return "reset";
+        },
+        dispose: async () => {},
+      }),
+    }),
+  });
+  const prepared = await service.prepare("codex", "account");
+  if (!prepared.operation) throw new Error("Missing operation");
+  const failed = await service.confirm("codex", "account", prepared.operation.operationId);
+  expect(failed.outcome).toBe("reset");
+  expect(failed.refreshError).toContain("threads could not be unlocked");
+  const retried = await service.confirm("codex", "account", prepared.operation.operationId);
+  expect(retried.refreshError).toBeNull();
+  expect(consumes).toBe(1);
+  expect(recoveryAttempts).toBe(2);
+});

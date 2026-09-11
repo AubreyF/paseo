@@ -181,6 +181,7 @@ function ComboboxSheetBackground({ style }: BottomSheetBackgroundProps) {
 }
 
 export interface SearchInputProps {
+  containerStyle?: StyleProp<ViewStyle>;
   placeholder: string;
   onChangeText: (text: string) => void;
   onSubmitEditing?: () => void;
@@ -190,6 +191,7 @@ export interface SearchInputProps {
 }
 
 export function SearchInput({
+  containerStyle,
   placeholder,
   onChangeText,
   onSubmitEditing,
@@ -210,13 +212,14 @@ export function SearchInput({
   }, [autoFocus]);
 
   return (
-    <View style={styles.searchInputContainer}>
+    <View style={[styles.searchInputContainer, containerStyle]}>
       <Search size={16} color={theme.colors.foregroundMuted} />
       <AdaptiveTextInput
         ref={inputRef}
         // @ts-expect-error - outlineStyle is web-only
         style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
         placeholder={placeholder}
+        accessibilityLabel={placeholder}
         placeholderTextColor={theme.colors.foregroundMuted}
         resetKey={resetKey}
         onChangeText={onChangeText}
@@ -231,6 +234,7 @@ export function SearchInput({
 export interface ComboboxItemProps {
   label: string;
   labelStyle?: StyleProp<TextStyle>;
+  labelNumberOfLines?: number;
   style?: StyleProp<ViewStyle>;
   descriptionSlot?: ReactNode;
   description?: string;
@@ -252,6 +256,7 @@ export interface ComboboxItemProps {
 export function ComboboxItem({
   label,
   labelStyle,
+  labelNumberOfLines,
   style,
   descriptionSlot,
   description,
@@ -329,7 +334,7 @@ export function ComboboxItem({
       {leadingContent}
       <View style={itemContentStyle}>
         <Text
-          numberOfLines={descriptionPlacement === "below" ? 2 : 1}
+          numberOfLines={labelNumberOfLines ?? (descriptionPlacement === "below" ? 2 : 1)}
           style={[styles.comboboxItemLabel, labelStyle]}
         >
           {label}

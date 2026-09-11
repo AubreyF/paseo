@@ -63,21 +63,22 @@ export function attachAgentStoragePersistence(
 }
 
 export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSessionConfig> {
+  const config = record.config ?? {};
   return stripInternalPaseoMcpServer({
     provider: record.provider,
     cwd: record.cwd,
-    modeId: record.config?.modeId ?? undefined,
-    model: record.config?.model ?? undefined,
-    thinkingOptionId: record.config?.thinkingOptionId ?? undefined,
-    featureValues: record.config?.featureValues ?? undefined,
-    providerOptions: record.config?.providerOptions ?? undefined,
-    toolPolicy: record.config?.toolPolicy ?? undefined,
-    systemPrompt: record.config?.systemPrompt ?? undefined,
-    profileLaunch: record.config?.profileLaunch,
-    quotaPausedAt: record.config?.quotaPausedAt,
-    quotaResetAt: record.config?.quotaResetAt,
-    quotaReserve: record.config?.quotaReserve,
-    mcpServers: record.config?.mcpServers ?? undefined,
+    modeId: config.modeId ?? undefined,
+    model: config.model ?? undefined,
+    thinkingOptionId: config.thinkingOptionId ?? undefined,
+    featureValues: config.featureValues ?? undefined,
+    providerOptions: config.providerOptions ?? undefined,
+    toolPolicy: config.toolPolicy ?? undefined,
+    systemPrompt: config.systemPrompt ?? undefined,
+    profileLaunch: config.profileLaunch,
+    quotaPausedAt: config.quotaPausedAt,
+    quotaResetAt: config.quotaResetAt,
+    quotaReserve: config.quotaReserve,
+    mcpServers: config.mcpServers ?? undefined,
   });
 }
 

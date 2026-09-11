@@ -17,19 +17,28 @@ export function currentResetPreparation(
     : null;
 }
 
+function hasResetCredits(snapshot: ProviderResetView["snapshot"] | undefined): boolean {
+  return snapshot?.status === "available" && snapshot.availableCount > 0;
+}
+
 export function resetPresentation(input: {
   supported: boolean;
   connected: boolean;
   open: boolean;
   current?: ProviderResetView;
   displayed?: ProviderResetView;
+  readFailed?: boolean;
+  positiveOnly?: boolean;
 }) {
   const snapshot = input.current?.snapshot;
   const available = input.displayed?.snapshot;
   const pending = input.displayed?.operation?.state === "pending";
   return {
+    showBadge: !input.positiveOnly || hasResetCredits(snapshot),
     visible:
-      input.supported && Boolean(snapshot || input.open) && snapshot?.status !== "unsupported",
+      input.supported &&
+      Boolean(snapshot || input.open || input.readFailed) &&
+      snapshot?.status !== "unsupported",
     badge:
       snapshot?.status === "available"
         ? resetCountLabel(snapshot.availableCount)

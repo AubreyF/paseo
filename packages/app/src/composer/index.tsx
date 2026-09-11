@@ -1,3 +1,4 @@
+import { useMobileComposerLayout, MOBILE_COMPOSER_MARGIN } from "./mobile-layout";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
@@ -303,6 +304,7 @@ function resolveContextWindowPlacement(
   reserveSlot: boolean,
   touch: boolean,
 ): ReactNode {
+  if (touch && !meter) return null;
   return reserveSlot ? (
     <View style={[styles.contextWindowMeterSlot, touch && styles.touchMeterSlot]}>{meter}</View>
   ) : null;
@@ -2244,9 +2246,14 @@ function ComposerContentImpl({
     [githubSearchItems, selectedAttachments, handleToggleGithubItem],
   );
 
+  const mobileComposer = useMobileComposerLayout();
   const inputAreaContainerStyle = useMemo(
-    () => [styles.inputAreaContainer, isComposerLocked && styles.inputAreaLocked],
-    [isComposerLocked],
+    () => [
+      styles.inputAreaContainer,
+      mobileComposer.enabled && styles.mobileInputArea,
+      isComposerLocked && styles.inputAreaLocked,
+    ],
+    [isComposerLocked, mobileComposer.enabled],
   );
 
   const attachmentTray = useMemo(
@@ -2458,6 +2465,13 @@ const styles = StyleSheet.create((theme: Theme) => ({
     overflow: "visible",
     paddingHorizontal: theme.spacing[4],
     paddingBottom: theme.spacing[4],
+  },
+  mobileInputArea: {
+    paddingHorizontal: MOBILE_COMPOSER_MARGIN,
+    paddingBottom: MOBILE_COMPOSER_MARGIN,
+    paddingTop: theme.spacing[2],
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
   },
   inputAreaLocked: {
     opacity: 0.6,

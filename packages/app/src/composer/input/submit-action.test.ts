@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveSubmitAction, supportsSubmitModifiers } from "./submit-action";
+import {
+  resolvePrimaryAction,
+  resolveSubmitAction,
+  supportsSubmitModifiers,
+} from "./submit-action";
 
 const running = {
   enabled: true,
@@ -85,4 +89,60 @@ describe("composer submit action", () => {
       }),
     ).toBe(true);
   });
+});
+
+const emptyComposer = {
+  hasSendableContent: false,
+  allowEmptySubmit: false,
+  isAgentRunning: false,
+  isSubmitLoading: false,
+  isSubmitDisabled: false,
+  vortonMode: true,
+  inputMode: "chat",
+  readOnly: false,
+} as const;
+
+describe("empty composer submit button", () => {
+  it("keeps a disabled submit button in an empty Vorton chat", () => {
+    expect(resolvePrimaryAction(emptyComposer)).toEqual({ kind: "send", isSubmitDisabled: true });
+  });
+  it("shows only stop while running with no content to send", () => {
+    expect(resolvePrimaryAction({ ...emptyComposer, isAgentRunning: true })).toEqual({
+      kind: "active",
+      isSubmitDisabled: true,
+    });
+  });
+  it("enables submit when text or attachments become sendable", () => {
+    expect(resolvePrimaryAction({ ...emptyComposer, hasSendableContent: true })).toEqual({
+      kind: "send",
+      isSubmitDisabled: false,
+    });
+  });
+  it("preserves intentional empty submissions and pending submissions", () => {
+    expect(resolvePrimaryAction({ ...emptyComposer, allowEmptySubmit: true })).toEqual({
+      kind: "send",
+      isSubmitDisabled: false,
+    });
+    expect(resolvePrimaryAction({ ...emptyComposer, isSubmitLoading: true })).toEqual({
+      kind: "send",
+      isSubmitDisabled: false,
+    });
+  });
+  it("keeps the caller's disabled state", () => {
+    expect(
+      resolvePrimaryAction({ ...emptyComposer, hasSendableContent: true, isSubmitDisabled: true }),
+    ).toEqual({ kind: "send", isSubmitDisabled: true });
+  });
+  it.each([{ vortonMode: false }, { inputMode: "terminal" as const }, { readOnly: true }])(
+    "preserves baseline controls outside editable Vorton chat: %j",
+    (override) => {
+      expect(resolvePrimaryAction({ ...emptyComposer, ...override })).toEqual({
+        kind: "none",
+        isSubmitDisabled: false,
+      });
+      expect(resolvePrimaryAction({ ...emptyComposer, ...override, isAgentRunning: true })).toEqual(
+        { kind: "active", isSubmitDisabled: false },
+      );
+    },
+  );
 });

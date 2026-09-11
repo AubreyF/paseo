@@ -1,7 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
+import { useFetchQuery } from "@/data/query";
 import { Button } from "@/components/ui/button";
 import { useHostFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -29,23 +30,30 @@ export function WorkspaceTitleSuggestions(props: Props) {
 function AvailableSuggestions({ workspace, onSelect, disabled }: Props) {
   const queryClient = useQueryClient();
   const queryKey = ["workspace-title-suggestions", workspace.serverId, workspace.workspaceId];
-  const suggestions = useQuery({
+  const refreshRequested = useRef(false);
+  const cached = queryClient.getQueryState(queryKey);
+  const suggestions = useFetchQuery({
+    dataShape: "value",
+    enabled: !cached?.data || Date.now() - cached.dataUpdatedAt >= 30 * 60_000,
     queryKey,
     queryFn: async () => {
       const client = getHostRuntimeStore().getClient(workspace.serverId);
       if (!client) throw new Error("Host disconnected. Reconnect and try again.");
-      // A cached client result means this is an explicit regeneration. Reopening does not refetch.
-      const regenerate = queryClient.getQueryData(queryKey) !== undefined;
+      // Only the Regenerate button requests new alternatives.
+      const regenerate = refreshRequested.current;
+      refreshRequested.current = false;
       return client.suggestWorkspaceTitles(workspace.workspaceId, regenerate);
     },
-    staleTime: 30 * 60_000,
+    staleTimeMs: 30 * 60_000,
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
+  const refetch = suggestions.refetch;
   const regenerate = useCallback(() => {
-    void suggestions.refetch({ cancelRefetch: false });
-  }, [suggestions.refetch]);
+    refreshRequested.current = true;
+    void refetch({ cancelRefetch: false });
+  }, [refetch]);
   return (
     <View style={styles.body} testID="workspace-title-suggestions">
       <View style={styles.header}>
@@ -71,19 +79,29 @@ function AvailableSuggestions({ workspace, onSelect, disabled }: Props) {
         </Text>
       ) : null}
       {suggestions.data?.map((title) => (
-        <Button
-          key={title}
-          variant="ghost"
-          size="md"
-          style={styles.suggestion}
-          textStyle={styles.suggestionText}
-          disabled={disabled}
-          onPress={() => onSelect(title)}
-        >
-          {title}
-        </Button>
+        <SuggestedTitle key={title} title={title} disabled={disabled} onSelect={onSelect} />
       ))}
     </View>
+  );
+}
+
+function SuggestedTitle({
+  title,
+  disabled,
+  onSelect,
+}: Pick<Props, "disabled" | "onSelect"> & { title: string }) {
+  const select = useCallback(() => onSelect(title), [onSelect, title]);
+  return (
+    <Button
+      variant="ghost"
+      size="md"
+      style={styles.suggestion}
+      textStyle={styles.suggestionText}
+      disabled={disabled}
+      onPress={select}
+    >
+      {title}
+    </Button>
   );
 }
 

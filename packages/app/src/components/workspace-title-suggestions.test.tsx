@@ -30,24 +30,29 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
       editable?: boolean;
     }
   >((props, ref) => {
-    const input = R.useRef<HTMLInputElement>(null);
+    const inputRef = R.useRef<HTMLInputElement>(null);
     R.useImperativeHandle(ref, () => ({
-      focus: () => input.current?.focus(),
-      blur: () => input.current?.blur(),
-      isFocused: () => document.activeElement === input.current,
-      getText: () => input.current?.value ?? "",
+      focus: () => inputRef.current?.focus(),
+      blur: () => inputRef.current?.blur(),
+      isFocused: () => document.activeElement === inputRef.current,
+      getText: () => inputRef.current?.value ?? "",
       replaceText: (text) => {
-        if (input.current) input.current.value = text;
+        if (inputRef.current) inputRef.current.value = text;
       },
-      getNativeRef: () => input.current,
+      getNativeRef: () => inputRef.current,
     }));
+    const onChangeText = props.onChangeText;
+    const handleInput = R.useCallback(
+      (event: React.FormEvent<HTMLInputElement>) => onChangeText?.(event.currentTarget.value),
+      [onChangeText],
+    );
     return (
       <input
-        ref={input}
+        ref={inputRef}
         defaultValue={props.initialValue}
         data-testid={props.testID}
         disabled={props.editable === false}
-        onInput={(event) => props.onChangeText?.(event.currentTarget.value)}
+        onInput={handleInput}
       />
     );
   });
@@ -69,7 +74,7 @@ vi.mock("@/components/ui/button", () => ({
     disabled?: boolean;
     testID?: string;
   }) => (
-    <button disabled={disabled} data-testid={testID} onClick={onPress}>
+    <button type="button" disabled={disabled} data-testid={testID} onClick={onPress}>
       {children}
     </button>
   ),
@@ -131,7 +136,9 @@ function input() {
   return node;
 }
 function button(text: string) {
-  const node = [...host.querySelectorAll("button")].find((node) => node.textContent === text);
+  const node = [...host.querySelectorAll("button")].find(
+    (candidate) => candidate.textContent === text,
+  );
   if (!node) throw new Error(`Missing button ${text}`);
   return node;
 }

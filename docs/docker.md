@@ -6,6 +6,9 @@ container gives you both the daemon API and a self-hosted UI.
 
 The image source lives in [`docker/`](../docker/).
 
+For the planned private preview deployment with Tailscale inside each personal
+container, see [container-tailscale.md](container-tailscale.md).
+
 ## How it works
 
 The official image:
@@ -15,6 +18,7 @@ The official image:
 - listens on `0.0.0.0:6767` inside the container
 - enables the bundled daemon web UI with `PASEO_WEB_UI_ENABLED=true`
 - stores daemon state and agent credentials under `/home/paseo`
+- includes Git and GitHub CLI (`gh`) for GitHub repository search and operations
 - leaves agent CLIs out of the base image
 
 Open the container's HTTP origin, for example `http://localhost:6767`, to load
@@ -110,6 +114,23 @@ Agent credentials and config persist in `/home/paseo`, alongside daemon state.
 Provider environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 `OPENAI_BASE_URL`, or `ANTHROPIC_BASE_URL` can be passed through `docker run -e`
 or `compose.environment`; Paseo passes them to launched agents.
+
+## GitHub authentication
+
+Sign in separately for each installation, as the daemon's `paseo` user:
+
+```bash
+docker exec -it --user paseo paseo gh auth login --hostname github.com --git-protocol https --web
+docker exec --user paseo paseo gh auth status --hostname github.com
+```
+
+GitHub CLI configuration persists under `/home/paseo/.config/gh` in the home
+volume. Without a system credential store, `gh` saves the token in that
+directory. Keep the volume and its backups private. Never bake credentials
+into the image or copy another installation's account state.
+
+Existing images without `gh` need to be rebuilt or replaced with an image that
+includes it. Installing into a running container alone is lost on recreation.
 
 ## Volumes
 

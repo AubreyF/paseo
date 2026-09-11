@@ -76,6 +76,7 @@ export const PanelLeft = StubIcon;
 export const PanelsTopLeft = StubIcon;
 export const Paperclip = StubIcon;
 export const Pencil = StubIcon;
+export const ListPlus = StubIcon;
 export const PencilRuler = StubIcon;
 export const Pin = StubIcon;
 export const PinOff = StubIcon;

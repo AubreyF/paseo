@@ -1,8 +1,10 @@
+import { useMobileComposerLayout, COMPOSER_CORNER_INSET } from "../mobile-layout";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useVortonTouch } from "@/vorton-touch";
 import {
   View,
   Text,
+  Pressable,
   useWindowDimensions,
   NativeSyntheticEvent,
   TextInputKeyPressEventData,
@@ -54,7 +56,12 @@ import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { useVortonMode } from "@/vorton-mode";
 import { useSubmitModifier } from "./submit-modifier";
-import { supportsSubmitModifiers, resolveSubmitAction } from "./submit-action";
+import {
+  supportsSubmitModifiers,
+  resolveSubmitAction,
+  resolvePrimaryAction,
+  type PrimaryActionKind,
+} from "./submit-action";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
@@ -573,6 +580,7 @@ function MessageInputOverlay({
   onCancelRecording,
   onAcceptRecording,
   onAcceptAndSendRecording,
+  onAcceptAndQueueRecording,
   onRetryFailedRecording,
   onDiscardFailedRecording,
   onRealtimeVoiceStop,
@@ -596,6 +604,7 @@ function MessageInputOverlay({
   onCancelRecording: () => Promise<void>;
   onAcceptRecording: () => Promise<void>;
   onAcceptAndSendRecording: () => Promise<void>;
+  onAcceptAndQueueRecording?: () => Promise<void>;
   onRetryFailedRecording: () => void;
   onDiscardFailedRecording: () => void;
   onRealtimeVoiceStop: () => void;
@@ -612,6 +621,7 @@ function MessageInputOverlay({
         onCancel={onCancelRecording}
         onAccept={onAcceptRecording}
         onAcceptAndSend={onAcceptAndSendRecording}
+        onAcceptAndQueue={onAcceptAndQueueRecording}
         onRetry={dictationStatus === "failed" ? onRetryFailedRecording : undefined}
         onDiscard={dictationStatus === "failed" ? onDiscardFailedRecording : undefined}
       />
@@ -823,8 +833,6 @@ function SendButtonTooltip({
   );
 }
 
-type PrimaryActionKind = "send" | "active" | "none";
-
 interface SendButtonPresentation {
   buttonIcon: "arrow" | "return" | "queue" | "newline";
   buttonKeys: ShortcutKey[][];
@@ -867,18 +875,6 @@ function hasSendableComposerContent(input: {
   hasExternalContent: boolean;
 }): boolean {
   return input.hasText || input.attachments.length > 0 || input.hasExternalContent;
-}
-
-function resolvePrimaryActionKind(input: {
-  hasSendableContent: boolean;
-  allowEmptySubmit: boolean;
-  isAgentRunning: boolean;
-  isSubmitLoading: boolean;
-}): PrimaryActionKind {
-  if (input.hasSendableContent || input.allowEmptySubmit) return "send";
-  if (input.isAgentRunning) return "active";
-  if (input.isSubmitLoading) return "send";
-  return "none";
 }
 
 function PrimaryAction({
@@ -1273,6 +1269,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const isCompact = useIsCompactFormFactor();
     const vortonMode = useVortonMode();
     const touch = useVortonTouch();
+    const mobileComposer = useMobileComposerLayout();
+    const showMobileQueue = useMemo(
+      () => mobileComposer.enabled && isAgentRunning && Boolean(onQueue) && !readOnly,
+      [mobileComposer.enabled, isAgentRunning, onQueue, readOnly],
+    );
     const showSubmitModifiers = supportsSubmitModifiers({
       vortonMode,
       isWeb,
@@ -1368,6 +1369,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       getNativeElement: () => (isWeb ? getTextInputNativeElement(textInputRef.current) : null),
     }));
     const sendAfterTranscriptRef = useRef(false);
+    const queueAfterTranscriptRef = useRef(false);
     const serverInfo = useSessionStore(
       useCallback(
         (state) => {
@@ -1398,6 +1400,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const handleDictationTranscript = useCallback(
       (text: string, _meta: { requestId: string }) => {
         const autoSend = sendAfterTranscriptRef.current;
+        const queueRequested = queueAfterTranscriptRef.current;
+        queueAfterTranscriptRef.current = false;
         sendAfterTranscriptRef.current = false;
         applyDictationTranscript(text, {
           value: valueRef.current,
@@ -1409,6 +1413,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           attachments,
           cwd,
           autoSend,
+          queueRequested,
         });
       },
       [replaceText, onSubmit, onQueue, attachments, cwd, isAgentRunning, defaultSendBehavior],
@@ -1520,15 +1525,24 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
 
     const handleCancelRecording = useCallback(async () => {
+      queueAfterTranscriptRef.current = false;
       await cancelDictation();
     }, [cancelDictation]);
 
     const handleAcceptRecording = useCallback(async () => {
+      queueAfterTranscriptRef.current = false;
       sendAfterTranscriptRef.current = false;
       await confirmDictation();
     }, [confirmDictation]);
 
     const handleAcceptAndSendRecording = useCallback(async () => {
+      queueAfterTranscriptRef.current = false;
+      sendAfterTranscriptRef.current = true;
+      await confirmDictation();
+    }, [confirmDictation]);
+
+    const handleAcceptAndQueueRecording = useCallback(async () => {
+      queueAfterTranscriptRef.current = true;
       sendAfterTranscriptRef.current = true;
       await confirmDictation();
     }, [confirmDictation]);
@@ -1716,7 +1730,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       });
     }
 
-    const primaryActionKind = resolvePrimaryActionKind({
+    const primaryAction = resolvePrimaryAction({
       hasSendableContent: hasSendableComposerContent({
         hasText: hasLiveText,
         attachments,
@@ -1725,11 +1739,15 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       allowEmptySubmit,
       isAgentRunning,
       isSubmitLoading,
+      isSubmitDisabled,
+      vortonMode,
+      inputMode,
+      readOnly,
     });
     const { canPressLoadingButton, isSendButtonDisabled, defaultActionQueues } =
       computeSendButtonState({
         disabled,
-        isSubmitDisabled,
+        isSubmitDisabled: primaryAction.isSubmitDisabled,
         isSubmitLoading,
         onSubmitLoadingPress,
         defaultSendBehavior,
@@ -1786,7 +1804,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         buttonIcon: submitIcon,
         buttonKeys: DEFAULT_SEND_KEYS,
         buttonDisabled: isSendButtonDisabled,
-        buttonKind: primaryActionKind,
+        buttonKind: primaryAction.kind,
         submitAccessibilityLabel,
         sendTooltipLabel,
       },
@@ -1857,11 +1875,21 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const inputWrapperCombinedStyle = useMemo(
       () => [
         styles.inputWrapper,
+        mobileComposer.enabled && { paddingBottom: mobileComposer.bottomPadding },
         readOnly && styles.inputWrapperReadOnly,
         inputWrapperStyle,
+        mobileComposer.enabled && styles.mobileInputSurface,
+        showMobileQueue && styles.mobileQueueSurface,
         { opacity: surfacePresentation.input.opacity },
       ],
-      [inputWrapperStyle, readOnly, surfacePresentation.input.opacity],
+      [
+        inputWrapperStyle,
+        readOnly,
+        surfacePresentation.input.opacity,
+        mobileComposer.enabled,
+        mobileComposer.bottomPadding,
+        showMobileQueue,
+      ],
     );
     // `withUnistyles` maps this component's `style` into a `.hash > *` child
     // rule, which ties on specificity with react-native-web's own
@@ -1936,6 +1964,27 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       />
     );
 
+    const mobileQueueButton = useMemo(
+      () =>
+        showMobileQueue ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Queue message"
+            testID="mobile-queue-message"
+            disabled={isSendButtonDisabled}
+            onPress={handleQueueMessage}
+            style={[styles.mobileQueueButton, isSendButtonDisabled && styles.buttonDisabled]}
+          >
+            <ThemedListPlus size={20} uniProps={iconForegroundMapping} />
+            <Text style={styles.queueLetter}>Q</Text>
+          </Pressable>
+        ) : null,
+      [showMobileQueue, isSendButtonDisabled, handleQueueMessage],
+    );
+    const queueRecordingAction = useMemo(
+      () => (showMobileQueue ? handleAcceptAndQueueRecording : undefined),
+      [showMobileQueue, handleAcceptAndQueueRecording],
+    );
     const dictationPlacement = placeDictationButton(voiceButton, touch, mode.showVoice);
     return (
       <View
@@ -1957,6 +2006,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         >
           {attachmentSlot}
           {dictationPlacement.top}
+          {mobileQueueButton}
           {/* Text input */}
           <RenderProfile id="ComposerTextSurface">
             <ComposerTextSurface
@@ -2046,6 +2096,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             onCancelRecording={handleCancelRecording}
             onAcceptRecording={handleAcceptRecording}
             onAcceptAndSendRecording={handleAcceptAndSendRecording}
+            onAcceptAndQueueRecording={queueRecordingAction}
             onRetryFailedRecording={handleRetryFailedRecording}
             onDiscardFailedRecording={handleDiscardFailedRecording}
             onRealtimeVoiceStop={handleRealtimeVoiceStop}
@@ -2069,7 +2120,11 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
     borderRadius: theme.borderRadius["2xl"],
-    paddingVertical: {
+    paddingTop: {
+      xs: theme.spacing[2],
+      md: theme.spacing[4],
+    },
+    paddingBottom: {
       xs: theme.spacing[2],
       md: theme.spacing[4],
     },
@@ -2090,6 +2145,27 @@ const styles = StyleSheet.create((theme: Theme) => ({
   inputWrapperReadOnly: {
     borderStyle: "dotted",
   },
+  mobileInputSurface: {
+    backgroundColor: "transparent",
+    borderColor: "transparent",
+    borderRadius: 0,
+  },
+  mobileQueueSurface: { minHeight: 172, justifyContent: "space-between" },
+  mobileQueueButton: {
+    position: "absolute",
+    bottom: 59,
+    right: 7,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 1,
+  },
+  queueLetter: { fontSize: 11, color: theme.colors.foreground, fontWeight: "600" },
   textInputScrollWrapper: {
     flexShrink: 1,
     position: "relative",
@@ -2125,7 +2201,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     minHeight: MIN_INPUT_HEIGHT,
     color: theme.colors.foregroundMuted,
   },
-  touchButton: { width: 44, height: 44, minWidth: 44, minHeight: 44 },
+  touchButton: { width: 44, height: 44, minWidth: 44, minHeight: 44, marginLeft: 0 },
   touchDictationButton: {
     width: 44,
     height: 44,
@@ -2135,7 +2211,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.borderAccent,
   },
-  touchDictationSlot: { position: "absolute", top: 8, right: 12, zIndex: 1 },
+  touchDictationSlot: {
+    position: "absolute",
+    top: COMPOSER_CORNER_INSET,
+    right: COMPOSER_CORNER_INSET,
+    zIndex: 1,
+  },
   touchTextInput: { paddingRight: 56, minHeight: 44 },
   buttonRow: {
     flexShrink: 0,

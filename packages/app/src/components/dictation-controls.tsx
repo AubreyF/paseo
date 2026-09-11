@@ -1,8 +1,9 @@
+import { useMobileComposerLayout, COMPOSER_CORNER_INSET } from "@/composer/mobile-layout";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useMemo } from "react";
 import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { X, ArrowUp, RefreshCcw, Check, Mic, Pencil } from "lucide-react-native";
+import { X, ArrowUp, RefreshCcw, Check, Mic, Pencil, ListPlus } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { VolumeMeter } from "./volume-meter";
 import { FOOTER_HEIGHT } from "@/constants/layout";
@@ -20,6 +21,7 @@ interface DictationControlsProps {
   onCancel: () => void;
   onAccept: () => void;
   onAcceptAndSend: () => void;
+  onAcceptAndQueue?: () => void;
   onRetry?: () => void;
   onDiscard?: () => void;
   disabled?: boolean;
@@ -149,11 +151,13 @@ export function DictationOverlay({
   onCancel,
   onAccept,
   onAcceptAndSend,
+  onAcceptAndQueue,
   onRetry,
   onDiscard,
 }: Omit<DictationControlsProps, "onStart" | "disabled" | "transcript"> & { errorText?: string }) {
   const { theme } = useUnistyles();
   const touch = useVortonTouch();
+  const mobileComposer = useMobileComposerLayout();
   const { t } = useTranslation();
   const isFailed = status === "failed";
   const showActiveState = isRecording || isProcessing || isFailed;
@@ -165,16 +169,18 @@ export function DictationOverlay({
       overlayStyles.container,
       touch && overlayStyles.touchContainer,
       { backgroundColor: theme.colors.accent },
+      mobileComposer.enabled && overlayStyles.mobileContainer,
     ],
-    [theme.colors.accent, touch],
+    [theme.colors.accent, touch, mobileComposer.enabled],
   );
   const overlayCancelButtonStyle = useMemo(
     () => [
       overlayStyles.cancelButton,
       touch && overlayStyles.touchCancel,
+      mobileComposer.enabled && { bottom: mobileComposer.bottomPadding + 1 },
       actionsDisabled && !isFailed && overlayStyles.buttonDisabled,
     ],
-    [actionsDisabled, isFailed, touch],
+    [actionsDisabled, isFailed, touch, mobileComposer.enabled, mobileComposer.bottomPadding],
   );
   const overlayTimerTextStyle = useMemo(
     () => [overlayStyles.timerText, { color: theme.colors.accentForeground }],
@@ -188,11 +194,44 @@ export function DictationOverlay({
     () => [
       overlayStyles.actionButton,
       touch && overlayStyles.touchSubmit,
+      mobileComposer.enabled && { bottom: mobileComposer.bottomPadding + 1 },
       { backgroundColor: theme.colors.accentForeground },
     ],
-    [theme.colors.accentForeground, touch],
+    [theme.colors.accentForeground, touch, mobileComposer.enabled, mobileComposer.bottomPadding],
   );
   const overlayConfirmButtonStyle = overlayRetryButtonStyle;
+  const overlayLoadingStyle = useMemo(
+    () => [
+      overlayStyles.loadingContainer,
+      touch && overlayStyles.touchSubmit,
+      mobileComposer.enabled && { bottom: mobileComposer.bottomPadding + 1 },
+    ],
+    [touch, mobileComposer.enabled, mobileComposer.bottomPadding],
+  );
+
+  const queueButton = useMemo(
+    () =>
+      mobileComposer.enabled && onAcceptAndQueue ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Queue recorded message"
+          disabled={actionsDisabled || isFailed}
+          onPress={onAcceptAndQueue}
+          style={[overlayStyles.queueButton, actionsDisabled && overlayStyles.buttonDisabled]}
+        >
+          <ListPlus size={20} color={theme.colors.accentForeground} />
+          <Text style={overlayTimerTextStyle}>Q</Text>
+        </Pressable>
+      ) : null,
+    [
+      mobileComposer.enabled,
+      onAcceptAndQueue,
+      actionsDisabled,
+      isFailed,
+      theme.colors.accentForeground,
+      overlayTimerTextStyle,
+    ],
+  );
 
   if (!showActiveState) {
     return null;
@@ -200,6 +239,14 @@ export function DictationOverlay({
 
   return (
     <View style={containerStyle} testID="dictation-overlay">
+      {mobileComposer.enabled ? (
+        <View
+          pointerEvents="none"
+          testID="mobile-recording-background"
+          style={[overlayStyles.mobileBackground, { backgroundColor: theme.colors.accent }]}
+        />
+      ) : null}
+      {queueButton}
       <Pressable
         onPress={handleCancel}
         disabled={actionsDisabled && !isFailed}
@@ -235,7 +282,7 @@ export function DictationOverlay({
 
       <View style={[overlayStyles.actionButtonsContainer, touch && overlayStyles.touchActions]}>
         {actionsDisabled ? (
-          <View style={[overlayStyles.loadingContainer, touch && overlayStyles.touchSubmit]}>
+          <View style={overlayLoadingStyle}>
             <LoadingSpinner size="small" color={theme.colors.accentForeground} />
           </View>
         ) : null}
@@ -356,6 +403,20 @@ const overlayStyles = StyleSheet.create((theme) => ({
   // The hidden composer still owns the footprint. Fill it rather than replacing
   // a multiline draft with FOOTER_HEIGHT. Match its border + padding offsets.
   touchContainer: { height: "100%", paddingHorizontal: 0, paddingVertical: 0 },
+  mobileContainer: { backgroundColor: "transparent", borderRadius: 0 },
+  mobileBackground: { position: "absolute", top: -9, bottom: -16, left: -16, right: -16 },
+  queueButton: {
+    position: "absolute",
+    bottom: 59,
+    right: 7,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   touchCancel: {
     position: "absolute",
     left: { xs: theme.spacing[3] + 1 - 6, md: theme.spacing[4] + 1 - 6 },
@@ -366,9 +427,13 @@ const overlayStyles = StyleSheet.create((theme) => ({
     right: { xs: theme.spacing[3] + 1 - 6, md: theme.spacing[4] + 1 - 6 },
     bottom: { xs: theme.spacing[2] + 1, md: theme.spacing[4] + 1 },
   },
-  touchEdit: { position: "absolute", top: 9, right: 13 },
+  touchEdit: {
+    position: "absolute",
+    top: COMPOSER_CORNER_INSET + 1,
+    right: COMPOSER_CORNER_INSET + 1,
+  },
   touchActions: { position: "static" },
-  touchCenter: { alignSelf: "stretch", paddingHorizontal: 56, paddingTop: 8, paddingBottom: 52 },
+  touchCenter: { alignSelf: "stretch", paddingHorizontal: 56, paddingVertical: 8 },
   container: {
     flexDirection: "row",
     alignItems: "center",

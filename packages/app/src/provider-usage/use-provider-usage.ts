@@ -56,7 +56,7 @@ export function useProviderUsage(
     queryKey,
     queryFn,
     enabled,
-    staleTime: PROVIDER_USAGE_STALE_TIME_MS,
+    staleTime: options.pollActivity ? 15_000 : PROVIDER_USAGE_STALE_TIME_MS,
     refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,

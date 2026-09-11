@@ -73,6 +73,7 @@ export class ProviderResetService {
   ): Promise<ProviderResetResult> {
     return this.withSession(providerId, async (session) => {
       await this.requireAccount(session, accountId);
+      const operation = await this.options.store.read(accountId);
       const outcome = await this.options.store.confirm({ accountId, operationId }, (attempt) =>
         session.consume(attempt),
       );
@@ -92,8 +93,7 @@ export class ProviderResetService {
       }
       if (outcome === "reset" || outcome === "alreadyRedeemed") {
         try {
-          const operation = await this.options.store.read(accountId);
-          if (operation?.state === "completed") {
+          if (operation) {
             await this.options.onResetApplied?.(providerId, operation.createdAt);
           }
         } catch {

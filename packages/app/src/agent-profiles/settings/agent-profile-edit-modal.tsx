@@ -220,6 +220,10 @@ function ProfileLaunchFields({
   );
 }
 
+function profileActionPlacement(fixed: boolean, actions: ReactElement) {
+  return { footer: fixed ? actions : undefined, inline: fixed ? null : actions };
+}
+
 function OpenAgentProfileEditModal({
   serverId,
   visible,
@@ -312,12 +316,45 @@ function OpenAgentProfileEditModal({
     onClose();
   }, [onClose, state.isSubmitting]);
 
+  const vortonMode = useVortonMode();
+  const actions = (
+    <View
+      style={[styles.actions, vortonMode && styles.fixedActions]}
+      testID="agent-profile-actions"
+    >
+      <Button
+        variant="secondary"
+        style={styles.actionButton}
+        onPress={handleCancel}
+        disabled={state.isSubmitting}
+        testID="agent-profile-cancel-button"
+      >
+        {t("common.actions.cancel")}
+      </Button>
+      <Button
+        variant="default"
+        style={styles.actionButton}
+        onPress={handleSavePress}
+        disabled={!state.canSubmit}
+        testID="agent-profile-save-button"
+      >
+        {state.isSubmitting
+          ? t("settings.host.agentProfiles.saving")
+          : t("settings.host.agentProfiles.save")}
+      </Button>
+    </View>
+  );
+
+  const actionPlacement = profileActionPlacement(vortonMode, actions);
+
   return (
     <AdaptiveModalSheet
       visible={visible}
       header={sheetHeader}
       onClose={handleCancel}
       onDismiss={onDismiss}
+      footer={actionPlacement.footer}
+      sizeContentToCurrentSnapPoint={vortonMode}
       desktopMaxWidth={520}
       testID="agent-profile-edit-modal"
     >
@@ -478,28 +515,7 @@ function OpenAgentProfileEditModal({
           </Text>
         ) : null}
 
-        <View style={styles.actions}>
-          <Button
-            variant="secondary"
-            style={styles.actionButton}
-            onPress={handleCancel}
-            disabled={state.isSubmitting}
-            testID="agent-profile-cancel-button"
-          >
-            {t("common.actions.cancel")}
-          </Button>
-          <Button
-            variant="default"
-            style={styles.actionButton}
-            onPress={handleSavePress}
-            disabled={!state.canSubmit}
-            testID="agent-profile-save-button"
-          >
-            {state.isSubmitting
-              ? t("settings.host.agentProfiles.saving")
-              : t("settings.host.agentProfiles.save")}
-          </Button>
-        </View>
+        {actionPlacement.inline}
       </View>
     </AdaptiveModalSheet>
   );
@@ -656,6 +672,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     marginTop: theme.spacing[2],
+  },
+  fixedActions: {
+    flex: 1,
+    marginTop: 0,
   },
   actionButton: {
     flex: 1,

@@ -132,6 +132,9 @@ into the image or copy another installation's account state.
 Existing images without `gh` need to be rebuilt or replaced with an image that
 includes it. Installing into a running container alone is lost on recreation.
 
+For the private Aubrey installation, the combined Tailscale images already bundle
+`gh` in an image layer. See the current [packaging acceptance record](container-tailscale.md#github-cli-packaging-verification) before scheduling another replacement.
+
 ## Volumes
 
 | Mount         | Purpose                                                                  |

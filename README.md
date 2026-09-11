@@ -27,9 +27,12 @@ On a Mac, run Tailscale and MTPLX natively. Containers supply the Linux agent en
 
 ## Private access from your phone and other computers
 
-Use **Tailscale Serve** to put the container's bundled web interface behind private HTTPS. Install Tailscale on the host and each client device, then connect them to your intended private network. Keep the application password enabled.
+> [!TIP]
+> **Open a “local preview” from any of your Tailscale devices.** Ask an agent in your build thread: “Start this workspace's preview and give me the verified private URL.” In a configured personal environment, the shared preview helper checks the URL, saves the assigned port, and registers the preview for restoration after a daemon restart. The link stays private to permitted devices on your tailnet. See the [preview setup and commands](docker/personal-tailscale/README.md#preview-workflow). Ordinary previews use HTTP; microphone and other secure-context features need a [private HTTPS mapping](docker/personal-tailscale/README.md#private-https-previews).
 
-Follow the [remote access setup and verification steps](docker/multiplex/README.md#private-https-with-tailscale). On an iPhone or iPad, connect Tailscale and open the resulting HTTPS address in Safari. Use that address on your other development machines too. The remote browser connects to the hosted daemon, so its project paths refer to the host's container.
+Use **Tailscale Serve** to put the container's bundled web interface behind private HTTPS. The personal environment runs Tailscale inside its container; install Tailscale on each client device and connect it to your intended private network. Keep the application password enabled.
+
+Follow the [personal environment setup and verification steps](docs/container-tailscale.md). On an iPhone or iPad, connect Tailscale and open the resulting HTTPS address in Safari. Use that address on your other development machines too. The remote browser connects to the hosted daemon, so its project paths refer to the host's container.
 
 Serve the bundled web interface rather than the development preview on port 8081. Updating source files does not update a running image. For an existing installation, publish a tested web export using the persistent web workflow below. Server changes still require a reviewed server build and coordinated deployment.
 

@@ -63,6 +63,7 @@ it.each([false, true])("keeps edit, submit and cancel independent with touch=%s"
   const queueButton = host.querySelector<HTMLElement>('[aria-label="Queue recorded message"]');
   if (touch) {
     expect(queueButton).not.toBeNull();
+    expect(queueButton?.textContent).not.toContain("Q");
     act(() => queueButton?.click());
     expect(queue).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledTimes(1);

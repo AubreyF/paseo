@@ -387,7 +387,7 @@ function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
     args;
   if (queuedMessages.length === 0) return null;
   return (
-    <View style={styles.queueTrack}>
+    <View style={styles.queueTrack} testID="composer-queued-messages">
       {queuedMessages.map((item) => (
         <QueuedMessageRow
           key={item.id}
@@ -2342,10 +2342,13 @@ function ComposerContentImpl({
         enabled={!externalKeyboardShift}
       >
         <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
+        {mobileComposer.enabled && queueList ? (
+          <View style={styles.mobileQueueArea}>{queueList}</View>
+        ) : null}
         {/* Input area */}
-        <View style={inputAreaContainerStyle}>
+        <View style={inputAreaContainerStyle} testID="composer-input-area">
           <View style={styles.inputAreaContent}>
-            {queueList}
+            {!mobileComposer.enabled ? queueList : null}
             {sendErrorNode}
 
             <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
@@ -2465,6 +2468,11 @@ const styles = StyleSheet.create((theme: Theme) => ({
     overflow: "visible",
     paddingHorizontal: theme.spacing[4],
     paddingBottom: theme.spacing[4],
+  },
+  mobileQueueArea: {
+    paddingHorizontal: MOBILE_COMPOSER_MARGIN,
+    paddingBottom: 12,
+    flexShrink: 1,
   },
   mobileInputArea: {
     paddingHorizontal: MOBILE_COMPOSER_MARGIN,

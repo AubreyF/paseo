@@ -228,8 +228,7 @@ export function DictationOverlay({
           onPress={onAcceptAndQueue}
           style={[overlayStyles.queueButton, actionsDisabled && overlayStyles.buttonDisabled]}
         >
-          <ListPlus size={20} color={theme.colors.accentForeground} />
-          <Text style={overlayTimerTextStyle}>Q</Text>
+          <ListPlus size={theme.iconSize.lg} color={theme.colors.accentForeground} />
         </Pressable>
       ) : null,
     [
@@ -238,7 +237,7 @@ export function DictationOverlay({
       actionsDisabled,
       isFailed,
       theme.colors.accentForeground,
-      overlayTimerTextStyle,
+      theme.iconSize.lg,
     ],
   );
 
@@ -421,7 +420,7 @@ const overlayStyles = StyleSheet.create((theme) => ({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    backgroundColor: theme.colors.accent,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

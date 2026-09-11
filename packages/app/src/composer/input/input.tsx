@@ -1981,13 +1981,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             testID="mobile-queue-message"
             disabled={isSendButtonDisabled}
             onPress={handleQueueMessage}
-            style={[styles.mobileQueueButton, isSendButtonDisabled && styles.buttonDisabled]}
+            style={[
+              styles.sendButton,
+              styles.touchButton,
+              styles.mobileQueueButton,
+              isSendButtonDisabled && styles.buttonDisabled,
+            ]}
           >
-            <ThemedListPlus size={20} uniProps={iconForegroundMapping} />
-            <Text style={styles.queueLetter}>Q</Text>
+            <ThemedListPlus size={buttonIconSize} uniProps={iconAccentForegroundMapping} />
           </Pressable>
         ) : null,
-      [showMobileQueue, isSendButtonDisabled, handleQueueMessage],
+      [showMobileQueue, isSendButtonDisabled, handleQueueMessage, buttonIconSize],
     );
     const queueRecordingAction = useMemo(
       () => (showMobileQueue ? handleAcceptAndQueueRecording : undefined),
@@ -2168,17 +2172,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     position: "absolute",
     bottom: 59,
     right: 7,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: theme.colors.borderAccent,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 1,
   },
-  queueLetter: { fontSize: 11, color: theme.colors.foreground, fontWeight: "600" },
   textInputScrollWrapper: {
     flexShrink: 1,
     position: "relative",

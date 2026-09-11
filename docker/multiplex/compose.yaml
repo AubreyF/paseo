@@ -5,13 +5,15 @@ services:
     image: ${PASEO_IMAGE:-ghcr.io/aubreyf/paseo-multiplex:edge}
     restart: unless-stopped
     init: true
-    pids_limit: 2048
+    pids_limit: 4096
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    mem_limit: ${PASEO_MEMORY_LIMIT:-8g}
+    mem_limit: ${PASEO_MEMORY_LIMIT:-16g}
+    # Docker counts RAM plus swap here, preserving a 4 GiB swap allowance.
+    memswap_limit: ${PASEO_MEMORY_SWAP_LIMIT:-20g}
     cpus: ${PASEO_CPU_LIMIT:-4}
     extra_hosts:
       - "host.docker.internal:host-gateway"

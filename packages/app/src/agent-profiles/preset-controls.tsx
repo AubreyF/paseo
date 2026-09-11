@@ -1,3 +1,4 @@
+import { ProfileDetailsView } from "./profile-details-view";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { ActivityIndicator, Text, ScrollView, View, useWindowDimensions } from "react-native";
@@ -298,6 +299,7 @@ export function PresetControls({
           </View>
           {inspectorRow ? (
             <PresetInspector
+              serverId={serverId}
               row={inspectorRow}
               definition={definition}
               worker={worker}
@@ -399,11 +401,13 @@ function PresetRow({
   );
 }
 function PresetInspector({
+  serverId,
   row,
   definition,
   worker,
   rail,
 }: {
+  serverId: string | null;
   row: AgentProfilePicker["rows"][number];
   definition?: AgentProfile;
   worker?: AgentProfile;
@@ -423,17 +427,20 @@ function PresetInspector({
       {rail}
       <Text style={styles.label}>Configuration</Text>
       <Text style={styles.text}>{row.summary}</Text>
+      {vortonMode && definition ? (
+        <ProfileDetailsView serverId={serverId} profile={definition} />
+      ) : null}
       <Text style={styles.label}>Execution</Text>
       <Text style={styles.text}>{execution}</Text>
       <Text style={styles.label}>Instructions</Text>
       <Text style={styles.text}>
-        {definition?.instructions?.trim() || "No preset-specific instructions."}
+        {definition?.instructions?.trim() || "No profile-specific instructions."}
       </Text>
       {!row.localEndpoint ? (
         <>
           <Text style={styles.label}>On quota exhaustion</Text>
           <Text style={styles.text}>
-            Stop and suggest another preset. Never switch automatically.
+            Stop and suggest another profile. Never switch automatically.
           </Text>
         </>
       ) : null}

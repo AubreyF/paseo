@@ -1,3 +1,4 @@
+import { AccountDisconnectedIcon } from "@/provider-usage/reconnect-control";
 import { ProfileDetailsView } from "./profile-details-view";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
@@ -27,6 +28,30 @@ import { presetNickname } from "./nickname";
 import { permissionCaption } from "./permission-caption";
 import { RemainingRing } from "@/provider-usage/remaining-ring";
 import { selectedPresetPresentation } from "./selected-preset-presentation";
+
+function PresetStatusIcon({
+  waiting,
+  showWarning,
+  showRing,
+  remaining,
+  stale,
+}: {
+  waiting: boolean;
+  showWarning: boolean;
+  showRing: boolean;
+  remaining: number | null;
+  stale: boolean;
+}) {
+  if (waiting) return <ActivityIndicator size="small" style={styles.pendingRing} />;
+  if (showWarning) return <AccountDisconnectedIcon />;
+  if (showRing)
+    return (
+      <View style={styles.ring}>
+        <RemainingRing remaining={remaining} stale={stale} />
+      </View>
+    );
+  return null;
+}
 
 interface PresetControlsProps {
   serverId: string | null;
@@ -144,17 +169,18 @@ export function PresetControls({
   const worker = definitions?.find((row) => row.id === definition?.workerProfileId);
   const selected = profiles.rows.find((row) => row.id === selectedProfileId);
   const compactName = useCompactProfileName(controlsRef, isCompact);
-  const { triggerLabel, showRing, remaining, accessibilityLabel } = selectedPresetPresentation({
-    selectedProfileId,
-    compactName,
-    selectedProfileName,
-    currentProvider,
-    selected,
-    definitions,
-    vortonMode,
-    view,
-    now,
-  });
+  const { triggerLabel, showWarning, showRing, remaining, statusLabel, accessibilityLabel } =
+    selectedPresetPresentation({
+      compactName,
+      selectedProfileId,
+      selectedProfileName,
+      currentProvider,
+      selected,
+      definitions,
+      vortonMode,
+      view,
+      now,
+    });
   const compactPermission = useCompactPermission(
     controlsRef,
     touch,
@@ -193,11 +219,8 @@ export function PresetControls({
   );
   const renderRail = (row: AgentProfilePicker["rows"][number]) => (
     <PresetUsageRail
-      usage={
-        view.kind === "ready"
-          ? view.payload.providers.find((entry) => entry.providerId === row.provider)
-          : undefined
-      }
+      view={view}
+      now={now}
       localStatus={
         row.localEndpoint
           ? `${formatLocalEndpointSummary(row.localEndpoint, now)?.replace("Local endpoint", "Local")} · ${formatWorkerActivity(
@@ -226,12 +249,13 @@ export function PresetControls({
           accessibilityLabel={accessibilityLabel}
           testID="agent-preset-selector"
         >
-          {waitingToOpen ? <ActivityIndicator size="small" style={styles.pendingRing} /> : null}
-          {!waitingToOpen && showRing ? (
-            <View style={styles.ring}>
-              <RemainingRing remaining={remaining} />
-            </View>
-          ) : null}
+          <PresetStatusIcon
+            waiting={waitingToOpen}
+            showWarning={showWarning}
+            showRing={showRing}
+            remaining={remaining}
+            stale={Boolean(statusLabel)}
+          />
           <Text style={styles.toolbarText} numberOfLines={1}>
             {triggerLabel}
           </Text>

@@ -1,5 +1,5 @@
 import type {
-  ProviderUsage,
+  ProviderUsage as WireProviderUsage,
   ProviderUsageBalance,
   ProviderUsageDetail,
   ProviderUsageListResponseMessage,
@@ -9,7 +9,6 @@ import type {
 } from "@getpaseo/protocol/messages";
 
 export type {
-  ProviderUsage,
   ProviderUsageBalance,
   ProviderUsageDetail,
   ProviderUsageStatus,
@@ -18,9 +17,18 @@ export type {
 };
 
 export type ProviderUsageBalanceUnit = ProviderUsageBalance["unit"];
-export type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
+export type ProviderUsage = WireProviderUsage & { refreshError?: string };
+export type ProviderUsageListPayload = Omit<
+  ProviderUsageListResponseMessage["payload"],
+  "providers"
+> & { providers: ProviderUsage[] };
 
 export type ProviderUsageView =
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "ready"; payload: ProviderUsageListPayload; isRefreshing: boolean };
+  | {
+      kind: "ready";
+      payload: ProviderUsageListPayload;
+      isRefreshing: boolean;
+      refreshError?: string;
+    };

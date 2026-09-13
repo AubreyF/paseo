@@ -46,10 +46,10 @@ export function usePresetData(
     view,
     ready: presetMenuReady({
       catalogLoading: Boolean(profiles.isLoadingStatus || profiles.isRefreshingStatus),
-      usageLoading: view.kind === "loading" || (view.kind === "ready" && view.isRefreshing),
+      usageLoading: view.kind === "loading",
       resets: resets.map((query) => ({
         enabled,
-        hasData: query.data !== undefined && !query.isFetching,
+        hasData: query.data !== undefined,
         failed: query.isError && !query.isFetching,
       })),
     }),

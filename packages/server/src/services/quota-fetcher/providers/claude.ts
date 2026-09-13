@@ -366,6 +366,15 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
     const resp = await this.callClaudeApi(oauth.accessToken);
 
+    if (resp === "AUTH_REJECTED") {
+      return {
+        ...unavailableUsage(this),
+        authRecovery: {
+          instructions:
+            "Open Claude Code on this account’s host using the same account configuration. Run /login and follow the sign-in prompts for the intended account. Then check the connection below.",
+        },
+      };
+    }
     if (resp === "NEEDS_AUTH") {
       // Read-only on credentials; the Claude CLI owns refresh. See docs/providers.md.
       return unavailableUsage(this);
@@ -465,7 +474,9 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     return oauth?.accessToken ? { oauth: { ...oauth, accessToken: oauth.accessToken } } : null;
   }
 
-  private async callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
+  private async callClaudeApi(
+    token: string,
+  ): Promise<ClaudeUsageResponse | "NEEDS_AUTH" | "AUTH_REJECTED"> {
     const res = await fetchProviderApi(this.fetchApi, "https://api.anthropic.com/api/oauth/usage", {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -473,7 +484,8 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
         "anthropic-beta": CLAUDE_OAUTH_BETA,
       },
     });
-    if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
+    if (res.status === 401) return "AUTH_REJECTED";
+    if (res.status === 403) return "NEEDS_AUTH";
     if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
     return ClaudeUsageResponseSchema.parse(await res.json());
   }

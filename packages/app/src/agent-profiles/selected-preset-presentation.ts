@@ -1,6 +1,6 @@
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import type { ProviderUsageView } from "@/provider-usage/types";
-import { remainingRingValue } from "@/provider-usage/remaining-ring-value";
+import { quotaReading } from "@/provider-usage/quota-reading";
 import { presetNickname } from "./nickname";
 
 interface SelectionInput {
@@ -21,22 +21,20 @@ export function selectedPresetPresentation(input: SelectionInput) {
     input.vortonMode && input.compactName !== false && input.selectedProfileId
       ? presetNickname({ name: fullName, nickname: definition?.nickname })
       : fullName;
-  const providerId = input.currentProvider ?? input.selected?.provider;
-  const usage =
-    input.view.kind === "ready"
-      ? input.view.payload.providers.find((entry) => entry.providerId === providerId)
-      : undefined;
-  const showRing =
-    input.vortonMode &&
-    Boolean(input.selectedProfileId) &&
-    Boolean(usage?.windows.some((window) => window.id !== "code_review"));
-  const remaining =
-    input.view.kind === "ready"
-      ? remainingRingValue(usage, input.view.payload.fetchedAt, input.now)
-      : null;
+  const providerId = input.currentProvider ?? input.selected?.provider ?? definition?.provider;
+  const reading = quotaReading(input.view, providerId, input.now);
+  const { remaining, statusLabel } = reading;
+  const showWarning =
+    input.vortonMode && Boolean(input.selectedProfileId) && Boolean(reading.authRecovery);
+  const showRing = input.vortonMode && Boolean(input.selectedProfileId) && Boolean(reading.window);
   let accessibilityLabel = `Profile (${fullName}, ${triggerLabel})`;
-  if (showRing)
-    accessibilityLabel +=
-      remaining === null ? ", usage unavailable" : `, ${Math.round(remaining)} percent remaining`;
-  return { triggerLabel, showRing, remaining, accessibilityLabel };
+  if (showWarning) accessibilityLabel += ", account disconnected, open profiles to reconnect";
+  if (showRing) accessibilityLabel += usageAccessibilityLabel(remaining, statusLabel);
+  return { triggerLabel, showWarning, showRing, remaining, statusLabel, accessibilityLabel };
+}
+
+function usageAccessibilityLabel(remaining: number | null, statusLabel: string | null) {
+  const remainingLabel =
+    remaining === null ? ", usage unavailable" : `, ${Math.round(remaining)} percent remaining`;
+  return remainingLabel + (statusLabel ? `, ${statusLabel}` : "");
 }

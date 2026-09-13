@@ -1,6 +1,6 @@
 import { existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type {
@@ -109,14 +109,25 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
-    const auth = await this.readCodexAuth();
+    const credentials = await this.readCodexAuth();
+    const auth = credentials?.auth;
     const accessToken = auth?.tokens?.access_token;
-    if (!auth || !accessToken) {
+    if (!credentials || !auth || !accessToken) {
       return unavailableUsage(this);
     }
 
     const { account_id } = auth.tokens ?? {};
     const resp = await this.callCodexApi(accessToken, account_id);
+
+    if (resp === "AUTH_REJECTED") {
+      const home = "'" + credentials.home.replaceAll("'", "'\"'\"'") + "'";
+      return {
+        ...unavailableUsage(this),
+        authRecovery: {
+          instructions: `Open a terminal on this account’s host and run:\nCODEX_HOME=${home} codex login --device-auth\nOpen the URL printed by Codex, enter its device code, and sign in to the intended account. Then check the connection below.`,
+        },
+      };
+    }
 
     if (resp === "NEEDS_AUTH") {
       // Read-only on credentials; the Codex CLI owns refresh. See docs/providers.md.
@@ -202,7 +213,7 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
     };
   }
 
-  private async readCodexAuth(): Promise<CodexAuth | null> {
+  private async readCodexAuth(): Promise<{ auth: CodexAuth; home: string } | null> {
     let candidates: string[];
     if (this.strictCodexHome) {
       candidates = this.codexHome ? [join(this.codexHome, "auth.json")] : [];
@@ -217,7 +228,7 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
       if (!existsSync(path)) continue;
       try {
         const auth = CodexAuthSchema.parse(JSON.parse(await fs.readFile(path, "utf8")));
-        if (auth.tokens?.access_token) return auth;
+        if (auth.tokens?.access_token) return { auth, home: dirname(path) };
       } catch {
         continue;
       }
@@ -228,7 +239,7 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   private async callCodexApi(
     token: string,
     accountId?: string,
-  ): Promise<CodexUsageResponse | "NEEDS_AUTH"> {
+  ): Promise<CodexUsageResponse | "NEEDS_AUTH" | "AUTH_REJECTED"> {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
@@ -243,7 +254,8 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
         headers,
       },
     );
-    if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
+    if (res.status === 401) return "AUTH_REJECTED";
+    if (res.status === 403) return "NEEDS_AUTH";
     if (!res.ok) throw new Error(`Codex usage API returned ${res.status}`);
     const text = await res.text();
     if (text.trim().startsWith("<")) return "NEEDS_AUTH";

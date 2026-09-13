@@ -31,7 +31,15 @@ for (const relative of files) {
   if (relative.startsWith("../") || path.isAbsolute(relative))
     throw new Error("Invalid source path");
   const from = path.join(source, relative);
-  const stat = await fs.lstat(from);
+  // Tracked files deleted in the working tree still appear in git ls-files.
+  const stat = await fs.lstat(from).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!stat) {
+    await fs.rm(path.join(root, relative), { force: true });
+    continue;
+  }
   if (!stat.isFile()) continue;
   const to = path.join(root, relative);
   await fs.mkdir(path.dirname(to), { recursive: true });

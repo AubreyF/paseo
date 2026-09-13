@@ -1787,6 +1787,7 @@ export const ProviderDiagnosticRequestMessageSchema = z.object({
 
 export const ProviderUsageListRequestMessageSchema = z.object({
   type: z.literal("provider.usage.list.request"),
+  forceRefresh: z.boolean().optional(),
   requestId: z.string(),
 });
 
@@ -5988,6 +5989,8 @@ export const ProviderUsageSchema = z.object({
   providerId: z.string(),
   displayName: z.string(),
   status: ProviderUsageStatusSchema,
+  // Explicit authentication rejection, independent of usage availability.
+  authRecovery: z.object({ instructions: z.string() }).optional(),
   planLabel: z.string().nullable(),
   sourceLabel: z.string().nullable().optional(),
   fetchedAt: z.string().nullable().optional(),

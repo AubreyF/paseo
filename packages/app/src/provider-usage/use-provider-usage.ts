@@ -6,7 +6,10 @@ import { useSessionStore } from "@/stores/session-store";
 import { providerUsageCopy } from "./copy";
 import type { ProviderUsageListPayload, ProviderUsageView } from "./types";
 
-export const PROVIDER_USAGE_STALE_TIME_MS = 5 * 60 * 1000;
+import { PROVIDER_USAGE_STALE_TIME_MS } from "./quota-reading";
+import { retainLastKnownUsage } from "./usage-cache";
+import { providerUsageView } from "./usage-view";
+export { PROVIDER_USAGE_STALE_TIME_MS } from "./quota-reading";
 
 type ProviderUsageClient = Pick<DaemonClient, "listProviderUsage">;
 
@@ -49,16 +52,20 @@ export function useProviderUsage(
     if (!client) {
       throw new Error(providerUsageCopy.clientUnavailable);
     }
-    return fetchProviderUsage(client);
-  }, [client]);
+    return retainLastKnownUsage(
+      await fetchProviderUsage(client),
+      queryClient.getQueryData<ProviderUsageListPayload>(queryKey),
+    );
+  }, [client, queryClient, queryKey]);
 
   const query = useQuery({
     queryKey,
     queryFn,
     enabled,
     staleTime: options.pollActivity ? 15_000 : PROVIDER_USAGE_STALE_TIME_MS,
+    gcTime: Infinity,
     refetchOnMount: true,
-    refetchOnReconnect: false,
+    refetchOnReconnect: true,
     refetchOnWindowFocus: false,
     refetchInterval,
   });
@@ -73,37 +80,27 @@ export function useProviderUsage(
     });
   }, [canFetch, queryClient, queryFn, queryKey]);
 
-  const view = useMemo<ProviderUsageView>(() => {
-    if (!serverId || !client || !isConnected) {
-      return { kind: "error", message: providerUsageCopy.hostUnavailable };
-    }
-    if (!supportsProviderUsage) {
-      return { kind: "error", message: providerUsageCopy.hostUpgradeRequired };
-    }
-    if (query.data) {
-      return {
-        kind: "ready",
-        payload: query.data,
-        isRefreshing: query.isFetching,
-      };
-    }
-    if (query.isError) {
-      return {
-        kind: "error",
-        message: query.error instanceof Error ? query.error.message : String(query.error),
-      };
-    }
-    return { kind: "loading" };
-  }, [
-    client,
-    isConnected,
-    query.data,
-    query.error,
-    query.isError,
-    query.isFetching,
-    serverId,
-    supportsProviderUsage,
-  ]);
+  const view = useMemo(
+    () =>
+      providerUsageView({
+        hasHost: Boolean(serverId),
+        connected: Boolean(client && isConnected),
+        supported: supportsProviderUsage,
+        data: query.data,
+        fetching: query.isFetching,
+        error: query.isError ? query.error : undefined,
+      }),
+    [
+      serverId,
+      client,
+      isConnected,
+      supportsProviderUsage,
+      query.data,
+      query.isFetching,
+      query.isError,
+      query.error,
+    ],
+  );
 
   return { view, refresh, canFetch };
 }

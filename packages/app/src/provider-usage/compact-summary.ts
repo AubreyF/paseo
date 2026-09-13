@@ -1,17 +1,8 @@
 import { formatAmount, formatPct, formatResetLabel } from "./format";
 import type { ProviderUsage } from "./types";
+import { limitingWindow } from "./quota-reading";
 
-export function limitingWindow(usage: ProviderUsage | undefined) {
-  if (!usage || usage.status !== "available") return null;
-  return (
-    usage.windows
-      .filter(
-        (window): window is typeof window & { remainingPct: number } =>
-          typeof window.remainingPct === "number" && Number.isFinite(window.remainingPct),
-      )
-      .sort((left, right) => left.remainingPct - right.remainingPct)[0] ?? null
-  );
-}
+export { limitingWindow } from "./quota-reading";
 
 /** Keep the model picker useful at a glance without recreating the full usage card. */
 export function formatProviderUsageSummary(usage: ProviderUsage | undefined): string | null {

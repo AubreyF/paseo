@@ -6,10 +6,12 @@ import type { Theme } from "@/styles/theme";
 const circumference = 2 * Math.PI * 12;
 function Ring({
   remaining,
+  stale,
   green,
   gray,
 }: {
   remaining: number | null;
+  stale: boolean;
   green: string;
   gray: string;
 }) {
@@ -38,7 +40,9 @@ function Ring({
           ) : null}
         </Svg>
       </View>
-      <Text style={styles.value}>{remaining === null ? "?" : `${Math.round(remaining)}%`}</Text>
+      <Text style={styles.value}>
+        {remaining === null ? "?" : `${Math.round(remaining)}%${stale ? "*" : ""}`}
+      </Text>
     </View>
   );
 }
@@ -47,8 +51,8 @@ const palette = (theme: Theme) => ({
   green: theme.colors.statusSuccess,
   gray: theme.colors.foregroundExtraMuted,
 });
-export function RemainingRing({ remaining }: { remaining: number | null }) {
-  return <ThemedRing remaining={remaining} uniProps={palette} />;
+export function RemainingRing({ remaining, stale }: { remaining: number | null; stale: boolean }) {
+  return <ThemedRing remaining={remaining} stale={stale} uniProps={palette} />;
 }
 const styles = StyleSheet.create((theme) => ({
   ring: { width: 28, height: 28, alignItems: "center", justifyContent: "center", flexShrink: 0 },

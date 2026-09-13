@@ -1,3 +1,4 @@
+import type { ProviderLoginService } from "../services/provider-login/service.js";
 import { WorkspaceTitleSuggestionError } from "./workspace-title-suggestions.js";
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
@@ -514,6 +515,7 @@ export interface SessionOptions {
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
   providerResetService?: ProviderResetService;
+  providerLoginService?: ProviderLoginService;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
   serviceProxy?: ServiceProxySubsystem;
@@ -791,6 +793,7 @@ export class Session {
       providerSnapshotManager,
       providerUsageService,
       providerResetService,
+      providerLoginService,
       serviceProxy,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
@@ -928,6 +931,7 @@ export class Session {
       providerSnapshotManager,
       providerUsageService,
       providerResetService,
+      providerLoginService,
       logger: this.sessionLogger,
     });
     this.agentConfigSession = new AgentConfigSession({
@@ -2652,6 +2656,10 @@ export class Session {
         return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
       case "provider.usage.list.request":
         return this.providerCatalogSession.handleProviderUsageListRequest(msg);
+      case "provider.login.read.request":
+      case "provider.login.start.request":
+      case "provider.login.cancel.request":
+        return this.providerCatalogSession.handleProviderLoginRequest(msg);
       case "provider.reset.read.request":
       case "provider.reset.prepare.request":
       case "provider.reset.confirm.request":

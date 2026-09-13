@@ -3,12 +3,26 @@ import {
   applyDictationTranscript,
   computeCanStartDictation,
   resolveActiveSendBehavior,
+  resolveImmediateSendBehavior,
   resolveComposerSurfacePresentation,
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
   stopRealtimeVoice,
 } from "./state";
+
+it.each(["interrupt", "steer", "queue"] as const)(
+  "queues by default and steers immediate sends in Vorton with saved preference %s",
+  (saved) => {
+    expect(resolveActiveSendBehavior(saved, false, true)).toBe("queue");
+    expect(resolveImmediateSendBehavior(saved, true)).toBe("steer");
+    expect(resolveActiveSendBehavior(saved, false, false)).toBe(saved);
+    expect(resolveImmediateSendBehavior(saved, false)).toBe(
+      saved === "steer" ? "steer" : "interrupt",
+    );
+    expect(resolveActiveSendBehavior(saved, true, true)).toBe("queue");
+  },
+);
 
 const connected = { isConnected: true } as never;
 const disconnected = { isConnected: false } as never;

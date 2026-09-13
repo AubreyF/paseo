@@ -104,7 +104,7 @@ import {
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
-import { resolveActiveSendBehavior } from "./input/state";
+import { resolveActiveSendBehavior, resolveImmediateSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -1472,10 +1472,10 @@ function ComposerContentImpl({
         agentIdRef.current,
         text,
         submitAttachments,
-        appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
+        resolveImmediateSendBehavior(appSettings.sendBehavior, formPreferences.vortonMode),
       );
     },
-    [appSettings.sendBehavior, cwd, onMessageSent, t],
+    [appSettings.sendBehavior, cwd, onMessageSent, t, formPreferences.vortonMode],
   );
 
   useEffect(() => {
@@ -1539,6 +1539,7 @@ function ComposerContentImpl({
   const activeSendBehavior = resolveActiveSendBehavior(
     appSettings.sendBehavior,
     hasPendingPermission,
+    formPreferences.vortonMode,
   );
   const hasAgent = agentState.status !== null;
 

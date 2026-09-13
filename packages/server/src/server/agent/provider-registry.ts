@@ -540,6 +540,7 @@ function wrapClientProvider(
       : undefined,
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     openResetCreditSession: inner.openResetCreditSession?.bind(inner),
+    openAccountLoginSession: inner.openAccountLoginSession?.bind(inner),
     resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
     listFeatures: listFeatures

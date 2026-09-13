@@ -1,3 +1,4 @@
+import type { ProviderLoginSession } from "../../services/provider-login/session.js";
 import type {
   AgentProviderNotice,
   AgentTaskItem,
@@ -808,6 +809,7 @@ export interface AgentClient {
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /** Account management only. Never attach this operation to the agent tool catalog. */
   openResetCreditSession?(): Promise<ProviderResetCreditSession>;
+  openAccountLoginSession?(): Promise<ProviderLoginSession>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.

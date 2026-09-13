@@ -8,8 +8,17 @@ export type SendBehavior = ActiveTurnBehavior | "queue";
 export function resolveActiveSendBehavior(
   sendBehavior: SendBehavior,
   hasPendingPermission: boolean,
+  vortonMode = false,
 ): SendBehavior {
+  if (vortonMode) return "queue";
   return sendBehavior === "queue" && hasPendingPermission ? "interrupt" : sendBehavior;
+}
+
+export function resolveImmediateSendBehavior(
+  sendBehavior: SendBehavior,
+  vortonMode = false,
+): ActiveTurnBehavior {
+  return vortonMode || sendBehavior === "steer" ? "steer" : "interrupt";
 }
 
 interface ComposerSurfaceState {

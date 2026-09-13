@@ -4872,6 +4872,24 @@ export class DaemonClient {
     });
   }
 
+  async readProviderLogin(providerId: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.login.read.response">({
+      message: { type: "provider.login.read.request", providerId },
+    });
+  }
+
+  async startProviderLogin(providerId: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.login.start.response">({
+      message: { type: "provider.login.start.request", providerId },
+    });
+  }
+
+  async cancelProviderLogin(providerId: string, attemptId: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.login.cancel.response">({
+      message: { type: "provider.login.cancel.request", providerId, attemptId },
+    });
+  }
+
   async readProviderReset(providerId: string) {
     return this.sendNamespacedCorrelatedSessionRequest<"provider.reset.read.response">({
       message: { type: "provider.reset.read.request", providerId },

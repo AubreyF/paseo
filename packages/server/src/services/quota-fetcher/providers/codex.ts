@@ -124,6 +124,7 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
       return {
         ...unavailableUsage(this),
         authRecovery: {
+          method: "device_code",
           instructions: `Open a terminal on this account’s host and run:\nCODEX_HOME=${home} codex login --device-auth\nOpen the URL printed by Codex, enter its device code, and sign in to the intended account. Then check the connection below.`,
         },
       };

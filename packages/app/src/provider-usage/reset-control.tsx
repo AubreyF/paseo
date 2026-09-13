@@ -9,6 +9,7 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { useSessionStore } from "@/stores/session-store";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+import { CompactAccountButton } from "./compact-account-button";
 import { providerUsageQueryKey } from "./use-provider-usage";
 import { currentResetPreparation, resetCountLabel, resetPresentation } from "./reset-state";
 import { providerResetQueryOptions } from "./reset-query";
@@ -226,10 +227,11 @@ export function ProviderResetControl(props: {
     positiveOnly: props.compact,
   });
   if (!visible) return null;
+  const BadgeButton = props.compact ? CompactAccountButton : Button;
   return (
     <>
       {showBadge ? (
-        <Button
+        <BadgeButton
           variant="ghost"
           size="sm"
           onPress={show}
@@ -238,14 +240,10 @@ export function ProviderResetControl(props: {
           textStyle={[styles.text, criticalTextStyle]}
           testID={`provider-reset-${providerId}`}
         >
-          {props.compact ? (
-            <Text numberOfLines={1} style={criticalTextStyle}>
-              {badge}
-            </Text>
-          ) : (
-            badge
-          )}
-        </Button>
+          <Text numberOfLines={1} style={criticalTextStyle}>
+            {badge}
+          </Text>
+        </BadgeButton>
       ) : null}
       {open ? (
         <AdaptiveModalSheet
@@ -325,7 +323,6 @@ const styles = StyleSheet.create((theme) => ({
     top: (Math.ceil(theme.fontSize.base * 1.4) - 44) / 2,
     height: 44,
     minHeight: 44,
-    paddingHorizontal: 0,
     maxWidth: "100%",
   },
   body: { padding: theme.spacing[4], gap: theme.spacing[3] },

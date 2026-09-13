@@ -1,3 +1,4 @@
+import { ProviderLoginService } from "../services/provider-login/service.js";
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
 import { join } from "path";
@@ -593,6 +594,7 @@ export class VoiceAssistantWebSocketServer {
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
   private readonly providerUsageService: ProviderUsageService;
+  private readonly providerLoginService: ProviderLoginService;
   private readonly providerResetService: ProviderResetService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
@@ -743,6 +745,14 @@ export class VoiceAssistantWebSocketServer {
         logger: this.logger,
         getProviderConfigs: () => this.daemonConfigStore.get().providers,
       });
+    this.providerLoginService = new ProviderLoginService({
+      getClient: (providerId) => {
+        const state = this.providerSnapshotManager.getAgentManagerProviderState();
+        if (state.providerDefinitions[providerId]?.enabled !== true) return null;
+        return state.clients[providerId] ?? null;
+      },
+      onConnected: () => this.providerUsageService.invalidate(),
+    });
     this.providerResetService = new ProviderResetService({
       logger: this.logger,
       store: new ResetCreditStore(join(paseoHome, "provider-reset-operations")),
@@ -1115,6 +1125,7 @@ export class VoiceAssistantWebSocketServer {
     }
 
     await Promise.all(cleanupPromises);
+    await this.providerLoginService.dispose();
     this.providerSnapshotManager.destroy();
     this.checkoutDiffManager.dispose();
     await this.workspaceGitService.dispose();
@@ -1451,6 +1462,7 @@ export class VoiceAssistantWebSocketServer {
       providerSnapshotManager: this.providerSnapshotManager,
       providerUsageService: this.providerUsageService,
       providerResetService: this.providerResetService,
+      providerLoginService: this.providerLoginService,
       hubExecutionAgents: options.hubExecutionAgents,
       hubRelationships: options.hubRelationships,
       serviceProxy: this.serviceProxy ?? undefined,
@@ -1732,6 +1744,9 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: true,
         providerResetManagement: true,
+        providerAccountLogin: Object.values(
+          this.providerSnapshotManager.getAgentManagerProviderState().clients,
+        ).some((client) => Boolean(client?.openAccountLoginSession)),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: true,
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.

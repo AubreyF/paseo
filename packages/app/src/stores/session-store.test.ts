@@ -41,6 +41,18 @@ function initializeTestSession(): void {
   useSessionStore.getState().initializeSession("test-server", null as unknown as DaemonClient);
 }
 
+it("updates account-management permissions even when other server information is unchanged", () => {
+  initializeTestSession();
+  const store = useSessionStore.getState();
+  const info = { serverId: "test-server", hostname: null, version: null };
+  store.updateSessionServerInfo("test-server", { ...info, permissions: ["daemon.manage"] });
+  expect(store.getSession("test-server")?.serverInfo?.permissions).toEqual(["daemon.manage"]);
+  store.updateSessionServerInfo("test-server", { ...info, permissions: ["daemon.read"] });
+  expect(store.getSession("test-server")?.serverInfo?.permissions).toEqual(["daemon.read"]);
+  store.updateSessionServerInfo("test-server", { ...info, permissions: [] });
+  expect(store.getSession("test-server")?.serverInfo?.permissions).toEqual([]);
+});
+
 function getTestSessionReferences() {
   const state = useSessionStore.getState();
   const session = state.sessions["test-server"];

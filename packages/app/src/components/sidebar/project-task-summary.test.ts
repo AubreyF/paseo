@@ -42,7 +42,38 @@ describe("project task totals", () => {
     ];
     expect(
       aggregateProjectTasks("a", new Map(tasks.map((task) => [task.workspaceKey, task]))),
-    ).toEqual({ count: 3, additions: 308, deletions: 88 });
+    ).toEqual({ count: 3, additions: 154, deletions: 44 });
+  });
+  it("counts eight tasks sharing a checkout without multiplying their diff", () => {
+    const tasks = Array.from({ length: 8 }, (_, index) =>
+      entry(String(index), "a", { additions: 1700, deletions: 222 }),
+    );
+    expect(
+      aggregateProjectTasks("a", new Map(tasks.map((task) => [task.workspaceKey, task]))),
+    ).toEqual({ count: 8, additions: 1700, deletions: 222 });
+  });
+  it("sums distinct directories and hosts even when their diff numbers match", () => {
+    const tasks = [
+      entry("one", "a", { additions: 10, deletions: 2 }),
+      {
+        ...entry("two", "a", { additions: 10, deletions: 2 }),
+        workspaceDirectory: "/other-worktree",
+      },
+      { ...entry("three", "a", { additions: 10, deletions: 2 }), serverId: "other-host" },
+    ];
+    expect(
+      aggregateProjectTasks("a", new Map(tasks.map((task) => [task.workspaceKey, task]))),
+    ).toEqual({ count: 3, additions: 30, deletions: 6 });
+  });
+  it("uses a loaded diff when another task has none and normalizes trailing separators", () => {
+    const tasks = [
+      entry("loading", "a", null),
+      entry("loaded", "a", { additions: 10, deletions: 2 }),
+      { ...entry("alias", "a", { additions: 10, deletions: 2 }), workspaceDirectory: "/repo/" },
+    ];
+    expect(
+      aggregateProjectTasks("a", new Map(tasks.map((task) => [task.workspaceKey, task]))),
+    ).toEqual({ count: 3, additions: 10, deletions: 2 });
   });
   it("shows zero totals for an empty project", () => {
     expect(aggregateProjectTasks("empty", new Map())).toEqual({

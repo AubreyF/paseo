@@ -1,3 +1,4 @@
+import { CodexLoginSession } from "./codex/login.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPermissionAction,
@@ -7035,6 +7036,28 @@ export class CodexAppServerAgentClient implements AgentClient {
     );
     await session.connect();
     return session;
+  }
+
+  async openAccountLoginSession(): Promise<CodexLoginSession> {
+    if (this.deps.customProvider && !this.runtimeSettings?.env?.CODEX_HOME?.trim()) {
+      throw new Error("Configure this account’s CODEX_HOME before signing in.");
+    }
+    const home =
+      this.runtimeSettings?.env?.CODEX_HOME ??
+      process.env.CODEX_HOME ??
+      path.join(os.homedir(), ".codex");
+    await fs.mkdir(home, { recursive: true });
+    const scope = await fs.realpath(home);
+    const child = await this.spawnAppServer();
+    const client = new CodexAppServerClient(child, this.logger);
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams(), 15_000);
+      client.notify("initialized", {});
+      return new CodexLoginSession(client, scope);
+    } catch (error) {
+      await client.dispose();
+      throw error;
+    }
   }
 
   async openResetCreditSession(): Promise<CodexResetCreditSession> {

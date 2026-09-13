@@ -157,6 +157,8 @@ Cursor usage reads the desktop `state.vscdb` token first, then `cursor-agent`'s 
 
 A fetcher reads the provider's credential file and never writes it. On a 401 or 403 it returns `unavailable` and leaves refresh to the provider's own CLI: redeeming a refresh token in the fetcher invalidates the CLI's copy (refresh tokens are single-use), and rewriting the file through the fetcher's Zod schema drops any field the schema does not model, corrupting the file for the CLI.
 
+Account sign-in uses a dedicated Codex app-server process with the configured provider environment. Never reuse an active agent transport: closing a sign-in panel must not stop an agent. The daemon owns pending device-code attempts so a browser disconnect or panel close does not abandon sign-in; explicit cancellation and expiry dispose only that dedicated process.
+
 ---
 
 ## ACP Provider Checklist

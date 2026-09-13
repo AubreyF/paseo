@@ -1,3 +1,4 @@
+import type { ProviderLoginService } from "../../../services/provider-login/service.js";
 import type pino from "pino";
 import { createHash } from "node:crypto";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
@@ -62,6 +63,7 @@ export interface ProviderCatalogSessionOptions {
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
   providerResetService?: ProviderResetService;
+  providerLoginService?: ProviderLoginService;
   logger: pino.Logger;
 }
 
@@ -89,6 +91,7 @@ export class ProviderCatalogSession {
   private readonly host: ProviderCatalogSessionHost;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly providerUsageService: ProviderUsageService;
+  private readonly providerLoginService: ProviderLoginService | undefined;
   private readonly providerResetService: ProviderResetService | undefined;
   private readonly logger: pino.Logger;
   private unsubscribeSnapshotEvents: (() => void) | null = null;
@@ -98,6 +101,7 @@ export class ProviderCatalogSession {
     this.providerSnapshotManager = options.providerSnapshotManager;
     this.providerUsageService = options.providerUsageService;
     this.providerResetService = options.providerResetService;
+    this.providerLoginService = options.providerLoginService;
     this.logger = options.logger;
   }
 
@@ -486,6 +490,55 @@ export class ProviderCatalogSession {
           code: "provider_diagnostic_failed",
         },
       });
+    }
+  }
+
+  async handleProviderLoginRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "provider.login.read.request"
+          | "provider.login.start.request"
+          | "provider.login.cancel.request";
+      }
+    >,
+  ): Promise<void> {
+    const service = this.providerLoginService;
+    if (!service || !this.host.isProviderVisibleToClient(msg.providerId)) {
+      this.host.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          code: "unavailable",
+          error: "Account sign-in is unavailable for this provider.",
+        },
+      });
+      return;
+    }
+    switch (msg.type) {
+      case "provider.login.read.request":
+        this.host.emit({
+          type: "provider.login.read.response",
+          payload: { requestId: msg.requestId, state: service.read(msg.providerId) },
+        });
+        break;
+      case "provider.login.start.request":
+        this.host.emit({
+          type: "provider.login.start.response",
+          payload: { requestId: msg.requestId, state: service.start(msg.providerId) },
+        });
+        break;
+      case "provider.login.cancel.request":
+        this.host.emit({
+          type: "provider.login.cancel.response",
+          payload: {
+            requestId: msg.requestId,
+            state: await service.cancel(msg.providerId, msg.attemptId),
+          },
+        });
+        break;
     }
   }
 

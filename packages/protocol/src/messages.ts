@@ -1,3 +1,11 @@
+import {
+  ProviderLoginReadRequestSchema,
+  ProviderLoginStartRequestSchema,
+  ProviderLoginCancelRequestSchema,
+  ProviderLoginReadResponseSchema,
+  ProviderLoginStartResponseSchema,
+  ProviderLoginCancelResponseSchema,
+} from "./provider-login.js";
 import { z } from "zod";
 import { QuotaReservePolicySchema, QuotaReserveLaunchPolicySchema } from "./quota-reserve.js";
 import {
@@ -3166,6 +3174,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderResetReadRequestSchema,
   ProviderResetPrepareRequestSchema,
   ProviderResetConfirmRequestSchema,
+  ProviderLoginReadRequestSchema,
+  ProviderLoginStartRequestSchema,
+  ProviderLoginCancelRequestSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -3536,6 +3547,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
         providerResetManagement: z.boolean().optional(),
+        providerAccountLogin: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
@@ -5990,7 +6002,9 @@ export const ProviderUsageSchema = z.object({
   displayName: z.string(),
   status: ProviderUsageStatusSchema,
   // Explicit authentication rejection, independent of usage availability.
-  authRecovery: z.object({ instructions: z.string() }).optional(),
+  authRecovery: z
+    .object({ instructions: z.string(), method: z.literal("device_code").optional() })
+    .optional(),
   planLabel: z.string().nullable(),
   sourceLabel: z.string().nullable().optional(),
   fetchedAt: z.string().nullable().optional(),
@@ -6643,6 +6657,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
+  ProviderLoginReadResponseSchema,
+  ProviderLoginStartResponseSchema,
+  ProviderLoginCancelResponseSchema,
   ProviderResetReadResponseSchema,
   ProviderResetPrepareResponseSchema,
   ProviderResetConfirmResponseSchema,

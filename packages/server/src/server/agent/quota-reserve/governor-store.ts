@@ -30,6 +30,18 @@ import {
   type PacingState,
 } from "./governor-pacing.js";
 
+import {
+  AccountingContractSchema,
+  createAccountingContract,
+  legacyAccountingContract,
+  satisfiesAccountingContract,
+  type AccountingContract,
+} from "./governor-accounting-contract.js";
+
+const AccountingContractRequirementSchema = AccountingContractSchema.omit({
+  semantics: true,
+}).strict();
+
 const PacingLedgerSchema = z
   .object({
     version: z.literal(1),
@@ -67,6 +79,8 @@ const LedgerSchema = z
     version: z.literal(1),
     account: QuotaAccountSchema,
     windowContract: z.string(),
+    // Absent only in legacy journals; null means explicitly unconfigured.
+    accountingContractRevision: z.string().min(1).nullable().optional(),
     observation: QuotaObservationSchema,
     reservation: ReservationSchema,
     execution: GovernorExecutionSchema,
@@ -111,6 +125,8 @@ type ReserveResult =
   | {
       kind: "deferred";
       reason:
+        | "accounting_contract_missing"
+        | "accounting_migration_required"
         | "account_busy"
         | "store_busy"
         | "window_contract_changed"
@@ -212,6 +228,42 @@ export class QuotaGovernorStore {
       const updated = kind === "held" ? buckets : reservations.map((result) => result.state);
       await writeProtectedJson(path, { version: 1, account: input.account, buckets: updated });
       return { kind, buckets: updated };
+    });
+  }
+
+  async accountingContract(account: QuotaAccount): Promise<AccountingContract | null> {
+    const path = this.accountPath(account);
+    return loadAccountingContract(path, account, await readLedger(path));
+  }
+
+  /** Trusted configuration boundary only. Semantic migration requires explicit continuity proof. */
+  async configureAccountingContract(input: {
+    policy: QuotaGovernorPolicy;
+    expectedRevision: string | null;
+  }): Promise<
+    | { kind: "configured"; contract: AccountingContract }
+    | { kind: "deferred"; reason: "store_busy" | "accounting_migration_required" }
+  > {
+    const path = this.accountPath(input.policy.account);
+    return this.withAccountLock(path, async () => {
+      const ledger = await readLedger(path);
+      const current = await loadAccountingContract(path, input.policy.account, ledger);
+      if ((current?.revision ?? null) !== input.expectedRevision)
+        throw new Error("Accounting contract changed. Reload it before saving.");
+      // Existing unconfigured execution history needs an explicit migration,
+      // including settlement reconciliation, before adding account semantics.
+      if (!current && ledger)
+        return { kind: "deferred", reason: "accounting_migration_required" } as const;
+      const candidate = createAccountingContract(input.policy);
+      if (current && !isDeepStrictEqual(current.semantics, candidate.semantics))
+        return { kind: "deferred", reason: "accounting_migration_required" } as const;
+      const contract = current ?? candidate;
+      // Persist intent first. A crash before the contract lands holds for
+      // reconciliation instead of allowing another initial configuration.
+      await persistAccountingContract(path, contract);
+      if (ledger)
+        await writeLedger(path, { ...ledger, accountingContractRevision: contract.revision });
+      return { kind: "configured", contract } as const;
     });
   }
 
@@ -424,6 +476,10 @@ export class QuotaGovernorStore {
     const observation = QuotaObservationSchema.parse(input.observation);
     if (observation.status !== "available")
       throw new Error("Admission requires available telemetry.");
+    const accounting = await loadAccountingContract(path, input.policy.account, ledger);
+    const accountingDeferral = accountingAdmissionDeferral(accounting, input.policy);
+    if (accountingDeferral) return accountingDeferral;
+    const accountingRevision = await recordAdmissionAccounting(path, accounting, ledger);
     const contract = windowContract(observation);
     if (ledger && !ledger.released) {
       if (ledger.execution.state === "completed")
@@ -443,6 +499,7 @@ export class QuotaGovernorStore {
       version: 1,
       account: input.policy.account,
       windowContract: contract,
+      accountingContractRevision: accountingRevision,
       observation,
       reservation,
       lastFreezeAt: null,
@@ -505,6 +562,80 @@ function windowContract(observation: Extract<QuotaObservation, { status: "availa
       )
       .sort(),
   );
+}
+
+function accountingAdmissionDeferral(
+  contract: AccountingContract | null,
+  policy: QuotaGovernorPolicy,
+): Extract<ReserveResult, { kind: "deferred" }> | null {
+  if (!contract && policy.consumptionLimits.length > 0)
+    return { kind: "deferred", reason: "accounting_contract_missing" };
+  if (contract && !satisfiesAccountingContract(contract, policy))
+    return { kind: "deferred", reason: "accounting_migration_required" };
+  return null;
+}
+
+function legacyContractFromLedger(ledger: Ledger): AccountingContract | null {
+  // Historical floor-only execution never established gross accounting semantics.
+  return ledger.reservation.policy.consumptionLimits.length > 0
+    ? legacyAccountingContract(ledger.reservation.policy)
+    : null;
+}
+
+async function recordAdmissionAccounting(
+  path: string,
+  contract: AccountingContract | null,
+  ledger: Ledger | null,
+): Promise<string | null> {
+  if (contract) await persistAccountingContract(path, contract);
+  const revision = contract?.revision ?? null;
+  if (ledger) ledger.accountingContractRevision = revision;
+  return revision;
+}
+
+async function persistAccountingContract(
+  path: string,
+  contract: AccountingContract,
+): Promise<void> {
+  await writeProtectedJson(`${path}.contract-required`, {
+    version: 1,
+    account: contract.account,
+    revision: contract.revision,
+  });
+  await writeProtectedJson(`${path}.contract`, contract);
+}
+
+async function loadAccountingContract(
+  path: string,
+  account: QuotaAccount,
+  ledger: Ledger | null,
+): Promise<AccountingContract | null> {
+  const requiredValue = await readProtectedJson(`${path}.contract-required`);
+  const required =
+    requiredValue === undefined ? null : AccountingContractRequirementSchema.parse(requiredValue);
+  if (required && !isDeepStrictEqual(required.account, account))
+    throw new Error("Accounting contract requirement account mismatch.");
+  const saved = await readProtectedJson(`${path}.contract`);
+  if (required && saved === undefined)
+    throw new Error("Recorded accounting contract is missing; reconciliation required.");
+  let contract: AccountingContract | null;
+  if (saved !== undefined) {
+    contract = AccountingContractSchema.parse(saved);
+    if (required && required.revision !== contract.revision)
+      throw new Error("Accounting contract requirement revision mismatch.");
+    if (
+      ledger?.accountingContractRevision !== undefined &&
+      ledger.accountingContractRevision !== contract.revision
+    )
+      throw new Error("Accounting contract provenance requires reconciliation.");
+  } else if (ledger?.accountingContractRevision) {
+    throw new Error("Recorded accounting contract is missing; reconciliation required.");
+  } else if (ledger && ledger.accountingContractRevision === undefined) {
+    contract = legacyContractFromLedger(ledger);
+  } else contract = null;
+  if (contract && !isDeepStrictEqual(contract.account, account))
+    throw new Error("Accounting contract account identity mismatch.");
+  return contract;
 }
 
 async function readLedger(path: string): Promise<Ledger | null> {

@@ -63,3 +63,5 @@ Tests don't fully cover compatibility. If you touched `packages/protocol`, say i
 Schedule configuration edits can use `expectedConfigurationRevision` when the host advertises `scheduleConfigurationRevision`. Pass the revision returned by inspection, or explicit `null` for a legacy record without one. The daemon compares it within the serialized update and rejects a stale edit before changing the record. Reload and reconcile edits after a conflict. Omitted revisions retain older clients' partial-update behavior.
 
 Configuration revisions change when the name, prompt, cadence, target configuration, maximum runs or expiration changes. Run history, quota observations and pause/resume activity preserve them. Revisions protect configuration edits; they do not establish quota authority or reset account accounting.
+
+The schedule update CLI inspects the record before editing and supplies its revision on capable hosts, including explicit `null` for a legacy record. It reports conflicts without retrying. Older hosts retain ordinary partial updates when no revision is present; a known revision is never discarded to force a write.

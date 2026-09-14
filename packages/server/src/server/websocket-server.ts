@@ -86,6 +86,7 @@ import {
   type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
+import type { ProviderQuotaObservationService } from "../services/quota-fetcher/governor-service.js";
 import { ProviderResetService } from "../services/quota-fetcher/reset-service.js";
 import { ResetCreditStore } from "../services/quota-fetcher/reset-store.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
@@ -654,6 +655,10 @@ export class VoiceAssistantWebSocketServer {
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
     providerUsageService?: ProviderUsageService,
+    private readonly providerQuotaObservationService?: Pick<
+      ProviderQuotaObservationService,
+      "read"
+    >,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -1461,6 +1466,7 @@ export class VoiceAssistantWebSocketServer {
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
       providerUsageService: this.providerUsageService,
+      providerQuotaObservationService: this.providerQuotaObservationService,
       providerResetService: this.providerResetService,
       providerLoginService: this.providerLoginService,
       hubExecutionAgents: options.hubExecutionAgents,
@@ -1673,6 +1679,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceSetupRun: true,
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
+        // COMPAT(providerQuotaObservation): added in v0.7.2, remove gate after 2027-03-14.
+        providerQuotaObservation: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: true,
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the

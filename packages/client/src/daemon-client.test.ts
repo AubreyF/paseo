@@ -6129,3 +6129,50 @@ test("waitForFinish with timeout=0 omits timeoutMs and has no client deadline", 
     vi.useRealTimers();
   }
 });
+
+test("quota observation rejects older hosts before sending an unsupported request", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "quota-test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+  await expect(client.readProviderQuotaObservation("secondary")).rejects.toThrow("Update the host");
+  expect(mock.sent).toEqual([]);
+});
+
+test("quota observation correlates an account-scoped request on a capable host", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "quota-test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: { providerQuotaObservation: true } });
+  await connected;
+  const pending = client.readProviderQuotaObservation("secondary");
+  const sent = JSON.parse(assertStr(mock.sent[0])).message;
+  expect(sent).toMatchObject({
+    type: "provider.quota.get_observation.request",
+    providerId: "secondary",
+  });
+  const payload = {
+    requestId: sent.requestId,
+    providerId: "secondary",
+    observation: { status: "unavailable", reason: "unsupported" },
+  };
+  mock.triggerMessage(
+    wrapSessionMessage({ type: "provider.quota.get_observation.response", payload }),
+  );
+  await expect(pending).resolves.toEqual(payload);
+});

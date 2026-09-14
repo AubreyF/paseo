@@ -4878,6 +4878,17 @@ export class DaemonClient {
     });
   }
 
+  async readProviderQuotaObservation(providerId: string) {
+    // COMPAT(providerQuotaObservation): added in v0.7.2, remove gate after 2027-03-14.
+    if (this.lastServerInfoMessage?.features?.providerQuotaObservation !== true) {
+      throw new Error("Update the host to inspect account quota for schedules.");
+    }
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.quota.get_observation.response">({
+      message: { type: "provider.quota.get_observation.request", providerId },
+      timeout: 100_000,
+    });
+  }
+
   async startProviderLogin(providerId: string) {
     return this.sendNamespacedCorrelatedSessionRequest<"provider.login.start.response">({
       message: { type: "provider.login.start.request", providerId },

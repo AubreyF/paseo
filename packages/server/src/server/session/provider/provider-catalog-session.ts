@@ -21,6 +21,8 @@ import {
 } from "../../agent/agent-sdk-types.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
 import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
+import type { ProviderQuotaObservationService } from "../../../services/quota-fetcher/governor-service.js";
+import { QuotaObservationSchema, type QuotaObservation } from "@getpaseo/protocol/quota-governor";
 import {
   ProviderResetServiceError,
   type ProviderResetService,
@@ -62,6 +64,7 @@ export interface ProviderCatalogSessionOptions {
   host: ProviderCatalogSessionHost;
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
+  providerQuotaObservationService?: Pick<ProviderQuotaObservationService, "read">;
   providerResetService?: ProviderResetService;
   providerLoginService?: ProviderLoginService;
   logger: pino.Logger;
@@ -91,6 +94,9 @@ export class ProviderCatalogSession {
   private readonly host: ProviderCatalogSessionHost;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly providerUsageService: ProviderUsageService;
+  private readonly providerQuotaObservationService:
+    | Pick<ProviderQuotaObservationService, "read">
+    | undefined;
   private readonly providerLoginService: ProviderLoginService | undefined;
   private readonly providerResetService: ProviderResetService | undefined;
   private readonly logger: pino.Logger;
@@ -100,6 +106,7 @@ export class ProviderCatalogSession {
     this.host = options.host;
     this.providerSnapshotManager = options.providerSnapshotManager;
     this.providerUsageService = options.providerUsageService;
+    this.providerQuotaObservationService = options.providerQuotaObservationService;
     this.providerResetService = options.providerResetService;
     this.providerLoginService = options.providerLoginService;
     this.logger = options.logger;
@@ -642,6 +649,36 @@ export class ProviderCatalogSession {
         },
       });
     }
+  }
+
+  async handleProviderQuotaObservationRequest(
+    msg: Extract<SessionInboundMessage, { type: "provider.quota.get_observation.request" }>,
+  ): Promise<void> {
+    let observation: QuotaObservation = { status: "unavailable", reason: "unsupported" };
+    if (
+      this.host.isProviderVisibleToClient(msg.providerId) &&
+      this.providerQuotaObservationService
+    ) {
+      try {
+        const parsed = QuotaObservationSchema.safeParse(
+          await this.providerQuotaObservationService.read(msg.providerId),
+        );
+        observation = parsed.success
+          ? parsed.data
+          : { status: "unavailable", reason: "invalid_observation" };
+      } catch {
+        // Provider errors can contain authentication details. Return a typed
+        // failure without forwarding raw error bodies to clients or logs.
+        observation = { status: "unavailable", reason: "read_failed" };
+      }
+    }
+    if (!this.host.isProviderVisibleToClient(msg.providerId)) {
+      observation = { status: "unavailable", reason: "unsupported" };
+    }
+    this.host.emit({
+      type: "provider.quota.get_observation.response",
+      payload: { requestId: msg.requestId, providerId: msg.providerId, observation },
+    });
   }
 }
 

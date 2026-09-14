@@ -1735,6 +1735,7 @@ export async function createPaseoDaemon(
               orchestrationSkills,
               workspaceLabelService,
               providerUsageService,
+              governorObservations,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();

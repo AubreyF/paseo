@@ -105,6 +105,28 @@ function optimisticallyRemove(queryClient: QueryClient, serverId: string, id: st
   );
 }
 
+export async function updateScheduleConfiguration(
+  client: Pick<DaemonClient, "scheduleUpdate"> & {
+    getLastServerInfoMessage(): { features?: { scheduleConfigurationRevision?: boolean } } | null;
+  },
+  input: UpdateScheduleInput,
+): Promise<void> {
+  const supportsRevision =
+    client.getLastServerInfoMessage()?.features?.scheduleConfigurationRevision === true;
+  // Older hosts have no token for legacy records. A known token always
+  // reaches the client gate, so capability loss cannot silently drop it.
+  const { expectedConfigurationRevision, ...patch } = input;
+  const payload = await client.scheduleUpdate({
+    ...patch,
+    ...(supportsRevision || expectedConfigurationRevision != null
+      ? { expectedConfigurationRevision }
+      : {}),
+  });
+  if (payload.error) {
+    throw new Error(payload.error);
+  }
+}
+
 export function useScheduleMutations({
   serverId,
 }: {
@@ -131,10 +153,7 @@ export function useScheduleMutations({
   const updateMutation = useMutation({
     mutationFn: async (input: UpdateScheduleInput): Promise<void> => {
       const client = requireClient(serverId, t("common.errors.daemonClientUnavailable"));
-      const payload = await client.scheduleUpdate(input);
-      if (payload.error) {
-        throw new Error(payload.error);
-      }
+      await updateScheduleConfiguration(client, input);
     },
     onSettled: invalidate,
   });

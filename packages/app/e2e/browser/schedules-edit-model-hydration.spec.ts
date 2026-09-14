@@ -13,6 +13,11 @@ import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { buildSchedulesRoute } from "../../src/utils/host-routes";
 
 interface ScheduleSeedClient {
+  schedulePause(input: { id: string }): Promise<{ error: string | null }>;
+  scheduleUpdate(input: { id: string; name: string }): Promise<{ error: string | null }>;
+  scheduleInspect(input: {
+    id: string;
+  }): Promise<{ schedule: { name: string | null } | null; error: string | null }>;
   scheduleCreate(input: {
     prompt: string;
     name?: string;
@@ -111,6 +116,53 @@ test.describe("Schedules", () => {
     }
     cleanupTasks.length = 0;
   });
+
+  for (const vortonMode of [false, true]) {
+    test(`stale schedule edits preserve the draft in Vorton ${vortonMode ? "on" : "off"}`, async ({
+      page,
+    }, testInfo) => {
+      const workspace = await seedWorkspace({ repoPrefix: "schedule-revision-" });
+      cleanupTasks.push(() => workspace.cleanup());
+      const scheduleId = await seedMockSchedule(workspace, "Revision review");
+      cleanupTasks.push(() => deleteSeededSchedule(workspace, scheduleId));
+      const paused = await (workspace.client as unknown as ScheduleSeedClient).schedulePause({
+        id: scheduleId,
+      });
+      expect(paused.error).toBeNull();
+      await page.goto(buildSchedulesRoute());
+      const modeButton = page.getByRole("button", {
+        name: vortonMode ? "Vorton mode" : "Paseo mode",
+        exact: true,
+      });
+      await modeButton.click();
+      await expect(modeButton).toHaveCSS("background-color", "rgb(49, 70, 58)");
+      const row = page.getByTestId(`schedule-row-${scheduleId}`);
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await row.click();
+      const form = page.getByTestId("schedule-form-sheet");
+      await expect(form).toBeVisible();
+      const name = page.getByTestId("schedule-name-input");
+      await name.fill("Owner draft");
+      const client = workspace.client as unknown as ScheduleSeedClient;
+      const changed = await client.scheduleUpdate({ id: scheduleId, name: "Other editor" });
+      expect(changed.error).toBeNull();
+      await page.getByTestId("schedule-form-submit").click();
+      await expect(
+        form.getByText("Schedule configuration changed. Reload it before saving your edits."),
+      ).toBeVisible();
+      await expect(name).toHaveValue("Owner draft");
+      expect((await client.scheduleInspect({ id: scheduleId })).schedule?.name).toBe(
+        "Other editor",
+      );
+      await page.screenshot({ path: testInfo.outputPath(`revision-vorton-${vortonMode}.png`) });
+      await form
+        .getByText("Schedule configuration changed. Reload it before saving your edits.")
+        .scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: testInfo.outputPath(`revision-conflict-vorton-${vortonMode}.png`),
+      });
+    });
+  }
 
   test("edit form hydrates the scheduled model selection", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "schedule-model-hydration-" });

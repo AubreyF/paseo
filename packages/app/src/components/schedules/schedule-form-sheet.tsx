@@ -320,10 +320,11 @@ function OpenScheduleFormSheet({
     }
     await updateSchedule({
       id: schedule.id,
+      expectedConfigurationRevision: state.initialConfigurationRevision,
       cadence: state.submitCadence,
     });
     return true;
-  }, [schedule, state.submitCadence, updateSchedule]);
+  }, [schedule, state.initialConfigurationRevision, state.submitCadence, updateSchedule]);
 
   const submitNewAgent = useCallback(async (): Promise<boolean> => {
     const provider = state.selectedProvider;
@@ -337,6 +338,7 @@ function OpenScheduleFormSheet({
     if (mode === "edit" && schedule) {
       await updateSchedule({
         id: schedule.id,
+        expectedConfigurationRevision: state.initialConfigurationRevision,
         name: state.name.trim() || null,
         prompt: state.prompt.trim(),
         ...(state.submitCadence ? { cadence: state.submitCadence } : {}),

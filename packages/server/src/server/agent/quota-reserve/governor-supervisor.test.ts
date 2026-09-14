@@ -146,6 +146,55 @@ it("rejects a mismatched settlement and retains the freezing state", async () =>
   expect(await f.execution()).toMatchObject({ state: "freezing", settlementId: null });
 });
 
+it("reconciles failed settlement once through retained custody without restarting work", async () => {
+  const f = await fixture();
+  f.options.freezeAndSettle.mockRejectedValueOnce(new Error("Custody proof unavailable"));
+  await expect(f.supervisor.freeze("manual")).rejects.toThrow("Custody proof unavailable");
+  expect(await f.execution()).toMatchObject({ state: "freezing", pauseReason: "manual" });
+  const first = f.supervisor.reconcileFreeze();
+  expect(f.supervisor.reconcileFreeze()).toBe(first);
+  expect(await first).toMatchObject({
+    state: "frozen",
+    executionId: "execution",
+    pauseReason: "manual",
+  });
+  await f.supervisor.reconcileFreeze();
+  expect(f.options.freezeAndSettle).toHaveBeenCalledTimes(2);
+  expect(await f.execution()).toMatchObject({
+    executionId: "execution",
+    authenticationGeneration: "auth",
+  });
+});
+
+it("reconciliation waits for a live stop request instead of issuing a second one", async () => {
+  const f = await fixture();
+  const entered = deferred<void>();
+  const receipt = deferred<QuotaExecutionSettlement>();
+  f.options.freezeAndSettle.mockImplementation(async () => {
+    entered.resolve();
+    return receipt.promise;
+  });
+  const freeze = f.supervisor.freeze("quota");
+  await entered.promise;
+  const reconcile = f.supervisor.reconcileFreeze();
+  expect(f.options.freezeAndSettle).toHaveBeenCalledTimes(1);
+  receipt.resolve(f.receipt);
+  await Promise.all([freeze, reconcile]);
+  expect(f.options.freezeAndSettle).toHaveBeenCalledTimes(1);
+  expect(await f.execution()).toMatchObject({ state: "frozen" });
+});
+
+it("reconciliation returns the current manual pause after a successful quota freeze", async () => {
+  const f = await fixture();
+  await f.supervisor.freeze("quota");
+  await f.supervisor.freeze("manual");
+  expect(await f.supervisor.reconcileFreeze()).toMatchObject({
+    state: "frozen",
+    pauseReason: "manual",
+  });
+  expect(f.options.freezeAndSettle).toHaveBeenCalledTimes(1);
+});
+
 it("keeps manual pause sticky when it arrives during quota settlement", async () => {
   const f = await fixture();
   const entered = deferred<void>();

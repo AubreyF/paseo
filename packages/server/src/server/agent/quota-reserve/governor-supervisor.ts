@@ -52,6 +52,7 @@ export class QuotaExecutionSupervisor {
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
   private polling: Promise<void> | undefined;
   private freezing: Promise<GovernorExecution> | undefined;
+  private reconciling: Promise<GovernorExecution> | undefined;
   private persistence: Promise<unknown> = Promise.resolve();
 
   private constructor(
@@ -246,6 +247,41 @@ export class QuotaExecutionSupervisor {
     }
     this.freezing = this.freezeExecution(reason);
     return this.freezing;
+  }
+
+  /** Retry only a terminal failed freeze, using the same retained custody handle. */
+  reconcileFreeze(): Promise<GovernorExecution> {
+    if (!this.revoked || !this.freezing) {
+      return Promise.reject(new Error("Quota execution has no freeze to reconcile."));
+    }
+    if (this.reconciling) return this.reconciling;
+    const previous = this.freezing;
+    this.reconciling = (async () => {
+      // An observation timeout is not proof that the stop operation ended.
+      // Wait for its actual outcome before considering another custody request.
+      const settled = await previous.then(
+        () => true,
+        () => false,
+      );
+      const current = await this.options.store.execution(
+        this.options.account,
+        this.options.reservationId,
+      );
+      assertExecution(current, this.options, true);
+      if (current.state === "frozen" && current.settlementId) {
+        supervisors.delete(this.key);
+        this.freezing = Promise.resolve(current);
+        return current;
+      }
+      if (settled || current.state !== "freezing") {
+        throw new Error("Quota freeze reconciliation requires durable freeze intent.");
+      }
+      this.freezing = this.freezeExecution(current.pauseReason ?? "quota");
+      return await this.freezing;
+    })().finally(() => {
+      this.reconciling = undefined;
+    });
+    return this.reconciling;
   }
 
   private async freezeExecution(reason: "quota" | "manual"): Promise<GovernorExecution> {

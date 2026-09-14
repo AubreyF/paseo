@@ -1,4 +1,10 @@
-import { QuotaObserverDisposedError } from "../agent-sdk-types.js";
+import {
+  QuotaObserverDisposedError,
+  type QuotaAdmissionGuard,
+  type QuotaAdmissionPermit,
+  type QuotaAdmissionRequest,
+} from "../agent-sdk-types.js";
+import type { QuotaObservation } from "@getpaseo/protocol/quota-governor";
 import { CodexLoginSession } from "./codex/login.js";
 import {
   getAgentStreamEventTurnId,
@@ -3376,6 +3382,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private connected = false;
   private connectionPromise: Promise<void> | null = null;
   private closed = false;
+  private quotaAdmissionGuard: QuotaAdmissionGuard | null = null;
   private collaborationModes: Array<{
     name: string;
     mode?: string | null;
@@ -4204,6 +4211,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
 
       const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
+      const quotaPermit = await this.assertQuotaAdmission("start");
       const turnId = this.createTurnId();
       this.activeForegroundTurnId = turnId;
       this.activeClientMessageId = options?.clientMessageId ?? null;
@@ -4231,6 +4239,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (pendingStart.cancelRequested) {
         throw new Error("Codex turn start was interrupted before reaching Codex");
       }
+      quotaPermit?.assertValidForDispatch();
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
       return { turnId };
     } catch (error) {
@@ -4269,10 +4278,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     const input = await this.buildUserInput(prompt);
+    const quotaPermit = await this.assertQuotaAdmission("steer");
     if (!this.matchesSteerAdmission({ client, threadId, nativeTurnId, foregroundTurnId })) {
       return { status: "unavailable" };
     }
     try {
+      quotaPermit?.assertValidForDispatch();
       const response = await client.request(
         "turn/steer",
         {
@@ -4434,6 +4445,9 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async setMode(modeId: string): Promise<void | AgentProviderNotice> {
     validateCodexMode(modeId);
+    if (this.quotaAdmissionGuard && modeId === "auto-review") {
+      throw new Error("Native automatic review is unavailable for quota-governed sessions.");
+    }
     this.currentMode = modeId;
     this.hasWorkflowModeOverride = true;
     this.config.modeId = modeId;
@@ -4691,6 +4705,82 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
+  setQuotaAdmissionGuard(guard: QuotaAdmissionGuard): void {
+    if (this.goalsEnabled)
+      throw new Error("Native autonomous goals require a quota-aware continuation boundary.");
+    if (this.autoReviewEnabled || this.currentMode === "auto-review")
+      throw new Error("Native automatic review requires a quota-aware continuation boundary.");
+    if (this.quotaAdmissionGuard && this.quotaAdmissionGuard !== guard)
+      throw new Error("Quota guard cannot be replaced on an existing session.");
+    if (this.quotaAdmissionGuard === guard) return;
+    if (this.connected || this.connectionPromise || this.client || this.closed)
+      throw new Error("Quota guard must be installed before connecting the session.");
+    this.quotaAdmissionGuard = guard;
+  }
+
+  async readQuotaObservation(): Promise<QuotaObservation> {
+    if (!this.client || !this.connected || this.closed)
+      return { status: "unavailable", reason: "read_failed" };
+    // This reader borrows the executing connection. Its disposal method is never
+    // called here; the session retains exclusive ownership of the transport.
+    return new CodexQuotaObservationSession(this.client).read();
+  }
+
+  private async assertQuotaAdmission(
+    operation: QuotaAdmissionRequest["operation"],
+  ): Promise<QuotaAdmissionPermit | undefined> {
+    if (!this.quotaAdmissionGuard) return;
+    if (this.currentMode === "auto-review") {
+      throw new Error("Native automatic review is unavailable for quota-governed sessions.");
+    }
+    const client = this.client;
+    const threadId = this.currentThreadId;
+    const nativeTurnId = this.currentTurnId;
+    const foregroundTurnId = this.activeForegroundTurnId;
+    const guard = this.quotaAdmissionGuard;
+    let expired = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const permit = await Promise.race([
+        this.readQuotaObservation().then((observation) => {
+          if (expired) throw new Error("Quota admission timed out.");
+          return guard({ observation, operation, threadId, nativeTurnId });
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            expired = true;
+            reject(new Error("Quota admission timed out."));
+          }, 10_000);
+        }),
+      ]);
+      return {
+        assertValidForDispatch: () => {
+          if (
+            !client ||
+            this.client !== client ||
+            this.closed ||
+            this.currentThreadId !== threadId
+          ) {
+            throw new Error("Execution connection changed during quota admission.");
+          }
+          if (this.currentMode === "auto-review") {
+            throw new Error("Native automatic review is unavailable for quota-governed sessions.");
+          }
+          if (
+            operation === "compact" &&
+            (this.currentTurnId !== nativeTurnId ||
+              this.activeForegroundTurnId !== foregroundTurnId)
+          ) {
+            throw new Error("Execution turn changed during quota admission.");
+          }
+          permit.assertValidForDispatch();
+        },
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   describePersistence(): {
     provider: typeof CODEX_PROVIDER;
     sessionId: string;
@@ -4925,8 +5015,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (!this.client || !this.currentThreadId) {
         throw new Error("Codex thread is not available");
       }
+      const quotaPermit = await this.assertQuotaAdmission("compact");
       this.pendingManualCompactionStarts += 1;
       try {
+        quotaPermit?.assertValidForDispatch();
         await this.client.request("thread/compact/start", {
           threadId: this.currentThreadId,
         });

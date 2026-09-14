@@ -677,6 +677,24 @@ export interface AgentPermissionResult {
   followUpPrompt?: AgentPromptInput;
 }
 
+export interface QuotaAdmissionRequest {
+  observation: import("@getpaseo/protocol/quota-governor").QuotaObservation;
+  operation: "start" | "steer" | "compact";
+  threadId: string | null;
+  nativeTurnId: string | null;
+}
+
+export interface QuotaAdmissionPermit {
+  /** Synchronously reject expired or revoked execution/policy/authentication authority. */
+  assertValidForDispatch(): void;
+}
+
+/**
+ * Runtime-only coordinator boundary. A denial must throw, without awaiting
+ * interruption of the admitting session: its pending start is waiting on this hook.
+ */
+export type QuotaAdmissionGuard = (request: QuotaAdmissionRequest) => Promise<QuotaAdmissionPermit>;
+
 export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
@@ -697,6 +715,10 @@ export interface AgentSession {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
+  /** Read quota through this execution's own authenticated provider connection. */
+  readQuotaObservation?(): Promise<import("@getpaseo/protocol/quota-governor").QuotaObservation>;
+  /** Trusted coordinator hook; sticky for this session and absent from worker RPC inputs. */
+  setQuotaAdmissionGuard?(guard: QuotaAdmissionGuard): void;
   /**
    * Resolve once every foreground turn that predates this call can no longer run or become active.
    * Calling while already idle is a successful no-op. Reject only when foreground ownership is

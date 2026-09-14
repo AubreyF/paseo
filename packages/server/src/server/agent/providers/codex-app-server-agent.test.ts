@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 
 import type {
   AgentLaunchContext,
+  QuotaAdmissionRequest,
+  QuotaAdmissionPermit,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -170,6 +172,160 @@ function createSession(
   session.activeForegroundTurnId = "test-turn";
   return session;
 }
+
+test.each([
+  ["start", "denied"],
+  ["steer", "denied"],
+  ["compact", "denied"],
+  ["start", "revoked"],
+  ["steer", "revoked"],
+  ["compact", "revoked"],
+  ["start", "interrupted"],
+  ["compact", "turn-changed"],
+] as const)(
+  "native quota admission blocks %s when %s using the executing connection's account",
+  async (operation, outcome) => {
+    const session = createSession();
+    session.activeForegroundTurnId = null;
+    session.connected = false;
+    const requests: string[] = [];
+    const client: CodexClientLike = {
+      request: vi.fn(async (method) => {
+        requests.push(method);
+        if (method === "thread/loaded/list") return { data: ["test-thread"] };
+        if (method === "thread/read")
+          return { thread: { id: "test-thread", turns: [], status: { type: "idle" } } };
+        if (method === "account/read") return { account: { type: "chatgpt" } };
+        if (method === "account/rateLimits/read")
+          return {
+            accountId: "executing-account",
+            rateLimitsByLimitId: {
+              codex: {
+                limitId: "codex",
+                primary: { usedPercent: 80, windowDurationMins: 10080, resetsAt: null },
+                secondary: null,
+              },
+            },
+          };
+        if (method === "account/usage/read") return {};
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+    let interruption: Promise<void> | undefined;
+    const guard = vi.fn(async (request: QuotaAdmissionRequest) => {
+      expect(request.operation).toBe(operation);
+      expect(request.threadId).toBe("test-thread");
+      expect(request.observation).toMatchObject({
+        status: "available",
+        account: { issuer: "openai", accountId: "executing-account" },
+      });
+      if (outcome === "interrupted") interruption = session.interrupt();
+      if (outcome === "turn-changed") {
+        castInternals<{ currentTurnId: string }>(session).currentTurnId = "replacement-turn";
+        return { assertValidForDispatch() {} };
+      }
+      if (outcome === "revoked") {
+        return {
+          assertValidForDispatch() {
+            throw new Error("Quota admission held");
+          },
+        };
+      }
+      throw new Error("Quota admission held");
+    });
+    session.setQuotaAdmissionGuard?.(guard);
+    session.client = client;
+    session.connected = true;
+    if (operation === "start") {
+      await expect(session.startTurn("implement")).rejects.toThrow("Quota admission held");
+    } else if (operation === "steer") {
+      session.activeForegroundTurnId = "test-turn";
+      castInternals<{ currentTurnId: string }>(session).currentTurnId = "native-turn";
+      await expect(
+        session.steerActiveTurn?.("implement", { expectedTurnId: "test-turn" }),
+      ).rejects.toThrow("Quota admission held");
+    } else {
+      const handler = session.tryHandleOutOfBand?.("/compact");
+      if (!handler) throw new Error("Compaction handler missing");
+      await handler.run({ emit: () => {} });
+    }
+    await interruption;
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(requests).not.toContain("turn/start");
+    expect(requests).not.toContain("turn/steer");
+    expect(requests).not.toContain("thread/compact/start");
+    expect(() =>
+      session.setQuotaAdmissionGuard?.(async () => ({ assertValidForDispatch() {} })),
+    ).toThrow("cannot be replaced");
+  },
+);
+
+test("quota guard refuses autonomous native goals whose continuations bypass managed admission", () => {
+  const session = createSession({}, { goalsEnabled: true });
+  expect(() =>
+    session.setQuotaAdmissionGuard?.(async () => ({ assertValidForDispatch() {} })),
+  ).toThrow("continuation boundary");
+});
+
+test("a guarded session cannot enable native automatic review after construction", async () => {
+  const session = createSession();
+  session.connected = false;
+  session.setQuotaAdmissionGuard?.(async () => ({ assertValidForDispatch() {} }));
+  await expect(session.setMode("auto-review")).rejects.toThrow("unavailable for quota-governed");
+  expect(await session.getCurrentMode()).toBe("auto");
+});
+
+test.each(["telemetry", "guard"] as const)(
+  "a stalled quota %s read releases a pending interruption and cannot dispatch late",
+  async (phase) => {
+    vi.useFakeTimers();
+    try {
+      const session = createSession();
+      session.connected = false;
+      session.activeForegroundTurnId = null;
+      let entered!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let releaseObservation!: (value: QuotaAdmissionRequest["observation"]) => void;
+      const observation = new Promise<QuotaAdmissionRequest["observation"]>((resolve) => {
+        releaseObservation = resolve;
+      });
+      let releasePermit!: (value: QuotaAdmissionPermit) => void;
+      const permit = new Promise<QuotaAdmissionPermit>((resolve) => {
+        releasePermit = resolve;
+      });
+      const guard = vi.fn(async () => {
+        entered();
+        return permit;
+      });
+      session.setQuotaAdmissionGuard?.(guard);
+      const request = vi.fn(async () => ({ data: ["test-thread"] }));
+      session.client = { request };
+      session.connected = true;
+      vi.spyOn(session, "readQuotaObservation").mockImplementation(async () => {
+        if (phase === "telemetry") entered();
+        return observation;
+      });
+      if (phase === "guard") releaseObservation({ status: "unavailable", reason: "read_failed" });
+      const start = expect(session.startTurn("implement")).rejects.toThrow(
+        "Quota admission timed out",
+      );
+      await waiting;
+      const interruption = session.interrupt();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await start;
+      await interruption;
+      releaseObservation({ status: "unavailable", reason: "read_failed" });
+      releasePermit({ assertValidForDispatch() {} });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(guard).toHaveBeenCalledTimes(phase === "guard" ? 1 : 0);
+      expect(request).not.toHaveBeenCalledWith("turn/start", expect.anything(), expect.anything());
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
 
 function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAppServerAgentClient {
   const provider = new CodexAppServerAgentClient(createTestLogger());

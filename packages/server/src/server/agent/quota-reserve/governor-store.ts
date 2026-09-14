@@ -110,6 +110,18 @@ export class QuotaGovernorStore {
   }
 
   async execution(account: QuotaAccount, reservationId: string): Promise<GovernorExecution> {
+    return (await this.executionContext(account, reservationId)).execution;
+  }
+
+  async executionContext(
+    account: QuotaAccount,
+    reservationId: string,
+  ): Promise<{
+    execution: GovernorExecution;
+    policy: QuotaGovernorPolicy;
+    providerId: string;
+    observation: QuotaObservation;
+  }> {
     const ledger = await readLedger(this.accountPath(account));
     if (
       !ledger ||
@@ -118,7 +130,12 @@ export class QuotaGovernorStore {
     ) {
       throw new Error("Quota reservation identity mismatch.");
     }
-    return ledger.execution;
+    return {
+      execution: ledger.execution,
+      policy: ledger.reservation.policy,
+      providerId: ledger.reservation.providerId,
+      observation: ledger.observation,
+    };
   }
 
   async transition(input: {

@@ -1,0 +1,308 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, it, vi } from "vitest";
+import type { QuotaGovernorPolicy, QuotaObservation } from "@getpaseo/protocol/quota-governor";
+import { QuotaGovernorStore } from "./governor-store.js";
+import { QuotaExecutionSupervisor, type QuotaExecutionSettlement } from "./governor-supervisor.js";
+
+const directories: string[] = [];
+const active: QuotaExecutionSupervisor[] = [];
+afterEach(async () => {
+  vi.useRealTimers();
+  await Promise.allSettled(active.splice(0).map((supervisor) => supervisor.freeze("manual")));
+  await Promise.all(
+    directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+async function fixture() {
+  const directory = await mkdtemp(join(tmpdir(), "quota-supervision-"));
+  directories.push(directory);
+  let now = Date.parse("2026-09-14T08:00:00Z");
+  const policy: QuotaGovernorPolicy = {
+    version: 1,
+    account: { issuer: "openai", accountId: "account" },
+    launchFloorPercent: 30,
+    freezeFloorPercent: 25,
+    maxObservationAgeSeconds: 120,
+    requiredWindows: [{ bucketId: "coding", windowId: "primary", durationMinutes: 10080 }],
+    consumptionLimits: [],
+    recovery: "automatic_after_reconciliation",
+  };
+  const sample = (usedPercent = 20): QuotaObservation => ({
+    status: "available",
+    account: policy.account,
+    observedAt: new Date(now).toISOString(),
+    windows: [
+      {
+        bucketId: "coding",
+        windowId: "primary",
+        durationMinutes: 10080,
+        usedPercent,
+        resetsAt: null,
+        semantics: "unknown",
+      },
+    ],
+    consumptionMeters: [],
+  });
+  let observation = sample();
+  const store = new QuotaGovernorStore(directory);
+  const reserved = await store.reserve({
+    policy,
+    observation,
+    nowMs: now,
+    scheduleId: "schedule",
+    occurrenceId: "occurrence",
+    providerId: "account-alias",
+  });
+  if (reserved.kind !== "admitted") throw new Error("Fixture admission failed");
+  const reservationId = reserved.reservation.id;
+  await store.transition({
+    account: policy.account,
+    reservationId,
+    expectedGeneration: 0,
+    event: { type: "start", executionId: "execution", authenticationGeneration: "auth" },
+    observation,
+    nowMs: now,
+  });
+  await store.transition({
+    account: policy.account,
+    reservationId,
+    expectedGeneration: 1,
+    event: { type: "started", executionId: "execution" },
+    nowMs: now,
+  });
+  const receipt = {
+    executionId: "execution",
+    authenticationGeneration: "auth",
+    settlementId: "settled",
+  };
+  const readObservation = vi.fn(async () => observation);
+  const freezeAndSettle = vi.fn(async () => receipt);
+  const options = {
+    store,
+    account: policy.account,
+    reservationId,
+    executionId: "execution",
+    authenticationGeneration: "auth",
+    readObservation,
+    freezeAndSettle,
+    assertAuthority: vi.fn(),
+    onFailure: vi.fn(),
+    nowMs: () => now,
+  };
+  const supervisor = await QuotaExecutionSupervisor.attach(options);
+  active.push(supervisor);
+  return {
+    store,
+    supervisor,
+    options,
+    sample,
+    receipt,
+    execution: () => store.execution(policy.account, reservationId),
+    observe(usedPercent: number) {
+      now += 1;
+      observation = sample(usedPercent);
+      return observation;
+    },
+    advance(ms: number) {
+      now += ms;
+    },
+  };
+}
+
+it("persists a freeze and preserves ownership until exact settlement arrives", async () => {
+  const f = await fixture();
+  const entered = deferred<void>();
+  const settlement = deferred<QuotaExecutionSettlement>();
+  f.options.freezeAndSettle.mockImplementation(async () => {
+    entered.resolve();
+    return settlement.promise;
+  });
+  f.observe(76);
+  const check = f.supervisor.checkNow();
+  await entered.promise;
+  settlement.resolve(f.receipt);
+  await check;
+  expect(await f.execution()).toMatchObject({
+    state: "frozen",
+    settlementId: "settled",
+    pauseReason: "quota",
+  });
+  expect(f.options.freezeAndSettle).toHaveBeenCalledExactlyOnceWith("execution");
+});
+
+it("rejects a mismatched settlement and retains the freezing state", async () => {
+  const f = await fixture();
+  f.options.freezeAndSettle.mockResolvedValue({ ...f.receipt, executionId: "other" });
+  await expect(f.supervisor.freeze("quota")).rejects.toThrow("settlement identity mismatch");
+  expect(await f.execution()).toMatchObject({ state: "freezing", settlementId: null });
+});
+
+it("keeps manual pause sticky when it arrives during quota settlement", async () => {
+  const f = await fixture();
+  const entered = deferred<void>();
+  const settlement = deferred<QuotaExecutionSettlement>();
+  f.options.freezeAndSettle.mockImplementation(async () => {
+    entered.resolve();
+    return settlement.promise;
+  });
+  const freezing = f.supervisor.freeze("quota");
+  await entered.promise;
+  const manual = f.supervisor.freeze("manual");
+  settlement.resolve(f.receipt);
+  await Promise.all([freezing, manual]);
+  expect(await f.execution()).toMatchObject({ state: "frozen", pauseReason: "manual" });
+  expect(f.options.freezeAndSettle).toHaveBeenCalledTimes(1);
+});
+
+it("revokes existing permits when fresher evidence holds new admission", async () => {
+  const f = await fixture();
+  const old = f.sample();
+  const permit = await f.supervisor.guard({
+    observation: old,
+    operation: "start",
+    threadId: "thread",
+    nativeTurnId: null,
+  });
+  permit.assertValidForDispatch();
+  f.observe(72);
+  await f.supervisor.checkNow();
+  expect(() => permit.assertValidForDispatch()).toThrow("revoked");
+  await expect(
+    f.supervisor.guard({
+      observation: old,
+      operation: "steer",
+      threadId: "thread",
+      nativeTurnId: "turn",
+    }),
+  ).rejects.toThrow("regressed");
+  expect(f.options.freezeAndSettle).not.toHaveBeenCalled();
+});
+
+it("missing admission telemetry freezes active work without awaiting its own native start", async () => {
+  const f = await fixture();
+  const settlement = deferred<QuotaExecutionSettlement>();
+  f.options.freezeAndSettle.mockImplementation(async () => settlement.promise);
+  await expect(
+    f.supervisor.guard({
+      observation: { status: "unavailable", reason: "read_failed" },
+      operation: "steer",
+      threadId: "thread",
+      nativeTurnId: "turn",
+    }),
+  ).rejects.toThrow("requires freeze");
+  settlement.resolve(f.receipt);
+  await f.supervisor.freeze("quota");
+  expect(await f.execution()).toMatchObject({ state: "frozen" });
+});
+
+it("a telemetry deadline freezes independently of a stalled poll and ignores its late result", async () => {
+  const f = await fixture();
+  f.advance(119_000);
+  vi.useFakeTimers();
+  const entered = deferred<void>();
+  const observation = deferred<QuotaObservation>();
+  f.options.readObservation.mockImplementation(async () => {
+    entered.resolve();
+    return observation.promise;
+  });
+  const check = f.supervisor.checkNow();
+  await entered.promise;
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(f.options.freezeAndSettle).toHaveBeenCalledExactlyOnceWith("execution");
+  observation.resolve(f.sample());
+  await check;
+  await f.supervisor.freeze("quota");
+  expect(await f.execution()).toMatchObject({ state: "frozen" });
+});
+
+it("prevents duplicate supervision and retires verified completion without another interruption", async () => {
+  const f = await fixture();
+  await expect(QuotaExecutionSupervisor.attach(f.options)).rejects.toThrow(
+    "already has a supervisor",
+  );
+  const current = await f.execution();
+  await f.store.transition({
+    account: f.options.account,
+    reservationId: f.options.reservationId,
+    expectedGeneration: current.generation,
+    event: { type: "complete", executionId: "execution", settlementId: "completed" },
+    nowMs: f.options.nowMs(),
+  });
+  await f.supervisor.checkNow();
+  expect(f.options.freezeAndSettle).not.toHaveBeenCalled();
+  expect(f.options.onFailure).not.toHaveBeenCalled();
+  active.splice(active.indexOf(f.supervisor), 1);
+});
+
+it("expiry requests the captured stop even while ledger reads are stalled", async () => {
+  const f = await fixture();
+  const before = await f.execution();
+  const ledger = deferred<typeof before>();
+  const entered = deferred<void>();
+  const read = vi.spyOn(f.store, "execution").mockImplementation(async () => {
+    entered.resolve();
+    return ledger.promise;
+  });
+  f.advance(119_000);
+  vi.useFakeTimers();
+  const checking = f.supervisor.checkNow();
+  await entered.promise;
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(f.options.freezeAndSettle).toHaveBeenCalledExactlyOnceWith("execution");
+  read.mockRestore();
+  ledger.resolve(before);
+  await checking;
+  await f.supervisor.freeze("quota");
+  expect(await f.execution()).toMatchObject({ state: "frozen" });
+});
+
+it("a permit expires even when its quota snapshot remains healthy", async () => {
+  const f = await fixture();
+  const permit = await f.supervisor.guard({
+    observation: f.sample(),
+    operation: "start",
+    threadId: "thread",
+    nativeTurnId: null,
+  });
+  f.advance(1_000);
+  expect(() => permit.assertValidForDispatch()).toThrow("expired");
+});
+
+it.each(["monitor", "admission"] as const)(
+  "conflicting same-timestamp evidence revokes permits through %s",
+  async (source) => {
+    const f = await fixture();
+    const permit = await f.supervisor.guard({
+      observation: f.sample(),
+      operation: "start",
+      threadId: "thread",
+      nativeTurnId: null,
+    });
+    const conflict = f.sample(80);
+    if (source === "monitor") {
+      f.options.readObservation.mockResolvedValue(conflict);
+      await f.supervisor.checkNow();
+    } else {
+      await expect(
+        f.supervisor.guard({
+          observation: conflict,
+          operation: "steer",
+          threadId: "thread",
+          nativeTurnId: "turn",
+        }),
+      ).rejects.toThrow("conflicts");
+    }
+    expect(() => permit.assertValidForDispatch()).toThrow("revoked");
+    await f.supervisor.freeze("quota");
+    expect(f.options.freezeAndSettle).toHaveBeenCalledExactlyOnceWith("execution");
+  },
+);

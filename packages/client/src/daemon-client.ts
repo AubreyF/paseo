@@ -765,6 +765,7 @@ export interface UpdateScheduleNewAgentConfig {
 }
 export interface UpdateScheduleOptions {
   id: string;
+  expectedConfigurationRevision?: string | null;
   name?: string | null;
   prompt?: string;
   cadence?: {
@@ -5626,11 +5627,20 @@ export class DaemonClient {
   }
 
   async scheduleUpdate(options: UpdateScheduleOptions): Promise<ScheduleUpdatePayload> {
+    if (
+      options.expectedConfigurationRevision !== undefined &&
+      !this.lastServerInfoMessage?.features?.scheduleConfigurationRevision
+    ) {
+      throw new Error("Update the host to save schedule edits with revision protection.");
+    }
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {
         type: "schedule/update",
         scheduleId: options.id,
+        ...(options.expectedConfigurationRevision !== undefined
+          ? { expectedConfigurationRevision: options.expectedConfigurationRevision }
+          : {}),
         ...(options.name !== undefined ? { name: options.name } : {}),
         ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
         ...(options.cadence !== undefined ? { cadence: options.cadence } : {}),

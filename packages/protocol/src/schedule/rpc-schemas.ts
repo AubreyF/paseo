@@ -90,6 +90,7 @@ const ScheduleUpdateNewAgentConfigSchema = z.object({
 });
 
 export const ScheduleUpdateRequestSchema = z.object({
+  expectedConfigurationRevision: z.string().min(1).nullable().optional(),
   type: z.literal("schedule/update"),
   requestId: z.string(),
   scheduleId: z.string(),

@@ -43,6 +43,15 @@ export class ScheduleTargetGoneError extends Error {
   }
 }
 
+function assertConfigurationRevision(
+  schedule: StoredSchedule,
+  expected: string | null | undefined,
+): void {
+  if (expected !== undefined && expected !== (schedule.configurationRevision ?? null)) {
+    throw new Error("Schedule configuration changed. Reload it before saving your edits.");
+  }
+}
+
 function trimOptionalName(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
@@ -483,6 +492,7 @@ export class ScheduleService {
 
   async update(input: UpdateScheduleInput): Promise<StoredSchedule> {
     const next = await this.store.update(input.id, async (schedule) => {
+      assertConfigurationRevision(schedule, input.expectedConfigurationRevision);
       if (
         this.hasUnfinishedProtectedExecution(schedule) &&
         ((input.prompt !== undefined && normalizePrompt(input.prompt) !== schedule.prompt) ||

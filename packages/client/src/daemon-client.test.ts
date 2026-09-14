@@ -6176,3 +6176,54 @@ test("quota observation correlates an account-scoped request on a capable host",
   );
   await expect(pending).resolves.toEqual(payload);
 });
+
+test("schedule revision protection rejects unsupported hosts before sending", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "revision-test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+  await expect(
+    client.scheduleUpdate({ id: "schedule", expectedConfigurationRevision: null, name: "edited" }),
+  ).rejects.toThrow("Update the host");
+  expect(mock.sent).toEqual([]);
+});
+
+test("schedule revision protection transmits the exact revision on supported hosts", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "revision-test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: { scheduleConfigurationRevision: true } });
+  await connected;
+  const pending = client.scheduleUpdate({
+    id: "schedule",
+    expectedConfigurationRevision: "saved-revision",
+    name: "edited",
+  });
+  const sent = JSON.parse(assertStr(mock.sent[0])).message;
+  expect(sent).toMatchObject({
+    type: "schedule/update",
+    expectedConfigurationRevision: "saved-revision",
+  });
+  const payload = {
+    requestId: sent.requestId,
+    schedule: null,
+    error: "Schedule configuration changed",
+  };
+  mock.triggerMessage(wrapSessionMessage({ type: "schedule/update/response", payload }));
+  await expect(pending).resolves.toEqual(payload);
+});

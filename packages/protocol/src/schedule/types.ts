@@ -69,6 +69,7 @@ export const StoredScheduleSchema = z.object({
   status: ScheduleStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
+  configurationRevision: z.string().min(1).optional(),
   nextRunAt: z.string().nullable(),
   lastRunAt: z.string().nullable(),
   pausedAt: z.string().nullable(),
@@ -109,6 +110,7 @@ export interface UpdateScheduleNewAgentConfig {
 
 export interface UpdateScheduleInput {
   id: string;
+  expectedConfigurationRevision?: string | null;
   name?: string | null;
   prompt?: string;
   cadence?: ScheduleCadence;

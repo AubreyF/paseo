@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -312,6 +312,92 @@ describe("ScheduleService", () => {
     // ENOTEMPTY races when AgentManager flushes a snapshot mid-cleanup.
     await agentStorage.flush();
     await rm(tempDir, { recursive: true, force: true });
+  });
+
+  test("configuration revisions reject concurrent stale edits without lifecycle churn", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "done" }),
+    });
+    const created = await service.create({
+      prompt: "Review",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "codex", cwd: tempDir } },
+    });
+    expect(created.configurationRevision).toEqual(expect.any(String));
+    await service.tick();
+    expect((await service.inspect(created.id)).configurationRevision).toBe(
+      created.configurationRevision,
+    );
+    const edits = await Promise.allSettled([
+      service.update({
+        id: created.id,
+        expectedConfigurationRevision: created.configurationRevision,
+        name: "First",
+      }),
+      service.update({
+        id: created.id,
+        expectedConfigurationRevision: created.configurationRevision,
+        name: "Second",
+      }),
+    ]);
+    expect(edits[0].status).toBe("fulfilled");
+    expect(edits[1].status).toBe("rejected");
+    const saved = await service.inspect(created.id);
+    expect(saved.name).toBe("First");
+    expect(saved.configurationRevision).not.toBe(created.configurationRevision);
+    // Old clients retain partial-update semantics and do not erase new fields.
+    await service.update({ id: created.id, maxRuns: 10 });
+    const latest = await service.inspect(created.id);
+    expect(latest.name).toBe("First");
+    expect(latest.configurationRevision).not.toBe(saved.configurationRevision);
+    await expect(
+      service.update({ id: created.id, expectedConfigurationRevision: null, name: "Legacy" }),
+    ).rejects.toThrow("configuration changed");
+  });
+
+  test("configuration revisions migrate legacy records and fence edits after replacement", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+    const input = {
+      name: "Legacy",
+      prompt: "Review",
+      cadence: { type: "every" as const, everyMs: 60_000 },
+      target: { type: "new-agent" as const, config: { provider: "codex", cwd: tempDir } },
+    };
+    const created = await service.create(input);
+    const legacy = { ...created };
+    delete legacy.configurationRevision;
+    await writeFile(join(tempDir, "schedules", `${created.id}.json`), JSON.stringify(legacy));
+    expect((await service.inspect(created.id)).configurationRevision).toBeUndefined();
+    const migrated = await service.update({
+      id: created.id,
+      expectedConfigurationRevision: null,
+      prompt: "Migrated",
+    });
+    expect(migrated.configurationRevision).toEqual(expect.any(String));
+    const replaced = await service.createOrReplace({ ...input, prompt: "Replaced" });
+    expect(replaced.id).toBe(created.id);
+    expect(replaced.configurationRevision).not.toBe(migrated.configurationRevision);
+    await expect(
+      service.update({
+        id: created.id,
+        expectedConfigurationRevision: migrated.configurationRevision,
+        prompt: "Stale",
+      }),
+    ).rejects.toThrow("configuration changed");
+    expect((await service.inspect(created.id)).prompt).toBe("Replaced");
   });
 
   test("ticks due schedules and records run history on disk", async () => {

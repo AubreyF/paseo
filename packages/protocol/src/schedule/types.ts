@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { AgentProviderSchema } from "../provider-manifest.js";
+import {
+  QuotaAccountSchema,
+  QuotaGovernorPolicySchema,
+  type QuotaGovernorPolicy,
+} from "../quota-governor.js";
 
 export const ScheduleStatusSchema = z.enum(["active", "paused", "completed"]);
 export type ScheduleStatus = z.infer<typeof ScheduleStatusSchema>;
@@ -26,6 +31,7 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
     type: z.literal("new-agent"),
     config: z.object({
       provider: AgentProviderSchema,
+      quotaPolicy: QuotaGovernorPolicySchema.optional(),
       cwd: z.string().trim().min(1),
       modeId: z.string().trim().min(1).optional(),
       model: z.string().trim().min(1).optional(),
@@ -42,6 +48,11 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
 ]);
 export type ScheduleTarget = z.infer<typeof ScheduleTargetSchema>;
 
+export const ScheduleGovernorBindingSchema = z.object({
+  account: QuotaAccountSchema,
+  reservationId: z.string().min(1),
+});
+
 export const ScheduleRunSchema = z.object({
   id: z.string(),
   scheduledFor: z.string(),
@@ -50,8 +61,13 @@ export const ScheduleRunSchema = z.object({
   status: z.enum(["running", "succeeded", "failed"]),
   agentId: z.guid().nullable(),
   workspaceId: z.string().nullable().optional(),
+  governorBinding: ScheduleGovernorBindingSchema.optional(),
+  governorPreparationId: z.string().uuid().optional(),
   output: z.string().nullable(),
   error: z.string().nullable(),
+  quotaState: z
+    .object({ state: z.enum(["frozen", "reconciliation_required"]), reason: z.string() })
+    .optional(),
 });
 export type ScheduleRun = z.infer<typeof ScheduleRunSchema>;
 
@@ -64,12 +80,20 @@ export const StoredScheduleSchema = z.object({
   status: ScheduleStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
+  configurationRevision: z.string().min(1).optional(),
   nextRunAt: z.string().nullable(),
   lastRunAt: z.string().nullable(),
   pausedAt: z.string().nullable(),
   expiresAt: z.string().nullable(),
   maxRuns: z.number().int().positive().nullable(),
   runs: z.array(ScheduleRunSchema),
+  // Recovery metadata only. The trusted driver owns reservation and execution authority.
+  governorPreparation: z
+    .object({ id: z.string().uuid(), scheduledFor: z.string().datetime() })
+    .optional(),
+  quotaState: z
+    .object({ state: z.literal("held"), reason: z.string(), checkedAt: z.string() })
+    .optional(),
 });
 export type StoredSchedule = z.infer<typeof StoredScheduleSchema>;
 
@@ -89,6 +113,7 @@ export interface CreateScheduleInput {
 }
 
 export interface UpdateScheduleNewAgentConfig {
+  quotaPolicy?: QuotaGovernorPolicy | null;
   provider?: string;
   model?: string | null;
   modeId?: string | null;
@@ -100,6 +125,7 @@ export interface UpdateScheduleNewAgentConfig {
 
 export interface UpdateScheduleInput {
   id: string;
+  expectedConfigurationRevision?: string | null;
   name?: string | null;
   prompt?: string;
   cadence?: ScheduleCadence;

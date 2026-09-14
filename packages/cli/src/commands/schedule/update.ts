@@ -52,8 +52,17 @@ export async function runUpdateCommand(
   });
   const { client } = await connectScheduleClient(options.host);
   try {
-    await requireNewAgentSchedule(client, id);
-    const payload = await client.scheduleUpdate(input);
+    const schedule = await requireNewAgentSchedule(client, id);
+    const supportsRevision =
+      client.getLastServerInfoMessage()?.features?.scheduleConfigurationRevision === true;
+    // A host advertising revisions must also guard legacy records with no token.
+    // Never silently discard an existing revision if a host loses the capability.
+    const payload = await client.scheduleUpdate({
+      ...input,
+      ...(supportsRevision || schedule.configurationRevision !== undefined
+        ? { expectedConfigurationRevision: schedule.configurationRevision ?? null }
+        : {}),
+    });
     if (payload.error || !payload.schedule) {
       throw new Error(payload.error ?? `Failed to update schedule: ${id}`);
     }

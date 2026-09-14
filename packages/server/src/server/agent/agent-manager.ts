@@ -1178,6 +1178,13 @@ export class AgentManager {
     return Array.from(this.clients.keys());
   }
 
+  getQuotaObservationClient(
+    provider: AgentProvider,
+  ): Pick<AgentClient, "openQuotaObservationSession"> | null {
+    if (this.providerEnabled.get(provider) === false) return null;
+    return this.clients.get(provider) ?? null;
+  }
+
   setAgentAttentionCallback(callback: AgentAttentionCallback): void {
     this.onAgentAttention = callback;
   }

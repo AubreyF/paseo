@@ -51,11 +51,12 @@ export function toScheduleCommandError(code: string, action: string, error: unkn
 export async function requireNewAgentSchedule(
   client: ScheduleDaemonClient,
   id: string,
-): Promise<void> {
+): Promise<ScheduleRecord> {
   const payload = await client.scheduleInspect({ id });
   if (payload.error || !payload.schedule || payload.schedule.target.type !== "new-agent") {
     throw new Error(payload.error ?? `Schedule not found: ${id}`);
   }
+  return payload.schedule;
 }
 
 export function formatCadence(cadence: ScheduleCadence): string {

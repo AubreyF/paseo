@@ -150,6 +150,8 @@ import {
 } from "./workspace-registry.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
+import { QuotaSchedulePreflight } from "./schedule/quota-preflight.js";
+import { ProviderQuotaObservationService } from "../services/quota-fetcher/governor-service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
@@ -1336,7 +1338,14 @@ export async function createPaseoDaemon(
       },
     );
   };
+  const governorObservations = new ProviderQuotaObservationService({
+    getClient: (provider) => agentManager.getQuotaObservationClient(provider),
+  });
+  const quotaPreflight = new QuotaSchedulePreflight({
+    readObservation: (provider) => governorObservations.read(provider),
+  });
   const scheduleService = new ScheduleService({
+    quotaRunner: quotaPreflight,
     paseoHome: config.paseoHome,
     logger,
     agentManager,
@@ -1726,6 +1735,7 @@ export async function createPaseoDaemon(
               orchestrationSkills,
               workspaceLabelService,
               providerUsageService,
+              governorObservations,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
@@ -1773,6 +1783,11 @@ export async function createPaseoDaemon(
       scriptHealthMonitor.start();
     } catch (error) {
       unsubscribePluginProviders();
+      quotaPreflight.stop();
+      wsServer?.prepareForShutdown();
+      agentManager.prepareForShutdown();
+      await scheduleService.stop().catch(() => undefined);
+      await governorObservations.stop();
       await quotaReservePolling.stop();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
@@ -1786,14 +1801,17 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
+    quotaPreflight.stop();
+    // Close ingress before waiting for metadata processes or other teardown.
+    wsServer?.prepareForShutdown();
+    agentManager.prepareForShutdown();
+    await scheduleService.stop().catch(() => undefined);
+    await governorObservations.stop();
     await pluginRuntime.stopAllPlugins();
     unsubscribePluginProviders();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
-    wsServer?.prepareForShutdown();
-    agentManager.prepareForShutdown();
     await quotaReservePolling.stop();
     await closeAllAgents(logger, agentManager);
     await agentManager.flushForShutdown().catch(() => undefined);
@@ -1802,7 +1820,6 @@ export async function createPaseoDaemon(
     await agentProviderRuntime.shutdown();
     terminalManager.killAll();
     await speechService.stop();
-    await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();

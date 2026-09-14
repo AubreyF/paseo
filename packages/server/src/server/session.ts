@@ -229,6 +229,7 @@ import {
 } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import type { ProviderUsageService } from "../services/quota-fetcher/service.js";
+import type { ProviderQuotaObservationService } from "../services/quota-fetcher/governor-service.js";
 import type { ProviderResetService } from "../services/quota-fetcher/reset-service.js";
 import {
   summarizeFetchWorkspacesEntries,
@@ -514,6 +515,7 @@ export interface SessionOptions {
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
+  providerQuotaObservationService?: Pick<ProviderQuotaObservationService, "read">;
   providerResetService?: ProviderResetService;
   providerLoginService?: ProviderLoginService;
   hubExecutionAgents?: HubExecutionAgents;
@@ -792,6 +794,7 @@ export class Session {
       terminalManager,
       providerSnapshotManager,
       providerUsageService,
+      providerQuotaObservationService,
       providerResetService,
       providerLoginService,
       serviceProxy,
@@ -930,6 +933,7 @@ export class Session {
       },
       providerSnapshotManager,
       providerUsageService,
+      providerQuotaObservationService,
       providerResetService,
       providerLoginService,
       logger: this.sessionLogger,
@@ -2656,6 +2660,8 @@ export class Session {
         return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
       case "provider.usage.list.request":
         return this.providerCatalogSession.handleProviderUsageListRequest(msg);
+      case "provider.quota.get_observation.request":
+        return this.providerCatalogSession.handleProviderQuotaObservationRequest(msg);
       case "provider.login.read.request":
       case "provider.login.start.request":
       case "provider.login.cancel.request":

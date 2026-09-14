@@ -159,6 +159,14 @@ A fetcher reads the provider's credential file and never writes it. On a 401 or 
 
 Account sign-in uses a dedicated Codex app-server process with the configured provider environment. Never reuse an active agent transport: closing a sign-in panel must not stop an agent. The daemon owns pending device-code attempts so a browser disconnect or panel close does not abandon sign-in; explicit cancellation and expiry dispose only that dedicated process.
 
+### Account evidence for schedules
+
+Use `paseo schedule quota --provider <configured-account>` to inspect authenticated quota evidence. Add `--json` for the account identity, observation timestamp, reported windows and consumption meters. This command reads metadata and does not launch an agent or change schedule policy.
+
+Clients use `provider.quota.get_observation.request` after checking `server_info.features.providerQuotaObservation`. Both request and response require `daemon.read`. A configured provider name alone is not authenticated account identity. Bind schedule policy to the returned account, and revalidate that binding at execution admission.
+
+Window occupancy and token activity do not establish gross daily consumption in quota percentage points. Missing consumption meters remain unavailable. Inspection is evidence for configuration; a launch still requires fresh quota checks, execution authority and a governed dispatch permit.
+
 ---
 
 ## ACP Provider Checklist

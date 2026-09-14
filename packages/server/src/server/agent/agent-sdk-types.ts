@@ -677,6 +677,41 @@ export interface AgentPermissionResult {
   followUpPrompt?: AgentPromptInput;
 }
 
+export interface QuotaAdmissionRequest {
+  observation: import("@getpaseo/protocol/quota-governor").QuotaObservation;
+  operation: "start" | "steer" | "compact";
+  threadId: string | null;
+  nativeTurnId: string | null;
+}
+
+export interface QuotaAdmissionPermit {
+  /** Synchronously reject expired or revoked execution/policy/authentication authority. */
+  assertValidForDispatch(): void;
+}
+
+/**
+ * Runtime-only coordinator boundary. A denial must throw, without awaiting
+ * interruption of the admitting session: its pending start is waiting on this hook.
+ */
+export type QuotaAdmissionGuard = (request: QuotaAdmissionRequest) => Promise<QuotaAdmissionPermit>;
+
+/** Trusted runtime input, never accepted from a worker tool or persisted as a callback. */
+export interface QuotaGovernedSessionInput {
+  config: AgentSessionConfig;
+  account: import("@getpaseo/protocol/quota-governor").QuotaAccount;
+  guard: QuotaAdmissionGuard;
+  launchContext?: AgentLaunchContext;
+  resumeHandle?: AgentPersistenceHandle;
+}
+
+/** Retains trusted cleanup custody when native construction cannot prove disposal. */
+export class QuotaConstructionCleanupError extends Error {
+  constructor(readonly retryCleanup: () => Promise<void>) {
+    super("Quota session construction cleanup is unresolved; account construction is fenced.");
+    this.name = "QuotaConstructionCleanupError";
+  }
+}
+
 export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
@@ -697,6 +732,10 @@ export interface AgentSession {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
+  /** Read quota through this execution's own authenticated provider connection. */
+  readQuotaObservation?(): Promise<import("@getpaseo/protocol/quota-governor").QuotaObservation>;
+  /** Trusted coordinator hook; sticky for this session and absent from worker RPC inputs. */
+  setQuotaAdmissionGuard?(guard: QuotaAdmissionGuard): void;
   /**
    * Resolve once every foreground turn that predates this call can no longer run or become active.
    * Calling while already idle is a successful no-op. Reject only when foreground ownership is
@@ -754,6 +793,18 @@ export interface ResolveAgentDefaultModeInput {
   signal?: AbortSignal;
 }
 
+export interface ProviderQuotaObservationSession {
+  read(): Promise<import("@getpaseo/protocol/quota-governor").QuotaObservation>;
+  dispose(): Promise<void>;
+}
+
+/** Providers may report this only after confirming disposal of a failed observer. */
+export class QuotaObserverDisposedError extends Error {
+  constructor() {
+    super("Quota observer initialization failed after confirmed disposal.");
+  }
+}
+
 export interface ProviderResetCreditSession {
   readonly canRedeem: boolean;
   read(): Promise<ProviderResetSnapshot>;
@@ -809,6 +860,10 @@ export interface AgentClient {
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /** Account management only. Never attach this operation to the agent tool catalog. */
   openResetCreditSession?(): Promise<ProviderResetCreditSession>;
+  /** Read-only account telemetry. This connection must never start inference. */
+  openQuotaObservationSession?(): Promise<ProviderQuotaObservationSession>;
+  /** Construct protection before native connection. Unsupported providers must not fall back. */
+  openQuotaGovernedSession?(input: QuotaGovernedSessionInput): Promise<AgentSession>;
   openAccountLoginSession?(): Promise<ProviderLoginSession>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().

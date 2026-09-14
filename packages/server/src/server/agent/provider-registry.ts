@@ -451,6 +451,9 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     },
     run: (prompt, options) => inner.run(prompt, options),
     startTurn: (prompt, options) => inner.startTurn(prompt, options),
+    steerActiveTurn: inner.steerActiveTurn?.bind(inner),
+    readQuotaObservation: inner.readQuotaObservation?.bind(inner),
+    setQuotaAdmissionGuard: inner.setQuotaAdmissionGuard?.bind(inner),
     subscribe: (callback) => inner.subscribe((event) => callback(mapStreamEvent(provider, event))),
     async *streamHistory() {
       for await (const event of inner.streamHistory()) {
@@ -540,6 +543,20 @@ function wrapClientProvider(
       : undefined,
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     openResetCreditSession: inner.openResetCreditSession?.bind(inner),
+    openQuotaObservationSession: inner.openQuotaObservationSession?.bind(inner),
+    openQuotaGovernedSession: inner.openQuotaGovernedSession
+      ? async (input) =>
+          wrapSessionProvider(
+            provider,
+            await inner.openQuotaGovernedSession!({
+              ...input,
+              config: { ...input.config, provider: inner.provider },
+              resumeHandle: input.resumeHandle
+                ? { ...input.resumeHandle, provider: inner.provider }
+                : undefined,
+            }),
+          )
+      : undefined,
     openAccountLoginSession: inner.openAccountLoginSession?.bind(inner),
     resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),

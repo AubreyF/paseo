@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { randomUUID } from "node:crypto";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,6 +9,21 @@ import {
   type StoredSchedule,
 } from "@getpaseo/protocol/schedule/types";
 import { writeJsonFileAtomic } from "../atomic-file.js";
+
+// Lifecycle observations must not invalidate a form the owner is editing.
+function configuration(schedule: StoredSchedule) {
+  const { name, prompt, cadence, target, maxRuns, expiresAt } = schedule;
+  return { name, prompt, cadence, target, maxRuns, expiresAt };
+}
+
+function withConfigurationRevision(current: StoredSchedule, next: StoredSchedule): StoredSchedule {
+  return {
+    ...next,
+    configurationRevision: isDeepStrictEqual(configuration(current), configuration(next))
+      ? current.configurationRevision
+      : randomUUID(),
+  };
+}
 
 function generateScheduleId(): string {
   return randomBytes(4).toString("hex");
@@ -129,7 +146,11 @@ export class ScheduleStore {
   }
 
   async create(schedule: Omit<StoredSchedule, "id">): Promise<StoredSchedule> {
-    const created = StoredScheduleSchema.parse({ ...schedule, id: generateScheduleId() });
+    const created = StoredScheduleSchema.parse({
+      ...schedule,
+      id: generateScheduleId(),
+      configurationRevision: randomUUID(),
+    });
     await this.write(created);
     return created;
   }
@@ -147,7 +168,7 @@ export class ScheduleStore {
       if (next.id !== id) {
         throw new Error(`Schedule update cannot change id: ${id}`);
       }
-      const updated = StoredScheduleSchema.parse(next);
+      const updated = StoredScheduleSchema.parse(withConfigurationRevision(current, next));
       await this.write(updated);
       return updated;
     });
@@ -168,6 +189,7 @@ export class ScheduleStore {
           const created = StoredScheduleSchema.parse({
             ...(await options.create()),
             id: generateScheduleId(),
+            configurationRevision: randomUUID(),
           });
           if (!matchesNameAndTarget(created, name, target)) {
             throw new Error("Created schedule does not match requested identity");
@@ -189,8 +211,10 @@ export class ScheduleStore {
     await writeJsonFileAtomic(this.filePath(schedule.id), schedule);
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(id: string, assertAllowed?: (schedule: StoredSchedule) => void): Promise<void> {
     await this.serializeScheduleMutation(id, async () => {
+      const current = await this.get(id);
+      if (current) assertAllowed?.(current);
       await this.ensureDir();
       await rm(this.filePath(id), { force: true });
     });
@@ -242,7 +266,7 @@ export class ScheduleStore {
       if (next.id !== id) {
         throw new Error(`Schedule update cannot change id: ${id}`);
       }
-      const updated = StoredScheduleSchema.parse(next);
+      const updated = StoredScheduleSchema.parse(withConfigurationRevision(current, next));
       if (!matchesNameAndTarget(updated, name, target)) {
         throw new Error("Updated schedule does not match requested identity");
       }

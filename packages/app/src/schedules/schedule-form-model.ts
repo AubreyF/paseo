@@ -82,6 +82,8 @@ type CronCadence = Extract<ScheduleCadence, { type: "cron" }>;
 type ProviderResolutionStatus = "idle" | "pending" | "complete";
 
 export interface ScheduleFormState {
+  // Captured with the draft, never advanced by background schedule refreshes.
+  initialConfigurationRevision: string | null;
   mode: "create" | "edit";
   targetKind: ScheduleFormTargetKind;
   name: string;
@@ -632,7 +634,10 @@ function updateDerivedState(input: {
   return { ...nextState, disclosure, canSubmit: resolveCanSubmit({ ...nextState, disclosure }) };
 }
 
-function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
+function buildInitialState(
+  snapshot: ScheduleFormSnapshot,
+  initialConfigurationRevision: string | null,
+): ScheduleFormState {
   const selectedServerId = resolveInitialServerId(snapshot);
   const config = newAgentConfig(snapshot.schedule);
   const targetKind = resolveTargetKind(snapshot);
@@ -655,6 +660,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
   const initialMode = config?.modeId ?? "";
   const initialThinking = config?.thinkingOptionId ?? "";
   const state: ScheduleFormState = {
+    initialConfigurationRevision,
     mode: snapshot.mode,
     targetKind,
     name: snapshot.schedule?.name ?? "",
@@ -868,7 +874,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
   let providerEntries: ProviderSnapshotEntry[] = [];
   let userModified = { ...INITIAL_USER_MODIFIED, isolation: false };
   const timezone = snapshot.defaults.timezone ?? DEFAULT_TIMEZONE;
-  let state = buildInitialState(snapshot);
+  let state = buildInitialState(snapshot, snapshot.schedule?.configurationRevision ?? null);
 
   function publish(nextState: ScheduleFormState): void {
     if (closed) {

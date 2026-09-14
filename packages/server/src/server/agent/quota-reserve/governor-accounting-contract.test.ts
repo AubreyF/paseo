@@ -265,3 +265,80 @@ it("does not recreate a missing configured contract even before first admission"
     store.configureAccountingContract({ policy, expectedRevision: null }),
   ).rejects.toThrow("contract is missing");
 });
+
+it("enforces account floors and consumption obligations across aliases after restart", async () => {
+  const { dir } = await setup();
+  const store = new QuotaGovernorStore(dir, { nowMs: () => nowMs });
+  const configured = await store.configureAccountPolicy({
+    policy,
+    expectedRevision: null,
+    readObservation: async () => observation,
+  });
+  expect(configured.kind).toBe("configured");
+  const reopened = new QuotaGovernorStore(dir, { nowMs: () => nowMs });
+  const weak = { ...policy, launchFloorPercent: 5, freezeFloorPercent: 0, consumptionLimits: [] };
+  const low = structuredClone(observation);
+  low.windows[0]!.usedPercent = 75;
+  expect(
+    await reopened.reserve({ ...input, policy: weak, observation: low, providerId: "other-alias" }),
+  ).toMatchObject({ kind: "deferred", reason: "quota", decision: { action: "freeze" } });
+  expect(
+    await reopened.reserve({
+      ...input,
+      policy: weak,
+      observation: { ...observation, consumptionMeters: [] },
+    }),
+  ).toMatchObject({
+    kind: "deferred",
+    reason: "quota",
+    decision: { reasons: [{ code: "meter_unavailable" }] },
+  });
+  const admitted = await reopened.reserve({ ...input, policy: weak, providerId: "other-alias" });
+  if (admitted.kind !== "admitted") throw new Error("Expected governed admission");
+  expect(admitted.reservation.policy).toEqual(policy);
+  expect((await reopened.executionContext(policy.account, admitted.reservation.id)).policy).toEqual(
+    policy,
+  );
+  const contract = await reopened.accountingContract(policy.account);
+  expect(
+    await reopened.configureAccountPolicy({
+      policy: weak,
+      expectedRevision: contract!.revision,
+      readObservation: async () => observation,
+    }),
+  ).toEqual({ kind: "deferred", reason: "account_busy" });
+});
+
+it("binds management changes to fresh observed identity and rotates configuration revisions", async () => {
+  const { dir } = await setup();
+  const store = new QuotaGovernorStore(dir, { nowMs: () => nowMs });
+  const configure = (seen: QuotaObservation) =>
+    store.configureAccountPolicy({
+      policy,
+      expectedRevision: null,
+      readObservation: async () => seen,
+    });
+  await expect(
+    configure({ ...observation, account: { ...policy.account, accountId: "wrong" } }),
+  ).rejects.toThrow("authenticated account");
+  await expect(
+    configure({ ...observation, observedAt: new Date(nowMs - 120_001).toISOString() }),
+  ).rejects.toThrow("authenticated account");
+  expect(await store.accountingContract(policy.account)).toBeNull();
+  const first = await configure({ ...observation, consumptionMeters: [] });
+  if (first.kind !== "configured") throw new Error("Expected configuration");
+  const next = await store.configureAccountPolicy({
+    policy: { ...policy, launchFloorPercent: 40 },
+    expectedRevision: first.contract.revision,
+    readObservation: async () => observation,
+  });
+  if (next.kind !== "configured") throw new Error("Expected configuration update");
+  expect(next.contract.revision).not.toBe(first.contract.revision);
+  await expect(
+    store.configureAccountPolicy({
+      policy,
+      expectedRevision: first.contract.revision,
+      readObservation: async () => observation,
+    }),
+  ).rejects.toThrow("contract changed");
+});

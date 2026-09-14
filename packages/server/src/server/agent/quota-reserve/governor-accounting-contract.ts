@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   QuotaAccountSchema,
+  QuotaGovernorPolicySchema,
   QuotaConsumptionLimitSchema,
   parseQuotaGovernorPolicy,
   type QuotaGovernorPolicy,
@@ -18,6 +19,7 @@ export const AccountingContractSchema = z
     account: QuotaAccountSchema,
     revision: z.string().min(1),
     semantics: z.array(AccountingSemanticsSchema),
+    envelope: QuotaGovernorPolicySchema.optional(),
   })
   .strict();
 export type AccountingContract = z.infer<typeof AccountingContractSchema>;

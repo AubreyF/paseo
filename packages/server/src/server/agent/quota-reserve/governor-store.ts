@@ -12,6 +12,7 @@ import {
   type QuotaGovernorPolicy,
   type QuotaObservation,
 } from "@getpaseo/protocol/quota-governor";
+import { assertQuotaPolicyAccount, combineQuotaPolicies } from "./governor-policy.js";
 import { evaluateQuotaGovernor, type QuotaGovernorDecision } from "./governor-evaluate.js";
 import {
   advanceGovernorExecution,
@@ -40,6 +41,7 @@ import {
 
 const AccountingContractRequirementSchema = AccountingContractSchema.omit({
   semantics: true,
+  envelope: true,
 }).strict();
 
 const PacingLedgerSchema = z
@@ -267,9 +269,51 @@ export class QuotaGovernorStore {
     });
   }
 
+  /** Trusted management only; the observer is daemon-owned. No schedule can call this boundary. */
+  async configureAccountPolicy(input: {
+    policy: QuotaGovernorPolicy;
+    expectedRevision: string | null;
+    readObservation: () => Promise<QuotaObservation>;
+  }): Promise<
+    | { kind: "configured"; contract: AccountingContract }
+    | { kind: "deferred"; reason: "store_busy" | "account_busy" | "accounting_migration_required" }
+  > {
+    const policy = structuredClone(input.policy);
+    const path = this.accountPath(policy.account);
+    return this.withAccountLock(path, async () => {
+      const ledger = await readLedger(path);
+      const current = await loadAccountingContract(path, policy.account, ledger);
+      if ((current?.revision ?? null) !== input.expectedRevision)
+        throw new Error("Accounting contract changed. Reload it before saving.");
+      if (ledger && !ledger.released) return { kind: "deferred", reason: "account_busy" } as const;
+      if (!current && ledger)
+        return { kind: "deferred", reason: "accounting_migration_required" } as const;
+      const candidate = createAccountingContract(policy);
+      if (current && !isDeepStrictEqual(current.semantics, candidate.semantics))
+        return { kind: "deferred", reason: "accounting_migration_required" } as const;
+      const observation = await input.readObservation();
+      assertQuotaPolicyAccount(policy, observation, this.nowMs());
+      const contract = { ...candidate, envelope: policy };
+      await persistAccountingContract(path, contract);
+      if (ledger)
+        await writeLedger(path, { ...ledger, accountingContractRevision: contract.revision });
+      return { kind: "configured", contract } as const;
+    });
+  }
+
   async reserve(input: ReserveInput): Promise<ReserveResult> {
     const path = this.accountPath(input.policy.account);
-    return this.withAccountLock(path, () => this.reserveUnderLock(path, input));
+    return this.withAccountLock(path, async () => {
+      const accounting = await loadAccountingContract(
+        path,
+        input.policy.account,
+        await readLedger(path),
+      );
+      const policy = accounting?.envelope
+        ? combineQuotaPolicies(accounting.envelope, input.policy)
+        : input.policy;
+      return this.reserveUnderLock(path, { ...input, policy });
+    });
   }
 
   async execution(account: QuotaAccount, reservationId: string): Promise<GovernorExecution> {

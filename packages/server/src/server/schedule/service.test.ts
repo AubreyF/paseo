@@ -466,6 +466,7 @@ describe("ScheduleService", () => {
       recovery: "automatic_after_reconciliation" as const,
     };
     const created = await service.create({
+      name: "Preparation fixture",
       prompt: "Factory",
       cadence: { type: "every", everyMs: 60000 },
       maxRuns: 1,
@@ -592,7 +593,7 @@ describe("ScheduleService", () => {
       releaseDelete();
       await deletion;
       expect(prepare).not.toHaveBeenCalled();
-      expect(await new ScheduleStore(tempDir).get(created.id)).toBeNull();
+      expect(await new ScheduleStore(join(tempDir, "schedules")).get(created.id)).toBeNull();
     },
   );
 
@@ -627,11 +628,13 @@ describe("ScheduleService", () => {
         now: () => now,
         runner: ordinary,
         quotaRunner: {
+          reconcilePreparation: async () => "resume",
           prepare: async (schedule) => {
             if (expireDuringPrepare)
               await service.update({ id: schedule.id, expiresAt: now.toISOString() });
             return {
               kind: "ready",
+              freezeBeforeDispatch: async () => {},
               binding: { account: { issuer: "openai", accountId: "account" }, reservationId },
               run: governed,
               resumeRunId: schedule.runs.find((run) => run.status === "running")?.id,
@@ -676,7 +679,7 @@ describe("ScheduleService", () => {
       if (inherited) {
         // Model a persisted inherited policy: protection belongs to the run,
         // even when the editable schedule has no explicit quota policy.
-        await new ScheduleStore(tempDir).update(created.id, (record) => {
+        await new ScheduleStore(join(tempDir, "schedules")).update(created.id, (record) => {
           if (record.target.type !== "new-agent") throw new Error("Expected new-agent target");
           const config = { ...record.target.config };
           delete config.quotaPolicy;
@@ -740,6 +743,159 @@ describe("ScheduleService", () => {
         status: "completed",
         runs: [{ status: "succeeded", output: "governed" }],
       });
+    },
+  );
+
+  test.each(["binding", "append"])(
+    "retains failed %s preparation across restart and transfers the reconciled attempt into its run",
+    async (failureStage) => {
+      const account = { issuer: "openai", accountId: "account" };
+      const attempts: string[] = [];
+      let outcome: "held" | "resume" = "held";
+      let invalid = true;
+      let freezes = 0;
+      let runs = 0;
+      const primary = new Error("fixture cleanup failed");
+      let service!: ScheduleService;
+      const options = {
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: async () => {
+          throw new Error("Ordinary runner forbidden");
+        },
+        quotaRunner: {
+          reconcilePreparation: async () => outcome,
+          prepare: async (candidate: StoredSchedule, scheduledFor: string) => {
+            const marker = candidate.governorPreparation;
+            if (!marker) throw new Error("Missing durable attempt");
+            expect(
+              (await new ScheduleStore(join(tempDir, "schedules")).get(candidate.id))
+                ?.governorPreparation,
+            ).toEqual(marker);
+            expect(scheduledFor).toBe(marker.scheduledFor);
+            attempts.push(marker.id);
+            if (invalid && failureStage === "append")
+              await service.update({ id: candidate.id, expiresAt: now.toISOString() });
+            return {
+              kind: "ready" as const,
+              binding: {
+                account:
+                  invalid && failureStage === "binding"
+                    ? { ...account, accountId: "wrong" }
+                    : account,
+                reservationId: "reservation",
+              },
+              freezeBeforeDispatch: async () => {
+                freezes++;
+                throw primary;
+              },
+              run: async (current: StoredSchedule, runId: string) => {
+                runs++;
+                expect(current.governorPreparation).toBeUndefined();
+                expect(current.runs.find((run) => run.id === runId)?.governorPreparationId).toBe(
+                  marker.id,
+                );
+                return { state: "frozen" as const, reason: "fixture" };
+              },
+            };
+          },
+        },
+      };
+      service = createScheduleService(options);
+      const created = await service.create({
+        name: "Preparation fixture",
+        prompt: "Factory",
+        cadence: { type: "every", everyMs: 60000 },
+        maxRuns: 1,
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "codex-secondary",
+            cwd: tempDir,
+            quotaPolicy: {
+              version: 1,
+              account,
+              requiredWindows: [{ bucketId: "codex", windowId: "primary", durationMinutes: 10080 }],
+              launchFloorPercent: 30,
+              freezeFloorPercent: 25,
+              maxObservationAgeSeconds: 120,
+              consumptionLimits: [],
+              recovery: "automatic_after_reconciliation",
+            },
+          },
+        },
+      });
+      let failure: unknown;
+      try {
+        await service.tick();
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(AggregateError);
+      const errors = (failure as AggregateError).errors;
+      expect(errors[0].message).toBe(
+        failureStage === "binding"
+          ? "Prepared quota account does not match the schedule."
+          : "Schedule changed during admission.",
+      );
+      expect(errors[1]).toBe(primary);
+      const retained = (await service.inspect(created.id)).governorPreparation;
+      expect(retained?.id).toBe(attempts[0]);
+      expect({ freezes, runs }).toEqual({ freezes: 1, runs: 0 });
+      await expect(service.delete(created.id)).rejects.toThrow("Reconcile");
+      await expect(
+        service.update({ id: created.id, newAgentConfig: { provider: "other" } }),
+      ).rejects.toThrow("Reconcile");
+      // Persisted preparation protects even a future inherited-policy record.
+      await new ScheduleStore(join(tempDir, "schedules")).update(created.id, (current) => {
+        if (current.target.type !== "new-agent") throw new Error("Expected target");
+        const config = { ...current.target.config };
+        delete config.quotaPolicy;
+        return { ...current, target: { ...current.target, config } };
+      });
+      const restarted = createScheduleService(options);
+      await restarted.update({ id: created.id, expiresAt: now.toISOString() });
+      await restarted.tick();
+      expect(attempts).toEqual([retained?.id]);
+      expect(await restarted.inspect(created.id)).toMatchObject({
+        status: "active",
+        governorPreparation: retained,
+        quotaState: { reason: "preparation_reconciliation_required" },
+        runs: [],
+      });
+      await expect(restarted.delete(created.id)).rejects.toThrow("Reconcile");
+      const pendingRecord = await restarted.inspect(created.id);
+      await expect(
+        restarted.createOrReplace({
+          name: pendingRecord.name,
+          prompt: "Replacement",
+          cadence: pendingRecord.cadence,
+          target: pendingRecord.target,
+        }),
+      ).rejects.toThrow("Reconcile");
+      await expect(restarted.update({ id: created.id, prompt: "Different" })).rejects.toThrow(
+        "Reconcile",
+      );
+      await restarted.update({ id: created.id, expiresAt: null });
+      outcome = "resume";
+      invalid = false;
+      await restarted.tick();
+      expect(attempts).toEqual([retained?.id, retained?.id]);
+      expect({ freezes, runs }).toEqual({ freezes: 1, runs: 1 });
+      expect(await restarted.inspect(created.id)).toMatchObject({
+        runs: [
+          {
+            status: "running",
+            governorBinding: { account, reservationId: "reservation" },
+            governorPreparationId: retained?.id,
+          },
+        ],
+      });
+      expect((await restarted.inspect(created.id)).governorPreparation).toBeUndefined();
     },
   );
 

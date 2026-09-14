@@ -69,6 +69,7 @@ it("reads the schedule account and holds an authenticated account mismatch", asy
   expect(await preflight.prepare(schedule, instant)).toEqual({
     kind: "deferred",
     reason: "account_changed",
+    custody: "none",
   });
   expect(providers).toEqual(["secondary"]);
 });
@@ -94,6 +95,7 @@ it("reports the required daily meter instead of treating token activity as quota
   expect(await preflight.prepare(strict, instant)).toEqual({
     kind: "deferred",
     reason: "meter_unavailable",
+    custody: "none",
   });
 });
 
@@ -105,6 +107,7 @@ it("does not launch an ordinary worker when the governed backend is unavailable"
   expect(await preflight.prepare(schedule, instant)).toEqual({
     kind: "deferred",
     reason: "governed_execution_unavailable",
+    custody: "none",
   });
 });
 
@@ -126,6 +129,7 @@ it("does not reuse admission evidence or run work during backend preparation", a
         preparations++;
         return {
           kind: "ready",
+          freezeBeforeDispatch: async () => {},
           binding: { account, reservationId: "reservation" },
           run: async () => {
             runs++;
@@ -153,6 +157,7 @@ it("paces held metadata reads while allowing an explicit new attempt to refresh"
   expect(await preflight.prepare(schedule, instant)).toEqual({
     kind: "deferred",
     reason: "freeze_floor",
+    custody: "none",
   });
   current += 1000;
   await preflight.prepare(schedule, instant);
@@ -193,6 +198,7 @@ it("checks freshness after metadata collection finishes", async () => {
   expect(await preflight.prepare(schedule, instant)).toEqual({
     kind: "deferred",
     reason: "telemetry_stale",
+    custody: "none",
   });
 });
 
@@ -208,10 +214,11 @@ it("cannot advance to execution when stopped during metadata collection", async 
   const pending = preflight.prepare(schedule, instant);
   preflight.stop();
   finish(observation());
-  expect(await pending).toEqual({ kind: "deferred", reason: "governor_stopped" });
+  expect(await pending).toEqual({ kind: "deferred", reason: "governor_stopped", custody: "none" });
   expect(await preflight.prepare(schedule, instant)).toEqual({
     kind: "deferred",
     reason: "governor_stopped",
+    custody: "none",
   });
 });
 
@@ -231,13 +238,14 @@ it("reconciles retained work even when a backend admission refusal is cached", a
       },
       prepare: async () => {
         preparations++;
-        return { kind: "deferred", reason: "pacing" };
+        return { kind: "deferred", reason: "pacing", custody: "none" };
       },
     },
   });
   expect(await preflight.prepare(schedule, instant)).toEqual({
     kind: "deferred",
     reason: "pacing",
+    custody: "none",
   });
   await preflight.prepare(schedule, instant);
   expect({ reads, reconciliations, preparations }).toEqual({
@@ -266,6 +274,7 @@ it("refuses a ready backend result when stopped during preparation", async () =>
         await pending;
         return {
           kind: "ready",
+          freezeBeforeDispatch: async () => {},
           binding: { account, reservationId: "reservation" },
           run: async () => {
             throw new Error("Must not run");
@@ -289,6 +298,7 @@ it("revokes a prepared run when stopped before execution", async () => {
       reconcile: async () => {},
       prepare: async () => ({
         kind: "ready",
+        freezeBeforeDispatch: async () => {},
         binding: { account, reservationId: "reservation" },
         run: async () => {
           throw new Error("Must not run");
@@ -344,7 +354,92 @@ it.each([false, true])(
     expect(await preflight.prepare(inherited, instant)).toEqual({
       kind: "deferred",
       reason: expired ? "schedule_expired" : "quota_policy_required",
+      custody: "none",
     });
     expect(reconciled).toBe(1);
   },
 );
+
+it("coalesces preparation freeze, fences dispatch immediately and retains failed cleanup", async () => {
+  let freezeCalls = 0;
+  let runCalls = 0;
+  let rejectFreeze!: (error: Error) => void;
+  const settlement = new Promise<void>((_resolve, reject) => {
+    rejectFreeze = reject;
+  });
+  const preflight = new QuotaSchedulePreflight({
+    nowMs: () => now,
+    readObservation: async () => observation(),
+    execution: {
+      reconcile: async () => {},
+      prepare: async () => ({
+        kind: "ready",
+        binding: { account, reservationId: "reservation" },
+        freezeBeforeDispatch: () => {
+          freezeCalls++;
+          return settlement;
+        },
+        run: async () => {
+          runCalls++;
+          return { state: "frozen", reason: "fixture" };
+        },
+      }),
+    },
+  });
+  const prepared = await preflight.prepare(schedule, instant);
+  if (prepared.kind !== "ready") throw new Error("Expected preparation");
+  const first = prepared.freezeBeforeDispatch("shutdown");
+  const second = prepared.freezeBeforeDispatch("expired");
+  expect(second).toBe(first);
+  const run = prepared.run(schedule, "run");
+  const results = Promise.allSettled([first, second, run]);
+  expect({ freezeCalls, runCalls }).toEqual({ freezeCalls: 1, runCalls: 0 });
+  const failure = new Error("Settlement deadline exceeded");
+  rejectFreeze(failure);
+  expect(await results).toEqual([
+    { status: "rejected", reason: failure },
+    { status: "rejected", reason: failure },
+    { status: "rejected", reason: failure },
+  ]);
+  await expect(prepared.run(schedule, "run")).rejects.toBe(failure);
+  expect({ freezeCalls, runCalls }).toEqual({ freezeCalls: 1, runCalls: 0 });
+});
+
+it("waits for late preparation settlement without dispatching or declaring it frozen early", async () => {
+  let settle!: () => void;
+  let freezeCalls = 0;
+  const settlement = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  const preflight = new QuotaSchedulePreflight({
+    nowMs: () => now,
+    readObservation: async () => observation(),
+    execution: {
+      reconcile: async () => {},
+      prepare: async () => ({
+        kind: "ready",
+        binding: { account, reservationId: "reservation" },
+        freezeBeforeDispatch: () => {
+          freezeCalls++;
+          return settlement;
+        },
+        run: async () => {
+          throw new Error("Forbidden dispatch");
+        },
+      }),
+    },
+  });
+  const prepared = await preflight.prepare(schedule, instant);
+  if (prepared.kind !== "ready") throw new Error("Expected preparation");
+  preflight.stop();
+  let finished = false;
+  const pending = prepared.run(schedule, "run").then((result) => {
+    finished = true;
+    return result;
+  });
+  await Promise.resolve();
+  expect({ freezeCalls, finished }).toEqual({ freezeCalls: 1, finished: false });
+  settle();
+  expect(await pending).toEqual({ state: "frozen", reason: "governor_stopped" });
+  expect({ freezeCalls, finished }).toEqual({ freezeCalls: 1, finished: true });
+});

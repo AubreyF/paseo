@@ -62,6 +62,7 @@ export const ScheduleRunSchema = z.object({
   agentId: z.guid().nullable(),
   workspaceId: z.string().nullable().optional(),
   governorBinding: ScheduleGovernorBindingSchema.optional(),
+  governorPreparationId: z.string().uuid().optional(),
   output: z.string().nullable(),
   error: z.string().nullable(),
   quotaState: z
@@ -86,6 +87,10 @@ export const StoredScheduleSchema = z.object({
   expiresAt: z.string().nullable(),
   maxRuns: z.number().int().positive().nullable(),
   runs: z.array(ScheduleRunSchema),
+  // Recovery metadata only. The trusted driver owns reservation and execution authority.
+  governorPreparation: z
+    .object({ id: z.string().uuid(), scheduledFor: z.string().datetime() })
+    .optional(),
   quotaState: z
     .object({ state: z.literal("held"), reason: z.string(), checkedAt: z.string() })
     .optional(),

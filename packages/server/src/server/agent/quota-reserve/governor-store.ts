@@ -19,6 +19,38 @@ import {
   type GovernorExecution,
   type GovernorExecutionEvent,
 } from "./governor-lifecycle.js";
+import {
+  advanceQuotaPacing,
+  reserveQuotaPacing,
+  settleQuotaPacing,
+  PacingStateSchema,
+  type PacingAccounting,
+  type PacingConfiguration,
+  type PacingEnvelope,
+  type PacingState,
+} from "./governor-pacing.js";
+
+const PacingLedgerSchema = z
+  .object({
+    version: z.literal(1),
+    account: QuotaAccountSchema,
+    buckets: z.array(PacingStateSchema).min(1),
+  })
+  .strict();
+
+interface PacingUpdateInput {
+  account: QuotaAccount;
+  maxObservationAgeMs: number;
+  buckets: Array<{
+    configuration: PacingConfiguration;
+    accounting: PacingAccounting;
+    envelopes: PacingEnvelope[];
+    reserveUnits: number;
+    /** Supplied only by the trusted accounting boundary after all slice charges appear. */
+    settlements?: Array<{ reservationId: string; accountedAt: number }>;
+  }>;
+  reservationId: string;
+}
 
 const ReservationSchema = z
   .object({
@@ -92,9 +124,11 @@ type ReserveResult =
 export class QuotaGovernorStore {
   private readonly pending = new Map<string, Promise<unknown>>();
   private readonly directory: string;
+  private readonly nowMs: () => number;
 
-  constructor(directory: string) {
+  constructor(directory: string, options: { nowMs?: () => number } = {}) {
     this.directory = resolve(directory);
+    this.nowMs = options.nowMs ?? Date.now;
   }
 
   accountPath(account: QuotaAccount): string {
@@ -102,6 +136,83 @@ export class QuotaGovernorStore {
       .update(JSON.stringify([account.issuer, account.accountId]))
       .digest("hex");
     return resolve(this.directory, `${key}.json`);
+  }
+
+  /** Account-wide budget reservation, not an execution permit. Completion never resets it. */
+  async updatePacing(
+    input: PacingUpdateInput,
+  ): Promise<
+    | { kind: "reserved" | "held" | "settled"; buckets: PacingState[] }
+    | { kind: "deferred"; reason: "store_busy" }
+  > {
+    const accountPath = this.accountPath(input.account);
+    return this.withAccountLock(accountPath, async () => {
+      const path = `${accountPath}.pacing`;
+      const saved = await readProtectedJson(path);
+      const ledger = saved === undefined ? null : PacingLedgerSchema.parse(saved);
+      // The account lock and journal read may wait. Never use a timestamp
+      // captured by the scheduler before entering this transaction.
+      const nowMs = this.nowMs();
+      if (ledger && !isDeepStrictEqual(ledger.account, input.account)) {
+        throw new Error("Pacing ledger account identity mismatch.");
+      }
+      if (!input.buckets.length) throw new Error("Pacing requires at least one meter.");
+      const identities = input.buckets.map((bucket) => pacingKey(bucket.accounting));
+      if (new Set(identities).size !== identities.length)
+        throw new Error("Duplicate pacing meter.");
+      if (
+        ledger &&
+        !isDeepStrictEqual(
+          ledger.buckets.map((bucket) => pacingKey(bucket.accounting)).sort(),
+          [...identities].sort(),
+        )
+      ) {
+        throw new Error("Pacing meter set requires reconciliation.");
+      }
+      const buckets = input.buckets.map((bucket) => {
+        const { identity } = bucket.accounting;
+        if (
+          identity.issuer !== input.account.issuer ||
+          identity.accountId !== input.account.accountId
+        ) {
+          throw new Error("Pacing accounting account identity mismatch.");
+        }
+        const previous =
+          ledger?.buckets.find(
+            (state) => pacingKey(state.accounting) === pacingKey(bucket.accounting),
+          ) ?? null;
+        let state = advanceQuotaPacing({
+          state: previous,
+          configuration: bucket.configuration,
+          accounting: bucket.accounting,
+          nowMs,
+          maxObservationAgeMs: input.maxObservationAgeMs,
+          envelopes: bucket.envelopes,
+        });
+        for (const settlement of bucket.settlements ?? []) {
+          state = settleQuotaPacing({ state, ...settlement });
+        }
+        return state;
+      });
+      const reservations = buckets.map((state, index) =>
+        reserveQuotaPacing({
+          state,
+          reservationId: input.reservationId,
+          units: input.buckets[index]!.reserveUnits,
+        }),
+      );
+      const kinds = new Set(reservations.map((result) => result.kind));
+      if (kinds.has("settled") && kinds.size !== 1) {
+        throw new Error("Pacing slice settlement is inconsistent across meters.");
+      }
+      let kind: "held" | "settled" | "reserved" = "reserved";
+      if (kinds.has("held")) kind = "held";
+      else if (kinds.has("settled")) kind = "settled";
+      // Commit observations even when held, but reserve the vector atomically.
+      const updated = kind === "held" ? buckets : reservations.map((result) => result.state);
+      await writeProtectedJson(path, { version: 1, account: input.account, buckets: updated });
+      return { kind, buckets: updated };
+    });
   }
 
   async reserve(input: ReserveInput): Promise<ReserveResult> {
@@ -397,29 +508,41 @@ function windowContract(observation: Extract<QuotaObservation, { status: "availa
 }
 
 async function readLedger(path: string): Promise<Ledger | null> {
+  const contents = await readProtectedJson(path);
+  return contents === undefined ? null : LedgerSchema.parse(contents);
+}
+
+async function readProtectedJson(path: string): Promise<unknown> {
   let file;
   try {
     file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   } catch (error) {
-    if (hasCode(error, "ENOENT")) return null;
+    if (hasCode(error, "ENOENT")) return undefined;
     throw error;
   }
   try {
     const stat = await file.stat();
     if (!stat.isFile() || stat.size > 16 * 1024 * 1024)
       throw new Error("Invalid quota ledger file.");
-    return LedgerSchema.parse(JSON.parse(await file.readFile("utf8")));
+    return JSON.parse(await file.readFile("utf8"));
   } finally {
     await file.close();
   }
 }
 
 async function writeLedger(path: string, ledger: Ledger): Promise<void> {
+  await writeProtectedJson(path, ledger);
+}
+
+async function writeProtectedJson(path: string, value: unknown): Promise<void> {
+  const contents = JSON.stringify(value);
+  if (Buffer.byteLength(contents) > 16 * 1024 * 1024)
+    throw new Error("Quota accounting journal capacity exceeded.");
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
     const file = await open(temporary, "wx", 0o600);
     try {
-      await file.writeFile(JSON.stringify(ledger));
+      await file.writeFile(contents);
       await file.sync();
     } finally {
       await file.close();
@@ -434,6 +557,11 @@ async function writeLedger(path: string, ledger: Ledger): Promise<void> {
   } finally {
     await rm(temporary, { force: true });
   }
+}
+
+function pacingKey(accounting: PacingAccounting): string {
+  const { issuer, accountId, bucketId, meterId, revision, unit } = accounting.identity;
+  return JSON.stringify([issuer, accountId, bucketId, meterId, revision, unit]);
 }
 
 function hasCode(error: unknown, code: string): boolean {

@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { AgentProviderSchema } from "../provider-manifest.js";
-import { QuotaGovernorPolicySchema, type QuotaGovernorPolicy } from "../quota-governor.js";
+import {
+  QuotaAccountSchema,
+  QuotaGovernorPolicySchema,
+  type QuotaGovernorPolicy,
+} from "../quota-governor.js";
 
 export const ScheduleStatusSchema = z.enum(["active", "paused", "completed"]);
 export type ScheduleStatus = z.infer<typeof ScheduleStatusSchema>;
@@ -44,6 +48,11 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
 ]);
 export type ScheduleTarget = z.infer<typeof ScheduleTargetSchema>;
 
+export const ScheduleGovernorBindingSchema = z.object({
+  account: QuotaAccountSchema,
+  reservationId: z.string().min(1),
+});
+
 export const ScheduleRunSchema = z.object({
   id: z.string(),
   scheduledFor: z.string(),
@@ -52,6 +61,7 @@ export const ScheduleRunSchema = z.object({
   status: z.enum(["running", "succeeded", "failed"]),
   agentId: z.guid().nullable(),
   workspaceId: z.string().nullable().optional(),
+  governorBinding: ScheduleGovernorBindingSchema.optional(),
   output: z.string().nullable(),
   error: z.string().nullable(),
   quotaState: z

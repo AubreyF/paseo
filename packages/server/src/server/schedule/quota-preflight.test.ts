@@ -126,6 +126,7 @@ it("does not reuse admission evidence or run work during backend preparation", a
         preparations++;
         return {
           kind: "ready",
+          binding: { account, reservationId: "reservation" },
           run: async () => {
             runs++;
             return { state: "frozen", reason: "fixture" };
@@ -265,6 +266,7 @@ it("refuses a ready backend result when stopped during preparation", async () =>
         await pending;
         return {
           kind: "ready",
+          binding: { account, reservationId: "reservation" },
           run: async () => {
             throw new Error("Must not run");
           },
@@ -287,6 +289,7 @@ it("revokes a prepared run when stopped before execution", async () => {
       reconcile: async () => {},
       prepare: async () => ({
         kind: "ready",
+        binding: { account, reservationId: "reservation" },
         run: async () => {
           throw new Error("Must not run");
         },
@@ -301,3 +304,47 @@ it("revokes a prepared run when stopped before execution", async () => {
     reason: "governor_stopped",
   });
 });
+
+it.each([false, true])(
+  "reconciles retained custody before refusal (expired=%s)",
+  async (expired) => {
+    let reconciled = 0;
+    const inherited = structuredClone(schedule);
+    if (inherited.target.type !== "new-agent") throw new Error("Expected fixture target");
+    delete inherited.target.config.quotaPolicy;
+    if (expired) inherited.expiresAt = instant;
+    inherited.runs = [
+      {
+        id: "retained-run",
+        scheduledFor: instant,
+        startedAt: instant,
+        endedAt: null,
+        status: "running",
+        agentId: null,
+        output: null,
+        error: null,
+        governorBinding: { account, reservationId: "retained-reservation" },
+      },
+    ];
+    const preflight = new QuotaSchedulePreflight({
+      nowMs: () => now,
+      readObservation: async () => {
+        throw new Error("Must not read for new admission");
+      },
+      execution: {
+        reconcile: async (candidate) => {
+          expect(candidate).toEqual(inherited);
+          reconciled++;
+        },
+        prepare: async () => {
+          throw new Error("Must not prepare inference");
+        },
+      },
+    });
+    expect(await preflight.prepare(inherited, instant)).toEqual({
+      kind: "deferred",
+      reason: expired ? "schedule_expired" : "quota_policy_required",
+    });
+    expect(reconciled).toBe(1);
+  },
+);

@@ -71,3 +71,9 @@ The schedule update CLI inspects the record before editing and supplies its revi
 A client must require `server_info.features.scheduleQuotaPolicy === true` before creating a schedule with `target.config.quotaPolicy` or updating `newAgentConfig.quotaPolicy`, including explicit removal with `null`. An older daemon may discard an unknown policy field and launch ordinary work. The client rejects these writes before transmission rather than retrying without the policy. Schedule writes that omit the policy retain their existing compatibility behavior.
 
 The capability means the daemon recognizes quota policies and fails closed when it cannot execute governed work. It does not certify available usage telemetry, account authority, a ready execution backend, or permission to remove an enforced account policy. Those remain server-side admission requirements. Protected writes use the existing nonqueued request path, so a disconnected client cannot replay them onto a different host after reconnecting.
+
+## Governed run custody
+
+A governed run records optional `governorBinding` metadata containing its verified account and reservation identifier. The trusted execution driver supplies this binding before the scheduler records the run. Resumption requires the exact retained binding; a legacy run without one needs reconciliation. The metadata links recovery records and does not grant execution authority.
+
+Restart recovery, edit guards and deletion guards recognize unfinished governed runs independently of the schedule's editable quota policy. A frozen run remains unfinished. Deletion checks run inside the schedule mutation, and admission verifies the current record before asking the driver to prepare work. Older clients may omit this optional response field, but replacing the daemon with a policy-unaware version still requires separate installation safeguards.

@@ -49,9 +49,6 @@ export class QuotaSchedulePreflight implements QuotaRunner {
   async prepare(schedule: StoredSchedule, scheduledFor: string): Promise<Preparation> {
     if (this.stopped) return { kind: "deferred", reason: "governor_stopped" };
     const target = schedule.target;
-    if (target.type !== "new-agent" || !target.config.quotaPolicy) {
-      return { kind: "deferred", reason: "quota_policy_required" };
-    }
     if (this.options.execution) {
       try {
         await this.options.execution.reconcile(schedule);
@@ -60,6 +57,11 @@ export class QuotaSchedulePreflight implements QuotaRunner {
       }
     }
     if (this.stopped) return { kind: "deferred", reason: "governor_stopped" };
+    if (schedule.expiresAt && Date.parse(schedule.expiresAt) <= this.nowMs())
+      return { kind: "deferred", reason: "schedule_expired" };
+    if (target.type !== "new-agent" || !target.config.quotaPolicy) {
+      return { kind: "deferred", reason: "quota_policy_required" };
+    }
     this.expireHolds(this.nowMs());
     const cached = this.holds.get(schedule.id);
     if (

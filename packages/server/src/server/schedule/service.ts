@@ -29,6 +29,7 @@ import type {
   UpdateScheduleInput,
   UpdateScheduleNewAgentConfig,
 } from "@getpaseo/protocol/schedule/types";
+import { ScheduleGovernorBindingSchema } from "@getpaseo/protocol/schedule/types";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
@@ -145,6 +146,29 @@ function countCompletedRuns(schedule: StoredSchedule): number {
   return schedule.runs.filter((run) => run.status !== "running").length;
 }
 
+function isProtectedSchedule(schedule: StoredSchedule): boolean {
+  return (
+    (schedule.target.type === "new-agent" && Boolean(schedule.target.config.quotaPolicy)) ||
+    schedule.runs.some(
+      (run) => run.status === "running" && Boolean(run.governorBinding || run.quotaState),
+    )
+  );
+}
+
+function preparedGovernorBinding(
+  schedule: StoredSchedule,
+  binding: NonNullable<ScheduleRun["governorBinding"]>,
+): NonNullable<ScheduleRun["governorBinding"]> {
+  const parsed = ScheduleGovernorBindingSchema.parse(binding);
+  if (
+    schedule.target.type === "new-agent" &&
+    schedule.target.config.quotaPolicy &&
+    !isDeepStrictEqual(parsed.account, schedule.target.config.quotaPolicy.account)
+  )
+    throw new Error("Prepared quota account does not match the schedule.");
+  return parsed;
+}
+
 function shouldArchiveScheduleRunWorkspace(input: {
   agentId: string | null;
   archiveOnFinish?: boolean;
@@ -152,8 +176,29 @@ function shouldArchiveScheduleRunWorkspace(input: {
   return input.agentId === null || (input.archiveOnFinish ?? true);
 }
 
+function isScheduleExpired(schedule: StoredSchedule, now: Date): boolean {
+  return Boolean(schedule.expiresAt && new Date(schedule.expiresAt).getTime() <= now.getTime());
+}
+
+function isExpiredProtectedSchedule(schedule: StoredSchedule, now: Date): boolean {
+  return isProtectedSchedule(schedule) && isScheduleExpired(schedule, now);
+}
+
+function quotaPreparationRefusal(
+  prepared:
+    | Awaited<ReturnType<NonNullable<ScheduleServiceOptions["quotaRunner"]>["prepare"]>>
+    | undefined,
+  expired: boolean,
+): string {
+  if (expired) return "schedule_expired";
+  return prepared?.kind === "deferred" ? prepared.reason : "governor_unavailable";
+}
+
 function shouldCompleteSchedule(schedule: StoredSchedule, now: Date): boolean {
-  if (schedule.expiresAt && new Date(schedule.expiresAt).getTime() <= now.getTime()) {
+  // Expiration stops inference, not reconciliation of retained custody.
+  if (isProtectedSchedule(schedule) && schedule.runs.some((run) => run.status === "running"))
+    return false;
+  if (isScheduleExpired(schedule, now)) {
     return true;
   }
   if (schedule.maxRuns == null) {
@@ -248,6 +293,7 @@ export interface ScheduleServiceOptions {
       | { kind: "deferred"; reason: string }
       | {
           kind: "ready";
+          binding: NonNullable<ScheduleRun["governorBinding"]>;
           resumeRunId?: string;
           run(
             schedule: StoredSchedule,
@@ -292,6 +338,7 @@ export class ScheduleService {
     runId: string,
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
+  private readonly deletingScheduleIds = new Set<string>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ScheduleServiceOptions) {
@@ -393,8 +440,7 @@ export class ScheduleService {
       },
       update: async (current) => {
         if (
-          current.target.type === "new-agent" &&
-          current.target.config.quotaPolicy &&
+          isProtectedSchedule(current) &&
           (current.status === "paused" ||
             this.runningScheduleIds.has(current.id) ||
             current.runs.some((run) => run.status === "running"))
@@ -483,8 +529,7 @@ export class ScheduleService {
 
   private hasUnfinishedProtectedExecution(schedule: StoredSchedule): boolean {
     return (
-      schedule.target.type === "new-agent" &&
-      Boolean(schedule.target.config.quotaPolicy) &&
+      isProtectedSchedule(schedule) &&
       (this.runningScheduleIds.has(schedule.id) ||
         schedule.runs.some((run) => run.status === "running"))
     );
@@ -525,7 +570,7 @@ export class ScheduleService {
         }
         const patchedTarget = applyNewAgentConfig(updated.target, input.newAgentConfig);
         if (
-          updated.target.config.quotaPolicy &&
+          isProtectedSchedule(updated) &&
           !isDeepStrictEqual(patchedTarget, updated.target) &&
           (this.runningScheduleIds.has(updated.id) ||
             updated.runs.some((run) => run.status === "running"))
@@ -554,7 +599,16 @@ export class ScheduleService {
   }
 
   async delete(id: string): Promise<void> {
-    await this.store.delete(id);
+    if (this.deletingScheduleIds.has(id)) throw new Error("Schedule deletion is already pending.");
+    this.deletingScheduleIds.add(id);
+    try {
+      await this.store.delete(id, (schedule) => {
+        if (this.hasUnfinishedProtectedExecution(schedule))
+          throw new Error("Reconcile the protected execution before deleting its schedule.");
+      });
+    } finally {
+      this.deletingScheduleIds.delete(id);
+    }
   }
 
   async completeForAgent(agentId: string): Promise<number> {
@@ -672,7 +726,7 @@ export class ScheduleService {
     await this.store.update(scheduleId, (current) => {
       // The governor reconciles its captured execution and preserves unfinished
       // work. The legacy restart path must not fail or archive that execution.
-      if (current.target.type === "new-agent" && current.target.config.quotaPolicy) return current;
+      if (isProtectedSchedule(current)) return current;
       let updated = { ...current };
       let dirty = false;
 
@@ -764,36 +818,53 @@ export class ScheduleService {
     });
   }
 
+  private async beginScheduleRun(schedule: StoredSchedule): Promise<void> {
+    if (this.deletingScheduleIds.has(schedule.id)) throw new Error("Schedule deletion is pending.");
+    if (this.runningScheduleIds.has(schedule.id)) throw new Error("Schedule is already running.");
+    this.runningScheduleIds.add(schedule.id);
+    try {
+      const current = await this.store.get(schedule.id);
+      if (!current || !isDeepStrictEqual(current, schedule))
+        throw new Error("Schedule changed before admission.");
+    } catch (error) {
+      this.runningScheduleIds.delete(schedule.id);
+      throw error;
+    }
+  }
+
   private async runSchedule(
     schedule: StoredSchedule,
     now: Date,
     options?: { manual?: boolean },
   ): Promise<void> {
     const manual = options?.manual === true;
-    this.runningScheduleIds.add(schedule.id);
+    await this.beginScheduleRun(schedule);
     let runner: (
       schedule: StoredSchedule,
       runId: string,
     ) => Promise<ScheduleExecutionResult | { state: "frozen"; reason: string }> = this.runner;
     let resumeRunId: string | undefined;
-    if (schedule.target.type === "new-agent" && schedule.target.config.quotaPolicy) {
+    let governorBinding: ScheduleRun["governorBinding"];
+    if (isProtectedSchedule(schedule)) {
       try {
         const prepared = await this.quotaRunner?.prepare(
           schedule,
           manual ? now.toISOString() : (schedule.nextRunAt ?? now.toISOString()),
         );
-        if (!prepared || prepared.kind === "deferred") {
+        const expired = isScheduleExpired(schedule, this.now());
+        if (!prepared || prepared.kind === "deferred" || expired) {
           await this.store.update(schedule.id, (current) => ({
             ...current,
             quotaState: {
               state: "held",
-              reason: prepared?.reason ?? "governor_unavailable",
+              reason: quotaPreparationRefusal(prepared, expired),
               checkedAt: this.now().toISOString(),
             },
           }));
           this.runningScheduleIds.delete(schedule.id);
           return;
         }
+        governorBinding = preparedGovernorBinding(schedule, prepared.binding);
         runner = prepared.run;
         resumeRunId = prepared.resumeRunId;
       } catch (error) {
@@ -811,12 +882,15 @@ export class ScheduleService {
       agentId: null,
       output: null,
       error: null,
+      ...(governorBinding ? { governorBinding } : {}),
     };
     let appended = false;
     try {
       const scheduleWithRun = await this.openScheduleRun(schedule, runningRun, resumeRunId);
       appended = true;
-      const result = await runner(scheduleWithRun, runId);
+      const result = isExpiredProtectedSchedule(scheduleWithRun, this.now())
+        ? { state: "frozen" as const, reason: "schedule_expired" }
+        : await runner(scheduleWithRun, runId);
       if ("state" in result) {
         await this.store.update(schedule.id, (current) => ({
           ...current,
@@ -841,7 +915,7 @@ export class ScheduleService {
       });
     } catch (error) {
       if (!appended) throw error;
-      if (schedule.target.type === "new-agent" && schedule.target.config.quotaPolicy) {
+      if (isProtectedSchedule(schedule)) {
         await this.store.update(schedule.id, (current) => ({
           ...current,
           quotaState: {
@@ -892,8 +966,13 @@ export class ScheduleService {
       current.prompt !== schedule.prompt
     )
       throw new Error("Schedule changed during resume admission.");
-    if (!current.runs.some((run) => run.id === resumeRunId && run.status === "running"))
-      throw new Error("Protected run to resume is missing.");
+    const retained = current.runs.find((run) => run.id === resumeRunId && run.status === "running");
+    if (!retained) throw new Error("Protected run to resume is missing.");
+    if (
+      !retained.governorBinding ||
+      !isDeepStrictEqual(retained.governorBinding, runningRun.governorBinding)
+    )
+      throw new Error("Protected reservation binding requires reconciliation before resume.");
     return current;
   }
 

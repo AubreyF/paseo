@@ -211,8 +211,10 @@ export class ScheduleStore {
     await writeJsonFileAtomic(this.filePath(schedule.id), schedule);
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(id: string, assertAllowed?: (schedule: StoredSchedule) => void): Promise<void> {
     await this.serializeScheduleMutation(id, async () => {
+      const current = await this.get(id);
+      if (current) assertAllowed?.(current);
       await this.ensureDir();
       await rm(this.filePath(id), { force: true });
     });

@@ -40,6 +40,7 @@ import {
   type ScheduleServiceOptions,
 } from "./service.js";
 import { ScheduleStore } from "./store.js";
+import { QuotaSchedulePreflight } from "./quota-preflight.js";
 import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
@@ -395,20 +396,31 @@ describe("ScheduleService", () => {
       nextRunAt: created.nextRunAt,
       quotaState: { state: "held", reason: "governor_unavailable" },
     });
-    const prepare = vi.fn(async () => ({ kind: "deferred" as const, reason: "weekly_floor" }));
-    const reopened = createScheduleService({ ...options, quotaRunner: { prepare } });
+    const readObservation = vi.fn(async () => ({
+      status: "available" as const,
+      account: quotaPolicy.account,
+      observedAt: now.toISOString(),
+      windows: [
+        {
+          ...quotaPolicy.requiredWindows[0]!,
+          usedPercent: 80,
+          resetsAt: null,
+          semantics: "unknown" as const,
+        },
+      ],
+      consumptionMeters: [],
+    }));
+    const quotaRunner = new QuotaSchedulePreflight({ readObservation, nowMs: () => now.getTime() });
+    const reopened = createScheduleService({ ...options, quotaRunner });
     await reopened.start();
     await reopened.stop();
     await reopened.tick();
-    expect(prepare).toHaveBeenCalledWith(
-      expect.objectContaining({ id: created.id }),
-      created.nextRunAt,
-    );
+    expect(readObservation).toHaveBeenCalledExactlyOnceWith("codex-secondary");
     expect(await reopened.inspect(created.id)).toMatchObject({
       status: "active",
       runs: [],
       nextRunAt: created.nextRunAt,
-      quotaState: { state: "held", reason: "weekly_floor" },
+      quotaState: { state: "held", reason: "freeze_floor" },
     });
     expect(runner).not.toHaveBeenCalled();
     expect(createWorkspace).not.toHaveBeenCalled();

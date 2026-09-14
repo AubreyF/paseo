@@ -19,6 +19,7 @@ RUN chmod 0755 /opt/personal-tailscale /opt/personal-tailscale/* \
  && chmod 0755 /etc/personal-tailscale \
  && chmod 0644 /etc/personal-tailscale/supervisord.conf
 COPY --chown=root:root paseo-preview.mjs /usr/local/bin/paseo-preview
+COPY --chown=root:root preview-broker-client.mjs /usr/local/bin/preview-broker-client.mjs
 RUN chmod 0755 /usr/local/bin/paseo-preview
 ENV PASEO_WEB_UI_DIST_DIR=/home/paseo/.paseo/web-ui
 ENTRYPOINT ["/usr/bin/tini", "--", "/bin/bash", "/opt/personal-tailscale/entrypoint"]

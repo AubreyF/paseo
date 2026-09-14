@@ -9,14 +9,21 @@ import sys
 
 if sys.platform != 'darwin':
     raise SystemExit('Install on the macOS Docker host only')
-root = Path(os.environ['PASEO_DEPLOYMENT_DIR']).expanduser().resolve()
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from host_config import load
+config = load()
+root = Path(config['deployment'])
 if not (root / 'compose.yaml').is_file():
     raise SystemExit('Existing private deployment is required')
-subprocess.run([os.environ.get('PASEO_DOCKER_BIN', '/usr/local/bin/docker'), '--context', os.environ.get('PASEO_DOCKER_CONTEXT', 'desktop-linux'), 'inspect', os.environ['PASEO_CONTAINER_NAME'], '--format', '{{.Id}}'], check=True)
+subprocess.run([config['docker'], '--context', config['context'], 'inspect', config['container'], '--format', '{{.Id}}'], check=True)
+shutil.copyfile(Path(__file__).with_name('host_config.py'), root / 'host_config.py')
+(root / 'host_config.py').chmod(0o700)
+from https_broker import atomic
+atomic(root / 'host-config.json', config)
 script = root / 'host-recovery.py'
 shutil.copyfile(Path(__file__).with_name('host-recovery.py'), script)
 script.chmod(0o700)
-label = os.environ.get('PASEO_RECOVERY_LABEL', 'local.paseo.container-recovery')
+label = os.environ.get('PASEO_RECOVERY_LABEL', config.get('recoveryLabel', 'local.paseo.container-recovery'))
 plist = Path.home() / 'Library/LaunchAgents' / (label + '.plist')
 plist.parent.mkdir(parents=True, exist_ok=True)
 content = {
@@ -29,14 +36,7 @@ content = {
     'Nice': 10,
     'StandardOutPath': str(root / 'recovery.stdout.log'),
     'StandardErrorPath': str(root / 'recovery.stderr.log'),
-    'EnvironmentVariables': {
-        'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin', 'HOME': str(Path.home()),
-        'PASEO_DEPLOYMENT_DIR': str(root),
-        'PASEO_CONTAINER_NAME': os.environ['PASEO_CONTAINER_NAME'],
-        'PASEO_ROLLBACK_CONTAINER_NAME': os.environ['PASEO_ROLLBACK_CONTAINER_NAME'],
-        'PASEO_DOCKER_BIN': os.environ.get('PASEO_DOCKER_BIN', '/usr/local/bin/docker'),
-        'PASEO_DOCKER_CONTEXT': os.environ.get('PASEO_DOCKER_CONTEXT', 'desktop-linux'),
-    },
+    'EnvironmentVariables': {'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin', 'HOME': str(Path.home())},
 }
 with plist.open('wb') as file:
     plistlib.dump(content, file)

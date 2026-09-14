@@ -30,7 +30,7 @@ A private environment file can define these host administration settings:
 | `PASEO_DOCKER_CONTEXT`          | Docker context, default `desktop-linux`            |
 | `PASEO_RECOVERY_LABEL`          | Optional unique macOS login-agent label            |
 
-Export the required settings before running host scripts. The login-agent installer persists their non-secret configuration in the user's private LaunchAgents directory. These tools do not need GitHub tokens, provider tokens or an enrollment key in their environment. GitHub authentication belongs in the persistent container user's `.config/gh`; provider accounts stay in their own persistent credential directories.
+The HTTPS broker installer discovers the existing deployment from the stable container name and Docker mount metadata. It persists non-secret settings in `host-config.json` outside agent mounts. Both runtime tools and recovery load that file without shell exports. Existing environment settings remain an initial recovery-installer fallback; missing values produce a diagnostic rather than creating a deployment.
 
 ## Recovery
 
@@ -46,32 +46,36 @@ python3 host-recovery.py resume
 
 Pause before planned Docker maintenance or rollback. The worker starts Docker if absent, with three attempts spaced ten minutes apart. It starts an existing stopped serving container with three attempts spaced five minutes apart. It never recreates a container or restarts a running unhealthy daemon. A running rollback container suppresses replacement recovery. Restore operations run as the agent user with all capabilities removed. Review private `recovery-status.json` and logs when manual attention is needed.
 
-## Preview lifecycle
+## Preview lifecycle and private HTTPS
 
-Install [AGENT-INSTRUCTIONS.md](AGENT-INSTRUCTIONS.md) in the relevant persistent agent instruction locations. The image supplies `paseo-preview`; host recovery expects a reviewed copy at `/home/paseo/.local/bin/paseo-preview` so persistent installations can update without interrupting agents.
-
-```sh
-paseo-preview list --workspace WORKSPACE_ID
-paseo-preview start preview --workspace WORKSPACE_ID
-paseo-preview status
-paseo-preview stop preview --workspace WORKSPACE_ID
-```
-
-The helper uses Paseo's existing allocator and service lifecycle. A successful start pins the allocated port in the project's `paseo.json` and records restoration intent in persistent home. It adopts running services without interruption. `restart` keeps the port; `stop` disables restoration immediately. Ordinary UI/CLI stops are observed at the next recovery check. Use the helper's stop before immediate shutdown. A new worktree must not inherit another checkout's occupied fixed port.
-
-Restoration applies only to registered, enabled services after a new daemon session, with at most three attempts per service. Changed commands or ports, moved workspaces and port conflicts require review. Recovery does not continuously restart crashed commands or evict another listener.
-
-## Private HTTPS
-
-Ordinary previews use HTTP over the private tailnet. Secure-context browser APIs need HTTPS. With the host settings exported and the target service registered, an administrator can run:
+On the Mac host, review and test this directory, then install against the retained serving container:
 
 ```sh
-python3 https-preview.py WORKSPACE_ID SCRIPT HTTPS_PORT
+python3 -B test_https_broker.py
+python3 -B test_host_recovery.py
+python3 install-https-broker.py --container EXISTING_NAME \
+  --allowed-root /absolute/development/root --rollback RETAINED_ROLLBACK_NAME
 ```
 
-Choose a free frontend port in the installed allocator's approved access-policy range. This helper currently restricts ports to 32768 through 60999. It preserves other Serve mappings, rejects known port conflicts and records the mapping privately. Configure framework host checks and WSS origins for the actual HTTPS endpoint. Never enable Funnel or give agents Tailscale operator privileges.
+The installer uses Docker mount metadata to locate the existing deployment. It rejects host code or policy targets beneath writable container mounts, preserves configuration backups, installs a bounded login consumer, and updates the persistent helper and instructions without restarting Paseo. Run the same installer after upgrading these tools. The image also distributes the helper module for new installations. Keep the existing Tailscale identity and grants. Review the current packet-filter scope; installation must not broaden it. The runtime fails closed if that scope or node identity changes.
 
-Remove only a reviewed mapping with `tailscale serve --https=PORT off` through an administrator-controlled container session. Never use `serve reset` to remove one preview. Delete its private receipt only after verifying removal. HTTPS enables browser APIs but does not grant microphone permission.
+Agents use the [approved helper workflow](AGENT-INSTRUCTIONS.md). Starts request HTTPS by default for host-approved local development roots. Requests contain only lifecycle operation, workspace ID, service name, request ID, timestamp and optional preferred frontend port. The filesystem inbox is the only request interface. No Docker or Tailscale socket is exposed to agents.
+
+The host resolves live daemon workspace and script records, checks the configuration fingerprint and managed terminal, and verifies the actual loopback listener process before publishing. It reserves a stable frontend, writes startup origin configuration, and starts the registered command through the existing unprivileged daemon CLI. The command wrapper supplies `PASEO_PREVIEW_ORIGIN` at launch. Applications must consume it where framework hosts, callback URLs or WSS origins need explicit configuration. A caller's environment does not reach a daemon-launched service.
+
+The mapping ledger, deduplication journal and lock remain outside agent-writable mounts. Repeated start adopts an unchanged owned mapping without probing its occupied frontend or replacing it. Stop persists its barrier and removes the exact owned route before stopping the service. Old queued starts and replays cannot undo a stop. Recovery revalidates ownership and process identity, removes stale routes, and never automatically restarts broker-managed services after a crash or daemon restart. An explicit new start is required. This conservative policy prevents backend reuse from being adopted during recovery.
+
+The consumer checks every ten seconds while the user session is available. It has bounded file sizes, queue batches, command timeouts and reconciliation work. It is not a synchronous process-death firewall: an external process exit or replacement can precede the next check. Use the helper for deliberate stop/restart so route removal precedes process termination. Never run a new unrelated listener on a reserved backend before its route is removed. Unexpected route changes require administrator review and are never evicted.
+
+Only `ready` receipts contain usable URLs after certificate-validating HTTPS and HTTP checks. Browser rendering, Web Crypto, clipboard permissions and application origin checks are separate acceptance checks. HTTPS adds neither application authentication nor tailnet authorization. Keep direct listeners' forwarded-header trust disabled and preserve explicit bind scope. Tailscale Serve supports WebSocket upgrades; frameworks with explicit HMR client origins must use the reserved HTTPS origin and WSS.
+
+`https-preview.py WORKSPACE_ID SERVICE HTTPS_PORT` remains an administrator compatibility entry point using the same policy, ledger and lock. Never use `serve reset`, enable Funnel or replace another mapping to claim a port.
+
+## Broker rollback
+
+Stop each broker-managed preview with the helper when its process may stop. This removes and verifies only its owned mapping, and keeps the frontend reservation. For a capability-only rollback that preserves processes, unload `local.paseo.https-preview-broker` with launchctl, then use `uninstall-https-broker.py` from the trusted installation. It verifies each exact route before removal and disables request handling without resetting Tailscale or touching unrelated mappings. Keep the helper's environment loader and origin files for already-wrapped commands. Restore backed-up recovery code/configuration only after checking that its container identities still match. Do not restore stale whole-home or whole-Tailscale state.
+
+An awake, logged-in Mac and available Docker are prerequisites. FileVault unlock, login and host wake are not supplied by this broker. Installation or recovery does not authorize restarting Paseo, Docker or unrelated services.
 
 ## Backup and replacement
 

@@ -8,10 +8,13 @@ import subprocess
 import sys
 import time
 
-ROOT = Path(os.environ['PASEO_DEPLOYMENT_DIR']).expanduser().resolve()
-DOCKER = os.environ.get('PASEO_DOCKER_BIN', '/usr/local/bin/docker')
-CONTAINER = os.environ['PASEO_CONTAINER_NAME']
-OLD_CONTAINER = os.environ['PASEO_ROLLBACK_CONTAINER_NAME']
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from host_config import load
+CONFIG = load()
+ROOT = Path(CONFIG['deployment'])
+DOCKER = CONFIG['docker']
+CONTAINER = CONFIG['container']
+OLD_CONTAINER = CONFIG.get('rollback')
 PAUSED = ROOT / 'recovery.paused'
 STATE = ROOT / 'recovery-status.json'
 
@@ -21,7 +24,7 @@ def command(args, timeout=20):
 
 
 def docker(*args, timeout=20):
-    return command([DOCKER, '--context', os.environ.get('PASEO_DOCKER_CONTEXT', 'desktop-linux'), *args], timeout)
+    return command([DOCKER, '--context', CONFIG['context'], *args], timeout)
 
 
 def write_state(state):
@@ -70,7 +73,7 @@ def main():
             write_state(state)
             return
         state['dockerStartAttempts'] = 0
-        old = docker('inspect', OLD_CONTAINER, '--format', '{{.State.Running}}').stdout.strip()
+        old = docker('inspect', OLD_CONTAINER, '--format', '{{.State.Running}}').stdout.strip() if OLD_CONTAINER else 'false'
         if old == 'true':
             state['status'] = 'Rollback container running; replacement recovery suppressed'
             write_state(state)

@@ -10,13 +10,13 @@ Use an immutable existing Paseo base that contains the required provider tools. 
 
 ## Private connectivity
 
-Bind the host-published daemon port to loopback. Use private Tailscale Serve for the daemon's HTTPS origin and direct tailnet ports for ordinary workspace previews. Grant only intended users the required destination ports. Keep Funnel disabled. Framework listeners must bind a reachable interface and permit their configured hostname.
+Bind the host-published daemon port to loopback. Use private Tailscale Serve for the daemon and broker-managed HTTPS workspace previews. Grant only intended users the required destination ports. Keep Funnel disabled. Framework listeners must bind a reachable interface and permit their configured hostname.
 
-HTTP remains an insecure browser origin despite Tailscale transport encryption. Add administrator-managed HTTPS mappings for secure-context APIs and configure WebSocket origins consistently. Agent users do not need Tailscale control privileges to launch previews.
+HTTP remains an insecure browser origin despite Tailscale transport encryption. Install the narrow host broker described in docker/tailscale/README.md for HTTPS lifecycle requests. Configure exact application and WebSocket origins from its reservation. Agent users do not receive Tailscale control privileges.
 
 ## Lifecycle and recovery
 
-Use Paseo's service allocator and lifecycle. Persist a preview's allocated port and explicit restoration intent. Restore only unchanged registered services after a new daemon session, with bounded retries. A deliberate stop must remain stopped. Reject occupied ports without killing their owner.
+Use Paseo's service allocator and lifecycle. Persist a preview's allocated port and explicit restoration intent. Legacy HTTP recovery restores only unchanged registered services after a new daemon session, with bounded retries. The HTTPS broker conservatively requires explicit start after a service or daemon restart and removes stale owned mappings. A deliberate stop must remain stopped. Reject occupied ports without killing their owner.
 
 Host recovery can start Docker after login and start the retained stopped container. It must not recreate containers, restart an unhealthy running daemon, or run production alongside rollback against the same home. Pause automatic recovery before maintenance. Keep consistent backups and exact rollback images outside Git.
 

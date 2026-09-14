@@ -85,6 +85,7 @@ describe("Codex executable discovery", () => {
 });
 
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
+import { QuotaConstructionCleanupError } from "../agent-sdk-types.js";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
@@ -339,6 +340,247 @@ function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAp
   internals.spawnAppServer = async () => appServer.child;
   return provider;
 }
+
+function createGovernedAppServer(
+  accountId = "reserved-account",
+  controls = true,
+  reviewer: string | null = "user",
+  loaded = false,
+): FakeCodexAppServer {
+  return createFakeCodexAppServer({
+    "thread/start": () => ({ thread: { id: "thread-1" }, approvalsReviewer: reviewer }),
+    "thread/resume": () => ({ approvalsReviewer: reviewer }),
+    "thread/loaded/list": () => ({ data: loaded ? ["thread-1"] : [] }),
+    "config/read": () => ({
+      config: controls
+        ? {
+            approvals_reviewer: "user",
+            features: { goals: false, multi_agent: false, multi_agent_v2: false },
+          }
+        : {},
+    }),
+    "account/read": () => ({ account: { type: "chatgpt" } }),
+    "account/rateLimits/read": () => ({
+      accountId,
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          primary: {
+            usedPercent: 30,
+            windowDurationMins: 10080,
+            resetsAt: null,
+          },
+          secondary: null,
+        },
+      },
+    }),
+    "account/usage/read": () => ({}),
+  });
+}
+
+test.each([
+  [false, "auto_review", false],
+  [true, "auto_review", false],
+  [true, null, false],
+  [true, "auto_review", true],
+] as const)(
+  "governed threads require a verified user reviewer (resume=%s, reviewer=%s, loaded=%s)",
+  async (resume, reviewer, loaded) => {
+    const appServer = createGovernedAppServer("reserved-account", true, reviewer, loaded);
+    const provider = createProviderWithFakeAppServer(appServer);
+    const guard = vi.fn(async () => ({ assertValidForDispatch() {} }));
+    let session: AgentSession | undefined;
+    const exercise = async () => {
+      session = await provider.openQuotaGovernedSession({
+        config: createConfig({ modeId: "full-access" }),
+        account: { issuer: "openai", accountId: "reserved-account" },
+        guard,
+        resumeHandle: resume ? { provider: "codex", sessionId: "thread-1" } : undefined,
+      });
+      await session.startTurn("implement");
+    };
+    try {
+      await expect(exercise()).rejects.toThrow("thread reviewer is unverified");
+      expect(guard).not.toHaveBeenCalled();
+      expect(appServer.requests().map((request) => request.method)).not.toContain("turn/start");
+    } finally {
+      await session?.close();
+      appServer.assertNoErrors();
+    }
+  },
+);
+
+test("governed reconnect rejects an account change before restoring the saved thread", async () => {
+  const first = createGovernedAppServer();
+  const second = createGovernedAppServer("other-account");
+  const provider = createProviderWithFakeAppServer(first);
+  const guard = vi.fn(async () => {
+    throw new Error("Reserved quota held");
+  });
+  const session = await provider.openQuotaGovernedSession({
+    config: createConfig(),
+    account: { issuer: "openai", accountId: "reserved-account" },
+    guard,
+  });
+  try {
+    await expect(session.startTurn("implement")).rejects.toThrow("Reserved quota held");
+    first.disconnect();
+    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+      provider,
+    ).spawnAppServer = async () => second.child;
+    await expect(session.startTurn("resume")).rejects.toThrow("does not match");
+    expect(second.requests().map((request) => request.method)).not.toContain("thread/resume");
+    expect(guard).toHaveBeenCalledOnce();
+  } finally {
+    await session.close();
+    first.assertNoErrors();
+    second.assertNoErrors();
+  }
+});
+
+test("failed governed cleanup retains custody and fences another client until cleanup succeeds", async () => {
+  const first = createGovernedAppServer("other-account");
+  const second = createGovernedAppServer();
+  const provider = createProviderWithFakeAppServer(first);
+  const otherProvider = createProviderWithFakeAppServer(second);
+  const input = {
+    config: createConfig(),
+    account: { issuer: "openai", accountId: "reserved-account" },
+    guard: async () => ({ assertValidForDispatch() {} }),
+  };
+  const dispose = vi
+    .spyOn(CodexAppServerClient.prototype, "dispose")
+    .mockRejectedValue(new Error("Disposal unavailable"));
+  let failure: QuotaConstructionCleanupError | undefined;
+  let session: AgentSession | undefined;
+  try {
+    try {
+      await provider.openQuotaGovernedSession(input);
+    } catch (error) {
+      if (!(error instanceof QuotaConstructionCleanupError)) throw error;
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(QuotaConstructionCleanupError);
+    await expect(otherProvider.openQuotaGovernedSession(input)).rejects.toBe(failure);
+    expect(second.requests()).toEqual([]);
+    dispose.mockRestore();
+    await failure!.retryCleanup();
+    session = await otherProvider.openQuotaGovernedSession(input);
+    expect(session.provider).toBe("codex");
+  } finally {
+    dispose.mockRestore();
+    await failure?.retryCleanup();
+    await session?.close();
+    first.assertNoErrors();
+    second.assertNoErrors();
+  }
+});
+
+test("a configured account alias retains governed construction and execution telemetry", async () => {
+  const appServer = createGovernedAppServer();
+  const nativeProvider = createProviderWithFakeAppServer(appServer);
+  const open = CodexAppServerAgentClient.prototype.openQuotaGovernedSession;
+  const spy = vi
+    .spyOn(CodexAppServerAgentClient.prototype, "openQuotaGovernedSession")
+    .mockImplementation((input) => open.call(nativeProvider, input));
+  let session: AgentSession | undefined;
+  try {
+    const registry = buildProviderRegistry(createTestLogger(), {
+      providerOverrides: {
+        "worker-account": {
+          extends: "codex",
+          label: "Worker account",
+          env: { CODEX_HOME: "/tmp/unused-fixture-home" },
+        },
+      },
+    });
+    const client = registry["worker-account"].createClient(createTestLogger());
+    const guard = vi.fn(async () => {
+      throw new Error("Reserved quota held");
+    });
+    session = await client.openQuotaGovernedSession!({
+      config: createConfig({ provider: "worker-account" }),
+      account: { issuer: "openai", accountId: "reserved-account" },
+      guard,
+    });
+    expect(session.provider).toBe("worker-account");
+    await expect(session.readQuotaObservation!()).resolves.toMatchObject({
+      status: "available",
+      account: { issuer: "openai", accountId: "reserved-account" },
+    });
+    await expect(session.startTurn("implement")).rejects.toThrow("Reserved quota held");
+    expect(session.describePersistence()).toMatchObject({ provider: "worker-account" });
+    expect(guard).toHaveBeenCalledOnce();
+  } finally {
+    await session?.close();
+    spy.mockRestore();
+    appServer.assertNoErrors();
+  }
+});
+
+test.each([false, true])(
+  "governed construction verifies controls and account before execution (resume=%s)",
+  async (resume) => {
+    const appServer = createGovernedAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    const guard = vi.fn(async () => {
+      throw new Error("Reserved quota held");
+    });
+    const session = await provider.openQuotaGovernedSession({
+      config: createConfig(),
+      account: { issuer: "openai", accountId: "reserved-account" },
+      guard,
+      resumeHandle: resume ? { provider: "codex", sessionId: "thread-1" } : undefined,
+    });
+    try {
+      await expect(session.startTurn("implement")).rejects.toThrow("Reserved quota held");
+      const methods = appServer.requests().map((request) => request.method);
+      expect(methods.indexOf("config/read")).toBeLessThan(methods.indexOf("account/read"));
+      expect(methods.indexOf("account/read")).toBeLessThan(
+        methods.indexOf(resume ? "thread/resume" : "thread/start"),
+      );
+      expect(methods).not.toContain("turn/start");
+      expect(guard).toHaveBeenCalledOnce();
+      const threadRequest = appServer
+        .requests()
+        .find((request) => request.method === (resume ? "thread/resume" : "thread/start"));
+      expect(threadRequest).toMatchObject({
+        params: {
+          config: {
+            approvals_reviewer: "user",
+            features: { goals: false, multi_agent: false, multi_agent_v2: false },
+          },
+        },
+      });
+    } finally {
+      await session.close();
+      appServer.assertNoErrors();
+    }
+  },
+);
+
+test.each(["controls", "account"] as const)(
+  "governed restoration refuses an unverified %s before restoring a thread",
+  async (failure) => {
+    const appServer = createGovernedAppServer(
+      failure === "account" ? "other-account" : "reserved-account",
+      failure !== "controls",
+    );
+    const kill = vi.spyOn(appServer.child, "kill");
+    const provider = createProviderWithFakeAppServer(appServer);
+    await expect(
+      provider.openQuotaGovernedSession({
+        config: createConfig(),
+        account: { issuer: "openai", accountId: "reserved-account" },
+        guard: async () => ({ assertValidForDispatch() {} }),
+        resumeHandle: { provider: "codex", sessionId: "thread-1" },
+      }),
+    ).rejects.toThrow(failure === "controls" ? "controls are unavailable" : "does not match");
+    expect(appServer.requests().map((request) => request.method)).not.toContain("thread/resume");
+    expect(kill).toHaveBeenCalled();
+    appServer.assertNoErrors();
+  },
+);
 
 async function startPublicSteeringSession(
   appServer: FakeCodexAppServer,

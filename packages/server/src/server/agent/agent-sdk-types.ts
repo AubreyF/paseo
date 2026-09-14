@@ -695,6 +695,23 @@ export interface QuotaAdmissionPermit {
  */
 export type QuotaAdmissionGuard = (request: QuotaAdmissionRequest) => Promise<QuotaAdmissionPermit>;
 
+/** Trusted runtime input, never accepted from a worker tool or persisted as a callback. */
+export interface QuotaGovernedSessionInput {
+  config: AgentSessionConfig;
+  account: import("@getpaseo/protocol/quota-governor").QuotaAccount;
+  guard: QuotaAdmissionGuard;
+  launchContext?: AgentLaunchContext;
+  resumeHandle?: AgentPersistenceHandle;
+}
+
+/** Retains trusted cleanup custody when native construction cannot prove disposal. */
+export class QuotaConstructionCleanupError extends Error {
+  constructor(readonly retryCleanup: () => Promise<void>) {
+    super("Quota session construction cleanup is unresolved; account construction is fenced.");
+    this.name = "QuotaConstructionCleanupError";
+  }
+}
+
 export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
@@ -845,6 +862,8 @@ export interface AgentClient {
   openResetCreditSession?(): Promise<ProviderResetCreditSession>;
   /** Read-only account telemetry. This connection must never start inference. */
   openQuotaObservationSession?(): Promise<ProviderQuotaObservationSession>;
+  /** Construct protection before native connection. Unsupported providers must not fall back. */
+  openQuotaGovernedSession?(input: QuotaGovernedSessionInput): Promise<AgentSession>;
   openAccountLoginSession?(): Promise<ProviderLoginSession>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().

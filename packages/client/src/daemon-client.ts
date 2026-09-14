@@ -1,3 +1,4 @@
+import type { QuotaGovernorPolicy } from "@getpaseo/protocol/quota-governor";
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
@@ -743,6 +744,7 @@ export interface CreateScheduleOptions {
           providerOptions?: AgentSessionConfig["providerOptions"];
           systemPrompt?: string;
           mcpServers?: AgentSessionConfig["mcpServers"];
+          quotaPolicy?: QuotaGovernorPolicy;
         };
       };
   maxRuns?: number;
@@ -755,6 +757,7 @@ export interface InspectScheduleOptions {
   requestId?: string;
 }
 export interface UpdateScheduleNewAgentConfig {
+  quotaPolicy?: QuotaGovernorPolicy | null;
   provider?: string;
   model?: string | null;
   modeId?: string | null;
@@ -5534,6 +5537,8 @@ export class DaemonClient {
   }
 
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
+    if (options.target.type === "new-agent" && options.target.config.quotaPolicy !== undefined)
+      this.assertScheduleQuotaPolicySupport();
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {
@@ -5626,7 +5631,15 @@ export class DaemonClient {
     });
   }
 
+  private assertScheduleQuotaPolicySupport(): void {
+    // COMPAT(scheduleQuotaPolicy): added in v0.7.2; remove only when every supported host enforces policies.
+    // A policy-unaware host may strip unknown fields and launch ordinary work.
+    if (this.lastServerInfoMessage?.features?.scheduleQuotaPolicy !== true)
+      throw new Error("Update the host before changing quota-protected schedules.");
+  }
+
   async scheduleUpdate(options: UpdateScheduleOptions): Promise<ScheduleUpdatePayload> {
+    if (options.newAgentConfig?.quotaPolicy !== undefined) this.assertScheduleQuotaPolicySupport();
     if (
       options.expectedConfigurationRevision !== undefined &&
       !this.lastServerInfoMessage?.features?.scheduleConfigurationRevision

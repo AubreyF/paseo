@@ -6227,3 +6227,92 @@ test("schedule revision protection transmits the exact revision on supported hos
   mock.triggerMessage(wrapSessionMessage({ type: "schedule/update/response", payload }));
   await expect(pending).resolves.toEqual(payload);
 });
+
+const scheduleQuotaPolicy = {
+  version: 1 as const,
+  account: { issuer: "test", accountId: "account" },
+  requiredWindows: [{ bucketId: "coding", windowId: "weekly", durationMinutes: 10080 }],
+  launchFloorPercent: 30,
+  freezeFloorPercent: 25,
+  maxObservationAgeSeconds: 120,
+  consumptionLimits: [],
+  recovery: "automatic_after_reconciliation" as const,
+};
+
+test("schedule quota policies never reach a policy-unaware host", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "quota-schedule-test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+  await expect(
+    client.scheduleCreate({
+      prompt: "Protected work",
+      cadence: { type: "cron", expression: "0 * * * *" },
+      target: {
+        type: "new-agent",
+        config: { provider: "secondary", cwd: "/tmp/work", quotaPolicy: scheduleQuotaPolicy },
+      },
+    }),
+  ).rejects.toThrow("Update the host");
+  for (const quotaPolicy of [scheduleQuotaPolicy, null]) {
+    await expect(
+      client.scheduleUpdate({ id: "schedule", newAgentConfig: { quotaPolicy } }),
+    ).rejects.toThrow("Update the host");
+  }
+  expect(mock.sent).toEqual([]);
+});
+
+test("schedule quota policies are preserved on a policy-aware host", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "quota-schedule-test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: { scheduleQuotaPolicy: true } });
+  await connected;
+  const pendingCreate = client.scheduleCreate({
+    prompt: "Protected work",
+    cadence: { type: "cron", expression: "0 * * * *" },
+    target: {
+      type: "new-agent",
+      config: { provider: "secondary", cwd: "/tmp/work", quotaPolicy: scheduleQuotaPolicy },
+    },
+    runOnCreate: false,
+  });
+  const created = JSON.parse(assertStr(mock.sent[0])).message;
+  expect(created.target.config.quotaPolicy).toEqual(scheduleQuotaPolicy);
+  expect(created.runOnCreate).toBe(false);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "schedule/create/response",
+      payload: { requestId: created.requestId, schedule: null, error: "synthetic refusal" },
+    }),
+  );
+  await pendingCreate;
+  const pendingUpdate = client.scheduleUpdate({
+    id: "schedule",
+    newAgentConfig: { quotaPolicy: scheduleQuotaPolicy },
+  });
+  const updated = JSON.parse(assertStr(mock.sent[1])).message;
+  expect(updated.newAgentConfig.quotaPolicy).toEqual(scheduleQuotaPolicy);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "schedule/update/response",
+      payload: { requestId: updated.requestId, schedule: null, error: "synthetic refusal" },
+    }),
+  );
+  await pendingUpdate;
+});

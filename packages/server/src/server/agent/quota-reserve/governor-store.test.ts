@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import type { QuotaGovernorPolicy, QuotaObservation } from "@getpaseo/protocol/quota-governor";
 import { QuotaGovernorStore } from "./governor-store.js";
 
@@ -10,6 +10,12 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 const nowMs = Date.parse("2026-09-14T08:00:00Z");
+let clockNow = nowMs;
+beforeEach(() => {
+  clockNow = nowMs;
+});
+const clock = { nowMs: () => clockNow };
+
 const policy: QuotaGovernorPolicy = {
   version: 1,
   account: { issuer: "openai", accountId: "account-one" },
@@ -52,11 +58,11 @@ async function directory() {
 
 it("persists one account reservation across aliases and restart", async () => {
   const dir = await directory();
-  const first = await new QuotaGovernorStore(dir).reserve(input);
+  const first = await new QuotaGovernorStore(dir, clock).reserve(input);
   expect(first.kind).toBe("admitted");
-  expect(await new QuotaGovernorStore(dir).reserve(input)).toEqual(first);
+  expect(await new QuotaGovernorStore(dir, clock).reserve(input)).toEqual(first);
   expect(
-    await new QuotaGovernorStore(dir).reserve({
+    await new QuotaGovernorStore(dir, clock).reserve({
       ...input,
       scheduleId: "schedule-two",
       providerId: "same-account-alias",
@@ -68,7 +74,7 @@ it("persists one account reservation across aliases and restart", async () => {
 });
 
 it("serializes competing account admissions before either can start inference", async () => {
-  const store = new QuotaGovernorStore(await directory());
+  const store = new QuotaGovernorStore(await directory(), clock);
   const results = await Promise.all([
     store.reserve(input),
     store.reserve({ ...input, scheduleId: "schedule-two", occurrenceId: "occurrence-two" }),
@@ -77,7 +83,7 @@ it("serializes competing account admissions before either can start inference", 
 });
 
 it("does not treat missing daily history as a fresh allowance", async () => {
-  const store = new QuotaGovernorStore(await directory());
+  const store = new QuotaGovernorStore(await directory(), clock);
   const result = await store.reserve({
     ...input,
     policy: {
@@ -108,19 +114,19 @@ it("does not treat missing daily history as a fresh allowance", async () => {
 
 it("rejects corrupt account accounting instead of recreating it", async () => {
   const dir = await directory();
-  const store = new QuotaGovernorStore(dir);
+  const store = new QuotaGovernorStore(dir, clock);
   await store.reserve(input);
   const path = store.accountPath(policy.account);
   expect(JSON.parse(await readFile(path, "utf8")).account).toEqual(policy.account);
   await writeFile(path, "broken");
-  await expect(new QuotaGovernorStore(dir).reserve(input)).rejects.toThrow();
+  await expect(new QuotaGovernorStore(dir, clock).reserve(input)).rejects.toThrow();
 });
 
 it("fences a changed window contract after restart", async () => {
   const dir = await directory();
-  await new QuotaGovernorStore(dir).reserve(input);
+  await new QuotaGovernorStore(dir, clock).reserve(input);
   expect(
-    await new QuotaGovernorStore(dir).reserve({
+    await new QuotaGovernorStore(dir, clock).reserve({
       ...input,
       observation: {
         ...observation,
@@ -131,7 +137,7 @@ it("fences a changed window contract after restart", async () => {
 });
 
 it("will not reassign a reserved occurrence when its schedule account configuration changes", async () => {
-  const store = new QuotaGovernorStore(await directory());
+  const store = new QuotaGovernorStore(await directory(), clock);
   await store.reserve(input);
   expect(await store.reserve({ ...input, providerId: "different-provider" })).toEqual({
     kind: "deferred",
@@ -140,16 +146,16 @@ it("will not reassign a reserved occurrence when its schedule account configurat
 });
 
 it("does not reclaim an unresolved filesystem lock based on its age", async () => {
-  const store = new QuotaGovernorStore(await directory());
+  const store = new QuotaGovernorStore(await directory(), clock);
   await mkdir(`${store.accountPath(policy.account)}.lock`);
   expect(await store.reserve(input)).toEqual({ kind: "deferred", reason: "store_busy" });
 });
 
 it("rejects older observations after reopening the account ledger", async () => {
   const dir = await directory();
-  await new QuotaGovernorStore(dir).reserve(input);
+  await new QuotaGovernorStore(dir, clock).reserve(input);
   expect(
-    await new QuotaGovernorStore(dir).reserve({
+    await new QuotaGovernorStore(dir, clock).reserve({
       ...input,
       observation: {
         ...observation,
@@ -161,7 +167,7 @@ it("rejects older observations after reopening the account ledger", async () => 
 
 it("does not follow a ledger symlink or overwrite its target", async () => {
   const dir = await directory();
-  const store = new QuotaGovernorStore(dir);
+  const store = new QuotaGovernorStore(dir, clock);
   const target = join(dir, "unrelated.json");
   await writeFile(target, "preserve");
   await symlink(target, store.accountPath(policy.account));
@@ -171,7 +177,7 @@ it("does not follow a ledger symlink or overwrite its target", async () => {
 
 it("persists start intent before launch and prevents another start after a crash", async () => {
   const dir = await directory();
-  const store = new QuotaGovernorStore(dir);
+  const store = new QuotaGovernorStore(dir, clock);
   const admitted = await store.reserve(input);
   if (admitted.kind !== "admitted") throw new Error("Expected admission");
   const start = {
@@ -190,7 +196,7 @@ it("persists start intent before launch and prevents another start after a crash
     kind: "transitioned",
     execution: { state: "starting", generation: 1 },
   });
-  const reopened = new QuotaGovernorStore(dir);
+  const reopened = new QuotaGovernorStore(dir, clock);
   expect(await reopened.execution(policy.account, admitted.reservation.id)).toMatchObject({
     state: "starting",
     executionId: "execution-one",
@@ -202,7 +208,7 @@ it("persists start intent before launch and prevents another start after a crash
 });
 
 it("requires confirmed settlement and fresh quota before resuming the same reservation", async () => {
-  const store = new QuotaGovernorStore(await directory());
+  const store = new QuotaGovernorStore(await directory(), clock);
   const admitted = await store.reserve(input);
   if (admitted.kind !== "admitted") throw new Error("Expected admission");
   const binding = {
@@ -221,9 +227,10 @@ it("requires confirmed settlement and fresh quota before resuming the same reser
     expectedGeneration: 1,
     event: { type: "freeze", reason: "quota" },
   });
+  clockNow = nowMs + 1;
   const recovery = {
     ...binding,
-    nowMs: nowMs + 1,
+
     observation: { ...observation, observedAt: new Date(nowMs + 1).toISOString() },
   };
   const resume = {
@@ -240,11 +247,11 @@ it("requires confirmed settlement and fresh quota before resuming the same reser
     expectedGeneration: 2,
     event: { type: "settled", executionId: "first", settlementId: "confirmed-process-exit" },
   });
+  clockNow = nowMs + 120001;
   expect(
     await store.transition({
       ...binding,
       expectedGeneration: 3,
-      nowMs: nowMs + 120001,
       event: resume,
     }),
   ).toMatchObject({
@@ -252,6 +259,7 @@ it("requires confirmed settlement and fresh quota before resuming the same reser
     reason: "quota",
     decision: { action: "hold" },
   });
+  clockNow = nowMs + 1;
   expect(await store.transition({ ...binding, expectedGeneration: 3, event: resume })).toEqual({
     kind: "deferred",
     reason: "observation_regressed",
@@ -265,7 +273,7 @@ it("requires confirmed settlement and fresh quota before resuming the same reser
 });
 
 it("preserves manual pauses and rejects account authentication changes during resume", async () => {
-  const store = new QuotaGovernorStore(await directory());
+  const store = new QuotaGovernorStore(await directory(), clock);
   const admitted = await store.reserve(input);
   if (admitted.kind !== "admitted") throw new Error("Expected admission");
   const binding = {
@@ -294,9 +302,10 @@ it("preserves manual pauses and rejects account authentication changes during re
     expectedGeneration: 3,
     event: { type: "settled", executionId: "first", settlementId: "exit" },
   });
+  clockNow = nowMs + 1;
   const recovery = {
     ...binding,
-    nowMs: nowMs + 1,
+
     observation: { ...observation, observedAt: new Date(nowMs + 1).toISOString() },
   };
   const event = {
@@ -319,7 +328,7 @@ it("preserves manual pauses and rejects account authentication changes during re
 });
 
 it("records real completion that races with freeze as terminal, never resumable", async () => {
-  const store = new QuotaGovernorStore(await directory());
+  const store = new QuotaGovernorStore(await directory(), clock);
   const admitted = await store.reserve(input);
   if (admitted.kind !== "admitted") throw new Error("Expected admission");
   const binding = {
@@ -349,10 +358,10 @@ it("records real completion that races with freeze as terminal, never resumable"
       },
     }),
   ).toMatchObject({ kind: "transitioned", execution: { state: "completed", generation: 3 } });
+  clockNow = nowMs + 1;
   await expect(
     store.transition({
       ...binding,
-      nowMs: nowMs + 1,
       observation: { ...observation, observedAt: new Date(nowMs + 1).toISOString() },
       expectedGeneration: 3,
       event: {
@@ -367,7 +376,7 @@ it("records real completion that races with freeze as terminal, never resumable"
 
 it("releases completed capacity without forgetting accounting or allowing duplicate publication work", async () => {
   const dir = await directory();
-  const store = new QuotaGovernorStore(dir);
+  const store = new QuotaGovernorStore(dir, clock);
   const admitted = await store.reserve(input);
   if (admitted.kind !== "admitted") throw new Error("Expected admission");
   const binding = {
@@ -391,6 +400,7 @@ it("releases completed capacity without forgetting accounting or allowing duplic
     kind: "deferred",
     reason: "observation_regressed",
   });
+  clockNow = nowMs + 1;
   const postCompletion = {
     ...observation,
     observedAt: new Date(nowMs + 1).toISOString(),
@@ -402,7 +412,7 @@ it("releases completed capacity without forgetting accounting or allowing duplic
       },
     ],
   };
-  const finalization = { ...binding, observation: postCompletion, nowMs: nowMs + 1 };
+  const finalization = { ...binding, observation: postCompletion };
   expect(
     await store.finalize({
       ...finalization,
@@ -413,13 +423,13 @@ it("releases completed capacity without forgetting accounting or allowing duplic
     reason: "charge_settlement_unavailable",
   });
   expect(await store.finalize(finalization)).toEqual({ kind: "finalized" });
-  const reopened = new QuotaGovernorStore(dir);
+  const reopened = new QuotaGovernorStore(dir, clock);
   expect(await reopened.finalize(finalization)).toEqual({ kind: "finalized" });
   expect(await reopened.reserve(input)).toEqual({
     kind: "completed",
     reservationId: admitted.reservation.id,
   });
-  const next = { ...input, occurrenceId: "next", observation: postCompletion, nowMs: nowMs + 1 };
+  const next = { ...input, occurrenceId: "next", observation: postCompletion };
   expect((await reopened.reserve(next)).kind).toBe("admitted");
   expect(await reopened.reserve(input)).toEqual({
     kind: "completed",
@@ -431,7 +441,7 @@ it("releases completed capacity without forgetting accounting or allowing duplic
 });
 
 it("allows cleanup at the freeze floor but does not admit another run against that allowance", async () => {
-  const store = new QuotaGovernorStore(await directory());
+  const store = new QuotaGovernorStore(await directory(), clock);
   const admitted = await store.reserve(input);
   if (admitted.kind !== "admitted") throw new Error("Expected admission");
   const binding = {
@@ -450,6 +460,7 @@ it("allows cleanup at the freeze floor but does not admit another run against th
     expectedGeneration: 1,
     event: { type: "complete", executionId: "first", settlementId: "exit" },
   });
+  clockNow = nowMs + 1;
   const exhausted = {
     ...observation,
     observedAt: new Date(nowMs + 1).toISOString(),
@@ -462,7 +473,7 @@ it("allows cleanup at the freeze floor but does not admit another run against th
       },
     ],
   };
-  expect(await store.finalize({ ...binding, observation: exhausted, nowMs: nowMs + 1 })).toEqual({
+  expect(await store.finalize({ ...binding, observation: exhausted })).toEqual({
     kind: "finalized",
   });
   expect(
@@ -470,7 +481,6 @@ it("allows cleanup at the freeze floor but does not admit another run against th
       ...input,
       occurrenceId: "next",
       observation: exhausted,
-      nowMs: nowMs + 1,
     }),
   ).toMatchObject({
     kind: "deferred",
@@ -480,7 +490,7 @@ it("allows cleanup at the freeze floor but does not admit another run against th
 });
 
 it("retains unsettled charges from earlier executions when a resumed execution completes", async () => {
-  const store = new QuotaGovernorStore(await directory());
+  const store = new QuotaGovernorStore(await directory(), clock);
   const admitted = await store.reserve(input);
   if (admitted.kind !== "admitted") throw new Error("Expected admission");
   const binding = {
@@ -504,11 +514,12 @@ it("retains unsettled charges from earlier executions when a resumed execution c
     expectedGeneration: 2,
     event: { type: "settled", executionId: "first", settlementId: "exit-one" },
   });
+  clockNow = nowMs + 1;
   const recovered = { ...observation, observedAt: new Date(nowMs + 1).toISOString() };
   await store.transition({
     ...binding,
     observation: recovered,
-    nowMs: nowMs + 1,
+
     expectedGeneration: 3,
     event: {
       type: "resume",
@@ -519,28 +530,175 @@ it("retains unsettled charges from earlier executions when a resumed execution c
   });
   await store.transition({
     ...binding,
-    nowMs: nowMs + 2,
+
     expectedGeneration: 4,
     event: { type: "complete", executionId: "second", settlementId: "exit-two" },
   });
+  clockNow = nowMs + 3;
   const receipt = {
     executionId: "second",
     authenticationGeneration: "auth",
     accountedAt: new Date(nowMs + 3).toISOString(),
   };
   const charges = { ...observation, observedAt: receipt.accountedAt, settledExecutions: [receipt] };
-  expect(await store.finalize({ ...binding, observation: charges, nowMs: nowMs + 3 })).toEqual({
+  expect(await store.finalize({ ...binding, observation: charges })).toEqual({
     kind: "deferred",
     reason: "charge_settlement_unavailable",
   });
   expect(
     await store.finalize({
       ...binding,
-      nowMs: nowMs + 3,
+
       observation: {
         ...charges,
         settledExecutions: [receipt, { ...receipt, executionId: "first" }],
       },
     }),
   ).toEqual({ kind: "finalized" });
+});
+
+it("rejects an initial reservation whose telemetry expires while queued", async () => {
+  const store = new QuotaGovernorStore(await directory(), clock);
+  const pending = store.reserve(input);
+  clockNow += 120_001;
+  expect(await pending).toMatchObject({
+    kind: "deferred",
+    reason: "quota",
+    decision: { reasons: [{ code: "telemetry_stale" }] },
+  });
+  await expect(readFile(store.accountPath(policy.account))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(
+    (
+      await store.reserve({
+        ...input,
+        observation: { ...observation, observedAt: new Date(clockNow).toISOString() },
+      })
+    ).kind,
+  ).toBe("admitted");
+});
+
+it.each(["start", "resume", "finalize"] as const)(
+  "uses the locked store clock for queued %s and preserves custody on stale evidence",
+  async (operation) => {
+    const store = new QuotaGovernorStore(await directory(), clock);
+    const admitted = await store.reserve(input);
+    if (admitted.kind !== "admitted") throw new Error("Expected admission");
+    const binding = { account: policy.account, reservationId: admitted.reservation.id };
+    const start = {
+      type: "start" as const,
+      executionId: "first",
+      authenticationGeneration: "auth",
+    };
+    if (operation !== "start") {
+      await store.transition({ ...binding, observation, expectedGeneration: 0, event: start });
+      if (operation === "resume") {
+        await store.transition({
+          ...binding,
+          expectedGeneration: 1,
+          event: { type: "freeze", reason: "quota" },
+        });
+        await store.transition({
+          ...binding,
+          expectedGeneration: 2,
+          event: { type: "settled", executionId: "first", settlementId: "exit" },
+        });
+      } else {
+        await store.transition({
+          ...binding,
+          expectedGeneration: 1,
+          event: { type: "complete", executionId: "first", settlementId: "exit" },
+        });
+      }
+    }
+    clockNow += 1;
+    const sample = () => ({
+      ...observation,
+      observedAt: new Date(clockNow).toISOString(),
+      settledExecutions: [
+        {
+          executionId: "first",
+          authenticationGeneration: "auth",
+          accountedAt: new Date(clockNow).toISOString(),
+        },
+      ],
+    });
+    const execute = () =>
+      operation === "finalize"
+        ? store.finalize({ ...binding, observation: sample() })
+        : store.transition({
+            ...binding,
+            observation: sample(),
+            expectedGeneration: operation === "start" ? 0 : 3,
+            event:
+              operation === "start"
+                ? start
+                : {
+                    type: "resume",
+                    executionId: "second",
+                    authenticationGeneration: "auth",
+                    manual: false,
+                  },
+          });
+    const before = await readFile(store.accountPath(policy.account), "utf8");
+    const pending = execute();
+    clockNow += 120_001;
+    expect(await pending).toMatchObject({
+      kind: "deferred",
+      reason: "quota",
+      decision: { reasons: [{ code: "telemetry_stale" }] },
+    });
+    expect(await readFile(store.accountPath(policy.account), "utf8")).toBe(before);
+    expect((await execute()).kind).toBe(operation === "finalize" ? "finalized" : "transitioned");
+    if (operation !== "finalize") {
+      const execution = await store.execution(binding.account, binding.reservationId);
+      clockNow += 120_001;
+      expect(
+        (
+          await store.transition({
+            ...binding,
+            expectedGeneration: execution.generation,
+            event: { type: "freeze", reason: "quota" },
+          })
+        ).kind,
+      ).toBe("transitioned");
+      expect(
+        (
+          await store.transition({
+            ...binding,
+            expectedGeneration: execution.generation + 1,
+            event: {
+              type: "settled",
+              executionId: operation === "start" ? "first" : "second",
+              settlementId: "cleanup",
+            },
+          })
+        ).kind,
+      ).toBe("transitioned");
+    }
+  },
+);
+
+it("rechecks freshness after persisting the accounting contract", async () => {
+  const dir = await directory();
+  const initial = new QuotaGovernorStore(dir, clock);
+  expect((await initial.configureAccountingContract({ policy, expectedRevision: null })).kind).toBe(
+    "configured",
+  );
+  let checks = 0;
+  const store = new QuotaGovernorStore(dir, {
+    nowMs: () => (++checks === 1 ? nowMs : nowMs + 120_001),
+  });
+  expect(await store.reserve(input)).toMatchObject({
+    kind: "deferred",
+    reason: "quota",
+    decision: { reasons: [{ code: "telemetry_stale" }] },
+  });
+  expect(checks).toBe(2);
+  await expect(readFile(store.accountPath(policy.account))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  const saved = JSON.parse(await readFile(`${store.accountPath(policy.account)}.contract`, "utf8"));
+  expect(saved.account).toEqual(policy.account);
 });

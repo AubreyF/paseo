@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import type { QuotaGovernorPolicy, QuotaObservation } from "@getpaseo/protocol/quota-governor";
 import { QuotaGovernorStore } from "./governor-store.js";
 import {
@@ -13,6 +13,12 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 const nowMs = Date.parse("2026-09-14T12:00:00Z");
+let clockNow = nowMs;
+beforeEach(() => {
+  clockNow = nowMs;
+});
+const clock = { nowMs: () => clockNow };
+
 const policy: QuotaGovernorPolicy = {
   version: 1,
   account: { issuer: "test", accountId: "account" },
@@ -65,7 +71,7 @@ const input = {
 async function setup() {
   const dir = await mkdtemp(join(tmpdir(), "account-contract-"));
   dirs.push(dir);
-  return { dir, store: new QuotaGovernorStore(dir) };
+  return { dir, store: new QuotaGovernorStore(dir, clock) };
 }
 
 it("canonicalizes timezone aliases while preserving meter definition and account identity", () => {
@@ -136,6 +142,7 @@ it("retains the account contract across completion, alias changes and restart", 
     expectedGeneration: 1,
     event: { type: "complete", executionId: "execution", settlementId: "exit" },
   });
+  clockNow = nowMs + 1;
   const at = new Date(nowMs + 1).toISOString();
   const meters = structuredClone(observation.consumptionMeters);
   for (const meter of meters) meter.coverageEnd = at;
@@ -147,14 +154,14 @@ it("retains the account contract across completion, alias changes and restart", 
       { executionId: "execution", authenticationGeneration: "auth", accountedAt: at },
     ],
   };
-  expect(await store.finalize({ ...binding, observation: settled, nowMs: nowMs + 1 })).toEqual({
+  expect(await store.finalize({ ...binding, observation: settled })).toEqual({
     kind: "finalized",
   });
-  const reopened = new QuotaGovernorStore(dir);
+  const reopened = new QuotaGovernorStore(dir, clock);
   const next = {
     ...input,
     observation: settled,
-    nowMs: nowMs + 1,
+
     scheduleId: "other",
     occurrenceId: "other",
     providerId: "other-alias",
@@ -206,6 +213,7 @@ it.each([false, true])(
       expectedGeneration: 1,
       event: { type: "complete", executionId: "execution", settlementId: "exit" },
     });
+    clockNow = nowMs + 1;
     const at = new Date(nowMs + 1).toISOString();
     const settled = structuredClone(observation);
     settled.observedAt = at;
@@ -213,7 +221,7 @@ it.each([false, true])(
     settled.settledExecutions = [
       { executionId: "execution", authenticationGeneration: "auth", accountedAt: at },
     ];
-    expect(await store.finalize({ ...binding, observation: settled, nowMs: nowMs + 1 })).toEqual({
+    expect(await store.finalize({ ...binding, observation: settled })).toEqual({
       kind: "finalized",
     });
     if (legacy) {
@@ -222,12 +230,12 @@ it.each([false, true])(
       delete old.accountingContractRevision;
       await writeFile(path, JSON.stringify(old));
     }
-    const reopened = new QuotaGovernorStore(dir);
+    const reopened = new QuotaGovernorStore(dir, clock);
     expect(
       await reopened.reserve({
         ...input,
         observation: settled,
-        nowMs: nowMs + 1,
+
         occurrenceId: "strict",
       }),
     ).toEqual({ kind: "deferred", reason: "accounting_contract_missing" });

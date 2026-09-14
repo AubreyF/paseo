@@ -10,7 +10,7 @@ const directories: string[] = [];
 const active: QuotaExecutionSupervisor[] = [];
 afterEach(async () => {
   vi.useRealTimers();
-  await Promise.allSettled(active.splice(0).map((supervisor) => supervisor.freeze("manual")));
+  await Promise.allSettled(active.splice(0).map((supervisor) => supervisor.freeze("quota")));
   await Promise.all(
     directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
   );
@@ -53,11 +53,10 @@ async function fixture() {
     consumptionMeters: [],
   });
   let observation = sample();
-  const store = new QuotaGovernorStore(directory);
+  const store = new QuotaGovernorStore(directory, { nowMs: () => now });
   const reserved = await store.reserve({
     policy,
     observation,
-    nowMs: now,
     scheduleId: "schedule",
     occurrenceId: "occurrence",
     providerId: "account-alias",
@@ -70,14 +69,12 @@ async function fixture() {
     expectedGeneration: 0,
     event: { type: "start", executionId: "execution", authenticationGeneration: "auth" },
     observation,
-    nowMs: now,
   });
   await store.transition({
     account: policy.account,
     reservationId,
     expectedGeneration: 1,
     event: { type: "started", executionId: "execution" },
-    nowMs: now,
   });
   const receipt = {
     executionId: "execution",
@@ -284,7 +281,6 @@ it("prevents duplicate supervision and retires verified completion without anoth
     reservationId: f.options.reservationId,
     expectedGeneration: current.generation,
     event: { type: "complete", executionId: "execution", settlementId: "completed" },
-    nowMs: f.options.nowMs(),
   });
   await f.supervisor.checkNow();
   expect(f.options.freezeAndSettle).not.toHaveBeenCalled();

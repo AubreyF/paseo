@@ -116,7 +116,6 @@ type Ledger = z.infer<typeof LedgerSchema>;
 interface ReserveInput {
   policy: QuotaGovernorPolicy;
   observation: QuotaObservation;
-  nowMs: number;
   scheduleId: string;
   occurrenceId: string;
   providerId: string;
@@ -351,7 +350,6 @@ export class QuotaGovernorStore {
     expectedGeneration: number;
     event: GovernorExecutionEvent;
     observation?: QuotaObservation;
-    nowMs: number;
   }): Promise<
     | { kind: "transitioned"; execution: GovernorExecution }
     | Extract<ReserveResult, { kind: "deferred" }>
@@ -366,12 +364,13 @@ export class QuotaGovernorStore {
       ) {
         throw new Error("Quota reservation identity mismatch.");
       }
+      const nowMs = this.nowMs();
       if (input.event.type === "start" || input.event.type === "resume") {
         const observation = input.observation ?? { status: "unavailable", reason: "read_failed" };
         const decision = evaluateQuotaGovernor({
           policy: ledger.reservation.policy,
           observation,
-          nowMs: input.nowMs,
+          nowMs,
           phase: "admission",
         });
         if (decision.action !== "admit") return { kind: "deferred", reason: "quota", decision };
@@ -392,14 +391,14 @@ export class QuotaGovernorStore {
       }
       if (input.event.type === "freeze") {
         const previous = ledger.lastFreezeAt ? Date.parse(ledger.lastFreezeAt) : -Infinity;
-        ledger.lastFreezeAt = new Date(Math.max(previous, input.nowMs)).toISOString();
+        ledger.lastFreezeAt = new Date(Math.max(previous, nowMs)).toISOString();
       }
       ledger.execution = advanceGovernorExecution(
         ledger.execution,
         input.expectedGeneration,
         input.event,
       );
-      recordExecutionAccounting(ledger, input.event, input.nowMs);
+      recordExecutionAccounting(ledger, input.event, nowMs);
       await writeLedger(path, ledger);
       return { kind: "transitioned", execution: ledger.execution };
     });
@@ -410,7 +409,6 @@ export class QuotaGovernorStore {
     account: QuotaAccount;
     reservationId: string;
     observation: QuotaObservation;
-    nowMs: number;
   }): Promise<{ kind: "finalized" } | Extract<ReserveResult, { kind: "deferred" }>> {
     const path = this.accountPath(input.account);
     return this.withAccountLock(path, async () => {
@@ -427,10 +425,11 @@ export class QuotaGovernorStore {
       )
         throw new Error("Execution completion is unconfirmed.");
       const observation = QuotaObservationSchema.parse(input.observation);
+      const nowMs = this.nowMs();
       const decision = evaluateQuotaGovernor({
         policy: ledger.reservation.policy,
         observation,
-        nowMs: input.nowMs,
+        nowMs,
         phase: "admission",
       });
       // Being out of allowance must not prevent cleanup. Missing or invalid
@@ -461,7 +460,7 @@ export class QuotaGovernorStore {
         scheduleId: ledger.reservation.scheduleId,
         occurrenceId: ledger.reservation.occurrenceId,
         reservationId: ledger.reservation.id,
-        finalizedAt: new Date(input.nowMs).toISOString(),
+        finalizedAt: new Date(nowMs).toISOString(),
       });
       await writeLedger(path, ledger);
       return { kind: "finalized" };
@@ -515,7 +514,8 @@ export class QuotaGovernorStore {
       const conflict = reconcile(ledger, input, windowContract(input.observation));
       if (conflict) return conflict;
     }
-    const decision = evaluateQuotaGovernor({ ...input, phase: "admission" });
+    let nowMs = this.nowMs();
+    let decision = evaluateQuotaGovernor({ ...input, nowMs, phase: "admission" });
     if (decision.action !== "admit") return { kind: "deferred", reason: "quota", decision };
     const observation = QuotaObservationSchema.parse(input.observation);
     if (observation.status !== "available")
@@ -524,6 +524,11 @@ export class QuotaGovernorStore {
     const accountingDeferral = accountingAdmissionDeferral(accounting, input.policy);
     if (accountingDeferral) return accountingDeferral;
     const accountingRevision = await recordAdmissionAccounting(path, accounting, ledger);
+    // Accounting reads and writes may wait. Recheck before recording admission;
+    // the native dispatch boundary must check again after persistence completes.
+    nowMs = this.nowMs();
+    decision = evaluateQuotaGovernor({ ...input, nowMs, phase: "admission" });
+    if (decision.action !== "admit") return { kind: "deferred", reason: "quota", decision };
     const contract = windowContract(observation);
     if (ledger && !ledger.released) {
       if (ledger.execution.state === "completed")
@@ -537,7 +542,7 @@ export class QuotaGovernorStore {
       occurrenceId: input.occurrenceId,
       providerId: input.providerId,
       policy: input.policy,
-      createdAt: new Date(input.nowMs).toISOString(),
+      createdAt: new Date(nowMs).toISOString(),
     });
     await writeLedger(path, {
       version: 1,

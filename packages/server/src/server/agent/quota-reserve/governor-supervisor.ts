@@ -401,7 +401,6 @@ export class QuotaExecutionSupervisor {
           reservationId: this.options.reservationId,
           expectedGeneration: current.generation,
           event,
-          nowMs: this.nowMs(),
         });
         if (result.kind !== "transitioned")
           throw new Error(`Quota state persistence deferred: ${result.reason}.`);

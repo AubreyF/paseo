@@ -593,8 +593,12 @@ export class HubRelationshipHarness {
     ];
     const responses: SessionOutboundMessage[] = [];
     for (const message of messages) {
+      const response = this.nextSocketEnvelope(
+        socket,
+        (reply) => "requestId" in reply.payload && reply.payload.requestId === message.requestId,
+      );
       socket.send(JSON.stringify({ type: "session", message }));
-      responses.push((await this.nextSocketEnvelope(socket)).message);
+      responses.push((await response).message);
     }
     await this.closeClaimedCliSocket(socket);
     return responses;
@@ -606,6 +610,10 @@ export class HubRelationshipHarness {
     const socket = await this.openClaimedCliSocket(`ws://127.0.0.1:${target.port}/ws`, {
       origin: `http://127.0.0.1:${target.port}`,
     });
+    const pending = this.nextSocketEnvelope(
+      socket,
+      (reply) => "requestId" in reply.payload && reply.payload.requestId === "browser-hub-connect",
+    );
     socket.send(
       JSON.stringify({
         type: "session",
@@ -618,7 +626,7 @@ export class HubRelationshipHarness {
         },
       }),
     );
-    const response = (await this.nextSocketEnvelope(socket)).message;
+    const response = (await pending).message;
     await this.closeClaimedCliSocket(socket);
     return response;
   }
@@ -1457,16 +1465,35 @@ export class HubRelationshipHarness {
     return process;
   }
 
-  private nextSocketEnvelope(socket: WebSocket): Promise<{ message: SessionOutboundMessage }> {
+  private nextSocketEnvelope(
+    socket: WebSocket,
+    matches: (message: SessionOutboundMessage) => boolean,
+  ): Promise<{ message: SessionOutboundMessage }> {
     return new Promise((resolve, reject) => {
-      socket.once("message", (data) => {
+      const cleanup = () => {
+        socket.off("message", onMessage);
+        socket.off("error", onError);
+        socket.off("close", onClose);
+      };
+      const onError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      const onClose = () => onError(new Error("Socket closed before the expected response."));
+      const onMessage = (data: import("ws").RawData) => {
         try {
-          resolve(JSON.parse(data.toString()) as { message: SessionOutboundMessage });
+          const envelope = JSON.parse(data.toString()) as { message: SessionOutboundMessage };
+          if (!matches(envelope.message)) return;
+          cleanup();
+          resolve(envelope);
         } catch (error) {
+          cleanup();
           reject(error);
         }
-      });
-      socket.once("error", reject);
+      };
+      socket.on("message", onMessage);
+      socket.once("error", onError);
+      socket.once("close", onClose);
     });
   }
 
@@ -1480,6 +1507,10 @@ export class HubRelationshipHarness {
       socket.once("open", resolve);
       socket.once("error", reject);
     });
+    const hello = this.nextSocketEnvelope(
+      socket,
+      (reply) => reply.type === "status" && reply.payload.status === "server_info",
+    );
     socket.send(
       JSON.stringify({
         type: "hello",
@@ -1488,7 +1519,7 @@ export class HubRelationshipHarness {
         protocolVersion: 1,
       }),
     );
-    await this.nextSocketEnvelope(socket);
+    await hello;
     return socket;
   }
 

@@ -1,3 +1,4 @@
+import { QuotaObserverDisposedError } from "../agent-sdk-types.js";
 import { CodexLoginSession } from "./codex/login.js";
 import {
   getAgentStreamEventTurnId,
@@ -42,6 +43,7 @@ import {
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { ProviderQuotaExhaustedError } from "../quota-error.js";
 import { CodexResetCreditError, CodexResetCreditSession } from "./codex/reset-credits.js";
+import { CodexQuotaObservationSession } from "./codex/quota-observation.js";
 import { probeResetRedemption } from "./codex/reset-capability.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
@@ -7057,6 +7059,22 @@ export class CodexAppServerAgentClient implements AgentClient {
     } catch (error) {
       await client.dispose();
       throw error;
+    }
+  }
+
+  async openQuotaObservationSession(): Promise<CodexQuotaObservationSession> {
+    if (this.deps.customProvider && !this.runtimeSettings?.env?.CODEX_HOME?.trim()) {
+      throw new Error("Configure an explicit CODEX_HOME before enforcing account quota.");
+    }
+    const child = await this.spawnAppServer();
+    const client = new CodexAppServerClient(child, this.logger);
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams(), 15_000);
+      client.notify("initialized", {});
+      return new CodexQuotaObservationSession(client);
+    } catch {
+      await client.dispose();
+      throw new QuotaObserverDisposedError();
     }
   }
 

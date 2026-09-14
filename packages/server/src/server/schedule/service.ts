@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { parseQuotaGovernorPolicy } from "@getpaseo/protocol/quota-governor";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
@@ -69,6 +71,10 @@ function applyNewAgentConfig(
   patch: UpdateScheduleNewAgentConfig,
 ): Extract<ScheduleTarget, { type: "new-agent" }> {
   const config = { ...target.config };
+  if (patch.quotaPolicy !== undefined) {
+    if (patch.quotaPolicy === null) delete config.quotaPolicy;
+    else config.quotaPolicy = parseQuotaGovernorPolicy(patch.quotaPolicy);
+  }
   if (patch.provider !== undefined) {
     const trimmed = patch.provider.trim();
     if (!trimmed) {
@@ -225,6 +231,22 @@ interface ScheduleWorkspaceCreateInput {
 }
 
 export interface ScheduleServiceOptions {
+  quotaRunner?: {
+    prepare(
+      schedule: StoredSchedule,
+      scheduledFor: string,
+    ): Promise<
+      | { kind: "deferred"; reason: string }
+      | {
+          kind: "ready";
+          resumeRunId?: string;
+          run(
+            schedule: StoredSchedule,
+            runId: string,
+          ): Promise<ScheduleExecutionResult | { state: "frozen"; reason: string }>;
+        }
+    >;
+  };
   paseoHome: string;
   logger: Logger;
   agentManager: ScheduleAgentManager;
@@ -242,6 +264,7 @@ export interface ScheduleServiceOptions {
 }
 
 export class ScheduleService {
+  private readonly quotaRunner: ScheduleServiceOptions["quotaRunner"];
   private readonly store: ScheduleStore;
   private readonly logger: Logger;
   private readonly agentManager: ScheduleAgentManager;
@@ -263,6 +286,7 @@ export class ScheduleService {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ScheduleServiceOptions) {
+    this.quotaRunner = options.quotaRunner;
     this.store = new ScheduleStore(join(options.paseoHome, "schedules"));
     this.logger = options.logger.child({ module: "schedule-service" });
     this.agentManager = options.agentManager;
@@ -298,6 +322,8 @@ export class ScheduleService {
   }
 
   async create(input: CreateScheduleInput): Promise<StoredSchedule> {
+    if (input.target.type === "new-agent" && input.target.config.quotaPolicy)
+      parseQuotaGovernorPolicy(input.target.config.quotaPolicy);
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
     return this.createScheduleRecord(input, {
@@ -342,6 +368,8 @@ export class ScheduleService {
   // name and target (e.g. babysit-pr re-registering its heartbeat) refreshes the
   // existing non-completed schedule in place instead of minting a duplicate.
   async createOrReplace(input: CreateScheduleInput): Promise<StoredSchedule> {
+    if (input.target.type === "new-agent" && input.target.config.quotaPolicy)
+      parseQuotaGovernorPolicy(input.target.config.quotaPolicy);
     const name = trimOptionalName(input.name);
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
@@ -355,6 +383,17 @@ export class ScheduleService {
         return this.buildScheduleRecord(input, { name, prompt, target: inputTarget });
       },
       update: async (current) => {
+        if (
+          current.target.type === "new-agent" &&
+          current.target.config.quotaPolicy &&
+          (current.status === "paused" ||
+            this.runningScheduleIds.has(current.id) ||
+            current.runs.some((run) => run.status === "running"))
+        ) {
+          throw new Error(
+            "Reconcile or explicitly resume the protected schedule before replacing it.",
+          );
+        }
         const now = this.now();
         const cadence = mergeScheduleCadenceTimezone(current.cadence, input.cadence);
         const runOnCreate = input.runOnCreate ?? cadence.type === "every";
@@ -433,8 +472,24 @@ export class ScheduleService {
     return requireSchedule(resumed, id);
   }
 
+  private hasUnfinishedProtectedExecution(schedule: StoredSchedule): boolean {
+    return (
+      schedule.target.type === "new-agent" &&
+      Boolean(schedule.target.config.quotaPolicy) &&
+      (this.runningScheduleIds.has(schedule.id) ||
+        schedule.runs.some((run) => run.status === "running"))
+    );
+  }
+
   async update(input: UpdateScheduleInput): Promise<StoredSchedule> {
     const next = await this.store.update(input.id, async (schedule) => {
+      if (
+        this.hasUnfinishedProtectedExecution(schedule) &&
+        ((input.prompt !== undefined && normalizePrompt(input.prompt) !== schedule.prompt) ||
+          (input.cadence !== undefined && !isDeepStrictEqual(input.cadence, schedule.cadence)))
+      ) {
+        throw new Error("Reconcile the protected execution before changing its prompt or cadence.");
+      }
       const now = this.now();
       let updated: StoredSchedule = schedule;
 
@@ -459,6 +514,16 @@ export class ScheduleService {
           throw new Error("new-agent config updates are only valid for new-agent target schedules");
         }
         const patchedTarget = applyNewAgentConfig(updated.target, input.newAgentConfig);
+        if (
+          updated.target.config.quotaPolicy &&
+          !isDeepStrictEqual(patchedTarget, updated.target) &&
+          (this.runningScheduleIds.has(updated.id) ||
+            updated.runs.some((run) => run.status === "running"))
+        ) {
+          throw new Error(
+            "Reconcile the protected execution before changing its account or configuration.",
+          );
+        }
         updated = {
           ...updated,
           target: patchedTarget,
@@ -595,6 +660,9 @@ export class ScheduleService {
       runId: string;
     }> = [];
     await this.store.update(scheduleId, (current) => {
+      // The governor reconciles its captured execution and preserves unfinished
+      // work. The legacy restart path must not fail or archive that execution.
+      if (current.target.type === "new-agent" && current.target.config.quotaPolicy) return current;
       let updated = { ...current };
       let dirty = false;
 
@@ -693,7 +761,37 @@ export class ScheduleService {
   ): Promise<void> {
     const manual = options?.manual === true;
     this.runningScheduleIds.add(schedule.id);
-    const runId = randomUUID();
+    let runner: (
+      schedule: StoredSchedule,
+      runId: string,
+    ) => Promise<ScheduleExecutionResult | { state: "frozen"; reason: string }> = this.runner;
+    let resumeRunId: string | undefined;
+    if (schedule.target.type === "new-agent" && schedule.target.config.quotaPolicy) {
+      try {
+        const prepared = await this.quotaRunner?.prepare(
+          schedule,
+          manual ? now.toISOString() : (schedule.nextRunAt ?? now.toISOString()),
+        );
+        if (!prepared || prepared.kind === "deferred") {
+          await this.store.update(schedule.id, (current) => ({
+            ...current,
+            quotaState: {
+              state: "held",
+              reason: prepared?.reason ?? "governor_unavailable",
+              checkedAt: this.now().toISOString(),
+            },
+          }));
+          this.runningScheduleIds.delete(schedule.id);
+          return;
+        }
+        runner = prepared.run;
+        resumeRunId = prepared.resumeRunId;
+      } catch (error) {
+        this.runningScheduleIds.delete(schedule.id);
+        throw error;
+      }
+    }
+    const runId = resumeRunId ?? randomUUID();
     const runningRun: ScheduleRun = {
       id: runId,
       scheduledFor: manual ? now.toISOString() : (schedule.nextRunAt ?? now.toISOString()),
@@ -704,10 +802,23 @@ export class ScheduleService {
       output: null,
       error: null,
     };
-    const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
-
+    let appended = false;
     try {
-      const result = await this.runner(scheduleWithRun, runId);
+      const scheduleWithRun = await this.openScheduleRun(schedule, runningRun, resumeRunId);
+      appended = true;
+      const result = await runner(scheduleWithRun, runId);
+      if ("state" in result) {
+        await this.store.update(schedule.id, (current) => ({
+          ...current,
+          quotaState: { state: "held", reason: result.reason, checkedAt: this.now().toISOString() },
+          runs: current.runs.map((run) =>
+            run.id === runId
+              ? { ...run, quotaState: { state: "frozen", reason: result.reason } }
+              : run,
+          ),
+        }));
+        return;
+      }
       await this.finishRun({
         scheduleId: schedule.id,
         runId,
@@ -719,6 +830,26 @@ export class ScheduleService {
         manual,
       });
     } catch (error) {
+      if (!appended) throw error;
+      if (schedule.target.type === "new-agent" && schedule.target.config.quotaPolicy) {
+        await this.store.update(schedule.id, (current) => ({
+          ...current,
+          quotaState: {
+            state: "held",
+            reason: "execution_uncertain",
+            checkedAt: this.now().toISOString(),
+          },
+          runs: current.runs.map((run) =>
+            run.id === runId
+              ? {
+                  ...run,
+                  quotaState: { state: "reconciliation_required", reason: "execution_uncertain" },
+                }
+              : run,
+          ),
+        }));
+        return;
+      }
       await this.finishRun({
         scheduleId: schedule.id,
         runId,
@@ -734,15 +865,53 @@ export class ScheduleService {
     }
   }
 
+  private async openScheduleRun(
+    schedule: StoredSchedule,
+    runningRun: ScheduleRun,
+    resumeRunId?: string,
+  ): Promise<StoredSchedule> {
+    if (!resumeRunId) {
+      if (schedule.runs.some((run) => run.status === "running"))
+        throw new Error("Reconcile unfinished work before admitting another run.");
+      return this.appendRunningRun(schedule.id, runningRun, schedule);
+    }
+    const current = await this.inspect(schedule.id);
+    if (
+      !isDeepStrictEqual(current.target, schedule.target) ||
+      current.status !== schedule.status ||
+      current.prompt !== schedule.prompt
+    )
+      throw new Error("Schedule changed during resume admission.");
+    if (!current.runs.some((run) => run.id === resumeRunId && run.status === "running"))
+      throw new Error("Protected run to resume is missing.");
+    return current;
+  }
+
   private async appendRunningRun(
     scheduleId: string,
     runningRun: ScheduleRun,
+    preparedSchedule: StoredSchedule,
   ): Promise<StoredSchedule> {
-    const updated = await this.store.update(scheduleId, (schedule) => ({
-      ...schedule,
-      updatedAt: runningRun.startedAt,
-      runs: [...schedule.runs, runningRun],
-    }));
+    const updated = await this.store.update(scheduleId, (schedule) => {
+      if (
+        !isDeepStrictEqual(schedule.target, preparedSchedule.target) ||
+        schedule.status !== preparedSchedule.status ||
+        schedule.prompt !== preparedSchedule.prompt ||
+        !isDeepStrictEqual(schedule.cadence, preparedSchedule.cadence) ||
+        !isDeepStrictEqual(schedule.runs, preparedSchedule.runs) ||
+        schedule.nextRunAt !== preparedSchedule.nextRunAt ||
+        schedule.expiresAt !== preparedSchedule.expiresAt ||
+        schedule.maxRuns !== preparedSchedule.maxRuns ||
+        schedule.runs.some((run) => run.status === "running")
+      )
+        throw new Error("Schedule changed during admission.");
+      return {
+        ...schedule,
+        quotaState: undefined,
+        updatedAt: runningRun.startedAt,
+        runs: [...schedule.runs, runningRun],
+      };
+    });
     return requireSchedule(updated, scheduleId);
   }
 
@@ -763,6 +932,7 @@ export class ScheduleService {
           ? {
               ...run,
               status: params.status,
+              quotaState: undefined,
               endedAt: now.toISOString(),
               agentId: params.agentId ?? run.agentId,
               output: params.output,
@@ -775,6 +945,7 @@ export class ScheduleService {
         runs: completedRuns,
         lastRunAt: now.toISOString(),
         updatedAt: now.toISOString(),
+        quotaState: undefined,
       };
 
       if (params.targetGone) {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AgentProviderSchema } from "../provider-manifest.js";
+import { QuotaGovernorPolicySchema, type QuotaGovernorPolicy } from "../quota-governor.js";
 
 export const ScheduleStatusSchema = z.enum(["active", "paused", "completed"]);
 export type ScheduleStatus = z.infer<typeof ScheduleStatusSchema>;
@@ -26,6 +27,7 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
     type: z.literal("new-agent"),
     config: z.object({
       provider: AgentProviderSchema,
+      quotaPolicy: QuotaGovernorPolicySchema.optional(),
       cwd: z.string().trim().min(1),
       modeId: z.string().trim().min(1).optional(),
       model: z.string().trim().min(1).optional(),
@@ -52,6 +54,9 @@ export const ScheduleRunSchema = z.object({
   workspaceId: z.string().nullable().optional(),
   output: z.string().nullable(),
   error: z.string().nullable(),
+  quotaState: z
+    .object({ state: z.enum(["frozen", "reconciliation_required"]), reason: z.string() })
+    .optional(),
 });
 export type ScheduleRun = z.infer<typeof ScheduleRunSchema>;
 
@@ -70,6 +75,9 @@ export const StoredScheduleSchema = z.object({
   expiresAt: z.string().nullable(),
   maxRuns: z.number().int().positive().nullable(),
   runs: z.array(ScheduleRunSchema),
+  quotaState: z
+    .object({ state: z.literal("held"), reason: z.string(), checkedAt: z.string() })
+    .optional(),
 });
 export type StoredSchedule = z.infer<typeof StoredScheduleSchema>;
 
@@ -89,6 +97,7 @@ export interface CreateScheduleInput {
 }
 
 export interface UpdateScheduleNewAgentConfig {
+  quotaPolicy?: QuotaGovernorPolicy | null;
   provider?: string;
   model?: string | null;
   modeId?: string | null;

@@ -754,6 +754,18 @@ export interface ResolveAgentDefaultModeInput {
   signal?: AbortSignal;
 }
 
+export interface ProviderQuotaObservationSession {
+  read(): Promise<import("@getpaseo/protocol/quota-governor").QuotaObservation>;
+  dispose(): Promise<void>;
+}
+
+/** Providers may report this only after confirming disposal of a failed observer. */
+export class QuotaObserverDisposedError extends Error {
+  constructor() {
+    super("Quota observer initialization failed after confirmed disposal.");
+  }
+}
+
 export interface ProviderResetCreditSession {
   readonly canRedeem: boolean;
   read(): Promise<ProviderResetSnapshot>;
@@ -809,6 +821,8 @@ export interface AgentClient {
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /** Account management only. Never attach this operation to the agent tool catalog. */
   openResetCreditSession?(): Promise<ProviderResetCreditSession>;
+  /** Read-only account telemetry. This connection must never start inference. */
+  openQuotaObservationSession?(): Promise<ProviderQuotaObservationSession>;
   openAccountLoginSession?(): Promise<ProviderLoginSession>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().

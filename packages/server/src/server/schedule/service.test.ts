@@ -352,6 +352,164 @@ describe("ScheduleService", () => {
     expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
   });
 
+  test("protected quota deferrals preserve the occurrence and maxRuns across restart", async () => {
+    const runner = vi.fn(async () => ({ agentId: null, output: "must not run" }));
+    const createWorkspace = vi.fn(async () => {
+      throw new Error("Must not create a workspace");
+    });
+    const options = {
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner,
+      createDirectoryWorkspace: createWorkspace,
+    };
+    const service = createScheduleService(options);
+    const quotaPolicy = {
+      version: 1 as const,
+      account: { issuer: "openai", accountId: "account" },
+      requiredWindows: [{ bucketId: "codex", windowId: "primary", durationMinutes: 10080 }],
+      launchFloorPercent: 30,
+      freezeFloorPercent: 25,
+      maxObservationAgeSeconds: 120,
+      consumptionLimits: [],
+      recovery: "automatic_after_reconciliation" as const,
+    };
+    const created = await service.create({
+      prompt: "Factory",
+      cadence: { type: "every", everyMs: 60000 },
+      maxRuns: 1,
+      target: {
+        type: "new-agent",
+        config: { provider: "codex-secondary", cwd: tempDir, quotaPolicy },
+      },
+    });
+    await service.tick();
+    await service.tick();
+    expect(await service.inspect(created.id)).toMatchObject({
+      status: "active",
+      runs: [],
+      nextRunAt: created.nextRunAt,
+      quotaState: { state: "held", reason: "governor_unavailable" },
+    });
+    const prepare = vi.fn(async () => ({ kind: "deferred" as const, reason: "weekly_floor" }));
+    const reopened = createScheduleService({ ...options, quotaRunner: { prepare } });
+    await reopened.start();
+    await reopened.stop();
+    await reopened.tick();
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ id: created.id }),
+      created.nextRunAt,
+    );
+    expect(await reopened.inspect(created.id)).toMatchObject({
+      status: "active",
+      runs: [],
+      nextRunAt: created.nextRunAt,
+      quotaState: { state: "held", reason: "weekly_floor" },
+    });
+    expect(runner).not.toHaveBeenCalled();
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
+  test("resumes the same governed run after freeze and restart without consuming another attempt", async () => {
+    const ordinary = vi.fn(async () => ({ agentId: null, output: "ordinary" }));
+    let frozen = false;
+    let executionAttempts = 0;
+    const governed = vi.fn(
+      async (
+        _schedule: StoredSchedule,
+        _runId: string,
+      ): Promise<ScheduleExecutionResult | { state: "frozen"; reason: string }> => {
+        executionAttempts++;
+        if (executionAttempts === 2) throw new Error("Execution outcome unknown");
+        if (!frozen) {
+          frozen = true;
+          return { state: "frozen", reason: "weekly_floor" };
+        }
+        return { agentId: null, output: "governed" };
+      },
+    );
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: ordinary,
+      quotaRunner: {
+        prepare: async (schedule) => ({
+          kind: "ready",
+          run: governed,
+          resumeRunId: schedule.runs.find((run) => run.status === "running")?.id,
+        }),
+      },
+    });
+    const created = await service.create({
+      prompt: "Factory",
+      cadence: { type: "every", everyMs: 60000 },
+      maxRuns: 1,
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "codex-secondary",
+          cwd: tempDir,
+          quotaPolicy: {
+            version: 1,
+            account: { issuer: "openai", accountId: "account" },
+            requiredWindows: [{ bucketId: "codex", windowId: "primary", durationMinutes: 10080 }],
+            launchFloorPercent: 30,
+            freezeFloorPercent: 25,
+            maxObservationAgeSeconds: 120,
+            consumptionLimits: [],
+            recovery: "automatic_after_reconciliation",
+          },
+        },
+      },
+    });
+    await service.tick();
+    expect(governed).toHaveBeenCalledTimes(1);
+    const held = await service.inspect(created.id);
+    expect(held).toMatchObject({
+      status: "active",
+      nextRunAt: created.nextRunAt,
+      runs: [{ status: "running", quotaState: { state: "frozen", reason: "weekly_floor" } }],
+    });
+    await expect(
+      service.update({ id: created.id, newAgentConfig: { provider: "another-account" } }),
+    ).rejects.toThrow("Reconcile");
+    await expect(service.update({ id: created.id, prompt: "Different work" })).rejects.toThrow(
+      "Reconcile",
+    );
+    await expect(
+      service.update({ id: created.id, cadence: { type: "every", everyMs: 300000 } }),
+    ).rejects.toThrow("Reconcile");
+    await service.start();
+    await service.stop();
+    await service.tick();
+    expect(governed).toHaveBeenCalledTimes(2);
+    expect(await service.inspect(created.id)).toMatchObject({
+      status: "active",
+      runs: [
+        {
+          status: "running",
+          quotaState: { state: "reconciliation_required" },
+        },
+      ],
+    });
+    await service.tick();
+    expect(governed).toHaveBeenCalledTimes(3);
+    expect(governed.mock.calls[0][1]).toBe(governed.mock.calls[1][1]);
+    expect(ordinary).not.toHaveBeenCalled();
+    expect(await service.inspect(created.id)).toMatchObject({
+      status: "completed",
+      runs: [{ status: "succeeded", output: "governed" }],
+    });
+  });
+
   test("pause and resume update persisted schedule state", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,

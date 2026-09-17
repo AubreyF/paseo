@@ -36,6 +36,7 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
+  type CapturedQuotaExecutionClient,
   type AgentCreateSessionOptions,
   type AgentResumeSessionOptions,
   type AgentFeature,
@@ -1072,6 +1073,7 @@ export class AgentManager {
     }
   }
   private readonly clients = new Map<AgentProvider, AgentClient>();
+  private readonly governedClientGenerations = new Map<AgentProvider, number>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
@@ -1150,6 +1152,10 @@ export class AgentManager {
   }
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
+    this.governedClientGenerations.set(
+      provider,
+      (this.governedClientGenerations.get(provider) ?? 0) + 1,
+    );
     this.clients.set(provider, client);
   }
 
@@ -1157,6 +1163,18 @@ export class AgentManager {
     providerDefinitions: ProviderEnabledMap;
     clients: ProviderClientMap;
   }): void {
+    const providers = new Set([...this.clients.keys(), ...Object.keys(input.clients)]);
+    for (const provider of providers) {
+      if (
+        this.clients.get(provider) !== input.clients[provider] ||
+        this.providerEnabled.get(provider) !== input.providerDefinitions[provider]?.enabled
+      ) {
+        this.governedClientGenerations.set(
+          provider,
+          (this.governedClientGenerations.get(provider) ?? 0) + 1,
+        );
+      }
+    }
     this.providerEnabled.clear();
     this.providerDefinitions.clear();
     for (const [provider, definition] of Object.entries(input.providerDefinitions)) {
@@ -1183,6 +1201,37 @@ export class AgentManager {
   ): Pick<AgentClient, "openQuotaObservationSession"> | null {
     if (this.providerEnabled.get(provider) === false) return null;
     return this.clients.get(provider) ?? null;
+  }
+
+  captureGovernedExecutionClient(provider: AgentProvider): CapturedQuotaExecutionClient {
+    const client = this.clients.get(provider);
+    const open = client?.openQuotaGovernedSession;
+    if (
+      !this.acceptingAgentRegistrations ||
+      this.providerEnabled.get(provider) === false ||
+      !client ||
+      !open
+    ) {
+      throw new Error("Governed provider execution is unavailable.");
+    }
+    const generation = this.governedClientGenerations.get(provider);
+    const assertCurrent = () => {
+      if (
+        !this.acceptingAgentRegistrations ||
+        this.providerEnabled.get(provider) === false ||
+        this.clients.get(provider) !== client ||
+        this.governedClientGenerations.get(provider) !== generation
+      ) {
+        throw new Error("Captured governed provider changed; reconciliation is required.");
+      }
+    };
+    return {
+      assertCurrent,
+      openSession: (input) => {
+        assertCurrent();
+        return open.call(client, input);
+      },
+    };
   }
 
   setAgentAttentionCallback(callback: AgentAttentionCallback): void {

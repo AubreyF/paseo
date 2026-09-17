@@ -152,6 +152,8 @@ import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
 import { QuotaSchedulePreflight } from "./schedule/quota-preflight.js";
 import { ProviderQuotaObservationService } from "../services/quota-fetcher/governor-service.js";
+import type { CreateGovernedScheduleRuntime } from "./schedule/governed-runtime.js";
+import { QuotaGovernorStore } from "./agent/quota-reserve/governor-store.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
@@ -477,6 +479,7 @@ export interface PaseoDaemon {
 }
 
 export interface PaseoDaemonDependencies {
+  createGovernedScheduleRuntime?: CreateGovernedScheduleRuntime;
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
@@ -1341,8 +1344,18 @@ export async function createPaseoDaemon(
   const governorObservations = new ProviderQuotaObservationService({
     getClient: (provider) => agentManager.getQuotaObservationClient(provider),
   });
-  const quotaPreflight = new QuotaSchedulePreflight({
+  const governedRuntime = await dependencies.createGovernedScheduleRuntime?.({
+    paseoHome: config.paseoHome,
+    store: new QuotaGovernorStore(path.join(config.paseoHome, "quota-governor")),
     readObservation: (provider) => governorObservations.read(provider),
+    captureClient: (provider) => agentManager.captureGovernedExecutionClient(provider),
+  });
+  const quotaPreflight = new QuotaSchedulePreflight({
+    readObservation: (provider) =>
+      governedRuntime
+        ? governedRuntime.readObservation(provider)
+        : governorObservations.read(provider),
+    execution: governedRuntime,
   });
   const scheduleService = new ScheduleService({
     quotaRunner: quotaPreflight,
@@ -1787,6 +1800,16 @@ export async function createPaseoDaemon(
       wsServer?.prepareForShutdown();
       agentManager.prepareForShutdown();
       await scheduleService.stop().catch(() => undefined);
+      const governedFailures: unknown[] = [];
+      try {
+        await governedRuntime?.stop();
+      } catch (failure) {
+        governedFailures.push(failure);
+        logger.error(
+          { err: failure },
+          "Governed runtime settlement remains unresolved during startup cleanup",
+        );
+      }
       await governorObservations.stop();
       await quotaReservePolling.stop();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
@@ -1796,6 +1819,14 @@ export async function createPaseoDaemon(
         httpServer.closeAllConnections();
         await new Promise<void>((resolve) => httpServer.close(() => resolve()));
       }
+      if (governedFailures.length)
+        // AggregateError accepts cause in argument three; the lint rule checks argument two.
+        // eslint-disable-next-line preserve-caught-error
+        throw new AggregateError(
+          [error, ...governedFailures],
+          "Daemon startup and governed cleanup failed.",
+          { cause: error },
+        );
       throw error;
     }
   };
@@ -1806,6 +1837,16 @@ export async function createPaseoDaemon(
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
     await scheduleService.stop().catch(() => undefined);
+    const governedFailures: unknown[] = [];
+    try {
+      await governedRuntime?.stop();
+    } catch (failure) {
+      governedFailures.push(failure);
+      logger.error(
+        { err: failure },
+        "Governed runtime settlement remains unresolved during shutdown",
+      );
+    }
     await governorObservations.stop();
     await pluginRuntime.stopAllPlugins();
     unsubscribePluginProviders();
@@ -1840,6 +1881,8 @@ export async function createPaseoDaemon(
     if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
       unlinkSync(listenTarget.path);
     }
+    if (governedFailures.length)
+      throw new AggregateError(governedFailures, "Governed runtime shutdown requires recovery.");
   };
 
   return {

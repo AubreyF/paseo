@@ -712,6 +712,12 @@ export interface QuotaGovernedSessionInput {
   resumeHandle?: AgentPersistenceHandle;
 }
 
+export interface CapturedQuotaExecutionClient {
+  openSession(input: QuotaGovernedSessionInput): Promise<AgentSession>;
+  /** Call inside the execution authority guard, including immediately before dispatch. */
+  assertCurrent(): void;
+}
+
 /** Retains trusted cleanup custody when native construction cannot prove disposal. */
 export class QuotaConstructionCleanupError extends Error {
   constructor(readonly retryCleanup: () => Promise<void>) {

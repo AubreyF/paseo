@@ -214,6 +214,33 @@ trusted custody. Bind authentication and project configuration for the attempt,
 then attach quota supervision before inference. The production schedule backend
 is not connected by this component alone.
 
+### Trusted governed schedule runtime
+
+The supervised daemon worker can load one installed `.mjs` module from
+`PASEO_GOVERNED_RUNTIME_MODULE` at startup. The module exports
+`createGovernedScheduleRuntime`. This is trusted daemon code with daemon
+authority, not a sandboxed plugin. Keep the complete installation, dependencies,
+configuration and parent directories outside worker writes. The loader checks
+the entry file's physical path, ownership and write permissions; it does not
+authenticate a package or its imports. An invalid configured module fails startup.
+There is no hot reload or schedule/RPC field for selecting the module.
+
+The factory receives the durable quota store, raw metadata reader and a narrow
+governed-client capture operation. It supplies preflight observations with the
+captured authentication binding and persisted hourly estimate, plus the existing
+schedule preparation/reconciliation/execution contract. Initialize without
+starting workers. Constructor failure must retain or settle anything it acquired.
+Provider replacement, disable/re-enable and daemon shutdown invalidate captured
+clients. Registry generation is not an authentication generation; the runtime
+must bind and verify account credentials separately.
+
+Runtime `stop()` must revoke authority synchronously before awaiting settlement.
+Rejection preserves the recovery condition while independent daemon cleanup
+continues. The daemon worker's forced-exit deadline is not settlement evidence.
+Without a configured runtime, protected schedules continue to hold without
+falling back to ordinary agent execution. Loading a runtime does not establish
+claim authority, worker isolation, review or publication acceptance.
+
 ---
 
 ## ACP Provider Checklist

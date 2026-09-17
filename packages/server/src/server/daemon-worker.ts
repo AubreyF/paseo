@@ -6,6 +6,7 @@ import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
+import { loadGovernedScheduleRuntimeFactory } from "./schedule/governed-runtime.js";
 
 process.title = "Paseo Daemon";
 
@@ -308,12 +309,16 @@ async function main() {
   installSupervisorLivenessGuard();
 
   try {
+    const createGovernedScheduleRuntime = await loadGovernedScheduleRuntimeFactory(
+      process.env.PASEO_GOVERNED_RUNTIME_MODULE,
+    );
     daemon = await createPaseoDaemon(
       {
         ...config,
         onLifecycleIntent: handleLifecycleIntent,
       },
       logger,
+      { createGovernedScheduleRuntime },
     );
   } catch (err) {
     logger.fatal({ err }, "Daemon bootstrap failed");

@@ -7,13 +7,15 @@ import type { ScheduleServiceOptions } from "./service.js";
 type QuotaRunner = NonNullable<ScheduleServiceOptions["quotaRunner"]>;
 type Preparation = Awaited<ReturnType<QuotaRunner["prepare"]>>;
 
+export interface QuotaScheduleExecution extends QuotaRunner {
+  /** Reconcile retained custody without inference, including during quota holds. */
+  reconcile(schedule: StoredSchedule): Promise<void>;
+}
+
 interface PreflightOptions {
   readObservation(providerId: string): Promise<QuotaObservation>;
   /** The governed driver owns claims, pacing, captured credentials and execution permits. */
-  execution?: QuotaRunner & {
-    /** Reconcile retained execution custody without launching inference, even when quota holds. */
-    reconcile(schedule: StoredSchedule): Promise<void>;
-  };
+  execution?: QuotaScheduleExecution;
   nowMs?: () => number;
 }
 

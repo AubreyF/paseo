@@ -61,7 +61,7 @@ export function SidebarModelProvider({
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
   const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
   const { hosts: labelHosts } = useWorkspaceLabelProjection();
-  const { collapsedProjectKeys, toggleProjectCollapsed } = useProjectExpansion(list.projects);
+  const { collapsedProjectKeys, toggleProjectCollapsed } = useProjectExpansion();
   const collapsedWorkspaceGroupKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedWorkspaceGroupKeys,
   );

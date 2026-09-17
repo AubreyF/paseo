@@ -258,6 +258,7 @@ import {
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { SessionAuthorization, type DaemonPermission } from "./authorization/index.js";
+import { TaskOwnerEvidenceStore } from "./authorization/task-owner-evidence.js";
 
 function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
@@ -448,6 +449,8 @@ type AgentMcpTransportFactory = () => Promise<unknown>;
 
 export interface SessionOptions {
   clientId: string;
+  /** From authenticated transport admission, never client request data. */
+  principalId?: string | null;
   permissions: readonly DaemonPermission[];
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
@@ -657,6 +660,8 @@ function workspaceLabelErrorCode(error: unknown): string {
 export class Session {
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
+  private readonly ownerEvidence: TaskOwnerEvidenceStore;
+  private readonly principalId: string | null | undefined;
   private appVersion: string | null;
   private clientCapabilities: ReadonlySet<ClientCapability>;
   private readonly sessionId: string;
@@ -816,6 +821,8 @@ export class Session {
     } = options;
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
+    this.principalId = options.principalId;
+    this.ownerEvidence = new TaskOwnerEvidenceStore(paseoHome);
     this.appVersion = appVersion ?? null;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
@@ -3569,10 +3576,17 @@ export class Session {
       }`,
     );
 
-    const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
-    const prompt = buildAgentPrompt(promptText, images, attachments);
-
     try {
+      await this.ownerEvidence.record({
+        taskId: agentId,
+        principalId: this.principalId,
+        clientId: this.clientId,
+        messageId: messageId ?? uuidv4(),
+        text,
+      });
+      const context = await this.ownerEvidence.context(agentId);
+      const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
+      const prompt = buildAgentPrompt(promptText + context, images, attachments);
       await sendPromptToAgent({
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
@@ -3670,8 +3684,17 @@ export class Session {
         {
           kind: "session",
           config: resolvedIntent.config,
-          onCreated: ({ agentId }) => {
+          onCreated: async ({ agentId }) => {
             createdAgentId = agentId;
+            if (initialPrompt && !msg.callerAgentId) {
+              await this.ownerEvidence.record({
+                taskId: agentId,
+                principalId: this.principalId,
+                clientId: this.clientId,
+                messageId: clientMessageId ?? requestId ?? uuidv4(),
+                text: initialPrompt,
+              });
+            }
           },
           workspaceId: resolvedIntent.intent.workspaceId,
           worktreeName,
@@ -7533,7 +7556,15 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
-      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
+      await this.ownerEvidence.record({
+        taskId: agentId,
+        principalId: this.principalId,
+        clientId: this.clientId,
+        messageId: msg.messageId ?? msg.requestId,
+        text: msg.text,
+      });
+      const context = await this.ownerEvidence.context(agentId);
+      const prompt = buildAgentPrompt(msg.text + context, msg.images, msg.attachments);
       this.sessionLogger.trace(
         {
           agentId,

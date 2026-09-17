@@ -523,6 +523,7 @@ describe("relay external socket reconnect behavior", () => {
     secondSocket.emit("message", JSON.stringify(createHelloMessage("plugin:exclusive")));
 
     expect(sessionMock.instances).toHaveLength(2);
+    expect(sessionMock.instances.map((session) => session.args.principalId)).toEqual([null, null]);
     firstSocket.emit("close", 1000, "plugin stopped");
     await firstAttachment.closed;
     expect(sessionMock.instances[0]?.cleanup).toHaveBeenCalledOnce();
@@ -703,6 +704,10 @@ describe("relay external socket reconnect behavior", () => {
     expect(sessionMock.instances).toHaveLength(2);
     expect(ownerInfo.permissions).toEqual(DAEMON_PERMISSIONS);
     expect(hubInfo?.permissions).toEqual(["hub.execute"]);
+    expect(sessionMock.instances.map((session) => session.args.principalId)).toEqual([
+      "owner",
+      "hub:daemon-1",
+    ]);
     await server.close();
   });
 

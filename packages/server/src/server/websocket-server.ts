@@ -472,6 +472,7 @@ interface BrowserToolsRegistration {
 }
 
 interface SocketSessionOptions {
+  principalId?: string | null;
   clientId: string;
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
@@ -1352,6 +1353,7 @@ export class VoiceAssistantWebSocketServer {
 
     const session = this.createSocketSession({
       clientId,
+      principalId: lifecycle.kind === "reconnectable" ? admission.principalId : null,
       appVersion,
       clientCapabilities,
       permissions: admission.permissions,
@@ -1424,6 +1426,7 @@ export class VoiceAssistantWebSocketServer {
   private createSocketSession(options: SocketSessionOptions): Session {
     return new Session({
       clientId: options.clientId,
+      principalId: options.principalId,
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
       permissions: options.permissions,

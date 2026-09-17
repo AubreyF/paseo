@@ -50,6 +50,35 @@ A delegating principal can grant only authority it already possesses. A session 
 
 Workspace-scoped grants require every resource-bearing operation and outbound observation to enforce the same workspace boundary. File preview currently accepts any daemon-readable regular file, so it must gain resource enforcement before workspace-specific access ships.
 
+## Task owner evidence
+
+Owner-principal prompts are retained outside Git under
+`$PASEO_HOME/task-owner-evidence/<hashed-task-id>/`. Receipts preserve the exact
+text, client message identity, principal, receive time and daemon sequence.
+Retries cannot replace earlier text. Later messages remain alongside earlier
+ones, so a restriction or revocation is available when reviewing scope.
+
+The task's `read_task_owner_evidence` tool retrieves these records in pages.
+Its task binding comes from the daemon, not a tool argument. Read through
+`latestSequence` before interpreting supersession. A child task cannot retrieve
+its parent's records with this tool. Resumed owner prompts include a reminder
+to consult it. Records are retained across task archive and daemon restart.
+
+This is review evidence, not an executable permission grant. Actor, target,
+actions and supersession still require interpretation of the original words.
+There is no automatic grant extraction or legacy transcript backfill. The
+existing owner transport admission does not prove a human typed a message;
+client IDs are also caller-supplied. Plugins, agent handoffs and service-principal
+messages do not acquire owner provenance from their text. Managed review,
+sandbox policy, required checks and draft-only worker boundaries still apply.
+
+Only the owning daemon writes this state. Keep daemon state inaccessible to
+untrusted workers. POSIX stores require private directory and file modes;
+Windows relies on the private daemon home's ACLs. File contents are flushed
+before atomic publication; directory flushing is available on POSIX. These
+controls do not defend against arbitrary code running with the daemon's own
+filesystem authority.
+
 ## Hub
 
 The Hub authenticates as a service principal. Its locally selected grants decide whether it may execute agents, manage the daemon, manage tunnels, or manage access.

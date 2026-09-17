@@ -1,3 +1,4 @@
+import { useVortonMode } from "@/vorton-mode";
 import { useMemo, type ReactNode } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { View, type StyleProp, type ViewStyle } from "react-native";
@@ -5,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   HEADER_INNER_HEIGHT,
+  VORTON_HEADER_HEIGHT,
   HEADER_INNER_HEIGHT_MOBILE,
   HEADER_TOP_PADDING_MOBILE,
   useIsCompactFormFactor,
@@ -36,6 +38,7 @@ export function ScreenHeader({
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
+  const vorton = useVortonMode();
   // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
   const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
   const baseHorizontalPadding = isMobile ? theme.spacing[2] : theme.spacing[3];
@@ -44,12 +47,15 @@ export function ScreenHeader({
     () => [styles.inner, { paddingTop: insets.top + topPadding }],
     [insets.top, topPadding],
   );
-  const rowStyle = useMemo(() => [styles.row, borderless && styles.borderless], [borderless]);
+  const rowStyle = useMemo(
+    () => [styles.row, vorton && !isMobile && styles.vortonRow, borderless && styles.borderless],
+    [borderless, vorton, isMobile],
+  );
   const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);
   const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
 
   return (
-    <View style={styles.header}>
+    <View style={styles.header} testID="screen-header">
       <View style={innerStyle}>
         <WindowChromeSafeArea
           placement="inline"
@@ -84,6 +90,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border,
     userSelect: "none",
   },
+  vortonRow: { height: VORTON_HEADER_HEIGHT },
   left: {
     flex: 1,
     flexDirection: "row",

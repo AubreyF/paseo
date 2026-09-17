@@ -1,3 +1,4 @@
+import { useVortonMode } from "@/vorton-mode";
 import { useCallback, useMemo, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -27,6 +28,8 @@ import {
 import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+
+const VORTON_TOOLBAR_ITEMS = ["new-workspace", "search"] as const;
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -136,7 +139,8 @@ function SidebarNavRow({
 
 export function SidebarNavSection(): ReactElement {
   const { t } = useTranslation();
-  const { items, setVisible, move } = useSidebarNavItems();
+  const vorton = useVortonMode();
+  const { items, setVisible, move } = useSidebarNavItems(vorton ? VORTON_TOOLBAR_ITEMS : undefined);
 
   return (
     <SettingsSection

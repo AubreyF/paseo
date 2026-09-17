@@ -63,6 +63,7 @@ function isBuiltinSidebarNavId(key: string): key is BuiltinSidebarNavId {
 }
 
 export function resolveSidebarNavItems(input: {
+  excludedKeys?: readonly string[];
   pluginGroups: readonly PluginSidebarGroup[];
   preferences: readonly SidebarNavPreference[];
 }): SidebarNavItem[] {
@@ -97,7 +98,7 @@ export function resolveSidebarNavItems(input: {
     if (placed.has(key)) continue;
     items.push({ kind: "plugin", key, group, visible: true });
   }
-  return items;
+  return items.filter((item) => !input.excludedKeys?.includes(item.key));
 }
 
 /**

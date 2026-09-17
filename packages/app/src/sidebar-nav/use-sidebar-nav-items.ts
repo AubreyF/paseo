@@ -16,7 +16,7 @@ export interface UseSidebarNavItemsReturn {
   move: (key: string, direction: "up" | "down") => void;
 }
 
-export function useSidebarNavItems(): UseSidebarNavItemsReturn {
+export function useSidebarNavItems(excludedKeys?: readonly string[]): UseSidebarNavItemsReturn {
   const plugins = useInstalledPlugins();
   const { settings, updateSettings } = useAppSettings();
   const preferences = settings.sidebarNavItems;
@@ -27,15 +27,20 @@ export function useSidebarNavItems(): UseSidebarNavItemsReturn {
       resolveSidebarNavItems({
         pluginGroups,
         preferences,
+        excludedKeys,
       }),
-    [pluginGroups, preferences],
+    [pluginGroups, preferences, excludedKeys],
   );
 
   const setVisible = useCallback(
     (key: string, visible: boolean) => {
       void updateSettings((current) => {
         const previous = current.sidebarNavItems;
-        const currentItems = resolveSidebarNavItems({ pluginGroups, preferences: previous });
+        const currentItems = resolveSidebarNavItems({
+          pluginGroups,
+          preferences: previous,
+          excludedKeys,
+        });
         return {
           sidebarNavItems: setSidebarNavItemVisible({
             items: currentItems,
@@ -46,14 +51,18 @@ export function useSidebarNavItems(): UseSidebarNavItemsReturn {
         };
       });
     },
-    [pluginGroups, updateSettings],
+    [pluginGroups, updateSettings, excludedKeys],
   );
 
   const move = useCallback(
     (key: string, direction: "up" | "down") => {
       void updateSettings((current) => {
         const previous = current.sidebarNavItems;
-        const currentItems = resolveSidebarNavItems({ pluginGroups, preferences: previous });
+        const currentItems = resolveSidebarNavItems({
+          pluginGroups,
+          preferences: previous,
+          excludedKeys,
+        });
         return {
           sidebarNavItems: moveSidebarNavItem({
             items: currentItems,
@@ -64,7 +73,7 @@ export function useSidebarNavItems(): UseSidebarNavItemsReturn {
         };
       });
     },
-    [pluginGroups, updateSettings],
+    [pluginGroups, updateSettings, excludedKeys],
   );
 
   return { items, setVisible, move };

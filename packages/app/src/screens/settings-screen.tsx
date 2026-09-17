@@ -1,10 +1,13 @@
+import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
+import { usePanelStore } from "@/stores/panel-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { VortonModeToggle } from "@/vorton-mode";
+import { useVortonMode, VortonModeToggle } from "@/vorton-mode";
 import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
   Pressable,
   ScrollView,
+  useWindowDimensions,
   Text,
   View,
   type PressableStateCallbackType,
@@ -1045,6 +1048,7 @@ function SettingsSidebar({
   activeHostServerId,
   layout,
 }: SettingsSidebarProps) {
+  const vorton = useVortonMode();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const hosts = useHosts();
@@ -1058,9 +1062,18 @@ function SettingsSidebar({
   );
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
+  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const { width: viewportWidth } = useWindowDimensions();
+  const visibleSidebarWidth = resolveDesktopSidebarWidth({
+    requestedWidth: sidebarWidth,
+    viewportWidth,
+  });
   const outerContainerStyle = useMemo(
-    () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
-    [isDesktop],
+    () => [
+      isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer,
+      isDesktop && vorton && { width: visibleSidebarWidth },
+    ],
+    [isDesktop, vorton, visibleSidebarWidth],
   );
   const innerContainerStyle = useMemo(
     () => [{ flex: 1 }, isDesktop ? { paddingTop: insets.top } : null],
@@ -1086,7 +1099,7 @@ function SettingsSidebar({
           />
         ))}
       </View>
-      <SidebarSeparator />
+      {!vorton && <SidebarSeparator />}
       {hasHosts ? (
         <View style={sidebarStyles.list}>
           <Text style={sidebarStyles.groupLabel}>{t("settings.groups.host")}</Text>
@@ -1150,15 +1163,31 @@ function SettingsSidebar({
     >
       {isDesktop ? (
         <View style={innerContainerStyle}>
-          <View style={sidebarStyles.sidebarDragArea}>
+          <View
+            style={[sidebarStyles.sidebarDragArea, vorton && sidebarStyles.sidebarDragAreaVorton]}
+          >
             <TitlebarDragRegion />
             <WindowChromeSafeArea placement="below" />
-            <SidebarHeaderRow
-              icon={ArrowLeft}
-              label={t("settings.backToWorkspace")}
-              onPress={onBackToWorkspace}
-              testID="settings-back-to-workspace"
-            />
+            {vorton ? (
+              <View style={sidebarStyles.modeHeader} testID="settings-mode-header">
+                <View style={sidebarStyles.backButtonContainer}>
+                  <SidebarHeaderRow
+                    icon={ArrowLeft}
+                    label={t("settings.backToWorkspace")}
+                    onPress={onBackToWorkspace}
+                    testID="settings-back-to-workspace"
+                    variant="compact"
+                  />
+                </View>
+              </View>
+            ) : (
+              <SidebarHeaderRow
+                icon={ArrowLeft}
+                label={t("settings.backToWorkspace")}
+                onPress={onBackToWorkspace}
+                testID="settings-back-to-workspace"
+              />
+            )}
           </View>
           <ScrollView
             style={sidebarStyles.scrollBody}
@@ -1167,17 +1196,9 @@ function SettingsSidebar({
           >
             {sidebarBody}
           </ScrollView>
-          <View style={sidebarStyles.modeFooter} testID="settings-mode-footer">
-            <VortonModeToggle compact />
-          </View>
         </View>
       ) : (
-        <>
-          {sidebarBody}
-          <View style={sidebarStyles.modeFooter} testID="settings-mode-footer">
-            <VortonModeToggle compact />
-          </View>
-        </>
+        sidebarBody
       )}
     </View>
   );
@@ -1763,14 +1784,26 @@ const sidebarStyles = StyleSheet.create((theme) => ({
   scrollBody: {
     flex: 1,
   },
-  modeFooter: {
-    alignItems: "flex-start",
-    padding: theme.spacing[4],
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
+  modeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[2],
+    paddingBottom: theme.spacing[3],
+  },
+  backButtonContainer: {
+    flex: 1,
+    // The shared row already owns the header's horizontal inset.
+    marginHorizontal: -theme.spacing[2],
+    minWidth: 0,
+    minHeight: 44,
+    justifyContent: "center",
   },
   sidebarDragArea: {
     position: "relative",
+  },
+  sidebarDragAreaVorton: {
+    paddingTop: theme.spacing[2],
   },
   mobileContainer: {
     paddingVertical: theme.spacing[2],

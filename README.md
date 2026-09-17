@@ -4,7 +4,7 @@ Run your coding agents in a container and control them from your browser or phon
 
 ## Install
 
-Install Git and start Docker with Compose. Install Tailscale on the devices you will connect from. On Windows, run this in WSL.
+Install Git and start Docker with Compose. Install Tailscale on the devices you will connect from.
 
 Give your agent this command, or run it yourself:
 

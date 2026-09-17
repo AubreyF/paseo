@@ -10,7 +10,7 @@ From the repository root:
 ./docker/multiplex/install.sh "$HOME/paseo-instance"
 ```
 
-The image builds for Linux AMD64 or ARM64. On macOS use Docker Desktop; on Windows use Docker's Linux-container backend and run the installation scripts from WSL. The installer needs Bash and Docker Compose, not host Node, Python or Tailscale. Only mount projects the agents should access. The default workspace is an empty private directory; clone projects into `/workspace` from the container.
+The image builds for Linux AMD64 or ARM64. On macOS use Docker Desktop; on Windows use Docker's Linux-container backend. The installer needs Bash and Docker Compose, not host Node, Python or Tailscale. Only mount projects the agents should access. The default workspace is an empty private directory; clone projects into `/workspace` from the container.
 
 Installation generates a password and separate random instance name, pins the image to a digest or local image ID, and keeps state outside the checkout. Startup waits for Tailscale enrollment, configures private HTTPS 443, and starts Paseo as a non-root user with an exact hostname/origin. The daemon binds container loopback; Compose publishes no host ports. Existing HTTPS routes are never replaced to claim 443.
 

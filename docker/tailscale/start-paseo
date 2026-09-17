@@ -2,9 +2,15 @@
 set -euo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 unset BASH_ENV ENV PYTHONPATH PYTHONHOME
+hostname="$(/usr/bin/python3 -I /opt/personal-tailscale/network.py)"
+export PASEO_HOSTNAMES="$hostname${PASEO_HOSTNAMES:+,$PASEO_HOSTNAMES}"
+export PASEO_CORS_ORIGINS="https://$hostname${PASEO_CORS_ORIGINS:+,$PASEO_CORS_ORIGINS}"
 while IFS= read -r name; do
   case "$name" in TS_*|TAILSCALE_*) unset "$name" ;; esac
 done < <(compgen -e)
+/usr/bin/setpriv --reuid=paseo --regid=paseo --init-groups \
+  --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs \
+  /usr/local/bin/node /opt/personal-tailscale/initialize-web.mjs
 exec /usr/bin/setpriv --reuid=paseo --regid=paseo --init-groups \
   --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs \
   /bin/bash /usr/local/bin/paseo-docker-entrypoint

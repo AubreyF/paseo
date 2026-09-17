@@ -1,40 +1,21 @@
-# Paseo with kernel-mode Tailscale
+# Optional preview broker and host recovery
 
-Run Paseo and Tailscale in one container while keeping agent processes unprivileged. This is a reusable image and Compose overlay, not a saved installation. Keep your actual Compose files, environment, identity volume, account state, backups and acceptance records outside the source checkout. See [the architecture](../../docs/container-tailscale.md).
+Install Paseo through the [multiplex installer](../multiplex/README.md). The image already contains Tailscale and serves Paseo over private HTTPS. This directory contains that runtime support plus optional macOS host tools for agent-managed workspace previews and recovery. These tools are not required for ordinary Paseo access.
 
-## Build
+Set `PASEO_SOURCE` to the checkout and `PASEO_DEPLOYMENT_DIR` to the private installation. The broker requires the standard `data/home` bind layout and a deployment directory outside agent-writable mounts. Python 3 and an awake, logged-in macOS user session are required for these optional host tools.
 
-Start from an immutable Paseo image that already supplies your required agent providers. The Dockerfile adds the pinned Tailscale release, GitHub CLI and process supervision without capturing a running container's filesystem. This recipe currently supports ARM64.
-
-```sh
-docker build --build-arg PASEO_BASE="$PASEO_BASE" \
-  -t "$PASEO_TAILSCALE_IMAGE" docker/tailscale
-```
-
-Supply `PASEO_BASE` as a reviewed image digest. Record the resulting image ID privately. Never use `docker commit` to package account state. Test the candidate with disposable home and identity volumes and no live workspace mounts before replacement. Confirm provider binaries, non-root execution, daemon health and persistent web assets.
-
-## Private installation files
-
-Copy `compose.yaml` into your private deployment directory and merge it with the existing service configuration. Preserve home, workspace and web mounts, environment and authentication. The overlay requires `PASEO_TAILSCALE_IMAGE` and `PASEO_TAILSCALE_VOLUME`; it deliberately has no installation defaults. It requires an existing external identity volume and a `tailscale-hostname` file containing the node's DNS name. Enroll a fresh identity through an administrator-controlled session before using that metadata. Do not attach a staging daemon to production home or identity state.
-
-The base service should publish its web port on host loopback only. Do not mount Docker's socket or a whole personal home. The container root supervisor holds networking and identity privileges; `start-paseo` drops all capabilities and enables no-new-privileges before starting Paseo. Keep Tailscale's state and socket unavailable to agent users.
-
-A private environment file can define these host administration settings:
-
-| Variable                        | Meaning                                            |
-| ------------------------------- | -------------------------------------------------- |
-| `PASEO_DEPLOYMENT_DIR`          | Absolute private deployment directory outside Git  |
-| `PASEO_CONTAINER_NAME`          | Existing serving container                         |
-| `PASEO_ROLLBACK_CONTAINER_NAME` | Existing stopped rollback container                |
-| `PASEO_DOCKER_BIN`              | Docker executable, default `/usr/local/bin/docker` |
-| `PASEO_DOCKER_CONTEXT`          | Docker context, default `desktop-linux`            |
-| `PASEO_RECOVERY_LABEL`          | Optional unique macOS login-agent label            |
-
-The HTTPS broker installer discovers the existing deployment from the stable container name and Docker mount metadata. It persists non-secret settings in `host-config.json` outside agent mounts. Both runtime tools and recovery load that file without shell exports. Existing environment settings remain an initial recovery-installer fallback; missing values produce a diagnostic rather than creating a deployment.
+Before installing a broker, grant intended users the container node's preview TCP range 32768 through 60999. Review overlapping grants; the installer does not broaden tailnet policy. Each installation has its own broker and recovery labels, derived from its deployment path. Legacy jobs migrate only when their script belongs to that installation.
 
 ## Recovery
 
-On the macOS Docker host, review the scripts, then run `python3 install-host-recovery.py` with the private settings exported. It copies the worker outside the checkout and installs a login agent that checks once per minute. An awake, logged-in Mac is required. This does not bypass FileVault or start Docker before login.
+On the macOS Docker host, review the scripts, then install recovery using the configuration written by the broker installer:
+
+```sh
+PASEO_HOST_CONFIG="$PASEO_DEPLOYMENT_DIR/host-config.json" \
+  python3 "$PASEO_SOURCE/docker/tailscale/install-host-recovery.py"
+```
+
+It copies the worker outside the checkout and installs a login agent that checks once per minute. An awake, logged-in Mac is required. This does not bypass FileVault or start Docker before login.
 
 From the private deployment directory:
 
@@ -48,11 +29,13 @@ Pause before planned Docker maintenance or rollback. The worker starts Docker if
 
 ## Preview lifecycle and private HTTPS
 
-On the Mac host, review and test this directory, then install against the retained serving container:
+On the Mac host, run these commands from this source directory, then install against the retained serving container:
 
 ```sh
 python3 -B test_https_broker.py
 python3 -B test_host_recovery.py
+python3 -B test_launch_agent.py
+node --test initialize-web.test.mjs
 python3 install-https-broker.py --container EXISTING_NAME \
   --allowed-root /absolute/development/root --rollback RETAINED_ROLLBACK_NAME
 ```
@@ -73,7 +56,7 @@ Only `ready` receipts contain usable URLs after certificate-validating HTTPS and
 
 ## Broker rollback
 
-Stop each broker-managed preview with the helper when its process may stop. This removes and verifies only its owned mapping, and keeps the frontend reservation. For a capability-only rollback that preserves processes, unload `local.paseo.https-preview-broker` with launchctl, then use `uninstall-https-broker.py` from the trusted installation. It verifies each exact route before removal and disables request handling without resetting Tailscale or touching unrelated mappings. Keep the helper's environment loader and origin files for already-wrapped commands. Restore backed-up recovery code/configuration only after checking that its container identities still match. Do not restore stale whole-home or whole-Tailscale state.
+Stop each broker-managed preview with the helper when its process may stop. This removes and verifies only its owned mapping, and keeps the frontend reservation. For a capability-only rollback that preserves processes, run `python3 uninstall-https-broker.py` from the trusted deployment directory. It unloads this instance's owned login job, verifies each exact route before removal and disables request handling without resetting Tailscale or touching unrelated mappings. Keep the helper's environment loader and origin files for already-wrapped commands. Restore backed-up recovery code/configuration only after checking that its container identities still match. Do not restore stale whole-home or whole-Tailscale state.
 
 An awake, logged-in Mac and available Docker are prerequisites. FileVault unlock, login and host wake are not supplied by this broker. Installation or recovery does not authorize restarting Paseo, Docker or unrelated services.
 

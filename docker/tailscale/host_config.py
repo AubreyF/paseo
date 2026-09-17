@@ -27,8 +27,7 @@ def load(path=None):
 def discover(container, docker='/usr/local/bin/docker', context='desktop-linux'):
     inspected = json.loads(subprocess.check_output([docker, '--context', context, 'inspect', container], text=True))[0]
     home = next(m for m in inspected['Mounts'] if m['Destination'] == '/home/paseo' and m['Type'] == 'bind')
-    hostname = next(m for m in inspected['Mounts'] if m['Destination'] == '/etc/personal-tailscale/hostname' and not m['RW'])
     root = Path(home['Source']).parent.parent
-    if Path(hostname['Source']).parent != root or not (root / 'compose.yaml').is_file():
+    if Path(home['Source']) != root / 'data/home' or not (root / 'compose.yaml').is_file():
         raise ValueError('Deployment mounts disagree; inspect existing Compose configuration')
     return {'deployment': str(root), 'container': inspected['Name'].lstrip('/'), 'docker': str(Path(docker).resolve()), 'context': context}, inspected

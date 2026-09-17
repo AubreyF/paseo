@@ -2,9 +2,19 @@ name: ${PASEO_INSTANCE:-paseo-multiplex}
 
 services:
   paseo:
-    image: ${PASEO_IMAGE:-ghcr.io/aubreyf/paseo-multiplex:edge}
+    image: ${PASEO_IMAGE:?Run install.sh first}
     restart: unless-stopped
-    init: true
+    init: false
+    user: 0:0
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP, CHOWN]
+    security_opt: [no-new-privileges:true]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    tmpfs:
+      - /run/tailscale:mode=0700
+      - /run/personal-tailscale:mode=0700
+    stop_grace_period: 90s
     pids_limit: 4096
     logging:
       driver: json-file
@@ -17,12 +27,15 @@ services:
     cpus: ${PASEO_CPU_LIMIT:-4}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    ports:
-      - "127.0.0.1:${PASEO_PORT:-6767}:6767"
     environment:
+      PASEO_INSTANCE: ${PASEO_INSTANCE:?Run install.sh first}
       PASEO_PASSWORD: ${PASEO_PASSWORD:?Set PASEO_PASSWORD in .env}
-      PASEO_HOSTNAMES: ${PASEO_HOSTNAMES:-}
       MTPLX_API_KEY: ${MTPLX_API_KEY:-}
     volumes:
       - ${PASEO_DATA_ROOT:-./data}/home:/home/paseo
       - ${PASEO_WORKSPACE_ROOT:-./workspace}:/workspace
+      - tailscale-state:/var/lib/tailscale
+
+volumes:
+  tailscale-state:
+    name: ${PASEO_INSTANCE:?Run install.sh first}-tailscale

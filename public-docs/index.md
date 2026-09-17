@@ -8,45 +8,7 @@ category: Getting started
 
 # Getting started
 
-Paseo runs your coding agents on your machine and gives you a mobile, desktop, web, and CLI client to drive them from anywhere. Three common ways to install.
-
-## Desktop app (recommended)
-
-Download from [paseo.sh/download](https://paseo.sh/download) or the [GitHub releases page](https://github.com/getpaseo/paseo/releases). Open it and you're done.
-
-The desktop app bundles its own daemon and starts it automatically, no separate install required. On first launch you'll see a brief startup screen, then connect from your phone using **Settings → your host → Pair Device**.
-
-## Server / CLI
-
-For headless machines, dev boxes, or any setup where you want the daemon running without the desktop UI:
-
-```bash
-npm install -g @getpaseo/cli
-paseo
-```
-
-Paseo starts the daemon locally, then asks whether to enable the end-to-end encrypted relay and print a pairing QR code. If you decline, enter the daemon address manually over TCP, Tailscale, or another VPN.
-
-The daemon can also serve the browser web app itself, so you can use the full UI without the hosted app. See [Self-hosting the web UI](/docs/web-ui).
-
-Configuration and local state live under `PASEO_HOME` (defaults to `~/.paseo`).
-
-## Docker
-
-For servers, dev boxes, NAS devices, or homelab hosts, run the official image:
-
-```bash
-docker run -d --name paseo \
-  -p 6767:6767 \
-  -e PASEO_PASSWORD=change-me \
-  -v "$PWD/paseo-home:/home/paseo" \
-  -v "$PWD:/workspace" \
-  ghcr.io/getpaseo/paseo:latest
-```
-
-Then open `http://localhost:6767`.
-
-The image runs the daemon and serves the bundled web UI. It does not bundle agent CLIs, so extend it with the agents you use. See [Docker](/docs/docker) for Compose, reverse proxy, agent install, and security examples.
+This fork runs Paseo and Vorton inside a container. Follow [Docker installation](/docs/docker), then connect accounts and enable Vorton from the sidebar. The installer builds the checkout locally and enrolls its internal Tailscale client.
 
 ## Where next
 

@@ -10,6 +10,7 @@ import subprocess
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from host_config import discover
+from launch_agent import install, label_for, owned_plist
 from https_broker import atomic, digest
 
 
@@ -26,11 +27,14 @@ def main():
         raise ValueError('Install on the existing macOS host')
     c, inspected = discover(args.container, args.docker, args.context)
     root = Path(c['deployment'])
+    label = label_for('https-preview-broker', root)
+    owned_plist(label, root / 'https_broker.py', Path.home() / 'Library/LaunchAgents')
+    c['brokerLabel'] = label
     previous = json.loads((root / 'host-config.json').read_text()) if (root / 'host-config.json').exists() else {}
     source = Path(__file__).resolve().parent
     # Executables, configuration, ledger and lock must not be reachable through any
     # writable agent bind. Protect both direct mounts and ancestor mounts.
-    targets = [root / name for name in ['https_broker.py', 'host_config.py', 'host-config.json', 'https-broker-ledger.json', 'https-broker.lock']]
+    targets = [root / name for name in ['https_broker.py', 'host_config.py', 'launch_agent.py', 'host-config.json', 'https-broker-ledger.json', 'https-broker.lock']]
     targets += [Path(sys.executable).resolve(), Path(c['docker']).resolve()]
     for target in targets:
         for mount in inspected['Mounts']:
@@ -55,8 +59,6 @@ def main():
     status = json.loads(subprocess.check_output(ts + ['status', '--json']))
     c['hostname'] = status['Self']['DNSName'].rstrip('.')
     c['nodeId'] = status['Self']['ID']
-    if (root / 'tailscale-hostname').read_text().strip() != c['hostname']:
-        raise ValueError('Configured and actual Tailscale identities disagree')
     netmap = json.loads(subprocess.check_output(ts + ['debug', 'netmap']))
     c['packetFilterHash'] = digest(netmap.get('PacketFilter'))
     for field in ('packetFilterHash', 'nodeId', 'hostname'):
@@ -75,10 +77,10 @@ def main():
     c['channelIdentities'] = {name: [os.stat(channel / name).st_dev, os.stat(channel / name).st_ino] for name in ['', 'inbox', 'receipts', 'origins']}
     backup = root / 'backups' / ('https-broker-' + str(__import__('time').time_ns()))
     backup.mkdir(parents=True, mode=0o700)
-    for name in ['host-config.json', 'https_broker.py', 'host_config.py', 'host-recovery.py', 'https-preview.py']:
+    for name in ['host-config.json', 'https_broker.py', 'host_config.py', 'launch_agent.py', 'host-recovery.py', 'https-preview.py']:
         if (root / name).exists():
             shutil.copy2(root / name, backup / name)
-    for name in ['https_broker.py', 'host_config.py', 'https-preview.py', 'host-recovery.py', 'uninstall-https-broker.py']:
+    for name in ['https_broker.py', 'host_config.py', 'launch_agent.py', 'https-preview.py', 'host-recovery.py', 'uninstall-https-broker.py']:
         temp = root / (name + '.install')
         shutil.copyfile(source / name, temp)
         temp.chmod(0o700)
@@ -104,19 +106,12 @@ def main():
     # Match ownership already used by persistent home, through the container's UID
     # mapping. No new capability or privileged socket is exposed.
     subprocess.run(base + ['exec', c['container'], '/bin/chown', '-R', 'paseo:paseo', '/home/paseo/.local/share/paseo-preview/https'], check=True)
-    label = 'local.paseo.https-preview-broker'
-    plist = Path.home() / 'Library/LaunchAgents' / (label + '.plist')
     content = {'Label': label, 'ProgramArguments': [str(Path(sys.executable).resolve()), '-I', str(root / 'https_broker.py')],
                'RunAtLoad': True, 'StartInterval': 10, 'ProcessType': 'Background', 'LowPriorityIO': True,
                'StandardOutPath': str(root / 'https-broker.stdout.log'), 'StandardErrorPath': str(root / 'https-broker.stderr.log'),
                'EnvironmentVariables': {'HOME': str(Path.home()), 'PATH': '/usr/bin:/bin:/usr/local/bin'}}
-    with plist.open('wb') as stream:
-        plistlib.dump(content, stream)
-    plist.chmod(0o600)
-    domain = f'gui/{os.getuid()}'
-    if subprocess.run(['/bin/launchctl', 'print', domain + '/' + label], capture_output=True).returncode == 0:
-        subprocess.run(['/bin/launchctl', 'bootout', domain + '/' + label], check=True)
-    subprocess.run(['/bin/launchctl', 'bootstrap', domain, str(plist)], check=True)
+    # COMPAT(shared-broker-label): added in v0.7.2, remove after 2027-03-16.
+    install(content, root / 'https_broker.py', ['local.paseo.https-preview-broker'])
     print(json.dumps({'installed': str(root), 'backup': str(backup), 'label': label, 'containerRestarted': False}))
 
 

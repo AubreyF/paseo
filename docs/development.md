@@ -1,5 +1,9 @@
 # Development
 
+Install using the [container workflow](../docker/multiplex/README.md). Run daemon development commands inside the container. From the private deployment directory, open a shell with `docker compose exec --user paseo paseo bash`, clone the source under `/workspace`, and run `npm ci` in that checkout. Keep Linux dependencies separate from host `node_modules`.
+
+The commands below describe source development. Desktop and native client builds are specialized client work, not alternative installations of this fork. Xcode builds require a separate macOS build environment.
+
 ## Prerequisites
 
 - Node.js (see `.tool-versions` for exact version)

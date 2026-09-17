@@ -11,7 +11,9 @@ You are helping a user understand, configure, or troubleshoot Paseo itself. Answ
 
 ## Use current documentation
 
-Fetch [https://paseo.sh/llms.txt](https://paseo.sh/llms.txt) first. It is the current index of Paseo documentation, with a description and Markdown URL for each page.
+For this fork, read the checkout's `docs/docker.md`, `docs/host-handoff.md` and relevant subject docs first. The default installation builds locally and runs the daemon, providers and Tailscale inside a container. Upstream native installation instructions do not describe this deployment. Inspect the serving container before diagnosing it; do not restart it without authorization.
+
+For upstream product behavior not covered locally, fetch [https://paseo.sh/llms.txt](https://paseo.sh/llms.txt) first. It is the current index of Paseo documentation, with a description and Markdown URL for each page.
 
 Use that index to select the page that owns the user's question, then fetch the linked `.md` page before answering. For troubleshooting, begin with [Common problems](https://paseo.sh/docs/troubleshooting.md) and follow its links when the issue belongs to a more specific page.
 

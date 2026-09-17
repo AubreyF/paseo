@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, open, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rename, rm, rmdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { observeHourlyEstimate, HourlyEstimateStateSchema } from "./governor-estimate.js";
@@ -115,6 +115,21 @@ const LedgerSchema = z
   .strict();
 type Ledger = z.infer<typeof LedgerSchema>;
 
+export interface QuotaLockRecoveryContext {
+  account: QuotaAccount;
+  ledger: {
+    reservationId: string;
+    execution: GovernorExecution;
+    executionBindings: Ledger["executionBindings"];
+    released: boolean;
+    providerId: string;
+    policy: QuotaGovernorPolicy;
+    observation: QuotaObservation;
+    scheduleId: string;
+    occurrenceId: string;
+  } | null;
+}
+
 interface ReserveInput {
   policy: QuotaGovernorPolicy;
   observation: QuotaObservation;
@@ -155,6 +170,105 @@ export class QuotaGovernorStore {
       .update(JSON.stringify([account.issuer, account.accountId]))
       .digest("hex");
     return resolve(this.directory, `${key}.json`);
+  }
+
+  /** Startup only, before any writer is enabled. Every writer must participate
+   * in the caller's exclusive lifetime ownership protocol. This removes only a
+   * stale directory lock, never execution custody or accounting history.
+   */
+  async recoverAbandonedAccountLock(input: {
+    account: QuotaAccount;
+    assertExclusiveWriter(): void;
+    reconcileCustody(context: QuotaLockRecoveryContext): Promise<{ reconciled: true }>;
+  }): Promise<"absent" | "recovered"> {
+    const account = QuotaAccountSchema.parse(input.account);
+    const path = this.accountPath(account);
+    return this.serializeAccount(path, async () => {
+      input.assertExclusiveWriter();
+      const directory = await inspectRecoveryDirectory(this.directory);
+      const lock = `${path}.lock`;
+      const inspectLock = async () => {
+        const info = await lstat(lock);
+        if (
+          !info.isDirectory() ||
+          info.uid !== process.getuid?.() ||
+          (info.mode & 0o777) !== 0o700 ||
+          (await readdir(lock)).length !== 0
+        )
+          throw new Error("Quota recovery requires a protected empty lock directory.");
+        return info;
+      };
+      let original;
+      try {
+        original = await inspectLock();
+      } catch (error) {
+        if (!hasCode(error, "ENOENT")) throw error;
+      }
+      const ledger = await readLedger(path);
+      if (ledger && !isDeepStrictEqual(ledger.account, account))
+        throw new Error("Quota recovery account identity mismatch.");
+      await loadAccountingContract(path, account, ledger);
+      const estimate = await readProtectedJson(`${path}.estimate`);
+      if (
+        estimate !== undefined &&
+        !isDeepStrictEqual(HourlyEstimateStateSchema.parse(estimate).account, account)
+      )
+        throw new Error("Quota estimate account mismatch.");
+      const pacing = await readProtectedJson(`${path}.pacing`);
+      if (
+        pacing !== undefined &&
+        !isDeepStrictEqual(PacingLedgerSchema.parse(pacing).account, account)
+      )
+        throw new Error("Quota pacing account mismatch.");
+      const result = await input.reconcileCustody(
+        structuredClone({
+          account,
+          ledger: ledger
+            ? {
+                reservationId: ledger.reservation.id,
+                execution: ledger.execution,
+                executionBindings: ledger.executionBindings,
+                released: ledger.released,
+                providerId: ledger.reservation.providerId,
+                policy: ledger.reservation.policy,
+                observation: ledger.observation,
+                scheduleId: ledger.reservation.scheduleId,
+                occurrenceId: ledger.reservation.occurrenceId,
+              }
+            : null,
+        }),
+      );
+      if (result?.reconciled !== true)
+        throw new Error("Quota custody reconciliation is unconfirmed.");
+      input.assertExclusiveWriter();
+      const currentDirectory = await inspectRecoveryDirectory(this.directory);
+      if (currentDirectory.dev !== directory.dev || currentDirectory.ino !== directory.ino)
+        throw new Error("Quota recovery directory changed.");
+      if (!original) {
+        try {
+          await lstat(lock);
+        } catch (error) {
+          if (hasCode(error, "ENOENT")) return "absent";
+          throw error;
+        }
+        throw new Error("Quota recovery lock appeared during reconciliation.");
+      }
+      const current = await inspectLock();
+      if (current.dev !== original.dev || current.ino !== original.ino)
+        throw new Error("Quota recovery lock changed.");
+      input.assertExclusiveWriter();
+      await rmdir(lock);
+      const parent = await open(
+        this.directory,
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+      );
+      try {
+        await parent.sync();
+      } finally {
+        await parent.close();
+      }
+      return "recovered";
+    });
   }
 
   /** Called by trusted observation/dispatch code, never with a worker-supplied generation. */
@@ -349,6 +463,39 @@ export class QuotaGovernorStore {
     return (await this.executionContext(account, reservationId)).execution;
   }
 
+  async reservationState(
+    account: QuotaAccount,
+    reservationId: string,
+  ): Promise<
+    | { kind: "finalized" }
+    | {
+        kind: "active";
+        execution: GovernorExecution;
+        providerId: string;
+        policy: QuotaGovernorPolicy;
+        observation: QuotaObservation;
+        scheduleId: string;
+        occurrenceId: string;
+      }
+  > {
+    const ledger = await readLedger(this.accountPath(account));
+    if (!ledger || !isDeepStrictEqual(ledger.account, account))
+      throw new Error("Quota reservation identity mismatch.");
+    if (ledger.completions.some((entry) => entry.reservationId === reservationId))
+      return { kind: "finalized" };
+    if (ledger.reservation.id !== reservationId)
+      throw new Error("Quota reservation identity mismatch.");
+    return {
+      kind: "active",
+      execution: ledger.execution,
+      providerId: ledger.reservation.providerId,
+      policy: ledger.reservation.policy,
+      observation: ledger.observation,
+      scheduleId: ledger.reservation.scheduleId,
+      occurrenceId: ledger.reservation.occurrenceId,
+    };
+  }
+
   async executionContext(
     account: QuotaAccount,
     reservationId: string,
@@ -510,8 +657,12 @@ export class QuotaGovernorStore {
     path: string,
     operation: () => Promise<T>,
   ): Promise<T | { kind: "deferred"; reason: "store_busy" }> {
+    return this.serializeAccount(path, () => this.lockedOperation(path, operation));
+  }
+
+  private async serializeAccount<T>(path: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.pending.get(path) ?? Promise.resolve();
-    const work = previous.catch(() => undefined).then(() => this.lockedOperation(path, operation));
+    const work = previous.catch(() => undefined).then(operation);
     this.pending.set(path, work);
     try {
       return await work;
@@ -738,17 +889,35 @@ async function readLedger(path: string): Promise<Ledger | null> {
   return contents === undefined ? null : LedgerSchema.parse(contents);
 }
 
+async function inspectRecoveryDirectory(path: string) {
+  const info = await lstat(path);
+  if (
+    !info.isDirectory() ||
+    info.uid !== process.getuid?.() ||
+    (info.mode & 0o777) !== 0o700 ||
+    (await realpath(path)) !== path
+  )
+    throw new Error("Unsafe quota recovery directory.");
+  return info;
+}
+
 async function readProtectedJson(path: string): Promise<unknown> {
   let file;
   try {
-    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (error) {
     if (hasCode(error, "ENOENT")) return undefined;
     throw error;
   }
   try {
     const stat = await file.stat();
-    if (!stat.isFile() || stat.size > 16 * 1024 * 1024)
+    if (
+      !stat.isFile() ||
+      stat.size > 16 * 1024 * 1024 ||
+      (process.getuid !== undefined &&
+        (stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o600)) ||
+      stat.nlink !== 1
+    )
       throw new Error("Invalid quota ledger file.");
     return JSON.parse(await file.readFile("utf8"));
   } finally {

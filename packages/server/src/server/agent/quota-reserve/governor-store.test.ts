@@ -1,11 +1,23 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { QuotaGovernorPolicy, QuotaObservation } from "@getpaseo/protocol/quota-governor";
 import { QuotaGovernorStore } from "./governor-store.js";
 
 const directories: string[] = [];
+const linuxIt = it.skipIf(process.platform !== "linux");
 afterEach(async () => {
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -72,6 +84,143 @@ it("persists one account reservation across aliases and restart", async () => {
     reason: "account_busy",
   });
 });
+
+linuxIt(
+  "startup recovery preserves journal bytes and requires explicit reconciliation even without a lock",
+  async () => {
+    const store = new QuotaGovernorStore(await directory(), clock);
+    const admitted = await store.reserve(input);
+    if (admitted.kind !== "admitted") throw new Error("Fixture admission failed");
+    await store.observeEstimatedUsage({
+      observation: input.observation,
+      authenticationGeneration: "auth",
+      bucketId: "coding",
+      windowId: "primary",
+      maxObservationAgeSeconds: 120,
+    });
+    const path = store.accountPath(policy.account);
+    const before = await readFile(path);
+    const estimate = await readFile(`${path}.estimate`);
+    await mkdir(`${path}.lock`, { mode: 0o700 });
+    const reconcileCustody = vi.fn(async () => ({ reconciled: true as const }));
+    const recovery = { account: policy.account, assertExclusiveWriter: vi.fn(), reconcileCustody };
+    expect(await store.recoverAbandonedAccountLock(recovery)).toBe("recovered");
+    expect(reconcileCustody).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: policy.account,
+        ledger: expect.objectContaining({
+          reservationId: admitted.reservation.id,
+          released: false,
+        }),
+      }),
+    );
+    expect(await readFile(path)).toEqual(before);
+    expect(await readFile(`${path}.estimate`)).toEqual(estimate);
+    expect(await store.recoverAbandonedAccountLock(recovery)).toBe("absent");
+    expect(reconcileCustody).toHaveBeenCalledTimes(2);
+    expect(await store.reservationState(policy.account, admitted.reservation.id)).toMatchObject({
+      kind: "active",
+      scheduleId: input.scheduleId,
+    });
+    await expect(store.reservationState(policy.account, "unknown")).rejects.toThrow(
+      "identity mismatch",
+    );
+  },
+);
+
+linuxIt.each(["unconfirmed", "authority", "replaced", "nonempty"])(
+  "startup recovery retains %s lock evidence",
+  async (failure) => {
+    const store = new QuotaGovernorStore(await directory(), clock);
+    await store.reserve(input);
+    const lock = `${store.accountPath(policy.account)}.lock`;
+    await mkdir(lock, { mode: 0o700 });
+    let authorized = true;
+    await expect(
+      store.recoverAbandonedAccountLock({
+        account: policy.account,
+        assertExclusiveWriter: () => {
+          if (!authorized) throw new Error("Authority lost");
+        },
+        reconcileCustody: async () => {
+          if (failure === "unconfirmed") return undefined as never;
+          if (failure === "authority") authorized = false;
+          if (failure === "replaced") {
+            await rename(lock, `${lock}.old`);
+            await mkdir(lock, { mode: 0o700 });
+          }
+          if (failure === "nonempty") await writeFile(join(lock, "retained"), "evidence");
+          return { reconciled: true };
+        },
+      }),
+    ).rejects.toThrow();
+    expect((await lstat(lock)).isDirectory()).toBe(true);
+  },
+);
+
+linuxIt(
+  "startup recovery with a missing ledger requires explicit custody proof and serializes local writers",
+  async () => {
+    const store = new QuotaGovernorStore(await directory(), clock);
+    const lock = `${store.accountPath(policy.account)}.lock`;
+    await mkdir(lock, { mode: 0o700 });
+    let release!: () => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const recovery = store.recoverAbandonedAccountLock({
+      account: policy.account,
+      assertExclusiveWriter: () => {},
+      reconcileCustody: async (context) => {
+        expect(context.ledger).toBeNull();
+        entered();
+        await waiting;
+        return { reconciled: true };
+      },
+    });
+    await ready;
+    let finished = false;
+    const reservation = store.reserve(input).then((result) => {
+      finished = true;
+      return result;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(finished).toBe(false);
+    release();
+    expect(await recovery).toBe("recovered");
+    expect((await reservation).kind).toBe("admitted");
+  },
+);
+
+linuxIt.each(["malformed", "mode", "fifo"])(
+  "startup recovery refuses a %s ledger without removing its lock",
+  async (kind) => {
+    const store = new QuotaGovernorStore(await directory(), clock);
+    await store.reserve(input);
+    const path = store.accountPath(policy.account);
+    await mkdir(`${path}.lock`, { mode: 0o700 });
+    if (kind === "malformed") await writeFile(path, "broken");
+    if (kind === "mode") await chmod(path, 0o644);
+    if (kind === "fifo") {
+      await rm(path);
+      expect(spawnSync("mkfifo", ["-m", "600", path]).status).toBe(0);
+    }
+    const reconcileCustody = vi.fn(async () => ({ reconciled: true as const }));
+    await expect(
+      store.recoverAbandonedAccountLock({
+        account: policy.account,
+        assertExclusiveWriter: () => {},
+        reconcileCustody,
+      }),
+    ).rejects.toThrow();
+    expect(reconcileCustody).not.toHaveBeenCalled();
+    expect((await lstat(`${path}.lock`)).isDirectory()).toBe(true);
+  },
+);
 
 it("serializes competing account admissions before either can start inference", async () => {
   const store = new QuotaGovernorStore(await directory(), clock);
@@ -431,6 +580,9 @@ it("releases completed capacity without forgetting accounting or allowing duplic
   });
   const next = { ...input, occurrenceId: "next", observation: postCompletion };
   expect((await reopened.reserve(next)).kind).toBe("admitted");
+  expect(await reopened.reservationState(policy.account, admitted.reservation.id)).toEqual({
+    kind: "finalized",
+  });
   expect(await reopened.reserve(input)).toEqual({
     kind: "completed",
     reservationId: admitted.reservation.id,

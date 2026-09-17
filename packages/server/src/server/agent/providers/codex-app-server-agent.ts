@@ -3411,7 +3411,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
-    private readonly quotaGovernance?: Pick<QuotaGovernedSessionInput, "account" | "guard">,
+    private readonly quotaGovernance?: Pick<
+      QuotaGovernedSessionInput,
+      "account" | "guard" | "permissionProfile"
+    >,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3911,8 +3914,27 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.quotaGovernance && toObjectRecord(response)?.approvalsReviewer !== "user") {
       throw new Error("Native thread reviewer is unverified for quota-governed execution.");
     }
+    const profile = this.quotaGovernance?.permissionProfile;
+    if (
+      profile &&
+      (toObjectRecord(toObjectRecord(response)?.activePermissionProfile)?.id !== profile ||
+        toObjectRecord(response)?.approvalPolicy !== "never")
+    ) {
+      throw new Error("Native permission profile is unverified for quota-governed execution.");
+    }
     const id = resumedThreadId ?? toObjectRecord(toObjectRecord(response)?.thread)?.id;
     if (this.quotaGovernance && typeof id === "string") this.verifiedQuotaThreads.add(id);
+  }
+
+  private applyGovernedPermissionProfile(params: Record<string, unknown>): void {
+    const profile = this.quotaGovernance?.permissionProfile;
+    if (!profile) return;
+    // Named profiles and legacy sandbox overrides are mutually exclusive.
+    // Interactive modes must not widen the coordinator's selected boundary.
+    delete params.sandbox;
+    delete params.sandboxPolicy;
+    params.permissions = profile;
+    params.approvalPolicy = "never";
   }
 
   private async ensureThreadLoaded(
@@ -3921,6 +3943,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.client || !this.currentThreadId) return;
     const params: Record<string, unknown> = { threadId: this.currentThreadId };
     if (this.quotaGovernance) params.approvalsReviewer = "user";
+    this.applyGovernedPermissionProfile(params);
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
@@ -4070,6 +4093,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
     const { approvalPolicy, sandboxPolicyType } = this.applyTurnWorkflowPolicy(params, preset);
     if (this.quotaGovernance) params.approvalsReviewer = "user";
+    this.applyGovernedPermissionProfile(params);
 
     if (this.config.model) {
       params.model = this.config.model;
@@ -5260,6 +5284,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       applyApprovalsReviewerParam(params, preset);
     }
     if (this.quotaGovernance) params.approvalsReviewer = "user";
+    this.applyGovernedPermissionProfile(params);
     return { params, approvalPolicy, sandbox };
   }
 
@@ -5280,6 +5305,20 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.quotaGovernance) {
       // Thread overrides cannot re-enable inference paths outside the coordinator.
       configured.approvals_reviewer = "user";
+      if (this.quotaGovernance.permissionProfile) {
+        for (const key of Object.keys(configured)) {
+          if (
+            key === "permissions" ||
+            key.startsWith("permissions.") ||
+            key === "sandbox_mode" ||
+            key === "sandbox_workspace_write" ||
+            key.startsWith("sandbox_workspace_write.")
+          )
+            delete configured[key];
+        }
+        configured.default_permissions = this.quotaGovernance.permissionProfile;
+        configured.approval_policy = "never";
+      }
       for (const feature of ["goals", "multi_agent", "multi_agent_v2"]) {
         delete configured[`features.${feature}`];
       }
@@ -7160,6 +7199,12 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async openQuotaGovernedSession(input: QuotaGovernedSessionInput): Promise<AgentSession> {
+    if (
+      input.permissionProfile !== undefined &&
+      !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(input.permissionProfile)
+    ) {
+      throw new Error("Governed execution requires a named permission profile.");
+    }
     if (this.deps.customProvider && !this.runtimeSettings?.env?.CODEX_HOME?.trim()) {
       throw new Error("Configure an explicit CODEX_HOME before enforcing account quota.");
     }
@@ -7186,7 +7231,11 @@ export class CodexAppServerAgentClient implements AgentClient {
         false,
         input.launchContext?.agentId,
         "interactive",
-        { account: { ...input.account }, guard: input.guard },
+        {
+          account: { ...input.account },
+          guard: input.guard,
+          permissionProfile: input.permissionProfile,
+        },
       );
       await session.connect();
       quotaConstructionCustody.delete(key);

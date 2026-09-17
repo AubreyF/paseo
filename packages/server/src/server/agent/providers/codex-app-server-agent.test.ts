@@ -346,10 +346,21 @@ function createGovernedAppServer(
   controls = true,
   reviewer: string | null = "user",
   loaded = false,
+  permissionProfile?: string,
+  approvalPolicy = "never",
 ): FakeCodexAppServer {
   return createFakeCodexAppServer({
-    "thread/start": () => ({ thread: { id: "thread-1" }, approvalsReviewer: reviewer }),
-    "thread/resume": () => ({ approvalsReviewer: reviewer }),
+    "thread/start": () => ({
+      thread: { id: "thread-1" },
+      approvalsReviewer: reviewer,
+      activePermissionProfile: permissionProfile ? { id: permissionProfile } : null,
+      approvalPolicy,
+    }),
+    "thread/resume": () => ({
+      approvalsReviewer: reviewer,
+      activePermissionProfile: permissionProfile ? { id: permissionProfile } : null,
+      approvalPolicy,
+    }),
     "thread/loaded/list": () => ({ data: loaded ? ["thread-1"] : [] }),
     "config/read": () => ({
       config: controls
@@ -377,6 +388,91 @@ function createGovernedAppServer(
     "account/usage/read": () => ({}),
   });
 }
+
+test.each([false, true])(
+  "governed permission profile survives native workflow overrides (resume=%s)",
+  async (resume) => {
+    const appServer = createGovernedAppServer("reserved-account", true, "user", true, "factory");
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.openQuotaGovernedSession({
+      config: createConfig({
+        modeId: "full-access",
+        providerOptions: { sandbox_mode: "danger-full-access" },
+      }),
+      account: { issuer: "openai", accountId: "reserved-account" },
+      guard: async () => ({ assertValidForDispatch() {} }),
+      permissionProfile: "factory",
+      resumeHandle: resume ? { provider: "codex", sessionId: "thread-1" } : undefined,
+    });
+    try {
+      await session.startTurn("implement");
+      const requests = appServer
+        .requests()
+        .filter(
+          ({ method }) =>
+            method === (resume ? "thread/resume" : "thread/start") || method === "turn/start",
+        );
+      expect(requests).toHaveLength(2);
+      for (const request of requests) {
+        expect(request.params).toMatchObject({
+          permissions: "factory",
+          approvalPolicy: "never",
+          approvalsReviewer: "user",
+        });
+        expect(request.params).not.toHaveProperty("sandbox");
+        expect(request.params).not.toHaveProperty("sandboxPolicy");
+        expect(request.params).not.toHaveProperty("config.sandbox_mode");
+        expect(request.params).toHaveProperty("config.default_permissions", "factory");
+      }
+    } finally {
+      await session.close();
+      appServer.assertNoErrors();
+    }
+  },
+);
+
+test.each([
+  [false, undefined, "never"],
+  [false, "other", "never"],
+  [false, "factory", "on-request"],
+  [true, undefined, "never"],
+  [true, "other", "never"],
+  [true, "factory", "on-request"],
+] as const)(
+  "governed permission profile rejects unverified native policy (resume=%s profile=%s approval=%s)",
+  async (resume, profile, approval) => {
+    const appServer = createGovernedAppServer(
+      "reserved-account",
+      true,
+      "user",
+      true,
+      profile,
+      approval,
+    );
+    const provider = createProviderWithFakeAppServer(appServer);
+    const guard = vi.fn(async () => ({ assertValidForDispatch() {} }));
+    let session: AgentSession | undefined;
+    try {
+      await expect(
+        (async () => {
+          session = await provider.openQuotaGovernedSession({
+            config: createConfig(),
+            account: { issuer: "openai", accountId: "reserved-account" },
+            guard,
+            permissionProfile: "factory",
+            resumeHandle: resume ? { provider: "codex", sessionId: "thread-1" } : undefined,
+          });
+          await session.startTurn("implement");
+        })(),
+      ).rejects.toThrow("permission profile is unverified");
+      expect(guard).not.toHaveBeenCalled();
+      expect(appServer.requests().map(({ method }) => method)).not.toContain("turn/start");
+    } finally {
+      await session?.close();
+      appServer.assertNoErrors();
+    }
+  },
+);
 
 test.each([
   [false, "auto_review", false],

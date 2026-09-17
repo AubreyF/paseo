@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { observeHourlyEstimate, HourlyEstimateStateSchema } from "./governor-estimate.js";
 import { z } from "zod";
 import {
   QuotaAccountSchema,
@@ -42,6 +43,7 @@ import {
 const AccountingContractRequirementSchema = AccountingContractSchema.omit({
   semantics: true,
   envelope: true,
+  estimatedWindow: true,
 }).strict();
 
 const PacingLedgerSchema = z
@@ -155,6 +157,26 @@ export class QuotaGovernorStore {
     return resolve(this.directory, `${key}.json`);
   }
 
+  /** Called by trusted observation/dispatch code, never with a worker-supplied generation. */
+  async observeEstimatedUsage(input: {
+    observation: QuotaObservation;
+    authenticationGeneration: string;
+    bucketId: string;
+    windowId: string;
+    maxObservationAgeSeconds: number;
+  }): Promise<QuotaObservation> {
+    if (input.observation.status !== "available") return input.observation;
+    const path = this.accountPath(input.observation.account);
+    const result = await this.withAccountLock(path, async () => {
+      const saved = await readProtectedJson(`${path}.estimate`);
+      const state = saved === undefined ? null : HourlyEstimateStateSchema.parse(saved);
+      const updated = observeHourlyEstimate({ ...input, state, nowMs: this.nowMs() });
+      await writeProtectedJson(`${path}.estimate`, updated.state);
+      return updated.observation;
+    });
+    return "kind" in result ? { status: "unavailable", reason: "read_failed" } : result;
+  }
+
   /** Account-wide budget reservation, not an execution permit. Completion never resets it. */
   async updatePacing(
     input: PacingUpdateInput,
@@ -256,7 +278,11 @@ export class QuotaGovernorStore {
       if (!current && ledger)
         return { kind: "deferred", reason: "accounting_migration_required" } as const;
       const candidate = createAccountingContract(input.policy);
-      if (current && !isDeepStrictEqual(current.semantics, candidate.semantics))
+      if (
+        current &&
+        (!isDeepStrictEqual(current.semantics, candidate.semantics) ||
+          !isDeepStrictEqual(current.estimatedWindow, candidate.estimatedWindow))
+      )
         return { kind: "deferred", reason: "accounting_migration_required" } as const;
       const contract = current ?? candidate;
       // Persist intent first. A crash before the contract lands holds for
@@ -288,7 +314,11 @@ export class QuotaGovernorStore {
       if (!current && ledger)
         return { kind: "deferred", reason: "accounting_migration_required" } as const;
       const candidate = createAccountingContract(policy);
-      if (current && !isDeepStrictEqual(current.semantics, candidate.semantics))
+      if (
+        current &&
+        (!isDeepStrictEqual(current.semantics, candidate.semantics) ||
+          !isDeepStrictEqual(current.estimatedWindow, candidate.estimatedWindow))
+      )
         return { kind: "deferred", reason: "accounting_migration_required" } as const;
       const observation = await input.readObservation();
       assertQuotaPolicyAccount(policy, observation, this.nowMs());
@@ -376,7 +406,7 @@ export class QuotaGovernorStore {
         if (decision.action !== "admit") return { kind: "deferred", reason: "quota", decision };
         if (observation.status !== "available" || ledger.observation.status !== "available")
           throw new Error("Missing quota observation.");
-        if (windowContract(observation) !== ledger.windowContract)
+        if (windowContract(observation, ledger.reservation.policy) !== ledger.windowContract)
           return { kind: "deferred", reason: "window_contract_changed" };
         if (Date.parse(observation.observedAt) < Date.parse(ledger.observation.observedAt))
           return { kind: "deferred", reason: "observation_regressed" };
@@ -440,19 +470,28 @@ export class QuotaGovernorStore {
         "consumption_throttle",
         "consumption_hold",
         "consumption_freeze",
+        "estimated_hourly_limit",
       ]);
+      if (ledger.reservation.policy.estimatedHourly) expenditureReasons.add("estimate_unavailable");
       if (decision.reasons.some((reason) => !expenditureReasons.has(reason.code)))
         return { kind: "deferred", reason: "quota", decision };
       if (observation.status !== "available" || ledger.observation.status !== "available")
         throw new Error("Missing completion accounting.");
-      if (windowContract(observation) !== ledger.windowContract)
+      if (windowContract(observation, ledger.reservation.policy) !== ledger.windowContract)
         return { kind: "deferred", reason: "window_contract_changed" };
       if (
         Date.parse(observation.observedAt) <= Date.parse(ledger.completedAt) ||
         Date.parse(observation.observedAt) < Date.parse(ledger.observation.observedAt)
       )
         return { kind: "deferred", reason: "observation_regressed" };
-      if (!chargesAccountedFor(ledger, observation))
+      // Estimated policies release only after confirmed execution custody and
+      // fresh post-completion telemetry. The separate estimate journal survives.
+      // Strict policies retain provider charge-settlement requirements.
+      if (
+        (!ledger.reservation.policy.estimatedHourly ||
+          ledger.reservation.policy.consumptionLimits.length > 0) &&
+        !chargesAccountedFor(ledger, observation)
+      )
         return { kind: "deferred", reason: "charge_settlement_unavailable" };
       ledger.observation = observation;
       ledger.released = true;
@@ -511,7 +550,7 @@ export class QuotaGovernorStore {
     );
     if (completed) return { kind: "completed", reservationId: completed.reservationId };
     if (ledger && input.observation.status === "available") {
-      const conflict = reconcile(ledger, input, windowContract(input.observation));
+      const conflict = reconcile(ledger, input, windowContract(input.observation, input.policy));
       if (conflict) return conflict;
     }
     let nowMs = this.nowMs();
@@ -529,7 +568,7 @@ export class QuotaGovernorStore {
     nowMs = this.nowMs();
     decision = evaluateQuotaGovernor({ ...input, nowMs, phase: "admission" });
     if (decision.action !== "admit") return { kind: "deferred", reason: "quota", decision };
-    const contract = windowContract(observation);
+    const contract = windowContract(observation, input.policy);
     if (ledger && !ledger.released) {
       if (ledger.execution.state === "completed")
         return { kind: "completed", reservationId: ledger.reservation.id };
@@ -598,9 +637,15 @@ function reconcile(ledger: Ledger, input: ReserveInput, contract: string): Reser
   return null;
 }
 
-function windowContract(observation: Extract<QuotaObservation, { status: "available" }>): string {
+function windowContract(
+  observation: Extract<QuotaObservation, { status: "available" }>,
+  policy: QuotaGovernorPolicy,
+): string {
   return JSON.stringify(
     observation.windows
+      .filter((window) =>
+        policy.requiredWindows.some((required) => required.bucketId === window.bucketId),
+      )
       .map((window) =>
         JSON.stringify([
           window.bucketId,
@@ -617,7 +662,7 @@ function accountingAdmissionDeferral(
   contract: AccountingContract | null,
   policy: QuotaGovernorPolicy,
 ): Extract<ReserveResult, { kind: "deferred" }> | null {
-  if (!contract && policy.consumptionLimits.length > 0)
+  if (!contract && (policy.consumptionLimits.length > 0 || policy.estimatedHourly))
     return { kind: "deferred", reason: "accounting_contract_missing" };
   if (contract && !satisfiesAccountingContract(contract, policy))
     return { kind: "deferred", reason: "accounting_migration_required" };
@@ -626,7 +671,8 @@ function accountingAdmissionDeferral(
 
 function legacyContractFromLedger(ledger: Ledger): AccountingContract | null {
   // Historical floor-only execution never established gross accounting semantics.
-  return ledger.reservation.policy.consumptionLimits.length > 0
+  return ledger.reservation.policy.consumptionLimits.length > 0 ||
+    ledger.reservation.policy.estimatedHourly
     ? legacyAccountingContract(ledger.reservation.policy)
     : null;
 }

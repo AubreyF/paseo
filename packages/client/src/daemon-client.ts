@@ -5538,7 +5538,9 @@ export class DaemonClient {
 
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
     if (options.target.type === "new-agent" && options.target.config.quotaPolicy !== undefined)
-      this.assertScheduleQuotaPolicySupport();
+      this.assertScheduleQuotaPolicySupport(
+        Boolean(options.target.config.quotaPolicy?.estimatedHourly),
+      );
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {
@@ -5631,15 +5633,21 @@ export class DaemonClient {
     });
   }
 
-  private assertScheduleQuotaPolicySupport(): void {
+  private assertScheduleQuotaPolicySupport(estimatedHourly = false): void {
     // COMPAT(scheduleQuotaPolicy): added in v0.7.2; remove only when every supported host enforces policies.
     // A policy-unaware host may strip unknown fields and launch ordinary work.
     if (this.lastServerInfoMessage?.features?.scheduleQuotaPolicy !== true)
       throw new Error("Update the host before changing quota-protected schedules.");
+    // COMPAT(estimatedHourlyQuota): added in v0.7.2; retain until every supported host enforces estimates.
+    if (estimatedHourly && this.lastServerInfoMessage?.features?.estimatedHourlyQuota !== true)
+      throw new Error("Update the host before using estimated hourly quota.");
   }
 
   async scheduleUpdate(options: UpdateScheduleOptions): Promise<ScheduleUpdatePayload> {
-    if (options.newAgentConfig?.quotaPolicy !== undefined) this.assertScheduleQuotaPolicySupport();
+    if (options.newAgentConfig?.quotaPolicy !== undefined)
+      this.assertScheduleQuotaPolicySupport(
+        Boolean(options.newAgentConfig.quotaPolicy?.estimatedHourly),
+      );
     if (
       options.expectedConfigurationRevision !== undefined &&
       !this.lastServerInfoMessage?.features?.scheduleConfigurationRevision

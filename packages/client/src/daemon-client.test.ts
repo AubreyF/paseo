@@ -6270,6 +6270,39 @@ test("schedule quota policies never reach a policy-unaware host", async () => {
   expect(mock.sent).toEqual([]);
 });
 
+test("estimated hourly policies cannot be silently stripped by older quota-aware hosts", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "estimated-quota-test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: { scheduleQuotaPolicy: true } });
+  await connected;
+  const quotaPolicy = {
+    ...scheduleQuotaPolicy,
+    estimatedHourly: { bucketId: "coding", windowId: "weekly", maxConsumedPoints: 10 },
+  };
+  await expect(
+    client.scheduleCreate({
+      prompt: "Protected work",
+      cadence: { type: "cron", expression: "0 * * * *" },
+      target: {
+        type: "new-agent",
+        config: { provider: "secondary", cwd: "/tmp/work", quotaPolicy },
+      },
+    }),
+  ).rejects.toThrow("estimated hourly quota");
+  await expect(
+    client.scheduleUpdate({ id: "schedule", newAgentConfig: { quotaPolicy } }),
+  ).rejects.toThrow("estimated hourly quota");
+  expect(mock.sent).toEqual([]);
+});
+
 test("schedule quota policies are preserved on a policy-aware host", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({

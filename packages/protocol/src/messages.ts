@@ -3490,6 +3490,7 @@ export const ServerInfoStatusPayloadSchema = z
         scheduleConfigurationRevision: z.boolean().optional(),
         // COMPAT(scheduleQuotaPolicy): added in v0.7.2; retain while policy-unaware hosts are supported.
         scheduleQuotaPolicy: z.boolean().optional(),
+        estimatedHourlyQuota: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.

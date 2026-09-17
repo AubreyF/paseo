@@ -119,6 +119,23 @@ it("holds stale admission and freezes stale active work", () => {
   }
 });
 
+it("ignores exhausted unrelated model buckets while retaining coding short-window limits", () => {
+  expect(
+    evaluateQuotaGovernor({
+      policy,
+      observation: {
+        ...observation,
+        windows: [
+          ...observation.windows,
+          { ...observation.windows[0], bucketId: "other-model", usedPercent: 100 },
+        ],
+      },
+      nowMs: now,
+      phase: "admission",
+    }),
+  ).toEqual({ action: "admit", reasons: [] });
+});
+
 it("cannot borrow another account's headroom", () => {
   expect(
     evaluateQuotaGovernor({

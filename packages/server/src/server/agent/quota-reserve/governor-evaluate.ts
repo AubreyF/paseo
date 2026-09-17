@@ -22,6 +22,8 @@ export interface QuotaGovernorReason {
     | "consumption_throttle"
     | "consumption_hold"
     | "consumption_freeze"
+    | "estimate_unavailable"
+    | "estimated_hourly_limit"
     | "required_window_unavailable";
   bucketId?: string;
   windowId?: string;
@@ -91,22 +93,7 @@ export function evaluateQuotaGovernor(input: EvaluationInput): QuotaGovernorDeci
   };
   const unknown = (reason: QuotaGovernorReason) =>
     restrict(input.phase === "active" ? "freeze" : "hold", reason);
-  const windows = new Set<string>();
-  for (const window of observation.windows) {
-    const identity = JSON.stringify([window.bucketId, window.windowId]);
-    if (windows.has(identity)) {
-      unknown({ code: "invalid_observation" });
-      continue;
-    }
-    windows.add(identity);
-    const remaining = 100 - window.usedPercent;
-    const identityFields = { bucketId: window.bucketId, windowId: window.windowId };
-    if (remaining <= policy.freezeFloorPercent) {
-      restrict("freeze", { code: "freeze_floor", ...identityFields });
-    } else if (remaining <= policy.launchFloorPercent) {
-      restrict("hold", { code: "launch_floor", ...identityFields });
-    }
-  }
+  evaluateAllowanceWindows(policy, observation, restrict, unknown);
   for (const limit of policy.consumptionLimits) {
     const meter = matchingMeter(observation.consumptionMeters, limit);
     if (!meter) {
@@ -126,7 +113,56 @@ export function evaluateQuotaGovernor(input: EvaluationInput): QuotaGovernorDeci
     else if (consumption.consumed >= limit.throttleAt)
       restrict("throttle", { code: "consumption_throttle", ...fields });
   }
+  const estimateReason = evaluateEstimate(policy, observation, input.nowMs);
+  if (estimateReason?.code === "estimate_unavailable") unknown(estimateReason);
+  else if (estimateReason) restrict("freeze", estimateReason);
   return decision;
+}
+
+function evaluateEstimate(
+  policy: QuotaGovernorPolicy,
+  observation: Extract<QuotaObservation, { status: "available" }>,
+  nowMs: number,
+): QuotaGovernorReason | null {
+  if (!policy.estimatedHourly) return null;
+  const estimate = observation.estimatedHourlyUsage;
+  if (
+    !estimate ||
+    estimate.bucketId !== policy.estimatedHourly.bucketId ||
+    estimate.windowId !== policy.estimatedHourly.windowId ||
+    estimate.consumedPoints === null ||
+    estimate.observedAt !== observation.observedAt ||
+    Date.parse(estimate.coverageStart) > nowMs - 3_600_000
+  )
+    return { code: "estimate_unavailable" };
+  return estimate.consumedPoints >= policy.estimatedHourly.maxConsumedPoints
+    ? { code: "estimated_hourly_limit", consumed: estimate.consumedPoints }
+    : null;
+}
+
+function evaluateAllowanceWindows(
+  policy: QuotaGovernorPolicy,
+  observation: Extract<QuotaObservation, { status: "available" }>,
+  restrict: (action: QuotaGovernorDecision["action"], reason: QuotaGovernorReason) => void,
+  unknown: (reason: QuotaGovernorReason) => void,
+): void {
+  const windows = new Set<string>();
+  for (const window of observation.windows) {
+    // Keep every short/long window in the executing model's buckets.
+    if (!policy.requiredWindows.some((required) => required.bucketId === window.bucketId)) continue;
+    const identity = JSON.stringify([window.bucketId, window.windowId]);
+    if (windows.has(identity)) {
+      unknown({ code: "invalid_observation" });
+      continue;
+    }
+    windows.add(identity);
+    const remaining = 100 - window.usedPercent;
+    const identityFields = { bucketId: window.bucketId, windowId: window.windowId };
+    if (remaining <= policy.freezeFloorPercent)
+      restrict("freeze", { code: "freeze_floor", ...identityFields });
+    else if (remaining <= policy.launchFloorPercent)
+      restrict("hold", { code: "launch_floor", ...identityFields });
+  }
 }
 
 function matchingMeter(

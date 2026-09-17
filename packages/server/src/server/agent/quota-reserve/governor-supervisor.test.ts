@@ -22,7 +22,7 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-async function fixture() {
+async function fixture(estimated = false) {
   const directory = await mkdtemp(join(tmpdir(), "quota-supervision-"));
   directories.push(directory);
   let now = Date.parse("2026-09-14T08:00:00Z");
@@ -35,6 +35,9 @@ async function fixture() {
     requiredWindows: [{ bucketId: "coding", windowId: "primary", durationMinutes: 10080 }],
     consumptionLimits: [],
     recovery: "automatic_after_reconciliation",
+    ...(estimated
+      ? { estimatedHourly: { bucketId: "coding", windowId: "primary", maxConsumedPoints: 10 } }
+      : {}),
   };
   const sample = (usedPercent = 20): QuotaObservation => ({
     status: "available",
@@ -54,6 +57,19 @@ async function fixture() {
   });
   let observation = sample();
   const store = new QuotaGovernorStore(directory, { nowMs: () => now });
+  if (estimated) {
+    await store.configureAccountingContract({ policy, expectedRevision: null });
+    for (let minute = 0; minute <= 60; minute++) {
+      if (minute > 0) now += 60_000;
+      observation = await store.observeEstimatedUsage({
+        observation: sample(),
+        authenticationGeneration: "auth",
+        bucketId: "coding",
+        windowId: "primary",
+        maxObservationAgeSeconds: 120,
+      });
+    }
+  }
   const reserved = await store.reserve({
     policy,
     observation,
@@ -134,6 +150,17 @@ it("persists a freeze and preserves ownership until exact settlement arrives", a
     pauseReason: "quota",
   });
   expect(f.options.freezeAndSettle).toHaveBeenCalledExactlyOnceWith("execution");
+});
+
+it("monitors the persisted hourly estimate outside the native turn and freezes at ten points", async () => {
+  const f = await fixture(true);
+  f.observe(29);
+  await f.supervisor.checkNow();
+  expect(f.options.freezeAndSettle).not.toHaveBeenCalled();
+  f.observe(30);
+  await f.supervisor.checkNow();
+  expect(f.options.freezeAndSettle).toHaveBeenCalledExactlyOnceWith("execution");
+  expect(await f.execution()).toMatchObject({ state: "frozen", settlementId: "settled" });
 });
 
 it("rejects a mismatched settlement and retains the freezing state", async () => {

@@ -19,6 +19,9 @@ export const AccountingContractSchema = z
     account: QuotaAccountSchema,
     revision: z.string().min(1),
     semantics: z.array(AccountingSemanticsSchema),
+    estimatedWindow: z
+      .object({ bucketId: z.string().min(1), windowId: z.string().min(1) })
+      .optional(),
     envelope: QuotaGovernorPolicySchema.optional(),
   })
   .strict();
@@ -51,6 +54,14 @@ export function createAccountingContract(policy: QuotaGovernorPolicy): Accountin
     account: policy.account,
     revision: randomUUID(),
     semantics: semantics(policy),
+    ...(policy.estimatedHourly
+      ? {
+          estimatedWindow: {
+            bucketId: policy.estimatedHourly.bucketId,
+            windowId: policy.estimatedHourly.windowId,
+          },
+        }
+      : {}),
   };
 }
 
@@ -58,7 +69,13 @@ export function createAccountingContract(policy: QuotaGovernorPolicy): Accountin
 export function legacyAccountingContract(policy: QuotaGovernorPolicy): AccountingContract {
   const contract = createAccountingContract(policy);
   const revision = createHash("sha256")
-    .update(JSON.stringify([contract.account, contract.semantics]))
+    .update(
+      JSON.stringify([
+        contract.account,
+        contract.semantics,
+        ...(contract.estimatedWindow ? [contract.estimatedWindow] : []),
+      ]),
+    )
     .digest("hex");
   return { ...contract, revision: `legacy:${revision}` };
 }
@@ -73,6 +90,13 @@ export function satisfiesAccountingContract(
   )
     return false;
   const requested = new Set(semantics(policy).map((value) => JSON.stringify(value)));
+  if (
+    contract.estimatedWindow &&
+    (!policy.estimatedHourly ||
+      contract.estimatedWindow.bucketId !== policy.estimatedHourly.bucketId ||
+      contract.estimatedWindow.windowId !== policy.estimatedHourly.windowId)
+  )
+    return false;
   // Extra schedule restrictions may add obligations, never remove the account's.
   return contract.semantics.every((value) => requested.has(JSON.stringify(value)));
 }

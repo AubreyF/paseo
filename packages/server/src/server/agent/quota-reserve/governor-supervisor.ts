@@ -142,7 +142,7 @@ export class QuotaExecutionSupervisor {
         return;
       }
       assertExecution(execution, this.options);
-      const observation = await this.readBounded();
+      const observation = await this.withEstimate(await this.readBounded());
       if (this.revoked) return;
       if (!this.acceptObservation(observation)) return;
       const decision = evaluateQuotaGovernor({
@@ -185,6 +185,7 @@ export class QuotaExecutionSupervisor {
       this.options.reservationId,
     );
     assertExecution(execution, this.options);
+    request = { ...request, observation: await this.withEstimate(request.observation) };
     if (!this.acceptObservation(request.observation))
       throw new Error("Quota observation regressed or conflicts with newer evidence.");
     const active = evaluateQuotaGovernor({
@@ -227,6 +228,23 @@ export class QuotaExecutionSupervisor {
         }
       },
     };
+  }
+
+  private withEstimate(observation: QuotaObservation): Promise<QuotaObservation> {
+    const estimated = this.policy.estimatedHourly;
+    if (
+      !estimated ||
+      observation.status !== "available" ||
+      !isDeepStrictEqual(observation.account, this.options.account)
+    )
+      return Promise.resolve(observation);
+    return this.options.store.observeEstimatedUsage({
+      observation,
+      authenticationGeneration: this.options.authenticationGeneration,
+      bucketId: estimated.bucketId,
+      windowId: estimated.windowId,
+      maxObservationAgeSeconds: this.policy.maxObservationAgeSeconds,
+    });
   }
 
   /** Revoke synchronously, persist freeze intent, then require an exact custody receipt. */

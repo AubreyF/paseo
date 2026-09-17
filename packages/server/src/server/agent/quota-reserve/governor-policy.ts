@@ -36,6 +36,21 @@ export function combineQuotaPolicies(
     windows.set(key, window);
   }
   const limits = new Map<string, QuotaConsumptionLimit>();
+  let estimatedHourly = parent.estimatedHourly ?? child.estimatedHourly;
+  if (parent.estimatedHourly && child.estimatedHourly) {
+    if (
+      parent.estimatedHourly.bucketId !== child.estimatedHourly.bucketId ||
+      parent.estimatedHourly.windowId !== child.estimatedHourly.windowId
+    )
+      throw new Error("Estimated quota windows require reconciliation.");
+    estimatedHourly = {
+      ...parent.estimatedHourly,
+      maxConsumedPoints: Math.min(
+        parent.estimatedHourly.maxConsumedPoints,
+        child.estimatedHourly.maxConsumedPoints,
+      ),
+    };
+  }
   for (const input of [...parent.consumptionLimits, ...child.consumptionLimits]) {
     const limit = normalizedLimit(input);
     const key = JSON.stringify([limit.meterId, limit.period.kind]);
@@ -70,6 +85,7 @@ export function combineQuotaPolicies(
       child.maxObservationAgeSeconds,
     ),
     consumptionLimits: [...limits.values()],
+    ...(estimatedHourly ? { estimatedHourly } : {}),
   });
 }
 

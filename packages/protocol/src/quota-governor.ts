@@ -44,6 +44,17 @@ export const QuotaConsumptionMeterSchema = z.object({
 });
 export type QuotaConsumptionMeter = z.infer<typeof QuotaConsumptionMeterSchema>;
 
+export const EstimatedHourlyUsageSchema = z.object({
+  bucketId: z.string().min(1),
+  windowId: z.string().min(1),
+  authenticationGeneration: z.string().min(1),
+  coverageStart: InstantSchema,
+  observedAt: InstantSchema,
+  // Account-wide occupancy deltas, never attributable billing or a strict meter.
+  // Null means insufficient continuous history, including resets and read gaps.
+  consumedPoints: QuantitySchema.nullable(),
+});
+
 export const QuotaObservationSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("available"),
@@ -51,6 +62,7 @@ export const QuotaObservationSchema = z.discriminatedUnion("status", [
     observedAt: InstantSchema,
     windows: z.array(QuotaWindowSchema).min(1),
     consumptionMeters: z.array(QuotaConsumptionMeterSchema),
+    estimatedHourlyUsage: EstimatedHourlyUsageSchema.optional(),
     // A trusted adapter emits these only when provider accounting proves all
     // charges for the captured execution are reflected, including owned work.
     // A later balance read, token total, or process exit is not this evidence.
@@ -119,6 +131,13 @@ export const QuotaGovernorPolicySchema = z.object({
   freezeFloorPercent: z.number().finite().min(0).max(100),
   maxObservationAgeSeconds: z.number().finite().positive().max(120),
   consumptionLimits: z.array(QuotaConsumptionLimitSchema),
+  estimatedHourly: z
+    .object({
+      bucketId: z.string().min(1),
+      windowId: z.string().min(1),
+      maxConsumedPoints: z.number().finite().positive().max(100),
+    })
+    .optional(),
   recovery: z.literal("automatic_after_reconciliation"),
 });
 export type QuotaGovernorPolicy = z.infer<typeof QuotaGovernorPolicySchema>;
@@ -128,6 +147,17 @@ export function parseQuotaGovernorPolicy(input: unknown): QuotaGovernorPolicy {
   const policy = QuotaGovernorPolicySchema.parse(input);
   if (policy.freezeFloorPercent >= policy.launchFloorPercent) {
     throw new Error("Freeze floor must be below the launch floor.");
+  }
+  if (
+    policy.estimatedHourly &&
+    !policy.requiredWindows.some(
+      (window) =>
+        window.bucketId === policy.estimatedHourly!.bucketId &&
+        window.windowId === policy.estimatedHourly!.windowId &&
+        window.durationMinutes === 10080,
+    )
+  ) {
+    throw new Error("Estimated hourly policy requires its weekly allowance window.");
   }
   const periods = new Set<string>();
   for (const limit of policy.consumptionLimits) {

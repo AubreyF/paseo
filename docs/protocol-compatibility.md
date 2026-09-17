@@ -72,6 +72,20 @@ A client must require `server_info.features.scheduleQuotaPolicy === true` before
 
 The capability means the daemon recognizes quota policies and fails closed when it cannot execute governed work. It does not certify available usage telemetry, account authority, a ready execution backend, or permission to remove an enforced account policy. Those remain server-side admission requirements. Protected writes use the existing nonqueued request path, so a disconnected client cannot replay them onto a different host after reconnecting.
 
+Policies with `estimatedHourly` also require `estimatedHourlyQuota`. Older
+quota-aware hosts may strip that optional field; clients must reject the write
+before transmission. The capability recognizes the policy and holds missing
+estimates. It does not certify a configured observer or execution backend.
+
+Estimated accounting uses a persisted hour of increases in the bound weekly
+allowance window, including usage outside the scheduled execution. It is not
+attributable billing. Missing history, a read gap beyond the freshness bound,
+an account or authentication change, or a quota reset requires a new continuous
+hour before admission. Native observations remain separate from these estimates.
+Confirmed execution termination can release an estimated-policy execution slot
+without a provider billing receipt; retained estimates still govern subsequent
+admission. Strict consumption policies retain their settlement requirements.
+
 ## Governed run custody
 
 Before preparation, the scheduler saves an optional `governorPreparation` attempt identifier and occurrence timestamp. This record survives a crash before a run exists. A retained attempt requires trusted reconciliation before another preparation, and blocks deletion or custody-changing edits, including replacement by name. A missing driver cannot clear it. The driver must journal its exact reservation and execution custody before acquiring resources; scheduler metadata is not that authority journal.

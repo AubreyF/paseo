@@ -1684,6 +1684,7 @@ export class VoiceAssistantWebSocketServer {
         scheduleConfigurationRevision: true,
         // Policy-aware scheduling fails closed when its execution backend is unavailable.
         scheduleQuotaPolicy: true,
+        estimatedHourlyQuota: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: true,
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the

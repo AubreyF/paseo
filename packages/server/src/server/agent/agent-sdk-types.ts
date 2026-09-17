@@ -700,6 +700,8 @@ export interface QuotaGovernedSessionInput {
   config: AgentSessionConfig;
   account: import("@getpaseo/protocol/quota-governor").QuotaAccount;
   guard: QuotaAdmissionGuard;
+  /** Coordinator-selected native profile. The coordinator must verify its filesystem and tool policy. */
+  permissionProfile?: string;
   launchContext?: AgentLaunchContext;
   resumeHandle?: AgentPersistenceHandle;
 }

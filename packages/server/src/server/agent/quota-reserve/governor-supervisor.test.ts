@@ -131,6 +131,66 @@ async function fixture(estimated = false) {
   };
 }
 
+it("completion drains pending telemetry before settlement and revokes existing permits", async () => {
+  const f = await fixture();
+  const permit = await f.supervisor.guard({
+    observation: f.sample(),
+    operation: "start",
+    threadId: null,
+    nativeTurnId: null,
+  });
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  f.options.readObservation.mockImplementation(async () => {
+    entered.resolve();
+    await release.promise;
+    throw new Error("Pending transport read failed");
+  });
+  const poll = f.supervisor.checkNow();
+  await entered.promise;
+  const completion = f.supervisor.complete();
+  expect(() => permit.assertValidForDispatch()).toThrow("revoked");
+  expect(f.options.freezeAndSettle).not.toHaveBeenCalled();
+  release.resolve();
+  await poll;
+  expect(await completion).toMatchObject({ state: "completed", settlementId: "settled" });
+  expect(f.options.freezeAndSettle).toHaveBeenCalledTimes(1);
+  expect(f.options.onFailure).not.toHaveBeenCalled();
+  expect(await f.execution()).toMatchObject({ state: "completed" });
+});
+
+it.each(["manual", "quota"] as const)(
+  "%s freeze wins while completion waits for settlement",
+  async (reason) => {
+    const f = await fixture();
+    const entered = deferred<void>();
+    const release = deferred<QuotaExecutionSettlement>();
+    f.options.freezeAndSettle.mockImplementation(async () => {
+      entered.resolve();
+      return release.promise;
+    });
+    const completion = f.supervisor.complete();
+    const rejected = expect(completion).rejects.toThrow("cancelled");
+    await entered.promise;
+    const frozen = f.supervisor.freeze(reason);
+    release.resolve(f.receipt);
+    await rejected;
+    expect(await frozen).toMatchObject({
+      state: "frozen",
+      settlementId: "settled",
+      pauseReason: reason,
+    });
+    expect(f.options.freezeAndSettle).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("completion rejects mismatched settlement without recording success", async () => {
+  const f = await fixture();
+  f.options.freezeAndSettle.mockResolvedValue({ ...f.receipt, executionId: "other" });
+  await expect(f.supervisor.complete()).rejects.toThrow("identity mismatch");
+  expect(await f.execution()).toMatchObject({ state: "running" });
+});
+
 it("persists a freeze and preserves ownership until exact settlement arrives", async () => {
   const f = await fixture();
   const entered = deferred<void>();
@@ -236,29 +296,47 @@ it("keeps manual pause sticky when it arrives during quota settlement", async ()
   expect(f.options.freezeAndSettle).toHaveBeenCalledTimes(1);
 });
 
-it("revokes existing permits when fresher evidence holds new admission", async () => {
+it("a newer healthy monitor sample preserves a permit without extending its deadline", async () => {
   const f = await fixture();
-  const old = f.sample();
   const permit = await f.supervisor.guard({
-    observation: old,
+    observation: f.sample(),
     operation: "start",
-    threadId: "thread",
+    threadId: null,
     nativeTurnId: null,
   });
-  permit.assertValidForDispatch();
-  f.observe(72);
+  f.observe(21);
   await f.supervisor.checkNow();
-  expect(() => permit.assertValidForDispatch()).toThrow("revoked");
-  await expect(
-    f.supervisor.guard({
-      observation: old,
-      operation: "steer",
-      threadId: "thread",
-      nativeTurnId: "turn",
-    }),
-  ).rejects.toThrow("regressed");
-  expect(f.options.freezeAndSettle).not.toHaveBeenCalled();
+  expect(() => permit.assertValidForDispatch()).not.toThrow();
+  f.advance(999);
+  expect(() => permit.assertValidForDispatch()).toThrow("expired");
 });
+
+it.each([70, 72])(
+  "revokes an existing permit when newer usage reaches %s percent",
+  async (usedPercent) => {
+    const f = await fixture();
+    const old = f.sample();
+    const permit = await f.supervisor.guard({
+      observation: old,
+      operation: "start",
+      threadId: "thread",
+      nativeTurnId: null,
+    });
+    permit.assertValidForDispatch();
+    f.observe(usedPercent);
+    await f.supervisor.checkNow();
+    expect(() => permit.assertValidForDispatch()).toThrow("revoked");
+    await expect(
+      f.supervisor.guard({
+        observation: old,
+        operation: "steer",
+        threadId: "thread",
+        nativeTurnId: "turn",
+      }),
+    ).rejects.toThrow("regressed");
+    expect(f.options.freezeAndSettle).not.toHaveBeenCalled();
+  },
+);
 
 it("missing admission telemetry freezes active work without awaiting its own native start", async () => {
   const f = await fixture();

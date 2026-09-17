@@ -54,6 +54,9 @@ export class QuotaExecutionSupervisor {
   private freezing: Promise<GovernorExecution> | undefined;
   private reconciling: Promise<GovernorExecution> | undefined;
   private persistence: Promise<unknown> = Promise.resolve();
+  private completing: Promise<GovernorExecution> | undefined;
+  private completionCancelled = false;
+  private settlement: Promise<QuotaExecutionSettlement> | undefined;
 
   private constructor(
     private readonly options: QuotaSupervisorOptions,
@@ -153,6 +156,9 @@ export class QuotaExecutionSupervisor {
       });
       if (decision.action === "freeze") await this.freeze("quota");
     } catch (error) {
+      // Completion owns shutdown of this connection. A read already in flight
+      // must drain without turning intentional transport shutdown into a freeze.
+      if (this.completing) return;
       // Loss of authority or telemetry cannot leave active usage ungoverned.
       await this.freeze("quota");
       throw error;
@@ -223,8 +229,22 @@ export class QuotaExecutionSupervisor {
       assertValidForDispatch: () => {
         this.options.assertAuthority();
         const now = this.nowMs();
-        if (this.revoked || this.epoch !== epoch || now < admittedAt || now >= expiresAt) {
+        if (this.revoked || now < admittedAt || now >= expiresAt) {
           throw new Error("Quota admission permit expired or was revoked.");
+        }
+        // A monitor can accept newer evidence between admission and dispatch.
+        // Keep the original permit deadline, but judge the new evidence against
+        // the full admission policy instead of rejecting healthy observations.
+        if (
+          this.epoch !== epoch &&
+          evaluateQuotaGovernor({
+            policy: this.policy,
+            observation: this.latestObservation,
+            nowMs: now,
+            phase: "admission",
+          }).action !== "admit"
+        ) {
+          throw new Error("Quota admission permit was revoked by newer evidence.");
         }
       },
     };
@@ -249,6 +269,7 @@ export class QuotaExecutionSupervisor {
 
   /** Revoke synchronously, persist freeze intent, then require an exact custody receipt. */
   freeze(reason: "quota" | "manual"): Promise<GovernorExecution> {
+    this.completionCancelled = true;
     this.revoked = true;
     this.epoch += 1;
     clearTimeout(this.freshnessTimer);
@@ -308,9 +329,7 @@ export class QuotaExecutionSupervisor {
     const recording = this.persist({ type: "freeze", reason });
     // The existing durable reservation already blocks new work. Stopping cannot
     // wait for a stalled disk; settlement is still withheld until intent is durable.
-    const stopping = Promise.resolve().then(() =>
-      this.options.freezeAndSettle(this.options.executionId),
-    );
+    const stopping = this.settleExecution();
     let recordTimer: ReturnType<typeof setTimeout> | undefined;
     const boundedRecording = Promise.race([
       recording,
@@ -405,6 +424,64 @@ export class QuotaExecutionSupervisor {
     supervisors.delete(this.key);
   }
 
+  private settleExecution(): Promise<QuotaExecutionSettlement> {
+    if (!this.settlement) {
+      this.settlement = Promise.resolve()
+        .then(() => this.options.freezeAndSettle(this.options.executionId))
+        .then((settlement) => {
+          if (
+            settlement.executionId !== this.options.executionId ||
+            settlement.authenticationGeneration !== this.options.authenticationGeneration ||
+            !settlement.settlementId.trim()
+          )
+            throw new Error("Quota execution settlement identity mismatch.");
+          return settlement;
+        })
+        .catch((error) => {
+          this.settlement = undefined;
+          throw error;
+        });
+    }
+    return this.settlement;
+  }
+
+  /** Revoke inference now, drain monitoring, then settle and durably complete.
+   * A concurrent freeze wins admission and prevents a successful completion.
+   * Accounting finalization remains the caller's responsibility.
+   */
+  complete(): Promise<GovernorExecution> {
+    if (this.completing) return this.completing;
+    if (this.revoked || this.freezing)
+      return Promise.reject(new Error("Quota completion requires active authority."));
+    this.revoked = true;
+    this.epoch += 1;
+    clearTimeout(this.pollTimer);
+    clearTimeout(this.freshnessTimer);
+    this.pollTimer = undefined;
+    this.completing = Promise.resolve().then(async () => {
+      await this.polling;
+      this.options.assertAuthority();
+      if (this.completionCancelled) throw new Error("Quota completion was cancelled by freeze.");
+      const settlement = await this.settleExecution();
+      if (
+        settlement.executionId !== this.options.executionId ||
+        settlement.authenticationGeneration !== this.options.authenticationGeneration ||
+        !settlement.settlementId.trim()
+      )
+        throw new Error("Quota execution settlement identity mismatch.");
+      this.options.assertAuthority();
+      const completed = await this.persist({
+        type: "complete",
+        executionId: this.options.executionId,
+        settlementId: settlement.settlementId,
+      });
+      if (this.completionCancelled) throw new Error("Quota completion was cancelled by freeze.");
+      supervisors.delete(this.key);
+      return completed;
+    });
+    return this.completing;
+  }
+
   private persist(event: GovernorExecutionEvent): Promise<GovernorExecution> {
     const operation = this.persistence
       .catch(() => undefined)
@@ -413,6 +490,8 @@ export class QuotaExecutionSupervisor {
           this.options.account,
           this.options.reservationId,
         );
+        if (event.type === "complete" && this.completionCancelled)
+          throw new Error("Quota completion was cancelled by freeze.");
         assertExecution(current, this.options, true);
         const result = await this.options.store.transition({
           account: this.options.account,

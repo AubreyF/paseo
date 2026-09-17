@@ -13,7 +13,7 @@ import { QuotaGovernorStore } from "./agent/quota-reserve/governor-store.js";
 import type { QuotaGovernorPolicy, QuotaObservation } from "@getpaseo/protocol/quota-governor";
 
 test.each([false, true])(
-  "daemon dispatches its trusted backend and cleans up after stop rejection=%s",
+  "daemon finalizes successive governed occurrences and cleans up after stop rejection=%s",
   async (rejectStop) => {
     const root = await mkdtemp(join(tmpdir(), "paseo-governed-backend-"));
     const paseoHome = join(root, "home");
@@ -54,6 +54,7 @@ test.each([false, true])(
         maxObservationAgeSeconds: 120,
       });
     const events: string[] = [];
+    const reservations: string[] = [];
     let daemon: Awaited<ReturnType<typeof createPaseoDaemon>> | undefined;
     try {
       await mkdir(staticDir, { recursive: true });
@@ -67,7 +68,7 @@ test.each([false, true])(
       const schedule = await schedules.create({
         name: "Controlled governed dispatch",
         prompt: "Fixture",
-        cadence: { type: "every", everyMs: 60000 },
+        cadence: { type: "every", everyMs: 1000 },
         target: {
           type: "new-agent",
           config: { provider: "codex", cwd: root, quotaPolicy: policy },
@@ -79,7 +80,7 @@ test.each([false, true])(
         lastRunAt: null,
         pausedAt: null,
         expiresAt: null,
-        maxRuns: 1,
+        maxRuns: 2,
         runs: [],
       });
       daemon = await createPaseoDaemon(
@@ -124,6 +125,7 @@ test.each([false, true])(
                 });
                 if (reserved.kind !== "admitted")
                   throw new Error(`Fixture reservation failed: ${reserved.kind}`);
+                reservations.push(reserved.reservation.id);
                 return {
                   kind: "ready",
                   binding: { account: policy.account, reservationId: reserved.reservation.id },
@@ -132,6 +134,45 @@ test.each([false, true])(
                   },
                   run: async () => {
                     events.push("run");
+                    const identity = {
+                      account: policy.account,
+                      reservationId: reserved.reservation.id,
+                    };
+                    const executionId = randomUUID();
+                    const execution = await context.store.execution(
+                      identity.account,
+                      identity.reservationId,
+                    );
+                    const starting = await context.store.transition({
+                      ...identity,
+                      expectedGeneration: execution.generation,
+                      event: {
+                        type: "start",
+                        executionId,
+                        authenticationGeneration: "fixture-generation",
+                      },
+                      observation: await read(),
+                    });
+                    if (starting.kind !== "transitioned")
+                      throw new Error(`Fixture start failed: ${starting.reason}`);
+                    const running = await context.store.transition({
+                      ...identity,
+                      expectedGeneration: starting.execution.generation,
+                      event: { type: "started", executionId },
+                    });
+                    if (running.kind !== "transitioned")
+                      throw new Error(`Fixture running transition failed: ${running.reason}`);
+                    // No process is launched in this fixture. This synthetic
+                    // receipt tests accounting integration, not native custody.
+                    await context.store.transition({
+                      ...identity,
+                      expectedGeneration: running.execution.generation,
+                      event: { type: "complete", executionId, settlementId: randomUUID() },
+                    });
+                    expect(
+                      await context.store.finalize({ ...identity, observation: await read() }),
+                    ).toEqual({ kind: "finalized" });
+                    events.push("finalized");
                     return { agentId: null, output: "controlled backend" };
                   },
                 };
@@ -151,11 +192,22 @@ test.each([false, true])(
           if (!current?.runs.length) throw new Error(JSON.stringify({ current, events }));
           expect(current.runs).toMatchObject([
             { status: "succeeded", output: "controlled backend" },
+            { status: "succeeded", output: "controlled backend" },
           ]);
         },
         { timeout: 10_000 },
       );
-      expect(events).toEqual(["reconcile", "prepare", "run"]);
+      expect(events).toEqual([
+        "reconcile",
+        "prepare",
+        "run",
+        "finalized",
+        "reconcile",
+        "prepare",
+        "run",
+        "finalized",
+      ]);
+      expect(new Set(reservations).size).toBe(2);
       expect(daemon.agentManager.listAgents()).toEqual([]);
       const bound = daemon.getListenTarget();
       if (!bound || bound.type !== "tcp") throw new Error("Fixture TCP listener is missing");

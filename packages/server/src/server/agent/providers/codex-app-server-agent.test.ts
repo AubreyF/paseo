@@ -350,6 +350,8 @@ function createGovernedAppServer(
   loaded = false,
   permissionProfile?: string,
   approvalPolicy = "never",
+  workerControls = false,
+  configPatch: Record<string, unknown> = {},
 ): FakeCodexAppServer {
   return createFakeCodexAppServer({
     "thread/start": () => ({
@@ -369,6 +371,35 @@ function createGovernedAppServer(
         ? {
             approvals_reviewer: "user",
             features: { goals: false, multi_agent: false, multi_agent_v2: false },
+            ...(workerControls
+              ? {
+                  features: Object.fromEntries(
+                    [
+                      "goals",
+                      "multi_agent",
+                      "multi_agent_v2",
+                      "apps",
+                      "plugins",
+                      "plugin_sharing",
+                      "remote_plugin",
+                      "recommended_plugins",
+                      "tool_suggest",
+                      "browser_use",
+                      "browser_use_external",
+                      "browser_use_full_cdp_access",
+                      "in_app_browser",
+                      "computer_use",
+                      "hooks",
+                      "shell_snapshot",
+                    ].map((key) => [key, false]),
+                  ),
+                  mcp_servers: {},
+                  allow_login_shell: false,
+                  shell_environment_policy: { inherit: "none" },
+                  web_search: "disabled",
+                }
+              : {}),
+            ...configPatch,
           }
         : {},
     }),
@@ -418,6 +449,7 @@ test.skipIf(process.platform !== "linux")(
         throw new Error("No inference");
       },
       processCustody: custody,
+      permissionProfile: "factory",
     };
     try {
       const error = await provider
@@ -445,7 +477,15 @@ test.skipIf(process.platform !== "linux")(
 );
 
 test("governed construction captures launcher custody for transport disposal", async () => {
-  const appServer = createGovernedAppServer();
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    false,
+    "factory",
+    "never",
+    true,
+  );
   const provider = new CodexAppServerAgentClient(createTestLogger(), {
     command: { mode: "replace", argv: [process.execPath] },
     env: { GITHUB_TOKEN: "synthetic-host-secret" },
@@ -458,31 +498,101 @@ test("governed construction captures launcher custody for transport disposal", a
   });
   const kill = vi.spyOn(appServer.child, "kill");
   const session = await provider.openQuotaGovernedSession({
-    config: createConfig(),
+    config: createConfig({
+      mcpServers: { escape: { type: "stdio", command: "synthetic-tool" } },
+    }),
     account: { issuer: "openai", accountId: "reserved-account" },
     guard: async () => {
       throw new Error("No inference in custody fixture");
     },
     processCustody: { spawn, settle },
+    permissionProfile: "factory",
     launchContext: { env: { GITHUB_TOKEN: "synthetic-task-secret" } },
   });
+  await expect(session.startTurn("fixture")).rejects.toThrow("No inference in custody fixture");
   await session.close();
-  expect(spawn).toHaveBeenCalledExactlyOnceWith(process.execPath, [
-    "app-server",
-    "--disable",
-    "goals",
-    "--disable",
-    "multi_agent",
-    "--disable",
-    "multi_agent_v2",
-    "-c",
-    'approvals_reviewer="user"',
-  ]);
+  expect(spawn).toHaveBeenCalledExactlyOnceWith(
+    process.execPath,
+    expect.arrayContaining([
+      "app-server",
+      "--disable",
+      "goals",
+      "--disable",
+      "multi_agent",
+      "--disable",
+      "multi_agent_v2",
+      "-c",
+      'approvals_reviewer="user"',
+      'web_search="disabled"',
+      'shell_environment_policy.inherit="none"',
+      "allow_login_shell=false",
+      "apps",
+      "plugins",
+      "hooks",
+      "browser_use",
+      "computer_use",
+    ]),
+  );
   expect(settle).toHaveBeenCalledOnce();
   expect(kill).not.toHaveBeenCalled();
+  const thread = appServer.requests().find(({ method }) => method === "thread/start");
+  expect(thread?.params).not.toHaveProperty("config.mcp_servers");
+  expect(thread?.params).toMatchObject({
+    config: {
+      features: { hooks: false, apps: false, plugins: false },
+      shell_environment_policy: { inherit: "none" },
+    },
+  });
   expect(appServer.requests().some(({ method }) => method === "turn/start")).toBe(false);
   appServer.assertNoErrors();
 });
+
+test.each([
+  { mcp_servers: { outside: { command: "untrusted-fixture" } } },
+  { allow_login_shell: true },
+  { shell_environment_policy: { inherit: "all" } },
+  { shell_environment_policy: { inherit: "none", set: { GITHUB_TOKEN: "synthetic" } } },
+  { shell_environment_policy: { inherit: "none", experimental_use_profile: true } },
+  { web_search: "live" },
+  { notify: ["untrusted-fixture"] },
+  { notify: "malformed-fixture" },
+])(
+  "protected worker rejects unsafe effective configuration before thread creation: %j",
+  async (configPatch) => {
+    const appServer = createGovernedAppServer(
+      "reserved-account",
+      true,
+      "user",
+      false,
+      "factory",
+      "never",
+      true,
+      configPatch,
+    );
+    const provider = createProviderWithFakeAppServer(appServer);
+    const settle = vi.fn(async () => {
+      appServer.child.kill();
+    });
+    await expect(
+      provider.openQuotaGovernedSession({
+        config: createConfig(),
+        account: { issuer: "openai", accountId: "reserved-account" },
+        guard: async () => {
+          throw new Error("No inference");
+        },
+        permissionProfile: "factory",
+        processCustody: { spawn: async () => appServer.child, settle },
+      }),
+    ).rejects.toThrow("worker tool and environment confinement");
+    expect(
+      appServer
+        .requests()
+        .some(({ method }) => method === "thread/start" || method === "turn/start"),
+    ).toBe(false);
+    expect(settle).toHaveBeenCalledOnce();
+    appServer.assertNoErrors();
+  },
+);
 
 test.each([false, true])(
   "governed permission profile survives native workflow overrides (resume=%s)",

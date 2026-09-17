@@ -152,6 +152,21 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
+const QUOTA_WORKER_DISABLED_FEATURES = [
+  "apps",
+  "plugins",
+  "plugin_sharing",
+  "remote_plugin",
+  "recommended_plugins",
+  "tool_suggest",
+  "browser_use",
+  "browser_use_external",
+  "browser_use_full_cdp_access",
+  "in_app_browser",
+  "computer_use",
+  "hooks",
+  "shell_snapshot",
+] as const;
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
 // CLI identity instead of showing up as Paseo in provider usage logs.
@@ -3574,6 +3589,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     ) {
       throw new Error("Native quota execution controls are unavailable or were overridden.");
     }
+    if (this.quotaGovernance?.processCustody) {
+      this.verifyWorkerConfiguration(config);
+    }
     const observation = await new CodexQuotaObservationSession(client).read();
     if (
       observation.status !== "available" ||
@@ -3582,6 +3600,33 @@ export class CodexAppServerAgentSession implements AgentSession {
     ) {
       throw new Error("Native execution account does not match the reserved quota account.");
     }
+  }
+
+  private verifyWorkerConfiguration(config: Record<string, unknown> | undefined): void {
+    const features = toObjectRecord(config?.features);
+    const servers = toObjectRecord(config?.mcp_servers);
+    if (
+      QUOTA_WORKER_DISABLED_FEATURES.some((key) => features?.[key] !== false) ||
+      config?.web_search !== "disabled" ||
+      !servers ||
+      Object.keys(servers).length !== 0
+    )
+      throw new Error("Native worker tool and environment confinement is unavailable.");
+    this.verifyWorkerShellPolicy(config);
+  }
+
+  private verifyWorkerShellPolicy(config: Record<string, unknown> | undefined): void {
+    const shell = toObjectRecord(config?.shell_environment_policy);
+    const assignments = toObjectRecord(shell?.set);
+    const notify = config?.notify;
+    if (
+      config?.allow_login_shell !== false ||
+      shell?.inherit !== "none" ||
+      shell?.experimental_use_profile === true ||
+      (shell?.set != null && (!assignments || Object.keys(assignments).length !== 0)) ||
+      (notify != null && (!Array.isArray(notify) || notify.length !== 0))
+    )
+      throw new Error("Native worker tool and environment confinement is unavailable.");
   }
 
   private rememberResolvedSandboxPolicy(response: unknown): void {
@@ -5308,6 +5353,23 @@ export class CodexAppServerAgentSession implements AgentSession {
       innerConfig.mcp_servers = mcpServers;
     }
     const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
+    if (this.quotaGovernance?.processCustody) {
+      // Worker candidates and provider overrides cannot add native tools or
+      // weaken the startup boundary through per-thread configuration.
+      const allowed = new Set([
+        "model_reasoning_effort",
+        "model_reasoning_summary",
+        "model_verbosity",
+        "service_tier",
+      ]);
+      for (const key of Object.keys(configured)) if (!allowed.has(key)) delete configured[key];
+      configured.features = Object.fromEntries(
+        QUOTA_WORKER_DISABLED_FEATURES.map((key) => [key, false]),
+      );
+      configured.allow_login_shell = false;
+      configured.shell_environment_policy = { inherit: "none" };
+      configured.web_search = "disabled";
+    }
     if (this.quotaGovernance) {
       // Thread overrides cannot re-enable inference paths outside the coordinator.
       configured.approvals_reviewer = "user";
@@ -7188,6 +7250,17 @@ export class CodexAppServerAgentClient implements AgentClient {
         'approvals_reviewer="user"',
       );
     }
+    if (options?.processCustody) {
+      for (const feature of QUOTA_WORKER_DISABLED_FEATURES) args.push("--disable", feature);
+      args.push(
+        "-c",
+        "allow_login_shell=false",
+        "-c",
+        'shell_environment_policy.inherit="none"',
+        "-c",
+        'web_search="disabled"',
+      );
+    }
     this.logger.trace(
       {
         agentId: options?.agentId,
@@ -7215,6 +7288,9 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async openQuotaGovernedSession(input: QuotaGovernedSessionInput): Promise<AgentSession> {
+    if (input.processCustody && !input.permissionProfile) {
+      throw new Error("Protected worker custody requires a named permission profile.");
+    }
     if (
       input.permissionProfile !== undefined &&
       !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(input.permissionProfile)

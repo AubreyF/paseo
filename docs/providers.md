@@ -189,10 +189,17 @@ must not release execution capacity. Supervisor death can leave descendants;
 absence of a live supervisor is not settlement. Automatic takeover remains
 unsupported without additional custody evidence.
 
-This launcher does not configure worker isolation or authorize tools. The trusted
-coordinator must still verify the native permission profile, authentication,
-MCP and project configuration, then attach quota supervision before inference.
-The production schedule backend is not connected by this component alone.
+Captured native worker launches require a named permission profile and disable
+apps, plugins, browser/computer control, hooks and shell snapshots. Before thread
+creation, effective configuration must show no MCP servers, shell environment
+assignments, login/profile sourcing, live web search or notification commands.
+Per-thread configuration cannot restore these tools or weaken launch controls.
+
+These checks do not establish the complete worker boundary. The trusted
+coordinator must still verify profile contents and protected paths, authentication
+and project configuration for the attempt, then attach quota supervision before
+inference. The production schedule backend is not connected by this component
+alone.
 
 ---
 

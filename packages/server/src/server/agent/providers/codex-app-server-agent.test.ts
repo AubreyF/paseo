@@ -1,12 +1,25 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterAll, describe, expect, test, vi } from "vitest";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { type Dirent, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  type Dirent,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
+
+const preparedWorkerRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "governed-workspace-")));
+mkdirSync(path.join(preparedWorkerRoot, ".codex"));
+afterAll(() => rmSync(preparedWorkerRoot, { recursive: true, force: true }));
 
 import type {
   AgentLaunchContext,
@@ -352,7 +365,9 @@ function createGovernedAppServer(
   approvalPolicy = "never",
   workerControls = false,
   configPatch: Record<string, unknown> = {},
-  runtimeWorkspaceRoots: unknown = ["/tmp/codex-question-test"],
+  runtimeWorkspaceRoots: unknown = workerControls
+    ? [preparedWorkerRoot]
+    : ["/tmp/codex-question-test"],
 ): FakeCodexAppServer {
   return createFakeCodexAppServer({
     "thread/start": () => ({
@@ -504,6 +519,7 @@ test("governed construction captures launcher custody for transport disposal", a
   const session = await provider.openQuotaGovernedSession({
     config: createConfig({
       mcpServers: { escape: { type: "stdio", command: "synthetic-tool" } },
+      cwd: preparedWorkerRoot,
     }),
     account: { issuer: "openai", accountId: "reserved-account" },
     guard: async () => {
@@ -554,7 +570,7 @@ test("governed construction captures launcher custody for transport disposal", a
 function workerPermissionProfile() {
   return {
     extends: null,
-    workspace_roots: { "/tmp/codex-question-test": true },
+    workspace_roots: { [preparedWorkerRoot]: true },
     filesystem: {
       ":root": "deny",
       ":minimal": "read",
@@ -566,12 +582,51 @@ function workerPermissionProfile() {
   };
 }
 
+test("worker refuses an unprepared workspace before creating a thread", async () => {
+  const unprepared = path.join(preparedWorkerRoot, "unprepared");
+  mkdirSync(unprepared);
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    false,
+    "factory",
+    "never",
+    true,
+    {
+      permissions: {
+        factory: { ...workerPermissionProfile(), workspace_roots: { [unprepared]: true } },
+      },
+    },
+  );
+  const provider = createProviderWithFakeAppServer(appServer);
+  const settle = vi.fn(async () => {
+    appServer.child.kill();
+  });
+  await expect(
+    provider.openQuotaGovernedSession({
+      config: createConfig({ cwd: unprepared }),
+      account: { issuer: "openai", accountId: "reserved-account" },
+      guard: async () => {
+        throw new Error("No inference");
+      },
+      permissionProfile: "factory",
+      processCustody: { spawn: async () => appServer.child, settle },
+    }),
+  ).rejects.toThrow();
+  expect(settle).toHaveBeenCalledOnce();
+  expect(
+    appServer.requests().some(({ method }) => method === "thread/start" || method === "turn/start"),
+  ).toBe(false);
+  appServer.assertNoErrors();
+});
+
 test.each([
   undefined,
   { ...workerPermissionProfile(), extends: ":workspace" },
   {
     ...workerPermissionProfile(),
-    workspace_roots: { "/tmp/codex-question-test": true, "/outside": true },
+    workspace_roots: { [preparedWorkerRoot]: true, "/outside": true },
   },
   { ...workerPermissionProfile(), workspace_roots: { "/other": true } },
   { ...workerPermissionProfile(), filesystem: { ":root": "write" } },
@@ -640,7 +695,7 @@ test.each([false, true])(
       "never",
       true,
       {},
-      ["/tmp/codex-question-test", "/outside"],
+      [preparedWorkerRoot, "/outside"],
     );
     const provider = createProviderWithFakeAppServer(appServer);
     const guard = vi.fn(async () => ({ assertValidForDispatch() {} }));
@@ -649,7 +704,7 @@ test.each([false, true])(
       await expect(
         (async () => {
           session = await provider.openQuotaGovernedSession({
-            config: createConfig(),
+            config: createConfig({ cwd: preparedWorkerRoot }),
             account: { issuer: "openai", accountId: "reserved-account" },
             guard,
             permissionProfile: "factory",
@@ -690,7 +745,7 @@ test("worker checks changed effective policy on a cached thread before admission
     throw new Error("No inference in fixture");
   });
   const session = await provider.openQuotaGovernedSession({
-    config: createConfig(),
+    config: createConfig({ cwd: preparedWorkerRoot }),
     account: { issuer: "openai", accountId: "reserved-account" },
     guard,
     permissionProfile: "factory",

@@ -1,4 +1,6 @@
 import { isAbsolute, normalize } from "node:path";
+import { join } from "node:path";
+import { lstat, realpath } from "node:fs/promises";
 import { z } from "zod";
 
 const Unset = z.null().optional();
@@ -59,5 +61,19 @@ export function verifyWorkerPermissionProfile(profile: unknown, cwd: string | un
 export function verifyWorkerRuntimeRoots(roots: unknown, cwd: string | undefined): void {
   if (!cwd || !Array.isArray(roots) || roots.length !== 1 || roots[0] !== cwd) {
     throw new Error("Native worker runtime workspace roots are unverified.");
+  }
+}
+
+export async function verifyWorkerPhysicalWorkspace(cwd: string | undefined): Promise<void> {
+  if (!cwd || !isAbsolute(cwd) || normalize(cwd) !== cwd) {
+    throw new Error("Native worker requires a prepared physical workspace.");
+  }
+  // Missing deny targets can fail native mount setup. Preparation owns their
+  // creation; verification never follows a link or repairs a worker's paths.
+  for (const directory of [cwd, join(cwd, ".codex")]) {
+    const info = await lstat(directory);
+    if (!info.isDirectory() || (await realpath(directory)) !== directory) {
+      throw new Error("Native worker requires a prepared physical workspace.");
+    }
   }
 }

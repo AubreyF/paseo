@@ -54,6 +54,7 @@ import { CodexResetCreditError, CodexResetCreditSession } from "./codex/reset-cr
 import { CodexQuotaObservationSession } from "./codex/quota-observation.js";
 import {
   verifyWorkerPermissionProfile,
+  verifyWorkerPhysicalWorkspace,
   verifyWorkerRuntimeRoots,
 } from "./codex/worker-permissions.js";
 import { probeResetRedemption } from "./codex/reset-capability.js";
@@ -3595,6 +3596,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     if (this.quotaGovernance?.processCustody) {
       this.verifyWorkerConfiguration(config);
+      await verifyWorkerPhysicalWorkspace(this.config.cwd);
     }
     const observation = await new CodexQuotaObservationSession(client).read();
     if (

@@ -1,6 +1,6 @@
 # Paseo with Vorton
 
-Run your coding agents in a container and control them from your browser or phone. This fork adds multiple provider accounts, usage reporting, named presets and bounded local workers. Vorton and standard Paseo share the same installation.
+Run your coding agents in a container and control them from your browser or phone. This fork adds multiple provider accounts, usage reporting, named presets, bounded local workers and a visual goal bar for Codex. Vorton and standard Paseo share the same installation.
 
 ## Install
 

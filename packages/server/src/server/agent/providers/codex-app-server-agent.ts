@@ -3433,7 +3433,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
     private readonly quotaGovernance?: Pick<
       QuotaGovernedSessionInput,
-      "account" | "guard" | "permissionProfile" | "processCustody"
+      "account" | "guard" | "permissionProfile" | "processCustody" | "externalChatgptAuth"
     >,
   ) {
     this.logger = logger.child({
@@ -3597,6 +3597,23 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.quotaGovernance?.processCustody) {
       this.verifyWorkerConfiguration(config);
       await verifyWorkerPhysicalWorkspace(this.config.cwd);
+    }
+    if (this.quotaGovernance?.externalChatgptAuth) {
+      const tokens = await this.readExternalChatgptTokens("initial");
+      try {
+        const result = toObjectRecord(
+          await client.request(
+            "account/login/start",
+            { type: "chatgptAuthTokens", ...tokens },
+            10_000,
+          ),
+        );
+        if (result?.type !== "chatgptAuthTokens") throw new Error("Unexpected authentication mode");
+        this.quotaGovernance.externalChatgptAuth.assertCurrent();
+      } catch {
+        // Provider errors must not echo credentials into daemon logs or worker output.
+        throw new Error("Protected provider authentication failed.");
+      }
     }
     const observation = await new CodexQuotaObservationSession(client).read();
     if (
@@ -3876,6 +3893,19 @@ export class CodexAppServerAgentSession implements AgentSession {
   private registerRequestHandlers(): void {
     if (!this.client) return;
 
+    if (this.quotaGovernance?.externalChatgptAuth) {
+      this.client.setRequestHandler("account/chatgptAuthTokens/refresh", (params) => {
+        const request = toObjectRecord(params);
+        if (
+          request?.reason !== "unauthorized" ||
+          (request.previousAccountId != null &&
+            request.previousAccountId !== this.quotaGovernance?.account.accountId)
+        )
+          throw new Error("Protected provider authentication request does not match its account.");
+        return this.readExternalChatgptTokens("unauthorized");
+      });
+    }
+
     this.client.setRequestHandler("item/commandExecution/requestApproval", (params) =>
       this.handleCommandApprovalRequest(params),
     );
@@ -3892,6 +3922,41 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.client.setRequestHandler("tool/requestUserInput", (params) =>
       this.handleToolApprovalRequest(params),
     );
+  }
+
+  private async readExternalChatgptTokens(reason: "initial" | "unauthorized") {
+    const auth = this.quotaGovernance?.externalChatgptAuth;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (!auth || this.closed) throw new Error("Authentication unavailable");
+      auth.assertCurrent();
+      const tokens = await Promise.race([
+        auth.readTokens(reason),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("Authentication timed out")), 9000);
+          timer.unref();
+        }),
+      ]);
+      auth.assertCurrent();
+      if (
+        this.closed ||
+        typeof tokens.accessToken !== "string" ||
+        tokens.accessToken.length === 0 ||
+        tokens.accessToken.length > 65536 ||
+        tokens.chatgptAccountId !== this.quotaGovernance?.account.accountId ||
+        (tokens.chatgptPlanType != null && typeof tokens.chatgptPlanType !== "string")
+      )
+        throw new Error("Authentication does not match reservation");
+      return {
+        accessToken: tokens.accessToken,
+        chatgptAccountId: tokens.chatgptAccountId,
+        chatgptPlanType: tokens.chatgptPlanType ?? null,
+      };
+    } catch {
+      throw new Error("Protected provider authentication is unavailable or changed.");
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private async loadPersistedHistory(): Promise<void> {
@@ -7313,6 +7378,9 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async openQuotaGovernedSession(input: QuotaGovernedSessionInput): Promise<AgentSession> {
+    if (input.externalChatgptAuth && !input.processCustody) {
+      throw new Error("External provider authentication requires protected process custody.");
+    }
     if (input.processCustody && !input.permissionProfile) {
       throw new Error("Protected worker custody requires a named permission profile.");
     }
@@ -7354,6 +7422,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           guard: input.guard,
           permissionProfile: input.permissionProfile,
           processCustody: input.processCustody,
+          externalChatgptAuth: input.externalChatgptAuth,
         },
       );
       await session.connect();

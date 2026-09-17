@@ -368,6 +368,7 @@ function createGovernedAppServer(
   runtimeWorkspaceRoots: unknown = workerControls
     ? [preparedWorkerRoot]
     : ["/tmp/codex-question-test"],
+  handlers: Record<string, (params: unknown) => unknown> = {},
 ): FakeCodexAppServer {
   return createFakeCodexAppServer({
     "thread/start": () => ({
@@ -438,8 +439,217 @@ function createGovernedAppServer(
       },
     }),
     "account/usage/read": () => ({}),
+    ...handlers,
   });
 }
+
+test("protected host authentication logs in through stdin and refreshes only the bound account", async () => {
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    false,
+    "factory",
+    "never",
+    true,
+    {},
+    [preparedWorkerRoot],
+    {
+      "account/login/start": () => ({ type: "chatgptAuthTokens" }),
+    },
+  );
+  const provider = createProviderWithFakeAppServer(appServer);
+  const readTokens = vi.fn(async () => ({
+    accessToken: "synthetic-access-secret",
+    chatgptAccountId: "reserved-account",
+    chatgptPlanType: "pro",
+    refreshToken: "must-not-forward",
+  }));
+  let revoked = false;
+  const session = await provider.openQuotaGovernedSession({
+    config: createConfig({ cwd: preparedWorkerRoot }),
+    account: { issuer: "openai", accountId: "reserved-account" },
+    permissionProfile: "factory",
+    processCustody: {
+      spawn: async () => appServer.child,
+      settle: async () => {
+        appServer.child.stdout.end();
+        appServer.child.stderr.end();
+      },
+    },
+    guard: async () => {
+      throw new Error("No inference in authentication test");
+    },
+    externalChatgptAuth: {
+      readTokens,
+      assertCurrent() {
+        if (revoked) throw new Error("revoked");
+      },
+    },
+  });
+  const login = appServer.requests().find((request) => request.method === "account/login/start");
+  expect(login?.params).toEqual({
+    type: "chatgptAuthTokens",
+    accessToken: "synthetic-access-secret",
+    chatgptAccountId: "reserved-account",
+    chatgptPlanType: "pro",
+  });
+  const refresh = async (id: number, previousAccountId: string) => {
+    const response = appServer.nextResponse();
+    appServer.child.stdout.write(
+      JSON.stringify({
+        id,
+        method: "account/chatgptAuthTokens/refresh",
+        params: { reason: "unauthorized", previousAccountId },
+      }) + "\n",
+    );
+    return JSON.parse(await response);
+  };
+  expect((await refresh(8001, "reserved-account")).result.accessToken).toBe(
+    "synthetic-access-secret",
+  );
+  expect(readTokens).toHaveBeenLastCalledWith("unauthorized");
+  expect((await refresh(8002, "other-account")).error.message).toContain("does not match");
+  expect(readTokens).toHaveBeenCalledTimes(2);
+  revoked = true;
+  expect((await refresh(8003, "reserved-account")).error.message).toContain(
+    "unavailable or changed",
+  );
+  expect(readTokens).toHaveBeenCalledTimes(2);
+  expect(appServer.requests().filter((request) => request.method === "turn/start")).toHaveLength(0);
+  revoked = false;
+  let entered!: () => void;
+  let release!: (value: Awaited<ReturnType<typeof readTokens>>) => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  readTokens.mockImplementationOnce(() => {
+    entered();
+    return new Promise((resolve) => {
+      release = resolve;
+    });
+  });
+  appServer.child.stdout.write(
+    JSON.stringify({
+      id: 8004,
+      method: "account/chatgptAuthTokens/refresh",
+      params: { reason: "unauthorized", previousAccountId: "reserved-account" },
+    }) + "\n",
+  );
+  await waiting;
+  await session.close();
+  release({
+    accessToken: "late-token",
+    chatgptAccountId: "reserved-account",
+    chatgptPlanType: "pro",
+    refreshToken: "never-forward",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(appServer.requests().some((request) => request.id === 8004)).toBe(false);
+});
+
+test("a stalled host authentication read settles construction and cannot send a late token", async () => {
+  vi.useFakeTimers();
+  let release!: (value: { accessToken: string; chatgptAccountId: string }) => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const token = new Promise<{ accessToken: string; chatgptAccountId: string }>((resolve) => {
+    release = resolve;
+  });
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    false,
+    "factory",
+    "never",
+    true,
+  );
+  const provider = createProviderWithFakeAppServer(appServer);
+  const settle = vi.fn(async () => {
+    appServer.child.stdout.end();
+    appServer.child.stderr.end();
+  });
+  try {
+    const pending = expect(
+      provider.openQuotaGovernedSession({
+        config: createConfig({ cwd: preparedWorkerRoot }),
+        account: { issuer: "openai", accountId: "reserved-account" },
+        permissionProfile: "factory",
+        processCustody: { spawn: async () => appServer.child, settle },
+        guard: async () => {
+          throw new Error("No inference");
+        },
+        externalChatgptAuth: {
+          assertCurrent() {},
+          readTokens() {
+            entered();
+            return token;
+          },
+        },
+      }),
+    ).rejects.toThrow("Protected provider authentication is unavailable or changed.");
+    await waiting;
+    await vi.advanceTimersByTimeAsync(9000);
+    await pending;
+    expect(settle).toHaveBeenCalledOnce();
+    release({ accessToken: "late-synthetic-secret", chatgptAccountId: "reserved-account" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(appServer.requests().some((request) => request.method === "account/login/start")).toBe(
+      false,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test.each(["wrong-account", "revoked-during-read", "secret-error"])(
+  "protected authentication rejects %s before login and settles construction",
+  async (failure) => {
+    const appServer = createGovernedAppServer(
+      "reserved-account",
+      true,
+      "user",
+      false,
+      "factory",
+      "never",
+      true,
+    );
+    const provider = createProviderWithFakeAppServer(appServer);
+    const settle = vi.fn(async () => {
+      appServer.child.stdout.end();
+      appServer.child.stderr.end();
+    });
+    let revoked = false;
+    await expect(
+      provider.openQuotaGovernedSession({
+        config: createConfig({ cwd: preparedWorkerRoot }),
+        account: { issuer: "openai", accountId: "reserved-account" },
+        permissionProfile: "factory",
+        processCustody: { spawn: async () => appServer.child, settle },
+        guard: async () => {
+          throw new Error("No inference");
+        },
+        externalChatgptAuth: {
+          assertCurrent() {
+            if (revoked) throw new Error("synthetic-secret");
+          },
+          async readTokens() {
+            if (failure === "secret-error") throw new Error("synthetic-secret");
+            revoked = failure === "revoked-during-read";
+            return { accessToken: "synthetic-secret", chatgptAccountId: "other-account" };
+          },
+        },
+      }),
+    ).rejects.toThrow("Protected provider authentication is unavailable or changed.");
+    expect(appServer.requests().some((request) => request.method === "account/login/start")).toBe(
+      false,
+    );
+    expect(settle).toHaveBeenCalledOnce();
+  },
+);
 
 test.skipIf(process.platform !== "linux")(
   "failed launcher handshake retains the account fence until receipt reconciliation",

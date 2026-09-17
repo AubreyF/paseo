@@ -703,6 +703,15 @@ export interface QuotaGovernedSessionInput {
   guard: QuotaAdmissionGuard;
   /** Coordinator-selected native profile. The coordinator must verify its filesystem and tool policy. */
   permissionProfile?: string;
+  /** Trusted host callback only. Tokens travel over provider stdin, never worker configuration. */
+  externalChatgptAuth?: {
+    assertCurrent(): void;
+    readTokens(reason: "initial" | "unauthorized"): Promise<{
+      accessToken: string;
+      chatgptAccountId: string;
+      chatgptPlanType?: string | null;
+    }>;
+  };
   /** Trusted launcher owns its environment and settlement of every descendant. */
   processCustody?: {
     spawn(command: string, args: string[]): Promise<ChildProcessWithoutNullStreams>;

@@ -4,6 +4,26 @@ import { lstat, realpath } from "node:fs/promises";
 import { z } from "zod";
 
 const Unset = z.null().optional();
+const ProxyFeature = z
+  .object({ enabled: z.literal(true), credential_broker: z.literal(false) })
+  .strict();
+const DenyAllProxyNetwork = z
+  .object({
+    enabled: z.literal(true),
+    proxy_url: z.literal("http://127.0.0.1:0"),
+    enable_socks5: z.literal(false),
+    socks_url: Unset,
+    enable_socks5_udp: z.literal(false),
+    allow_upstream_proxy: z.literal(false),
+    dangerously_allow_non_loopback_proxy: z.literal(false),
+    dangerously_allow_all_unix_sockets: z.literal(false),
+    mode: z.literal("limited"),
+    domains: z.object({}).strict(),
+    unix_sockets: z.object({}).strict(),
+    allow_local_binding: z.literal(false),
+    mitm: Unset,
+  })
+  .strict();
 const WorkerProfile = z
   .object({
     description: z.string().nullable().optional(),
@@ -25,29 +45,36 @@ const WorkerProfile = z
           .strict(),
       })
       .strict(),
-    network: z
-      .object({
-        enabled: z.literal(false),
-        proxy_url: Unset,
-        enable_socks5: Unset,
-        socks_url: Unset,
-        enable_socks5_udp: Unset,
-        allow_upstream_proxy: Unset,
-        dangerously_allow_non_loopback_proxy: Unset,
-        dangerously_allow_all_unix_sockets: Unset,
-        mode: Unset,
-        domains: Unset,
-        unix_sockets: Unset,
-        allow_local_binding: Unset,
-        mitm: Unset,
-      })
-      .strict(),
+    network: z.union([
+      z
+        .object({
+          enabled: z.literal(false),
+          proxy_url: Unset,
+          enable_socks5: Unset,
+          socks_url: Unset,
+          enable_socks5_udp: Unset,
+          allow_upstream_proxy: Unset,
+          dangerously_allow_non_loopback_proxy: Unset,
+          dangerously_allow_all_unix_sockets: Unset,
+          mode: Unset,
+          domains: Unset,
+          unix_sockets: Unset,
+          allow_local_binding: Unset,
+          mitm: Unset,
+        })
+        .strict(),
+      DenyAllProxyNetwork,
+    ]),
   })
   .strict();
 
 // A profile name is provenance, not proof of its effective grants. Accept only
 // the audited offline worker boundary; inherited profiles can widen it silently.
-export function verifyWorkerPermissionProfile(profile: unknown, cwd: string | undefined): void {
+export function verifyWorkerPermissionProfile(
+  profile: unknown,
+  cwd: string | undefined,
+  networkProxyFeature?: unknown,
+): void {
   const result = WorkerProfile.safeParse(profile);
   if (!result.success || !cwd || !isAbsolute(cwd) || normalize(cwd) !== cwd) {
     throw new Error("Native worker filesystem confinement is unavailable.");
@@ -55,6 +82,12 @@ export function verifyWorkerPermissionProfile(profile: unknown, cwd: string | un
   const roots = Object.keys(result.data.workspace_roots);
   if (roots.length !== 1 || roots[0] !== cwd) {
     throw new Error("Native worker filesystem confinement is unavailable.");
+  }
+  // Native Restricted seccomp denies shutdown(), breaking Node's stdin pipes.
+  // Managed proxy mode uses a separate tool network namespace and an empty
+  // allowlist, retaining process-local IPC without granting an egress path.
+  if (result.data.network.enabled && !ProxyFeature.safeParse(networkProxyFeature).success) {
+    throw new Error("Native worker deny-all managed proxy is unverified.");
   }
 }
 

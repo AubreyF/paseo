@@ -3621,7 +3621,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.verifyWorkerShellPolicy(config);
     const profiles = toObjectRecord(config?.permissions);
     const name = this.quotaGovernance?.permissionProfile;
-    verifyWorkerPermissionProfile(name ? profiles?.[name] : undefined, this.config.cwd);
+    verifyWorkerPermissionProfile(
+      name ? profiles?.[name] : undefined,
+      this.config.cwd,
+      features?.network_proxy,
+    );
   }
 
   private verifyWorkerShellPolicy(config: Record<string, unknown> | undefined): void {
@@ -5383,9 +5387,10 @@ export class CodexAppServerAgentSession implements AgentSession {
         "service_tier",
       ]);
       for (const key of Object.keys(configured)) if (!allowed.has(key)) delete configured[key];
-      configured.features = Object.fromEntries(
-        QUOTA_WORKER_DISABLED_FEATURES.map((key) => [key, false]),
-      );
+      configured.features = {
+        ...Object.fromEntries(QUOTA_WORKER_DISABLED_FEATURES.map((key) => [key, false])),
+        network_proxy: { enabled: true, credential_broker: false },
+      };
       configured.allow_login_shell = false;
       configured.shell_environment_policy = { inherit: "none" };
       configured.web_search = "disabled";

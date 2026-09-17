@@ -559,7 +559,12 @@ test("governed construction captures launcher custody for transport disposal", a
   expect(thread?.params).not.toHaveProperty("config.mcp_servers");
   expect(thread?.params).toMatchObject({
     config: {
-      features: { hooks: false, apps: false, plugins: false },
+      features: {
+        hooks: false,
+        apps: false,
+        plugins: false,
+        network_proxy: { enabled: true, credential_broker: false },
+      },
       shell_environment_policy: { inherit: "none" },
     },
   });

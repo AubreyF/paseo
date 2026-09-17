@@ -198,8 +198,11 @@ The same checks run at each inference admission, including cached threads.
 
 The accepted filesystem profile has no parent, one explicit workspace root equal
 to the session cwd, root and temporary-directory denial, minimal system reads,
-workspace writes, denied `.codex` access and read-only `.git` access. Network
-access is disabled. Additional grants are rejected. Native thread start and
+workspace writes, denied `.codex` access and read-only `.git` access. Workers
+either disable networking or use the native managed proxy with an empty
+destination allowlist, no socket grants and no upstream proxy or credential
+broker. The latter preserves Node subprocess IPC within the native tool network
+namespace. Additional grants are rejected. Native thread start and
 resume must report that same single runtime workspace root.
 The workspace and its precreated `.codex` directory must resolve to their exact
 physical paths. Missing targets, files and symlinked paths fail before thread

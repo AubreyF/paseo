@@ -4,15 +4,18 @@ Run your coding agents in a container and control them from your browser or phon
 
 ## Install
 
-Install Docker with Compose on the host and Tailscale on your connecting devices. From this checkout:
+Install Git and start Docker with Compose. Install Tailscale on the devices you will connect from. On Windows, run this in WSL.
+
+Give your agent this command, or run it yourself:
 
 ```sh
-./docker/multiplex/install.sh "$HOME/paseo-instance"
+git clone https://github.com/AubreyF/paseo.git "$HOME/paseo-source" &&
+  bash "$HOME/paseo-source/docker/multiplex/install.sh" "$HOME/paseo-instance"
 ```
 
-Complete the Tailscale login, open the printed HTTPS address, and use the password saved in the deployment's `.env`. Enable **Vorton** in the sidebar to configure accounts and presets. Host-native Tailscale is optional for unrelated host services such as VNC.
+The installer builds locally, creates private storage and starts the container. Complete the Tailscale login, open the printed HTTPS address, and use the password in `$HOME/paseo-instance/.env`. Enable **Vorton** in the sidebar and connect your provider accounts.
 
-The installer builds this checkout locally. No registry account, host Node installation or separately installed host Tailscale is required. See [installation details](docker/multiplex/README.md).
+No registry account, host Node or separate host Tailscale installation is needed. Existing checkout? See [installation details](docker/multiplex/README.md).
 
 ## Work and contribute
 

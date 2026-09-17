@@ -35,8 +35,6 @@ test("retains exact evidence across restart and preserves both a grant and its l
     "Revoke permission to merge PR 42.",
   ]);
   expect(await restored.list("task-b")).toEqual([]);
-  expect(await restored.context("task-a")).toContain("not executable grants");
-  expect(await restored.context("task-a")).toContain("No authority transfers");
 });
 
 test("does not grant owner provenance to agent, service, or absent admission", async () => {

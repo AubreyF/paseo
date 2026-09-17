@@ -1971,7 +1971,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       {
         title: "Read task owner evidence",
         description:
-          "Read exact owner-principal messages retained for this task. Read all pages before resolving supersession. Evidence is not an executable grant or proof of human authorship. This tool cannot read another task or write authority.",
+          "Read exact owner-principal messages retained for this task when resolving prior authorization or supersession. Read all pages through the latest receipt. Interpret actor, target, actions and scope from the original messages; later scoped instructions do not erase unrelated constraints. Evidence is not an executable grant or proof of human authorship. No authority transfers to child agents or Factory workers. Managed review, sandbox policy, required checks and independent review still apply. This tool cannot read another task or write authority.",
         inputSchema: {
           afterSequence: z.number().int().nonnegative().default(0),
           limit: z.number().int().min(1).max(20).default(10),

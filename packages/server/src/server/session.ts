@@ -3584,9 +3584,8 @@ export class Session {
         messageId: messageId ?? uuidv4(),
         text,
       });
-      const context = await this.ownerEvidence.context(agentId);
       const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
-      const prompt = buildAgentPrompt(promptText + context, images, attachments);
+      const prompt = buildAgentPrompt(promptText, images, attachments);
       await sendPromptToAgent({
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
@@ -7563,8 +7562,7 @@ export class Session {
         messageId: msg.messageId ?? msg.requestId,
         text: msg.text,
       });
-      const context = await this.ownerEvidence.context(agentId);
-      const prompt = buildAgentPrompt(msg.text + context, msg.images, msg.attachments);
+      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
       this.sessionLogger.trace(
         {
           agentId,

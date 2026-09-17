@@ -61,8 +61,9 @@ ones, so a restriction or revocation is available when reviewing scope.
 The task's `read_task_owner_evidence` tool retrieves these records in pages.
 Its task binding comes from the daemon, not a tool argument. Read through
 `latestSequence` before interpreting supersession. A child task cannot retrieve
-its parent's records with this tool. Resumed owner prompts include a reminder
-to consult it. Records are retained across task archive and daemon restart.
+its parent's records with this tool. Retrieval guidance lives in the tool
+description so owner prompts and transcript text remain unchanged. Records are
+retained across task archive and daemon restart.
 
 This is review evidence, not an executable permission grant. Actor, target,
 actions and supersession still require interpretation of the original words.

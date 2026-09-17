@@ -1,5 +1,5 @@
-import { fork, spawn, type ChildProcess } from "child_process";
-import { mkdirSync } from "node:fs";
+import { fork, spawn, type ChildProcess, type StdioOptions } from "child_process";
+import { fstatSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { createStream as createRotatingFileStream } from "rotating-file-stream";
 import { signalProcessTree } from "../src/utils/tree-kill.js";
@@ -45,6 +45,10 @@ interface SupervisorOptions {
   workerArgs?: string[];
   workerEnv?: NodeJS.ProcessEnv;
   workerExecArgv?: string[];
+  /** Startup-only lifetime ownership, shared with every trusted controller writer.
+   * Native worker custody and settlement remain separate requirements.
+   */
+  controllerLifetimeFd?: number;
   resolveWorkerSpawnSpec?: (workerEntry: string) => {
     command: string;
     args: string[];
@@ -58,6 +62,22 @@ interface SupervisorOptions {
 
 export interface SupervisorController {
   requestShutdown(reason: string): void;
+}
+
+export function parseControllerLifetimeFd(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const fd = Number(value);
+  if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(fd) || fd < 3)
+    throw new Error("Controller lifetime descriptor must be an integer at least 3.");
+  const info = fstatSync(fd);
+  if (
+    !info.isFile() ||
+    info.uid !== process.getuid?.() ||
+    (info.mode & 0o777) !== 0o600 ||
+    info.nlink !== 1
+  )
+    throw new Error("Controller lifetime descriptor requires an owner-controlled mode 0600 file.");
+  return fd;
 }
 
 function describeExit(code: number | null, signal: NodeJS.Signals | null): string {
@@ -119,6 +139,9 @@ function createSupervisorLogStream(options: SupervisorLogFileOptions | undefined
 }
 
 export function runSupervisor(options: SupervisorOptions): SupervisorController {
+  const controllerLifetimeFd = parseControllerLifetimeFd(
+    options.controllerLifetimeFd === undefined ? undefined : String(options.controllerLifetimeFd),
+  );
   const restartOnCrash = options.restartOnCrash ?? false;
   const workerArgs = options.workerArgs ?? process.argv.slice(2);
   const workerEnv = options.workerEnv ?? process.env;
@@ -229,16 +252,26 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     }
 
     const spawnSpec = resolveWorkerSpawnSpec?.(workerEntry) ?? null;
+    const stdio: StdioOptions = ["inherit", "pipe", "pipe", "ipc"];
+    const environment = { ...(spawnSpec?.env ?? workerEnv) };
+    // Both trusted processes retain the same open-file description until exit.
+    // Never unlock it here; ordinary descendants do not inherit extra stdio.
+    if (controllerLifetimeFd !== undefined) {
+      stdio.push(controllerLifetimeFd);
+      environment.PASEO_CONTROLLER_LIFETIME_FD = "4";
+    } else {
+      delete environment.PASEO_CONTROLLER_LIFETIME_FD;
+    }
     writeLifecycleLog("Spawning worker", { workerEntry });
     if (spawnSpec) {
       child = spawn(spawnSpec.command, spawnSpec.args, {
-        stdio: ["inherit", "pipe", "pipe", "ipc"],
-        env: spawnSpec.env ?? workerEnv,
+        stdio,
+        env: environment,
       });
     } else {
       child = fork(workerEntry, workerArgs, {
-        stdio: ["inherit", "pipe", "pipe", "ipc"],
-        env: workerEnv,
+        stdio,
+        env: environment,
         execArgv: workerExecArgv,
       });
     }

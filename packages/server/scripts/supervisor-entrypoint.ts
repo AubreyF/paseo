@@ -10,7 +10,7 @@ import {
 } from "../src/server/pid-lock.js";
 import { resolvePaseoHome } from "../src/server/paseo-home.js";
 import { loadPersistedConfig } from "../src/server/persisted-config.js";
-import { runSupervisor } from "./supervisor.js";
+import { parseControllerLifetimeFd, runSupervisor } from "./supervisor.js";
 import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 import { applySherpaLoaderEnv } from "../src/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
 
@@ -98,6 +98,7 @@ function resolvePackagedNodeEntrypointRunnerPath(currentScriptPath: string): str
 }
 
 async function main(): Promise<void> {
+  const controllerLifetimeFd = parseControllerLifetimeFd(process.env.PASEO_CONTROLLER_LIFETIME_FD);
   const config = parseConfig(process.argv.slice(2));
   const workerEntry = config.devMode ? resolveDevWorkerEntry() : resolveWorkerEntry();
   const workerExecArgv = resolveWorkerExecArgv(workerEntry, config.devMode);
@@ -151,6 +152,7 @@ async function main(): Promise<void> {
   };
 
   const supervisor = runSupervisor({
+    controllerLifetimeFd,
     name: "DaemonRunner",
     startupMessage: "Starting daemon worker (IPC restart and crash restart enabled)",
     resolveWorkerEntry: () => workerEntry,

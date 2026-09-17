@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   verifyWorkerPhysicalWorkspace,
   verifyWorkerPermissionProfile,
@@ -21,9 +21,11 @@ const denyAllProxy = {
   allow_local_binding: false,
 };
 const proxyFeature = { enabled: true, credential_broker: false };
+// Policy validation requires an absolute path in the host's native syntax.
+const fixtureRoot = resolve("/fixture");
 const workerProfile = {
   extends: null,
-  workspace_roots: { "/fixture": true },
+  workspace_roots: { [fixtureRoot]: true },
   filesystem: {
     ":root": "deny",
     ":minimal": "read",
@@ -37,12 +39,12 @@ test("admits audited deny-all managed proxy and retains strict network-denied pr
   expect(() =>
     verifyWorkerPermissionProfile(
       { ...workerProfile, network: denyAllProxy },
-      "/fixture",
+      fixtureRoot,
       proxyFeature,
     ),
   ).not.toThrow();
   expect(() =>
-    verifyWorkerPermissionProfile({ ...workerProfile, network: { enabled: false } }, "/fixture"),
+    verifyWorkerPermissionProfile({ ...workerProfile, network: { enabled: false } }, fixtureRoot),
   ).not.toThrow();
 });
 
@@ -63,7 +65,7 @@ test.each([
   expect(() =>
     verifyWorkerPermissionProfile(
       { ...workerProfile, network: { ...denyAllProxy, ...patch } },
-      "/fixture",
+      fixtureRoot,
       proxyFeature,
     ),
   ).toThrow("filesystem confinement");
@@ -78,7 +80,11 @@ test.each([
   { ...proxyFeature, domains: { "example.invalid": "allow" } },
 ])("requires the exact enabled proxy feature with broker disabled: %j", (feature) => {
   expect(() =>
-    verifyWorkerPermissionProfile({ ...workerProfile, network: denyAllProxy }, "/fixture", feature),
+    verifyWorkerPermissionProfile(
+      { ...workerProfile, network: denyAllProxy },
+      fixtureRoot,
+      feature,
+    ),
   ).toThrow("managed proxy is unverified");
 });
 

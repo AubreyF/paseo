@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { VortonModeToggle } from "@/vorton-mode";
+import { useVortonMode, VortonModeToggle } from "@/vorton-mode";
 import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
@@ -1045,6 +1045,7 @@ function SettingsSidebar({
   activeHostServerId,
   layout,
 }: SettingsSidebarProps) {
+  const vorton = useVortonMode();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const hosts = useHosts();
@@ -1150,7 +1151,9 @@ function SettingsSidebar({
     >
       {isDesktop ? (
         <View style={innerContainerStyle}>
-          <View style={sidebarStyles.sidebarDragArea}>
+          <View
+            style={[sidebarStyles.sidebarDragArea, vorton && sidebarStyles.sidebarDragAreaVorton]}
+          >
             <TitlebarDragRegion />
             <WindowChromeSafeArea placement="below" />
             <SidebarHeaderRow
@@ -1167,14 +1170,20 @@ function SettingsSidebar({
           >
             {sidebarBody}
           </ScrollView>
-          <View style={sidebarStyles.modeFooter} testID="settings-mode-footer">
+          <View
+            style={[sidebarStyles.modeFooter, vorton && sidebarStyles.modeFooterVorton]}
+            testID="settings-mode-footer"
+          >
             <VortonModeToggle compact />
           </View>
         </View>
       ) : (
         <>
           {sidebarBody}
-          <View style={sidebarStyles.modeFooter} testID="settings-mode-footer">
+          <View
+            style={[sidebarStyles.modeFooter, vorton && sidebarStyles.modeFooterVorton]}
+            testID="settings-mode-footer"
+          >
             <VortonModeToggle compact />
           </View>
         </>
@@ -1768,6 +1777,12 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
+  },
+  modeFooterVorton: {
+    paddingHorizontal: theme.spacing[2],
+  },
+  sidebarDragAreaVorton: {
+    paddingTop: theme.spacing[2],
   },
   sidebarDragArea: {
     position: "relative",

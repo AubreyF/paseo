@@ -800,8 +800,9 @@ function StatusWorkspaceRowInnerContent({
       didLongPressRef.current = false;
       return;
     }
+    if (isDragging) return;
     onPress();
-  }, [didLongPressRef, onPress]);
+  }, [didLongPressRef, isDragging, onPress]);
   const handlePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);

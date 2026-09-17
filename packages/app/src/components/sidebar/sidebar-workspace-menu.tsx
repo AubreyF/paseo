@@ -13,6 +13,8 @@ import {
   Tag,
 } from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
+import { useVortonMode } from "@/vorton-mode";
+import { useWorkspaceRenameDoubleClick } from "./workspace-rename-press";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -343,6 +345,11 @@ export function SidebarWorkspaceContextMenu({
       highlightStyle: ComponentProps<typeof ContextMenuTrigger>["highlightStyle"];
     }
 >) {
+  const vortonMode = useVortonMode();
+  const renameTriggerRef = useWorkspaceRenameDoubleClick({
+    enabled: vortonMode && !triggerProps.disabled,
+    onRename,
+  });
   const {
     settings: { workspaceTitleSource },
   } = useAppSettings();
@@ -377,6 +384,7 @@ export function SidebarWorkspaceContextMenu({
     <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>
       <ContextMenuTrigger
         {...triggerProps}
+        triggerRef={renameTriggerRef}
         enabledOnMobile={false}
         accessibilityLabel={accessibilityLabel ?? rowAccessibilityLabel}
         highlightStyle={highlightStyle}

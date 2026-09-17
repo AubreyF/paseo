@@ -1,4 +1,30 @@
 import { isWeb } from "@/constants/platform";
+import { useCallback, useEffect, useState } from "react";
+
+export function useWorkspaceRenameDoubleClick({
+  enabled,
+  onRename,
+}: {
+  enabled: boolean;
+  onRename?: () => void;
+}) {
+  const [element, setElement] = useState<HTMLElement | null>(null);
+  const ref = useCallback((node: unknown) => {
+    if (isWeb) setElement(node instanceof HTMLElement ? node : null);
+  }, []);
+  useEffect(() => {
+    if (!element || !enabled || !onRename) return;
+    const row = element;
+    function rename(event: MouseEvent) {
+      if (!isWorkspaceRenamePress({ nativeEvent: event, currentTarget: row }, true)) return;
+      onRename?.();
+    }
+    // PressResponder can suppress onPress when a double-click selects title text.
+    row.addEventListener("dblclick", rename);
+    return () => row.removeEventListener("dblclick", rename);
+  }, [element, enabled, onRename]);
+  return ref;
+}
 
 interface RenamePress {
   nativeEvent: unknown;

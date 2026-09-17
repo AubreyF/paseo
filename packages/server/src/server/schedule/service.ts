@@ -23,13 +23,17 @@ import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
   CreateScheduleInput,
   ScheduleExecutionResult,
+  ScheduleExecutionBinding,
   ScheduleRun,
   ScheduleTarget,
   StoredSchedule,
   UpdateScheduleInput,
   UpdateScheduleNewAgentConfig,
 } from "@getpaseo/protocol/schedule/types";
-import { ScheduleGovernorBindingSchema } from "@getpaseo/protocol/schedule/types";
+import {
+  ScheduleGovernorBindingSchema,
+  ScheduleWorkflowBindingSchema,
+} from "@getpaseo/protocol/schedule/types";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
@@ -151,16 +155,21 @@ function isProtectedSchedule(schedule: StoredSchedule): boolean {
     Boolean(schedule.governorPreparation) ||
     (schedule.target.type === "new-agent" && Boolean(schedule.target.config.quotaPolicy)) ||
     schedule.runs.some(
-      (run) => run.status === "running" && Boolean(run.governorBinding || run.quotaState),
+      (run) =>
+        run.status === "running" &&
+        Boolean(run.governorBinding || run.workflowBinding || run.quotaState),
     )
   );
 }
 
-function preparedGovernorBinding(
+function preparedExecutionBinding(
   schedule: StoredSchedule,
-  binding: NonNullable<ScheduleRun["governorBinding"]>,
-): NonNullable<ScheduleRun["governorBinding"]> {
-  const parsed = ScheduleGovernorBindingSchema.parse(binding);
+  binding: ScheduleExecutionBinding,
+): ScheduleExecutionBinding {
+  const parsed =
+    "workflowId" in binding
+      ? ScheduleWorkflowBindingSchema.strict().parse(binding)
+      : ScheduleGovernorBindingSchema.strict().parse(binding);
   if (
     schedule.target.type === "new-agent" &&
     schedule.target.config.quotaPolicy &&
@@ -168,6 +177,12 @@ function preparedGovernorBinding(
   )
     throw new Error("Prepared quota account does not match the schedule.");
   return parsed;
+}
+
+function retainedExecutionBinding(run: ScheduleRun): ScheduleExecutionBinding | undefined {
+  if (run.workflowBinding && run.governorBinding)
+    throw new Error("Ambiguous protected execution binding requires reconciliation.");
+  return run.workflowBinding ?? run.governorBinding;
 }
 
 function shouldArchiveScheduleRunWorkspace(input: {
@@ -299,7 +314,7 @@ export interface ScheduleServiceOptions {
       | { kind: "deferred"; reason: string; custody?: "none" }
       | {
           kind: "ready";
-          binding: NonNullable<ScheduleRun["governorBinding"]>;
+          binding: ScheduleExecutionBinding;
           resumeRunId?: string;
           /** Revoke synchronously; resolve only after durable freeze and verified settlement.
            * Preserve accounting reservations. Must be idempotent and exclude run(). */
@@ -376,7 +391,7 @@ interface PreparedScheduleAttempt {
   manual: boolean;
   runner: ScheduleRunner;
   resumeRunId?: string;
-  governorBinding?: ScheduleRun["governorBinding"];
+  executionBinding?: ScheduleExecutionBinding;
   custody: SchedulePreparationCustody;
 }
 
@@ -926,7 +941,7 @@ export class ScheduleService {
   ): Promise<void> {
     let runner: ScheduleRunner = this.runner;
     let resumeRunId: string | undefined;
-    let governorBinding: ScheduleRun["governorBinding"];
+    let executionBinding: ScheduleExecutionBinding | undefined;
     if (isProtectedSchedule(schedule)) {
       const marked = this.quotaRunner
         ? await this.prepareScheduleAttempt(
@@ -963,7 +978,7 @@ export class ScheduleService {
         }));
         return;
       }
-      governorBinding = preparedGovernorBinding(schedule, prepared.binding);
+      executionBinding = preparedExecutionBinding(schedule, prepared.binding);
       runner = prepared.run;
       resumeRunId = prepared.resumeRunId;
     }
@@ -974,7 +989,7 @@ export class ScheduleService {
       manual,
       runner,
       resumeRunId,
-      governorBinding,
+      executionBinding,
       custody,
     });
   }
@@ -985,7 +1000,7 @@ export class ScheduleService {
     manual,
     runner,
     resumeRunId,
-    governorBinding,
+    executionBinding,
     custody,
   }: PreparedScheduleAttempt): Promise<void> {
     const runId = resumeRunId ?? randomUUID();
@@ -1000,11 +1015,14 @@ export class ScheduleService {
       agentId: null,
       output: null,
       error: null,
-      ...(governorBinding ? { governorBinding } : {}),
       ...(schedule.governorPreparation
         ? { governorPreparationId: schedule.governorPreparation.id }
         : {}),
     };
+    if (executionBinding) {
+      if ("workflowId" in executionBinding) runningRun.workflowBinding = executionBinding;
+      else runningRun.governorBinding = executionBinding;
+    }
     let appended = false;
     try {
       const scheduleWithRun = await this.openScheduleRun(schedule, runningRun, resumeRunId);
@@ -1126,10 +1144,10 @@ export class ScheduleService {
       );
       if (!retained) throw new Error("Protected run to resume is missing.");
       if (
-        !retained.governorBinding ||
-        !isDeepStrictEqual(retained.governorBinding, runningRun.governorBinding)
+        !retainedExecutionBinding(retained) ||
+        !isDeepStrictEqual(retainedExecutionBinding(retained), retainedExecutionBinding(runningRun))
       )
-        throw new Error("Protected reservation binding requires reconciliation before resume.");
+        throw new Error("Protected execution binding requires reconciliation before resume.");
       if (!isDeepStrictEqual(current.governorPreparation, schedule.governorPreparation))
         throw new Error("Schedule preparation changed during resume.");
       return {

@@ -597,13 +597,23 @@ describe("ScheduleService", () => {
     },
   );
 
-  test.each([false, true])(
-    "resumes governed custody after freeze and restart (inherited=%s)",
-    async (inherited) => {
+  test.each(
+    [false, true].flatMap((inherited) =>
+      [false, true].map((workflow) => ({ inherited, workflow })),
+    ),
+  )(
+    "resumes governed custody after freeze and restart (inherited=$inherited, workflow=$workflow)",
+    async ({ inherited, workflow }) => {
       const ordinary = vi.fn(async () => ({ agentId: null, output: "ordinary" }));
       let frozen = false;
       let executionAttempts = 0;
-      let reservationId = "reservation";
+      const initialBindingId = workflow ? "11111111-1111-4111-8111-111111111111" : "reservation";
+      let bindingId = initialBindingId;
+      const binding = () => ({
+        account: { issuer: "openai", accountId: "account" },
+        ...(workflow ? { workflowId: bindingId } : { reservationId: bindingId }),
+      });
+      const bindingKey = workflow ? "workflowBinding" : "governorBinding";
       let expireDuringPrepare = false;
       const governed = vi.fn(
         async (
@@ -635,7 +645,7 @@ describe("ScheduleService", () => {
             return {
               kind: "ready",
               freezeBeforeDispatch: async () => {},
-              binding: { account: { issuer: "openai", accountId: "account" }, reservationId },
+              binding: binding(),
               run: governed,
               resumeRunId: schedule.runs.find((run) => run.status === "running")?.id,
             };
@@ -672,9 +682,31 @@ describe("ScheduleService", () => {
         nextRunAt: created.nextRunAt,
         runs: [{ status: "running", quotaState: { state: "frozen", reason: "weekly_floor" } }],
       });
-      expect(held.runs[0]?.governorBinding).toEqual({
-        account: { issuer: "openai", accountId: "account" },
-        reservationId: "reservation",
+      expect(held.runs[0]?.[bindingKey]).toEqual(binding());
+      expect(held.runs[0]?.[workflow ? "governorBinding" : "workflowBinding"]).toBeUndefined();
+      const store = new ScheduleStore(join(tempDir, "schedules"));
+      await store.update(created.id, (record) => {
+        const updated = structuredClone(record);
+        for (const run of updated.runs)
+          Object.assign(run, {
+            governorBinding: { account: binding().account, reservationId: "reservation" },
+            workflowBinding: {
+              account: binding().account,
+              workflowId: "11111111-1111-4111-8111-111111111111",
+            },
+          });
+        return updated;
+      });
+      await expect(service.tick()).rejects.toThrow("Ambiguous protected execution binding");
+      expect(governed).toHaveBeenCalledTimes(1);
+      await store.update(created.id, (record) => {
+        const updated = structuredClone(record);
+        for (const run of updated.runs) {
+          delete run.governorBinding;
+          delete run.workflowBinding;
+          Object.assign(run, { [bindingKey]: binding() });
+        }
+        return updated;
       });
       if (inherited) {
         // Model a persisted inherited policy: protection belongs to the run,
@@ -696,19 +728,17 @@ describe("ScheduleService", () => {
         runs: [{ status: "running" }],
       });
       await service.update({ id: created.id, expiresAt: null });
-      reservationId = "wrong-reservation";
-      await expect(service.tick()).rejects.toThrow("reservation binding");
+      bindingId = workflow ? "22222222-2222-4222-8222-222222222222" : "wrong-reservation";
+      await expect(service.tick()).rejects.toThrow("execution binding");
       expect(governed).toHaveBeenCalledTimes(1);
-      expect((await service.inspect(created.id)).runs[0]?.governorBinding?.reservationId).toBe(
-        "reservation",
-      );
-      reservationId = "reservation";
+      bindingId = initialBindingId;
+      expect((await service.inspect(created.id)).runs[0]?.[bindingKey]).toEqual(binding());
       expireDuringPrepare = true;
       await service.tick();
       expect(governed).toHaveBeenCalledTimes(1);
       expect((await service.inspect(created.id)).runs[0]).toMatchObject({
         status: "running",
-        governorBinding: { reservationId: "reservation" },
+        [bindingKey]: binding(),
         quotaState: { state: "frozen", reason: "schedule_expired" },
       });
       expireDuringPrepare = false;

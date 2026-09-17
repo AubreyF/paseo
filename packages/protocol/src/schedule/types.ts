@@ -53,6 +53,17 @@ export const ScheduleGovernorBindingSchema = z.object({
   reservationId: z.string().min(1),
 });
 
+// Workflow identity persists across independently governed stage reservations.
+// Keep this separate from governorBinding so existing clients can ignore the
+// additive metadata without interpreting a workflow as a quota reservation.
+export const ScheduleWorkflowBindingSchema = z.object({
+  account: QuotaAccountSchema,
+  workflowId: z.string().uuid(),
+});
+export type ScheduleExecutionBinding =
+  | z.infer<typeof ScheduleGovernorBindingSchema>
+  | z.infer<typeof ScheduleWorkflowBindingSchema>;
+
 export const ScheduleRunSchema = z.object({
   id: z.string(),
   scheduledFor: z.string(),
@@ -62,6 +73,7 @@ export const ScheduleRunSchema = z.object({
   agentId: z.guid().nullable(),
   workspaceId: z.string().nullable().optional(),
   governorBinding: ScheduleGovernorBindingSchema.optional(),
+  workflowBinding: ScheduleWorkflowBindingSchema.optional(),
   governorPreparationId: z.string().uuid().optional(),
   output: z.string().nullable(),
   error: z.string().nullable(),

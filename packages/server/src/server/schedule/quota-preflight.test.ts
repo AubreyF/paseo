@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { QuotaObservation } from "@getpaseo/protocol/quota-governor";
 import type { StoredSchedule } from "@getpaseo/protocol/schedule/types";
 import { QuotaSchedulePreflight } from "./quota-preflight.js";
+import { QuotaGovernorStore } from "../agent/quota-reserve/governor-store.js";
 
 const now = Date.parse("2026-09-14T08:00:00Z");
 const instant = new Date(now).toISOString();
@@ -56,6 +60,72 @@ function observation(usedPercent = 20, observedAt = now): QuotaObservation {
     consumptionMeters: [],
   };
 }
+
+it("collects continuous hourly history while held without preparing inference", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "quota-preflight-history-"));
+  try {
+    let current = now;
+    let reads = 0;
+    let preparations = 0;
+    const estimated = structuredClone(schedule);
+    if (estimated.target.type !== "new-agent" || !estimated.target.config.quotaPolicy)
+      throw new Error("fixture");
+    estimated.target.config.quotaPolicy.estimatedHourly = {
+      bucketId: "coding",
+      windowId: "weekly",
+      maxConsumedPoints: 10,
+    };
+    const store = new QuotaGovernorStore(directory, { nowMs: () => current });
+    const preflight = new QuotaSchedulePreflight({
+      nowMs: () => current,
+      readObservation: async () => {
+        reads++;
+        return store.observeEstimatedUsage({
+          observation: observation(20, current),
+          authenticationGeneration: "trusted-fixture-generation",
+          bucketId: "coding",
+          windowId: "weekly",
+          maxObservationAgeSeconds: 120,
+        });
+      },
+      execution: {
+        reconcile: async () => {},
+        prepare: async () => {
+          preparations++;
+          return { kind: "deferred", reason: "fixture_backend", custody: "none" };
+        },
+      },
+    });
+    for (let minute = 0; minute < 60; minute++) {
+      current = now + minute * 60_000;
+      expect(await preflight.prepare(estimated, instant)).toEqual({
+        kind: "deferred",
+        reason: "estimate_unavailable",
+        custody: "none",
+      });
+      current += 1000;
+      await preflight.prepare(estimated, instant);
+    }
+    expect({ reads, preparations }).toEqual({ reads: 60, preparations: 0 });
+    current = now + 3_600_000;
+    expect(await preflight.prepare(estimated, instant)).toEqual({
+      kind: "deferred",
+      reason: "fixture_backend",
+      custody: "none",
+    });
+    expect({ reads, preparations }).toEqual({ reads: 61, preparations: 1 });
+    // A missed interval must still invalidate history rather than count as zero.
+    current += 180_000;
+    expect(await preflight.prepare(estimated, instant)).toEqual({
+      kind: "deferred",
+      reason: "estimate_unavailable",
+      custody: "none",
+    });
+    expect(preparations).toBe(1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 it("reads the schedule account and holds an authenticated account mismatch", async () => {
   const providers: string[] = [];

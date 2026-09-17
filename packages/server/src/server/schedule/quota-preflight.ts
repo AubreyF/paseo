@@ -26,6 +26,7 @@ export class QuotaSchedulePreflight implements QuotaRunner {
       target: StoredSchedule["target"];
       scheduledFor: string;
       checkedAt: number;
+      retryAt: number;
       reason: string;
     }
   >();
@@ -42,7 +43,7 @@ export class QuotaSchedulePreflight implements QuotaRunner {
 
   private expireHolds(now: number): void {
     for (const [id, hold] of this.holds) {
-      if (now < hold.checkedAt || now - hold.checkedAt >= 300_000) this.holds.delete(id);
+      if (now < hold.checkedAt || now >= hold.retryAt) this.holds.delete(id);
     }
   }
 
@@ -74,6 +75,7 @@ export class QuotaSchedulePreflight implements QuotaRunner {
     if (target.type !== "new-agent" || !target.config.quotaPolicy) {
       return { kind: "deferred", reason: "quota_policy_required", custody: "none" };
     }
+    const policy = target.config.quotaPolicy;
     this.expireHolds(this.nowMs());
     const cached = this.holds.get(schedule.id);
     if (
@@ -87,10 +89,17 @@ export class QuotaSchedulePreflight implements QuotaRunner {
     }
     const hold = (reason: string): Preparation => {
       if (this.stopped) return { kind: "deferred", reason: "governor_stopped", custody: "none" };
+      const checkedAt = this.nowMs();
+      // Estimated accounting must keep sampling during holds. A five-minute
+      // refusal cache otherwise prevents the required continuous fresh hour.
+      const retryDelay = policy.estimatedHourly
+        ? Math.min(60_000, policy.maxObservationAgeSeconds * 500)
+        : 300_000;
       this.holds.set(schedule.id, {
         target: structuredClone(target),
         scheduledFor,
-        checkedAt: this.nowMs(),
+        checkedAt,
+        retryAt: checkedAt + retryDelay,
         reason,
       });
       return { kind: "deferred", reason, custody: "none" };

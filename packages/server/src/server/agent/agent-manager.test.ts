@@ -1749,11 +1749,17 @@ test.each(["held", "stopped"] as const)(
 test("reserve polling reconciles an unloaded supervisor and stops its loaded worker", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-unloaded-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class DelayedStartSession extends SteeringTestSession {
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      this.startPrompts.push(prompt);
+      return { turnId: `active-turn-${++this.startCount}` };
+    }
+  }
   const client = new (class extends TestAgentClient {
     readonly sessions: SteeringTestSession[] = [];
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       this.createdConfigs.push(config);
-      const session = new SteeringTestSession(config);
+      const session = new DelayedStartSession(config);
       this.sessions.push(session);
       return session;
     }
@@ -1827,16 +1833,26 @@ test("reserve polling reconciles an unloaded supervisor and stops its loaded wor
       workspaceId: undefined,
       labels: { [PARENT_AGENT_ID_LABEL]: rootId },
     });
+    const turnStarted = deferred<void>();
     const drain = (async () => {
       for await (const _event of manager.streamAgent(child.id, "bounded work")) {
-        /* Drain. */
+        if (_event.type === "turn_started") turnStarted.resolve();
       }
     })();
-    await vi.waitFor(() => expect(client.sessions[0]?.startCount).toBe(1));
+    await turnStarted.promise;
     remainingPct = 10;
     await polling.poll();
     await drain;
     expect(client.sessions[0]?.interruptCount).toBe(1);
+    // A delayed provider start must not resurrect the turn that Stop already settled.
+    client.sessions[0]!.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "active-turn-1",
+    });
+    await manager.flush();
+    expect(manager.getAgent(child.id)?.lifecycle).toBe("idle");
+    expect(manager.hasInFlightRun(child.id)).toBe(false);
     expect(manager.getAgent(rootId)).toBeNull();
     const reloaded = new AgentStorage(join(workdir, "agents"), logger);
     expect((await reloaded.get(rootId))?.config?.quotaReserve?.state).toMatchObject({
@@ -1847,6 +1863,7 @@ test("reserve polling reconciles an unloaded supervisor and stops its loaded wor
     remainingPct = 90;
     await polling.poll();
     expect(() => manager.assertQuotaNotPaused(child.id)).toThrow("Redline");
+    expect(client.sessions[0]?.interruptCount).toBe(1);
   } finally {
     await polling.stop();
     await manager.flush();

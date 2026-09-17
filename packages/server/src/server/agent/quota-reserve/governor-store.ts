@@ -901,16 +901,23 @@ async function inspectRecoveryDirectory(path: string) {
   return info;
 }
 
-async function readProtectedJson(path: string): Promise<unknown> {
+async function readProtectedJson(path: string, replacements = 0): Promise<unknown> {
   let file;
   try {
     file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (error) {
-    if (hasCode(error, "ENOENT")) return undefined;
+    if (hasCode(error, "ENOENT") && replacements === 0) return undefined;
     throw error;
   }
   try {
     const stat = await file.stat();
+    if (stat.nlink === 0 && replacements < 2) {
+      // Atomic publication may unlink the opened inode before fstat. Reopen
+      // the current path rather than accepting detached or missing evidence.
+      await file.close();
+      file = undefined;
+      return readProtectedJson(path, replacements + 1);
+    }
     if (
       !stat.isFile() ||
       stat.size > 16 * 1024 * 1024 ||
@@ -921,7 +928,7 @@ async function readProtectedJson(path: string): Promise<unknown> {
       throw new Error("Invalid quota ledger file.");
     return JSON.parse(await file.readFile("utf8"));
   } finally {
-    await file.close();
+    await file?.close();
   }
 }
 

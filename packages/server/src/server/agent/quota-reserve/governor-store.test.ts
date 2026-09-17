@@ -3,6 +3,8 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
+  link,
   readFile,
   rename,
   rm,
@@ -19,7 +21,65 @@ import { QuotaGovernorStore } from "./governor-store.js";
 const directories: string[] = [];
 const linuxIt = it.skipIf(process.platform !== "linux");
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+linuxIt.each(["replacement", "removal", "churn"] as const)(
+  "handles %s between ledger open and inspection",
+  async (mode) => {
+    const stateDirectory = await directory();
+    const store = new QuotaGovernorStore(stateDirectory, clock);
+    const reserved = await store.reserve(input);
+    if (reserved.kind !== "admitted") throw new Error("Expected fixture admission");
+    const path = store.accountPath(policy.account);
+    const old = await lstat(path);
+    const replacement = path + ".fixture-replacement";
+    const contents = await readFile(path);
+    const handle = await open(path, "r");
+    const prototype = Object.getPrototypeOf(handle) as typeof handle;
+    const original = prototype.stat;
+    await handle.close();
+    let detachments = 0;
+    vi.spyOn(prototype, "stat").mockImplementation(async function (this: typeof handle) {
+      const info = await original.call(this);
+      if ((info.ino === old.ino && detachments === 0) || mode === "churn") {
+        if (mode === "removal") await rm(path);
+        else {
+          await writeFile(replacement, contents, { mode: 0o600 });
+          await rename(replacement, path);
+        }
+        const replaced = await original.call(this);
+        expect(replaced.nlink).toBe(0);
+        detachments++;
+        return replaced;
+      }
+      return info;
+    });
+    if (mode === "replacement") {
+      expect((await store.execution(policy.account, reserved.reservation.id)).state).toBe(
+        "reserved",
+      );
+      expect(detachments).toBe(1);
+    } else {
+      await expect(store.execution(policy.account, reserved.reservation.id)).rejects.toThrow(
+        mode === "removal" ? "ENOENT" : "Invalid quota ledger file",
+      );
+      expect(detachments).toBe(mode === "removal" ? 1 : 3);
+    }
+  },
+);
+
+linuxIt("a hard-linked ledger remains invalid", async () => {
+  const stateDirectory = await directory();
+  const store = new QuotaGovernorStore(stateDirectory, clock);
+  const reserved = await store.reserve(input);
+  if (reserved.kind !== "admitted") throw new Error("Expected fixture admission");
+  const path = store.accountPath(policy.account);
+  await link(path, path + ".extra-link");
+  await expect(store.execution(policy.account, reserved.reservation.id)).rejects.toThrow(
+    "Invalid quota ledger file",
+  );
 });
 const nowMs = Date.parse("2026-09-14T08:00:00Z");
 let clockNow = nowMs;

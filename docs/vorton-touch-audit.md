@@ -18,7 +18,7 @@ September 10, 2026. Scope: sidebar navigation and workspace actions, footer over
 
 ## Mode contract
 
-Paseo is the default. The selector remains available to enable Vorton. All custom interaction and appearance rules require Vorton; touch enhancements additionally require touch capability. Turning Vorton off restores standard controls and saved appearance. It does not delete credentials, profiles or workspaces, change accounts, or interrupt existing tasks.
+Paseo is the default. The selector remains available to enable Vorton. All custom interaction and appearance rules require Vorton. Compact viewports use the full mobile controls and appearance, including desktop PWA windows with a mouse. Wide viewports retain touch enhancements when a coarse pointer is available. Use the shared compact breakpoint, never a user agent, to select mobile layout. Turning Vorton off restores standard controls and saved appearance. It does not delete credentials, profiles or workspaces, change accounts, or interrupt existing tasks.
 
 Agent instructions in CLAUDE.md, also reached through AGENTS.md, require this contract and publication to the real private instance for every interface request. Use [instance continuity](instance-continuity.md) for publication.
 

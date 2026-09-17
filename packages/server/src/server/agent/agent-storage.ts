@@ -18,6 +18,7 @@ import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./a
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
+    controllerExecutionId: z.string().uuid().optional(),
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
@@ -89,6 +90,7 @@ const STORED_AGENT_SCHEMA = z.object({
 
 export type SerializableAgentConfig = Pick<
   AgentSessionConfig,
+  | "controllerExecutionId"
   | "modeId"
   | "model"
   | "thinkingOptionId"

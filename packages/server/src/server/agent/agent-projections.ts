@@ -355,6 +355,8 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
     serializable.systemPrompt = config.systemPrompt;
   }
   if (config.profileLaunch) serializable.profileLaunch = config.profileLaunch;
+  if (config.controllerExecutionId)
+    serializable.controllerExecutionId = config.controllerExecutionId;
   if (config.quotaPausedAt) serializable.quotaPausedAt = config.quotaPausedAt;
   if (config.quotaResetAt) serializable.quotaResetAt = config.quotaResetAt;
   if (config.quotaReserve) serializable.quotaReserve = config.quotaReserve;

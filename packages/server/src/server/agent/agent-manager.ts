@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { countRunningWorkers } from "./worker-activity.js";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
+import { controllerSessionView } from "./controller-session.js";
 import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
@@ -194,6 +195,8 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     config.systemPrompt = record.config.systemPrompt;
   }
   if (record.config.profileLaunch) config.profileLaunch = record.config.profileLaunch;
+  if (record.config.controllerExecutionId)
+    config.controllerExecutionId = record.config.controllerExecutionId;
   if (record.config.quotaPausedAt) config.quotaPausedAt = record.config.quotaPausedAt;
   if (record.config.quotaResetAt) config.quotaResetAt = record.config.quotaResetAt;
   if (record.config.quotaReserve) config.quotaReserve = record.config.quotaReserve;
@@ -1074,6 +1077,13 @@ export class AgentManager {
   }
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly governedClientGenerations = new Map<AgentProvider, number>();
+  private readonly controllerSessions = new Map<
+    string,
+    {
+      stop(): Promise<void>;
+      assertSettled(): Promise<void>;
+    }
+  >();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
@@ -1229,7 +1239,41 @@ export class AgentManager {
       assertCurrent,
       openSession: (input) => {
         assertCurrent();
-        return open.call(client, input);
+        if (!input.inspection) return open.call(client, input);
+        const inspection = input.inspection;
+        const id = validateAgentId(inspection.executionId, "governed execution inspection");
+        if (this.agents.has(id) || this.controllerSessions.has(id))
+          throw new Error("Governed execution inspection identity already exists.");
+        return open.call(client, input).then(async (session) => {
+          try {
+            assertCurrent();
+            this.controllerSessions.set(id, inspection);
+            await this.registerSession(
+              controllerSessionView(session, inspection),
+              {
+                ...input.config,
+                controllerExecutionId: id,
+                title: inspection.title,
+              },
+              id,
+              { initialTitle: inspection.title },
+            );
+            assertCurrent();
+            const close = session.close.bind(session);
+            session.close = async () => {
+              await close();
+              await inspection.assertSettled();
+              await this.closeAgent(id);
+            };
+            return session;
+          } catch (error) {
+            await session.close();
+            await inspection.assertSettled();
+            if (this.agents.has(id)) await this.closeAgent(id);
+            else this.controllerSessions.delete(id);
+            throw error;
+          }
+        });
       },
     };
   }
@@ -1704,6 +1748,12 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+    if (
+      this.controllerSessions.has(resolvedAgentId) ||
+      this.agents.get(resolvedAgentId)?.config.controllerExecutionId ||
+      (await this.registry?.get(resolvedAgentId))?.config?.controllerExecutionId
+    )
+      throw new Error("Controller-managed execution must be created through its controller.");
     await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       config,
@@ -1767,6 +1817,36 @@ export class AgentManager {
     );
   }
 
+  private async assertOrdinaryResume(
+    handle: AgentPersistenceHandle,
+    agentId: string,
+    configs: Array<Partial<AgentSessionConfig> | undefined>,
+  ): Promise<void> {
+    const stored = await this.registry?.get(agentId);
+    const identities = new Set([handle.sessionId, handle.nativeHandle].filter(Boolean));
+    const siblings = (
+      await Promise.all(
+        [...identities].map((id) => this.registry?.listByProviderSession(handle.provider, id!)),
+      )
+    ).flat();
+    const liveMatch = [...this.agents.values()].some((agent) => {
+      if (!agent.config.controllerExecutionId || agent.provider !== handle.provider) return false;
+      const persistence = agent.session?.describePersistence() ?? agent.persistence;
+      return (
+        agent.id === agentId ||
+        identities.has(persistence?.sessionId) ||
+        identities.has(persistence?.nativeHandle)
+      );
+    });
+    if (
+      configs.some((config) => config?.controllerExecutionId) ||
+      stored?.config?.controllerExecutionId ||
+      liveMatch ||
+      siblings.some((record) => record?.config?.controllerExecutionId)
+    )
+      throw new Error("Controller-managed execution must resume through its controller.");
+  }
+
   private async resumeAgentFromPersistenceInternal(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -1787,6 +1867,7 @@ export class AgentManager {
       "resumeAgentFromPersistence",
     );
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    await this.assertOrdinaryResume(handle, resolvedAgentId, [metadata, overrides]);
     const mergedConfig = {
       ...metadata,
       ...overrides,
@@ -1850,6 +1931,12 @@ export class AgentManager {
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
+    const records = await this.registry?.listByProviderSession(
+      input.provider,
+      input.providerHandleId,
+    );
+    if (records?.some((record) => record.config?.controllerExecutionId))
+      throw new Error("Controller-managed execution cannot be imported as an ordinary agent.");
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
     this.requireEnabledProvider(input.provider);
 
@@ -2113,6 +2200,7 @@ export class AgentManager {
 
   private async closeAgentRuntime(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
+    await this.assertControllerSettled(agent);
     this.logger.trace(
       {
         agentId,
@@ -2157,6 +2245,7 @@ export class AgentManager {
     if (persistError !== undefined) {
       throw persistError;
     }
+    this.controllerSessions.delete(agentId);
   }
 
   private cancelRunningProviderSubagents(parentAgentId: string): void {
@@ -2179,6 +2268,7 @@ export class AgentManager {
 
   private async archiveAgentUnlocked(agentId: string): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
+    await this.assertControllerSettled(agent);
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
     }
@@ -2424,6 +2514,7 @@ export class AgentManager {
   private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
+      await this.assertControllerSettled(liveAgent);
       liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
       this.touchUpdatedAt(liveAgent);
       await this.persistSnapshot(liveAgent);
@@ -3366,6 +3457,14 @@ export class AgentManager {
     agentId: string,
     options?: { reason: "manual" },
   ): Promise<AgentRunCancellationResult> {
+    const controlled = this.agents.get(agentId);
+    if (controlled?.config.controllerExecutionId) {
+      const controls = this.controllerSessions.get(agentId);
+      if (!controls) throw new Error("Controller execution requires recovery before stopping.");
+      await controls.stop();
+      await controls.assertSettled();
+      return { status: "settled" };
+    }
     if (options?.reason === "manual") {
       const hadRun = this.hasInFlightRun(agentId);
       if (await this.stopQuotaReserveManually(agentId)) {
@@ -5483,6 +5582,8 @@ export class AgentManager {
     agentId: string,
     env?: Record<string, string>,
   ): Promise<PreparedSessionConfig> {
+    if (config.controllerExecutionId)
+      throw new Error("Controller-managed execution requires trusted registration.");
     const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
     const paseoToolPolicy = this.paseoToolsEnabled
       ? this.resolvePaseoToolPolicy(storedConfig.provider)
@@ -5643,10 +5744,19 @@ export class AgentManager {
 
   private requireSessionAgent(id: string): ActiveManagedAgent {
     const agent = this.requireAgent(id);
+    if (agent.config.controllerExecutionId)
+      throw new Error("Controller-managed execution must be controlled through its controller.");
     if (agent.session === null) {
       throw new Error(`Agent '${agent.id}' has no managed session`);
     }
     return agent;
+  }
+
+  private async assertControllerSettled(agent: LiveManagedAgent): Promise<void> {
+    if (!agent.config.controllerExecutionId || agent.session === null) return;
+    const controls = this.controllerSessions.get(agent.id);
+    if (!controls) throw new Error("Controller execution requires custody reconciliation.");
+    await controls.assertSettled();
   }
 
   private requirePublicAgent(id: string): LiveManagedAgent {

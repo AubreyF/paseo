@@ -614,6 +614,8 @@ export interface ImportedProviderSession {
 
 export interface AgentSessionConfig {
   provider: AgentProvider;
+  /** Trusted controller registration only. Ordinary launch/resume must refuse. */
+  controllerExecutionId?: string;
   profileId?: string;
   quotaReservePolicy?: QuotaReserveLaunchPolicy;
   profileLaunch?: AgentProfileLaunch;
@@ -698,6 +700,13 @@ export type QuotaAdmissionGuard = (request: QuotaAdmissionRequest) => Promise<Qu
 
 /** Trusted runtime input, never accepted from a worker tool or persisted as a callback. */
 export interface QuotaGovernedSessionInput {
+  /** Trusted controller callbacks, never accepted from public agent config. */
+  inspection?: {
+    executionId: string;
+    title: string;
+    stop(): Promise<void>;
+    assertSettled(): Promise<void>;
+  };
   config: AgentSessionConfig;
   account: import("@getpaseo/protocol/quota-governor").QuotaAccount;
   guard: QuotaAdmissionGuard;

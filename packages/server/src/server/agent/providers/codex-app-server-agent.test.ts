@@ -86,6 +86,8 @@ describe("Codex executable discovery", () => {
 
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import { QuotaConstructionCleanupError } from "../agent-sdk-types.js";
+import { LinuxQuotaProcessCustody } from "../quota-reserve/linux-custody.js";
+import { randomUUID } from "node:crypto";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
@@ -388,6 +390,99 @@ function createGovernedAppServer(
     "account/usage/read": () => ({}),
   });
 }
+
+test.skipIf(process.platform !== "linux")(
+  "failed launcher handshake retains the account fence until receipt reconciliation",
+  async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "quota-startup-failure-"));
+    const custody = await LinuxQuotaProcessCustody.create({
+      journalRoot: root,
+      executable: process.execPath,
+      pythonExecutable: "/bin/false",
+      cwd: root,
+      env: {},
+      identity: {
+        executionId: randomUUID(),
+        authenticationGeneration: "fixture-auth",
+        attemptId: "fixture",
+        ownershipGeneration: 1,
+      },
+    });
+    const provider = new CodexAppServerAgentClient(createTestLogger(), {
+      command: { mode: "replace", argv: [process.execPath] },
+    });
+    const input = {
+      config: createConfig(),
+      account: { issuer: "openai", accountId: "failed-launcher-fixture" },
+      guard: async () => {
+        throw new Error("No inference");
+      },
+      processCustody: custody,
+    };
+    try {
+      const error = await provider
+        .openQuotaGovernedSession(input)
+        .catch((failure: unknown) => failure);
+      expect(error).toBeInstanceOf(QuotaConstructionCleanupError);
+      await expect(provider.openQuotaGovernedSession(input)).rejects.toBe(error);
+      await expect((error as QuotaConstructionCleanupError).retryCleanup()).rejects.toThrow();
+      // /bin/false has exited without launching anything. A controlled receipt
+      // fixture exercises the same recovery boundary used by a restarted reader.
+      writeFileSync(
+        path.join(custody.directory, "receipt.json"),
+        JSON.stringify({
+          identity: custody.identity,
+          settled: true,
+          reason: "startup_failure",
+        }),
+        { mode: 0o600 },
+      );
+      await (error as QuotaConstructionCleanupError).retryCleanup();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("governed construction captures launcher custody for transport disposal", async () => {
+  const appServer = createGovernedAppServer();
+  const provider = new CodexAppServerAgentClient(createTestLogger(), {
+    command: { mode: "replace", argv: [process.execPath] },
+    env: { GITHUB_TOKEN: "synthetic-host-secret" },
+  });
+  const spawn = vi.fn(async () => appServer.child);
+  const settle = vi.fn(async (child: ChildProcessWithoutNullStreams) => {
+    expect(child).toBe(appServer.child);
+    child.stdout.end();
+    child.stderr.end();
+  });
+  const kill = vi.spyOn(appServer.child, "kill");
+  const session = await provider.openQuotaGovernedSession({
+    config: createConfig(),
+    account: { issuer: "openai", accountId: "reserved-account" },
+    guard: async () => {
+      throw new Error("No inference in custody fixture");
+    },
+    processCustody: { spawn, settle },
+    launchContext: { env: { GITHUB_TOKEN: "synthetic-task-secret" } },
+  });
+  await session.close();
+  expect(spawn).toHaveBeenCalledExactlyOnceWith(process.execPath, [
+    "app-server",
+    "--disable",
+    "goals",
+    "--disable",
+    "multi_agent",
+    "--disable",
+    "multi_agent_v2",
+    "-c",
+    'approvals_reviewer="user"',
+  ]);
+  expect(settle).toHaveBeenCalledOnce();
+  expect(kill).not.toHaveBeenCalled();
+  expect(appServer.requests().some(({ method }) => method === "turn/start")).toBe(false);
+  appServer.assertNoErrors();
+});
 
 test.each([false, true])(
   "governed permission profile survives native workflow overrides (resume=%s)",

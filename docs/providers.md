@@ -167,6 +167,33 @@ Clients use `provider.quota.get_observation.request` after checking `server_info
 
 Window occupancy and token activity do not establish gross daily consumption in quota percentage points. Missing consumption meters remain unavailable. Inspection is evidence for configuration; a launch still requires fresh quota checks, execution authority and a governed dispatch permit.
 
+### Governed native process custody
+
+Governed session construction accepts a trusted process-custody binding. The
+launcher supplies the complete process environment; provider and task environment
+overlays do not enter that launch. Transport shutdown delegates to the captured
+custody binding instead of killing its supervisor. A failed startup cannot clear
+the account fence until retained cleanup succeeds.
+
+The Linux implementation requires a trusted Python executable with subreaper,
+pidfd signaling and wait support. Its packaged helper must remain outside worker
+writes. Store its journal in an owner-only physical directory outside worker
+access, on a filesystem that supports file and directory synchronization. A
+filesystem that presents different ownership to the coordinator and its clean
+child environment fails this requirement. Do not relax ownership checks to make
+such a mount work.
+
+Persist the launch directory and full execution/attempt identity before starting
+work. Missing, invalid or mismatched settlement receipts require recovery and
+must not release execution capacity. Supervisor death can leave descendants;
+absence of a live supervisor is not settlement. Automatic takeover remains
+unsupported without additional custody evidence.
+
+This launcher does not configure worker isolation or authorize tools. The trusted
+coordinator must still verify the native permission profile, authentication,
+MCP and project configuration, then attach quota supervision before inference.
+The production schedule backend is not connected by this component alone.
+
 ---
 
 ## ACP Provider Checklist

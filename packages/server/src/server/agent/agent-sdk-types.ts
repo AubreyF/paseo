@@ -1,3 +1,4 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { ProviderLoginSession } from "../../services/provider-login/session.js";
 import type {
   AgentProviderNotice,
@@ -702,6 +703,11 @@ export interface QuotaGovernedSessionInput {
   guard: QuotaAdmissionGuard;
   /** Coordinator-selected native profile. The coordinator must verify its filesystem and tool policy. */
   permissionProfile?: string;
+  /** Trusted launcher owns its environment and settlement of every descendant. */
+  processCustody?: {
+    spawn(command: string, args: string[]): Promise<ChildProcessWithoutNullStreams>;
+    settle(child: ChildProcessWithoutNullStreams): Promise<void>;
+  };
   launchContext?: AgentLaunchContext;
   resumeHandle?: AgentPersistenceHandle;
 }

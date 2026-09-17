@@ -3413,7 +3413,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
     private readonly quotaGovernance?: Pick<
       QuotaGovernedSessionInput,
-      "account" | "guard" | "permissionProfile"
+      "account" | "guard" | "permissionProfile" | "processCustody"
     >,
   ) {
     this.logger = logger.child({
@@ -3486,7 +3486,13 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async establishConnection(): Promise<void> {
     this.verifiedQuotaThreads.clear();
     const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
+    const custody = this.quotaGovernance?.processCustody;
+    const client = new CodexAppServerClient(
+      child,
+      this.logger,
+      () => this.traceContext(),
+      custody ? () => custody.settle(child) : undefined,
+    );
     if (this.closed) {
       await client.dispose();
       throw this.createClosedError();
@@ -7158,7 +7164,12 @@ export class CodexAppServerAgentClient implements AgentClient {
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean; agentId?: string; quotaGoverned?: boolean },
+    options?: {
+      goalsEnabled?: boolean;
+      agentId?: string;
+      quotaGoverned?: boolean;
+      processCustody?: QuotaGovernedSessionInput["processCustody"];
+    },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
@@ -7186,6 +7197,11 @@ export class CodexAppServerAgentClient implements AgentClient {
       },
       "provider.codex.spawn",
     );
+    if (options?.processCustody) {
+      // The captured launcher supplies a protected environment. Runtime and
+      // task overlays must not leak coordinator credentials into this process.
+      return options.processCustody.spawn(launchPrefix.command, args);
+    }
     const child = spawnProcess(launchPrefix.command, args, {
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
@@ -7223,6 +7239,7 @@ export class CodexAppServerAgentClient implements AgentClient {
         () =>
           this.spawnAppServer(input.launchContext?.env, {
             quotaGoverned: true,
+            processCustody: input.processCustody,
             agentId: input.launchContext?.agentId,
           }),
         this.sessionDeps(),
@@ -7235,6 +7252,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           account: { ...input.account },
           guard: input.guard,
           permissionProfile: input.permissionProfile,
+          processCustody: input.processCustody,
         },
       );
       await session.connect();
@@ -7242,6 +7260,16 @@ export class CodexAppServerAgentClient implements AgentClient {
       return session;
     } catch (error) {
       const failedSession = session;
+      if (error instanceof QuotaConstructionCleanupError) {
+        // The launcher may own native descendants before a transport exists.
+        // Closing an unconnected session cannot establish their settlement.
+        custody.failure = new QuotaConstructionCleanupError(async () => {
+          await error.retryCleanup();
+          await failedSession?.close();
+          if (quotaConstructionCustody.get(key) === custody) quotaConstructionCustody.delete(key);
+        });
+        throw custody.failure;
+      }
       if (failedSession) {
         try {
           await failedSession.close();

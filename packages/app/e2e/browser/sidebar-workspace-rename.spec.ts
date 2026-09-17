@@ -2,6 +2,10 @@ import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import {
+  closeSidebarDisplayPreferences,
+  selectSidebarStatusGrouping,
+} from "../support/helpers/sidebar";
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
@@ -103,6 +107,19 @@ test.describe("Vorton workspace double-click rename", () => {
       await page.getByLabel("Paseo mode", { exact: true }).click();
       await row.dblclick();
       await expect(input).toHaveCount(0);
+      await selectSidebarStatusGrouping(page);
+      await closeSidebarDisplayPreferences(page);
+      await expect(row).toBeVisible();
+      await row.dblclick();
+      await expect(input).toHaveCount(0);
+      await page.getByLabel("Vorton mode", { exact: true }).click();
+      await row.click();
+      await expect(page).toHaveURL(new RegExp(`/workspace/${workspace.workspaceId}`));
+      await expect(input).toHaveCount(0);
+      await row.dblclick();
+      await expect(input).toBeVisible();
+      await expect(input).toHaveValue("main");
+      await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "cancel")).click();
     } finally {
       await workspace.cleanup();
     }

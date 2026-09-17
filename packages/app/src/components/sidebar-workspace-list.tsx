@@ -1,4 +1,5 @@
 import { useVortonMode } from "@/vorton-mode";
+import { isWorkspaceRenamePress } from "./sidebar/workspace-rename-press";
 import { DiffStat } from "@/components/diff-stat";
 import { aggregateProjectTasks, type ProjectTaskSummary } from "./sidebar/project-task-summary";
 import { useVortonTouch, VORTON_ACTION_SLOT } from "@/vorton-touch";
@@ -1121,13 +1122,19 @@ function WorkspaceRowInner({
     ...dragAttributes
   } = dragHandleProps?.attributes ?? {};
 
-  const handlePress = useCallback(() => {
-    if (interaction.didLongPressRef.current) {
-      interaction.didLongPressRef.current = false;
-      return;
-    }
-    onPress();
-  }, [interaction.didLongPressRef, onPress]);
+  const vortonMode = useVortonMode();
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      if (interaction.didLongPressRef.current) {
+        interaction.didLongPressRef.current = false;
+        return;
+      }
+      if (isDragging) return;
+      onPress();
+      if (isWorkspaceRenamePress(event, vortonMode)) onRename?.();
+    },
+    [interaction.didLongPressRef, onPress, onRename, isDragging, vortonMode],
+  );
   const handleWorkspacePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);

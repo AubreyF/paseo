@@ -352,6 +352,7 @@ function createGovernedAppServer(
   approvalPolicy = "never",
   workerControls = false,
   configPatch: Record<string, unknown> = {},
+  runtimeWorkspaceRoots: unknown = ["/tmp/codex-question-test"],
 ): FakeCodexAppServer {
   return createFakeCodexAppServer({
     "thread/start": () => ({
@@ -359,11 +360,13 @@ function createGovernedAppServer(
       approvalsReviewer: reviewer,
       activePermissionProfile: permissionProfile ? { id: permissionProfile } : null,
       approvalPolicy,
+      runtimeWorkspaceRoots,
     }),
     "thread/resume": () => ({
       approvalsReviewer: reviewer,
       activePermissionProfile: permissionProfile ? { id: permissionProfile } : null,
       approvalPolicy,
+      runtimeWorkspaceRoots,
     }),
     "thread/loaded/list": () => ({ data: loaded ? ["thread-1"] : [] }),
     "config/read": () => ({
@@ -397,6 +400,7 @@ function createGovernedAppServer(
                   allow_login_shell: false,
                   shell_environment_policy: { inherit: "none" },
                   web_search: "disabled",
+                  permissions: { factory: workerPermissionProfile() },
                 }
               : {}),
             ...configPatch,
@@ -545,6 +549,168 @@ test("governed construction captures launcher custody for transport disposal", a
   });
   expect(appServer.requests().some(({ method }) => method === "turn/start")).toBe(false);
   appServer.assertNoErrors();
+});
+
+function workerPermissionProfile() {
+  return {
+    extends: null,
+    workspace_roots: { "/tmp/codex-question-test": true },
+    filesystem: {
+      ":root": "deny",
+      ":minimal": "read",
+      ":tmpdir": "deny",
+      ":slash_tmp": "deny",
+      ":workspace_roots": { ".": "write", ".codex": "deny", ".git": "read" },
+    },
+    network: { enabled: false },
+  };
+}
+
+test.each([
+  undefined,
+  { ...workerPermissionProfile(), extends: ":workspace" },
+  {
+    ...workerPermissionProfile(),
+    workspace_roots: { "/tmp/codex-question-test": true, "/outside": true },
+  },
+  { ...workerPermissionProfile(), workspace_roots: { "/other": true } },
+  { ...workerPermissionProfile(), filesystem: { ":root": "write" } },
+  {
+    ...workerPermissionProfile(),
+    filesystem: { ...workerPermissionProfile().filesystem, "/outside": "read" },
+  },
+  {
+    ...workerPermissionProfile(),
+    filesystem: {
+      ...workerPermissionProfile().filesystem,
+      ":workspace_roots": { ".": "write", ".codex": "write", ".git": "read" },
+    },
+  },
+  { ...workerPermissionProfile(), unknown_grant: true },
+  { ...workerPermissionProfile(), network: { enabled: true } },
+  {
+    ...workerPermissionProfile(),
+    network: { enabled: false, unix_sockets: { "/outside": "allow" } },
+  },
+])("worker rejects unverified filesystem grants before creating a thread: %j", async (profile) => {
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    false,
+    "factory",
+    "never",
+    true,
+    {
+      permissions: { factory: profile },
+    },
+  );
+  const provider = createProviderWithFakeAppServer(appServer);
+  await expect(
+    provider.openQuotaGovernedSession({
+      config: createConfig(),
+      account: { issuer: "openai", accountId: "reserved-account" },
+      guard: async () => {
+        throw new Error("No inference");
+      },
+      permissionProfile: "factory",
+      processCustody: {
+        spawn: async () => appServer.child,
+        settle: async () => {
+          appServer.child.kill();
+        },
+      },
+    }),
+  ).rejects.toThrow("filesystem confinement");
+  expect(
+    appServer.requests().some(({ method }) => method === "thread/start" || method === "turn/start"),
+  ).toBe(false);
+  appServer.assertNoErrors();
+});
+
+test.each([false, true])(
+  "worker rejects widened runtime roots before inference (resume=%s)",
+  async (resume) => {
+    const appServer = createGovernedAppServer(
+      "reserved-account",
+      true,
+      "user",
+      true,
+      "factory",
+      "never",
+      true,
+      {},
+      ["/tmp/codex-question-test", "/outside"],
+    );
+    const provider = createProviderWithFakeAppServer(appServer);
+    const guard = vi.fn(async () => ({ assertValidForDispatch() {} }));
+    let session: AgentSession | undefined;
+    try {
+      await expect(
+        (async () => {
+          session = await provider.openQuotaGovernedSession({
+            config: createConfig(),
+            account: { issuer: "openai", accountId: "reserved-account" },
+            guard,
+            permissionProfile: "factory",
+            resumeHandle: resume ? { provider: "codex", sessionId: "thread-1" } : undefined,
+            processCustody: {
+              spawn: async () => appServer.child,
+              settle: async () => {
+                appServer.child.kill();
+              },
+            },
+          });
+          await session.startTurn("fixture");
+        })(),
+      ).rejects.toThrow("runtime workspace roots");
+      expect(guard).not.toHaveBeenCalled();
+      expect(appServer.requests().some(({ method }) => method === "turn/start")).toBe(false);
+    } finally {
+      await session?.close();
+      appServer.assertNoErrors();
+    }
+  },
+);
+
+test("worker checks changed effective policy on a cached thread before admission", async () => {
+  const patch: Record<string, unknown> = {};
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    true,
+    "factory",
+    "never",
+    true,
+    patch,
+  );
+  const provider = createProviderWithFakeAppServer(appServer);
+  const guard = vi.fn(async () => {
+    throw new Error("No inference in fixture");
+  });
+  const session = await provider.openQuotaGovernedSession({
+    config: createConfig(),
+    account: { issuer: "openai", accountId: "reserved-account" },
+    guard,
+    permissionProfile: "factory",
+    processCustody: {
+      spawn: async () => appServer.child,
+      settle: async () => {
+        appServer.child.kill();
+      },
+    },
+  });
+  try {
+    await expect(session.startTurn("fixture")).rejects.toThrow("No inference in fixture");
+    patch.permissions = { factory: { ...workerPermissionProfile(), extends: ":workspace" } };
+    await expect(session.startTurn("fixture again")).rejects.toThrow("filesystem confinement");
+    expect(guard).toHaveBeenCalledOnce();
+    expect(appServer.requests().some(({ method }) => method === "turn/start")).toBe(false);
+  } finally {
+    await session.close();
+    appServer.assertNoErrors();
+  }
 });
 
 test.each([

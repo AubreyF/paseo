@@ -52,6 +52,10 @@ import { importSessionFromPersistence } from "../provider-session-import.js";
 import { ProviderQuotaExhaustedError } from "../quota-error.js";
 import { CodexResetCreditError, CodexResetCreditSession } from "./codex/reset-credits.js";
 import { CodexQuotaObservationSession } from "./codex/quota-observation.js";
+import {
+  verifyWorkerPermissionProfile,
+  verifyWorkerRuntimeRoots,
+} from "./codex/worker-permissions.js";
 import { probeResetRedemption } from "./codex/reset-capability.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
@@ -3613,6 +3617,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     )
       throw new Error("Native worker tool and environment confinement is unavailable.");
     this.verifyWorkerShellPolicy(config);
+    const profiles = toObjectRecord(config?.permissions);
+    const name = this.quotaGovernance?.permissionProfile;
+    verifyWorkerPermissionProfile(name ? profiles?.[name] : undefined, this.config.cwd);
   }
 
   private verifyWorkerShellPolicy(config: Record<string, unknown> | undefined): void {
@@ -3972,6 +3979,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         toObjectRecord(response)?.approvalPolicy !== "never")
     ) {
       throw new Error("Native permission profile is unverified for quota-governed execution.");
+    }
+    if (this.quotaGovernance?.processCustody) {
+      verifyWorkerRuntimeRoots(toObjectRecord(response)?.runtimeWorkspaceRoots, this.config.cwd);
     }
     const id = resumedThreadId ?? toObjectRecord(toObjectRecord(response)?.thread)?.id;
     if (this.quotaGovernance && typeof id === "string") this.verifiedQuotaThreads.add(id);
@@ -4869,7 +4879,15 @@ export class CodexAppServerAgentSession implements AgentSession {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const permit = await Promise.race([
-        this.readQuotaObservation().then((observation) => {
+        (async () => {
+          if (this.quotaGovernance?.processCustody) {
+            if (!client) throw this.createClosedError();
+            // Loaded threads can bypass resume. Revalidate at every inference
+            // boundary, including steer and compaction, before quota admission.
+            await this.verifyGovernedConnection(client);
+          }
+          return this.readQuotaObservation();
+        })().then((observation) => {
           if (expired) throw new Error("Quota admission timed out.");
           if (
             this.quotaGovernance &&

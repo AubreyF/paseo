@@ -194,12 +194,22 @@ apps, plugins, browser/computer control, hooks and shell snapshots. Before threa
 creation, effective configuration must show no MCP servers, shell environment
 assignments, login/profile sourcing, live web search or notification commands.
 Per-thread configuration cannot restore these tools or weaken launch controls.
+The same checks run at each inference admission, including cached threads.
+
+The accepted filesystem profile has no parent, one explicit workspace root equal
+to the session cwd, root and temporary-directory denial, minimal system reads,
+workspace writes, denied `.codex` access and read-only `.git` access. Network
+access is disabled. Additional grants are rejected. Native thread start and
+resume must report that same single runtime workspace root.
 
 These checks do not establish the complete worker boundary. The trusted
-coordinator must still verify profile contents and protected paths, authentication
-and project configuration for the attempt, then attach quota supervision before
-inference. The production schedule backend is not connected by this component
-alone.
+coordinator must still verify physical paths, materialize the protected `.codex`
+directory before launch, and keep native configuration and its parents outside
+worker writes. A linked worktree's external Git metadata is not granted by this
+profile; Git inspection and publication need a verified preparation layout and
+trusted custody. Bind authentication and project configuration for the attempt,
+then attach quota supervision before inference. The production schedule backend
+is not connected by this component alone.
 
 ---
 

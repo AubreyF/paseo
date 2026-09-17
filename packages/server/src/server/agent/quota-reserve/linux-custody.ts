@@ -27,6 +27,16 @@ const Receipt = z
   .object({
     identity: Identity,
     settled: z.literal(true),
+    // Older receipts still prove settlement, but cannot prove command success.
+    commandOutcome: z
+      .object({
+        exitCode: z.number().int().nonnegative().nullable(),
+        signal: z.number().int().positive().nullable(),
+      })
+      .strict()
+      .refine((value) => (value.exitCode === null) !== (value.signal === null))
+      .nullable()
+      .optional(),
     reason: z.enum([
       "startup_failure",
       "native_exit",
@@ -228,6 +238,23 @@ export class LinuxQuotaProcessCustody implements NonNullable<
     directory: string,
     identity: z.infer<typeof Identity>,
   ): Promise<void> {
+    await LinuxQuotaProcessCustody.readReceipt(directory, identity);
+  }
+
+  static async readOutcome(
+    directory: string,
+    identity: z.infer<typeof Identity>,
+  ): Promise<{ exitCode: number | null; signal: number | null }> {
+    const receipt = await LinuxQuotaProcessCustody.readReceipt(directory, identity);
+    if (receipt.reason !== "native_exit" || !receipt.commandOutcome)
+      throw new Error("Native command completion is unconfirmed.");
+    return receipt.commandOutcome;
+  }
+
+  private static async readReceipt(
+    directory: string,
+    identity: z.infer<typeof Identity>,
+  ): Promise<z.infer<typeof Receipt>> {
     await protectedDirectory(directory);
     Identity.parse(identity);
     const file = await open(
@@ -247,6 +274,7 @@ export class LinuxQuotaProcessCustody implements NonNullable<
       const receipt = Receipt.parse(JSON.parse(await file.readFile("utf8")));
       if (!isDeepStrictEqual(receipt.identity, identity))
         throw new Error("Custody receipt identity mismatch.");
+      return receipt;
     } finally {
       await file.close();
     }

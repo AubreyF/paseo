@@ -32,6 +32,7 @@ def main():
     signal.signal(signal.SIGINT, stop)
     settled = False
     reason = "startup_failure"
+    command_outcome = None
     try:
         child = subprocess.Popen(sys.argv[2:], close_fds=True)
         os.write(4, b"ready\n")
@@ -58,6 +59,11 @@ def main():
                 reason = "freeze"
                 break
             deadline = time.monotonic() + 30
+        if reason == "native_exit" and child.returncode is not None:
+            command_outcome = {
+                "exitCode": child.returncode if child.returncode >= 0 else None,
+                "signal": -child.returncode if child.returncode < 0 else None,
+            }
     finally:
         # Never spawn after freezing. Adopted descendants become direct children
         # as their parents die. pidfd + waitid verifies ownership before signaling.
@@ -91,7 +97,8 @@ def main():
                 settled = True
                 break
             time.sleep(0.01)
-        receipt = {"identity": intent, "settled": settled, "reason": reason}
+        receipt = {"identity": intent, "settled": settled, "reason": reason,
+                   "commandOutcome": command_outcome}
         fd = os.open("receipt.tmp", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                      0o600, dir_fd=directory)
         with os.fdopen(fd, "w") as stream:

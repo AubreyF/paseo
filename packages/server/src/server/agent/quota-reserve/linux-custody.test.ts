@@ -10,6 +10,48 @@ import { LinuxQuotaProcessCustody } from "./linux-custody.js";
 
 const linux = test.skipIf(process.platform !== "linux");
 
+linux("command failure remains distinct from successful descendant settlement", async () => {
+  const root = await mkdtemp(join(tmpdir(), "quota-custody-outcome-"));
+  const custody = await LinuxQuotaProcessCustody.create({
+    journalRoot: root,
+    executable: "/usr/bin/python3",
+    pythonExecutable: "/usr/bin/python3",
+    cwd: root,
+    env: { PATH: "/usr/bin:/bin" },
+    identity: {
+      executionId: randomUUID(),
+      authenticationGeneration: "fixture",
+      attemptId: "fixture",
+      ownershipGeneration: 1,
+    },
+  });
+  const child = await custody.spawn("/usr/bin/python3", ["-c", "input(); raise SystemExit(7)"]);
+  child.stdout.resume();
+  child.stderr.resume();
+  const exited = once(child, "exit");
+  child.stdin.end("go\n");
+  try {
+    expect((await exited)[0]).toBe(0);
+    await custody.settle(child);
+    await expect(
+      LinuxQuotaProcessCustody.readOutcome(custody.directory, custody.identity),
+    ).resolves.toEqual({ exitCode: 7, signal: null });
+    const path = join(custody.directory, "receipt.json");
+    const receipt = JSON.parse(await readFile(path, "utf8"));
+    delete receipt.commandOutcome;
+    await writeFile(path, JSON.stringify(receipt));
+    await expect(
+      LinuxQuotaProcessCustody.readSettlement(custody.directory, custody.identity),
+    ).resolves.toBeUndefined();
+    await expect(
+      LinuxQuotaProcessCustody.readOutcome(custody.directory, custody.identity),
+    ).rejects.toThrow("completion is unconfirmed");
+  } finally {
+    await custody.settle(child);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 linux(
   "settles detached descendants through custody and rejects a different attempt receipt",
   async () => {

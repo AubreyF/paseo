@@ -950,11 +950,16 @@ async function writeProtectedJson(path: string, value: unknown): Promise<void> {
       await file.close();
     }
     await rename(temporary, path);
-    const directory = await open(resolve(path, ".."), "r");
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close();
+    // Node cannot fsync directory handles on Windows. The journal file is
+    // flushed before the atomic rename on every platform; retain the directory
+    // durability barrier wherever the OS supports it. Never swallow file errors.
+    if (process.platform !== "win32") {
+      const directory = await open(resolve(path, ".."), "r");
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
     }
   } finally {
     await rm(temporary, { force: true });

@@ -1,23 +1,17 @@
 import { afterAll, describe, expect, test, vi } from "vitest";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import {
-  type Dirent,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { type Dirent, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
-const preparedWorkerRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "governed-workspace-")));
+// Match the validator's native async canonicalization, including Windows paths.
+const preparedWorkerRoot = await realpath(
+  await mkdtemp(path.join(tmpdir(), "governed-workspace-")),
+);
 mkdirSync(path.join(preparedWorkerRoot, ".codex"));
 afterAll(() => rmSync(preparedWorkerRoot, { recursive: true, force: true }));
 

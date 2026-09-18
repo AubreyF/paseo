@@ -145,7 +145,8 @@ export type QuotaGovernorPolicy = z.infer<typeof QuotaGovernorPolicySchema>;
 /** Cross-field validation stays outside wire schemas used by generated validators. */
 export function parseQuotaGovernorPolicy(input: unknown): QuotaGovernorPolicy {
   const policy = QuotaGovernorPolicySchema.parse(input);
-  if (policy.freezeFloorPercent >= policy.launchFloorPercent) {
+  // Zero reserves intentionally run until exhaustion; positive reserves retain hysteresis.
+  if (policy.freezeFloorPercent >= policy.launchFloorPercent && policy.freezeFloorPercent !== 0) {
     throw new Error("Freeze floor must be below the launch floor.");
   }
   if (

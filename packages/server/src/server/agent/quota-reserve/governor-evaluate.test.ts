@@ -53,6 +53,41 @@ it.each([
   },
 );
 
+it.each(["admission", "active"] as const)(
+  "zero reserves still enforce exhaustion and freshness during %s",
+  (phase) => {
+    const zeroPolicy = {
+      ...policy,
+      launchFloorPercent: 0,
+      freezeFloorPercent: 0,
+    };
+    for (const [usedPercent, expected] of [
+      [99, "admit"],
+      [100, "freeze"],
+    ] as const) {
+      expect(
+        evaluateQuotaGovernor({
+          policy: zeroPolicy,
+          observation: {
+            ...observation,
+            windows: [{ ...observation.windows[0], usedPercent }],
+          },
+          nowMs: now,
+          phase,
+        }).action,
+      ).toBe(expected);
+    }
+    expect(
+      evaluateQuotaGovernor({
+        policy: zeroPolicy,
+        observation,
+        nowMs: now + 121000,
+        phase,
+      }).action,
+    ).not.toBe("admit");
+  },
+);
+
 it("freezes active work when a required daily meter is unavailable, even with token diagnostics", () => {
   const strict: QuotaGovernorPolicy = {
     ...policy,
@@ -74,7 +109,10 @@ it("freezes active work when a required daily meter is unavailable, even with to
       policy: strict,
       observation: {
         ...observation,
-        tokenActivity: { lifetimeTokens: 200, dailyBuckets: [{ date: "2026-09-14", tokens: 100 }] },
+        tokenActivity: {
+          lifetimeTokens: 200,
+          dailyBuckets: [{ date: "2026-09-14", tokens: 100 }],
+        },
       },
       nowMs: now,
       phase: "active",
@@ -127,7 +165,11 @@ it("ignores exhausted unrelated model buckets while retaining coding short-windo
         ...observation,
         windows: [
           ...observation.windows,
-          { ...observation.windows[0], bucketId: "other-model", usedPercent: 100 },
+          {
+            ...observation.windows[0],
+            bucketId: "other-model",
+            usedPercent: 100,
+          },
         ],
       },
       nowMs: now,
@@ -184,7 +226,11 @@ it("counts an interval crossing the hourly boundary in full instead of prorating
             coverageStart: "2026-09-14T06:00:00Z",
             coverageEnd: "2026-09-14T08:00:00Z",
             intervals: [
-              { startsAt: "2026-09-14T06:30:00Z", endsAt: "2026-09-14T07:30:00Z", consumed: 15 },
+              {
+                startsAt: "2026-09-14T06:30:00Z",
+                endsAt: "2026-09-14T07:30:00Z",
+                consumed: 15,
+              },
             ],
           },
         ],
@@ -229,7 +275,11 @@ it("uses local midnight, not UTC midnight, for a calendar budget", () => {
             coverageStart: "2026-09-14T00:00:00Z",
             coverageEnd: "2026-09-14T08:00:00Z",
             intervals: [
-              { startsAt: "2026-09-14T00:00:00Z", endsAt: "2026-09-14T06:00:00Z", consumed: 100 },
+              {
+                startsAt: "2026-09-14T00:00:00Z",
+                endsAt: "2026-09-14T06:00:00Z",
+                consumed: 100,
+              },
             ],
           },
         ],
@@ -241,17 +291,30 @@ it("uses local midnight, not UTC midnight, for a calendar budget", () => {
 });
 
 it("freezes when a required short window disappears from otherwise healthy telemetry", () => {
-  const required = { bucketId: "coding", windowId: "secondary", durationMinutes: 300 };
+  const required = {
+    bucketId: "coding",
+    windowId: "secondary",
+    durationMinutes: 300,
+  };
   expect(
     evaluateQuotaGovernor({
-      policy: { ...policy, requiredWindows: [...policy.requiredWindows, required] },
+      policy: {
+        ...policy,
+        requiredWindows: [...policy.requiredWindows, required],
+      },
       observation,
       nowMs: now,
       phase: "active",
     }),
   ).toEqual({
     action: "freeze",
-    reasons: [{ code: "required_window_unavailable", bucketId: "coding", windowId: "secondary" }],
+    reasons: [
+      {
+        code: "required_window_unavailable",
+        bucketId: "coding",
+        windowId: "secondary",
+      },
+    ],
   });
 });
 
@@ -289,5 +352,8 @@ it.each([
       nowMs: now,
       phase: "admission",
     }),
-  ).toEqual({ action: "hold", reasons: [{ code: "meter_unavailable", meterId: "m" }] });
+  ).toEqual({
+    action: "hold",
+    reasons: [{ code: "meter_unavailable", meterId: "m" }],
+  });
 });

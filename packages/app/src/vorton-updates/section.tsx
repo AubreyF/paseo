@@ -11,6 +11,7 @@ import { useDraftStore } from "@/stores/draft-store";
 import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useVortonMode } from "@/vorton-mode";
 import { buildUpdatePrompt, VORTON_REPOSITORY, type VortonUpdate } from "./check";
 import { useVortonUpdate, VORTON_BUILD_COMMIT } from "./use-update";
@@ -22,6 +23,7 @@ function statusText(update: VortonUpdate | undefined, t: TFunction): string {
 
 export function VortonUpdatesSection() {
   const vorton = useVortonMode();
+  const { isLoading: preferencesLoading } = useFormPreferences();
   const { t } = useTranslation();
   const update = useVortonUpdate();
   const router = useRouter();
@@ -47,7 +49,7 @@ export function VortonUpdatesSection() {
         : `${VORTON_REPOSITORY}/commits/main`;
     void openExternalUrl(url);
   }, [update.data]);
-  if (!vorton) return null;
+  if (!vorton || preferencesLoading) return null;
   let message = statusText(update.data, t);
   if (!VORTON_BUILD_COMMIT) message = t("settings.about.vortonUpdates.unknown");
   else if (update.isFetching) message = t("settings.about.vortonUpdates.checking");

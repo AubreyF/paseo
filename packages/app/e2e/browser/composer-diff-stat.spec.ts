@@ -4,6 +4,21 @@ import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { ensureExplorerSidebar, openFilesPanel } from "../support/helpers/workspace-tabs";
 
+async function usePaseoMode(page: Page) {
+  await page.evaluate(() => {
+    localStorage.setItem(
+      "@paseo:e2e-disable-default-seed-once",
+      localStorage.getItem("@paseo:e2e-seed-nonce") ?? "",
+    );
+    const key = "@paseo:create-agent-preferences";
+    localStorage.setItem(
+      key,
+      JSON.stringify({ ...JSON.parse(localStorage.getItem(key) ?? "{}"), vortonMode: false }),
+    );
+  });
+  await page.reload();
+}
+
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
 function visibleMainPane(page: Page) {
@@ -68,6 +83,7 @@ test("composer diff stat reveals Changes, then opens the diff in the configured 
       workspaceId: workspace.workspaceId,
       agentId: workspace.agentId,
     });
+    await usePaseoMode(page);
 
     const pill = composerChangesPill(page);
     await expect(pill).toBeVisible({ timeout: 30_000 });
@@ -108,6 +124,7 @@ test("composer diff stat opens the compact explorer instead of a Changes tab", a
       workspaceId: workspace.workspaceId,
       agentId: workspace.agentId,
     });
+    await usePaseoMode(page);
 
     const closeExplorer = page
       .getByTestId("explorer-header")
@@ -137,6 +154,7 @@ test("composer diff stat reveals Changes, then opens the diff in the focused pan
       workspaceId: workspace.workspaceId,
       agentId: workspace.agentId,
     });
+    await usePaseoMode(page);
 
     await revealComposerChangesInExplorer(page);
     await openComposerDiff(page);

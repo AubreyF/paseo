@@ -31,8 +31,9 @@ never read or modify that width.
 opens. Compact and wide native layouts select the matching Explorer tab. Desktop Changes opens
 follow the shared diff preference. Desktop pull requests use their Main panel, On the side, or
 Explorer sidebar setting. Callers request the content and never choose the shell.
-The composer Changes pill is a two-stage desktop action: it first reveals Explorer on Changes, then
-routes later presses to the working diff through the shared diff preference.
+The Changes counter is a two-stage desktop action: it first reveals Explorer on Changes, then
+routes later presses to the working diff through the shared diff preference. Vorton places it in
+the workspace toolbar before the runner; Paseo keeps it above the composer.
 
 The persisted layout still contains the Explorer pane so tabs survive reloads. The renderer removes
 that pane from the workspace split tree and docks it separately. Persisted identifiers retain the

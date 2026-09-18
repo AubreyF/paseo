@@ -1,4 +1,5 @@
 import { memo, useCallback, type ReactElement } from "react";
+import { useVortonMode } from "@/vorton-mode";
 import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import { AgentTaskList } from "@/composer/task-list";
@@ -50,6 +51,7 @@ export const AgentTracks = memo(function AgentTracks({
   hasPluginComposerPills: boolean;
 }): ReactElement | null {
   const { tabId, openTab } = usePaneContext();
+  const vortonMode = useVortonMode();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const isCompact = useIsCompactFormFactor();
   const canSplit = supportsDesktopPaneSplits() && !isCompact;
@@ -113,7 +115,7 @@ export const AgentTracks = memo(function AgentTracks({
   }, [cwd, isCompact, openInSidePane, serverId, workspaceKey]);
 
   if (
-    !hasWorkspaceDiffStat &&
+    (vortonMode || !hasWorkspaceDiffStat) &&
     !hasAgentTracks({
       subagentRows,
       tasks,
@@ -143,11 +145,13 @@ export const AgentTracks = memo(function AgentTracks({
         agentId={agentId}
         compact={isCompact}
       />
-      <WorkspaceDiffStatPill
-        serverId={serverId}
-        workspaceId={workspaceId}
-        onPress={handleOpenChanges}
-      />
+      {!vortonMode && (
+        <WorkspaceDiffStatPill
+          serverId={serverId}
+          workspaceId={workspaceId}
+          onPress={handleOpenChanges}
+        />
+      )}
     </ComposerTrackBar>
   );
 });

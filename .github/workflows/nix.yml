@@ -118,7 +118,7 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
 
       - name: Build Nix desktop package
-        run: nix build .#desktop -o result-desktop
+        run: nix build --print-build-logs .#desktop -o result-desktop
 
       - name: Verify macOS application bundle
         run: |

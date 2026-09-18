@@ -13,6 +13,7 @@ test.skipIf(process.platform === "win32")(
   async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "governed-module-")));
     const context: GovernedScheduleRuntimeContext = {
+      hostId: "srv_fixture",
       paseoHome: root,
       store: new QuotaGovernorStore(join(root, "quota")),
       readObservation: async () => ({ status: "unavailable", reason: "read_failed" }),

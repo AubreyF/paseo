@@ -7,6 +7,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 export interface GovernedScheduleRuntimeContext {
+  hostId: string;
   paseoHome: string;
   store: QuotaGovernorStore;
   readObservation(providerId: string): Promise<QuotaObservation>;

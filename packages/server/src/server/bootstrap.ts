@@ -1346,6 +1346,7 @@ export async function createPaseoDaemon(
     getClient: (provider) => agentManager.getQuotaObservationClient(provider),
   });
   const governedRuntime = await dependencies.createGovernedScheduleRuntime?.({
+    hostId: serverId,
     paseoHome: config.paseoHome,
     store: new QuotaGovernorStore(path.join(config.paseoHome, "quota-governor")),
     readObservation: (provider) => governorObservations.read(provider),

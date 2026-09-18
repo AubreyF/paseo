@@ -408,7 +408,12 @@ function createGovernedAppServer(
                   ),
                   mcp_servers: {},
                   allow_login_shell: false,
-                  shell_environment_policy: { inherit: "none" },
+                  shell_environment_policy: {
+                    inherit: "none",
+                    set: {
+                      PATH: `${path.join(preparedWorkerRoot, ".git/factory-tools/bin")}${path.delimiter}/usr/bin${path.delimiter}/bin`,
+                    },
+                  },
                   web_search: "disabled",
                   permissions: { factory: workerPermissionProfile() },
                 }
@@ -749,6 +754,7 @@ test("governed construction captures launcher custody for transport disposal", a
       'approvals_reviewer="user"',
       'web_search="disabled"',
       'shell_environment_policy.inherit="none"',
+      `shell_environment_policy.set={ PATH = ${JSON.stringify(path.join(preparedWorkerRoot, ".git/factory-tools/bin") + path.delimiter + "/usr/bin" + path.delimiter + "/bin")} }`,
       "allow_login_shell=false",
       "apps",
       "plugins",
@@ -769,7 +775,12 @@ test("governed construction captures launcher custody for transport disposal", a
         plugins: false,
         network_proxy: { enabled: true, credential_broker: false },
       },
-      shell_environment_policy: { inherit: "none" },
+      shell_environment_policy: {
+        inherit: "none",
+        set: {
+          PATH: `${path.join(preparedWorkerRoot, ".git/factory-tools/bin")}${path.delimiter}/usr/bin${path.delimiter}/bin`,
+        },
+      },
     },
   });
   expect(appServer.requests().some(({ method }) => method === "turn/start")).toBe(false);
@@ -981,6 +992,8 @@ test.each([
   { mcp_servers: { outside: { command: "untrusted-fixture" } } },
   { allow_login_shell: true },
   { shell_environment_policy: { inherit: "all" } },
+  { shell_environment_policy: { inherit: "none" } },
+  { shell_environment_policy: { inherit: "none", set: { PATH: "/untrusted/bin" } } },
   { shell_environment_policy: { inherit: "none", set: { GITHUB_TOKEN: "synthetic" } } },
   { shell_environment_policy: { inherit: "none", experimental_use_profile: true } },
   { web_search: "live" },
@@ -1005,7 +1018,7 @@ test.each([
     });
     await expect(
       provider.openQuotaGovernedSession({
-        config: createConfig(),
+        config: createConfig({ cwd: preparedWorkerRoot }),
         account: { issuer: "openai", accountId: "reserved-account" },
         guard: async () => {
           throw new Error("No inference");

@@ -53,6 +53,7 @@ import { ProviderQuotaExhaustedError } from "../quota-error.js";
 import { CodexResetCreditError, CodexResetCreditSession } from "./codex/reset-credits.js";
 import { CodexQuotaObservationSession } from "./codex/quota-observation.js";
 import {
+  workerShellEnvironment,
   verifyWorkerPermissionProfile,
   verifyWorkerPhysicalWorkspace,
   verifyWorkerRuntimeRoots,
@@ -3668,7 +3669,6 @@ export class CodexAppServerAgentSession implements AgentSession {
       Object.keys(servers).length !== 0
     )
       throw new Error("Native worker tool and environment confinement is unavailable.");
-    this.verifyWorkerShellPolicy(config);
     const profiles = toObjectRecord(config?.permissions);
     const name = this.quotaGovernance?.permissionProfile;
     verifyWorkerPermissionProfile(
@@ -3676,17 +3676,21 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.config.cwd,
       features?.network_proxy,
     );
+    this.verifyWorkerShellPolicy(config);
   }
 
   private verifyWorkerShellPolicy(config: Record<string, unknown> | undefined): void {
     const shell = toObjectRecord(config?.shell_environment_policy);
     const assignments = toObjectRecord(shell?.set);
+    const expected = workerShellEnvironment(this.config.cwd);
     const notify = config?.notify;
     if (
       config?.allow_login_shell !== false ||
       shell?.inherit !== "none" ||
       shell?.experimental_use_profile === true ||
-      (shell?.set != null && (!assignments || Object.keys(assignments).length !== 0)) ||
+      !assignments ||
+      Object.keys(assignments).length !== 1 ||
+      assignments.PATH !== expected.PATH ||
       (notify != null && (!Array.isArray(notify) || notify.length !== 0))
     )
       throw new Error("Native worker tool and environment confinement is unavailable.");
@@ -5518,7 +5522,10 @@ export class CodexAppServerAgentSession implements AgentSession {
         network_proxy: { enabled: true, credential_broker: false },
       };
       configured.allow_login_shell = false;
-      configured.shell_environment_policy = { inherit: "none" };
+      configured.shell_environment_policy = {
+        inherit: "none",
+        set: workerShellEnvironment(this.config.cwd),
+      };
       configured.web_search = "disabled";
     }
     if (this.quotaGovernance) {
@@ -7383,6 +7390,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       goalsEnabled?: boolean;
       agentId?: string;
       quotaGoverned?: boolean;
+      workerCwd?: string;
       processCustody?: QuotaGovernedSessionInput["processCustody"];
     },
   ): Promise<ChildProcessWithoutNullStreams> {
@@ -7410,6 +7418,8 @@ export class CodexAppServerAgentClient implements AgentClient {
         "allow_login_shell=false",
         "-c",
         'shell_environment_policy.inherit="none"',
+        "-c",
+        `shell_environment_policy.set={ PATH = ${JSON.stringify(workerShellEnvironment(options.workerCwd).PATH)} }`,
         "-c",
         'web_search="disabled"',
       );
@@ -7472,6 +7482,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           this.spawnAppServer(input.launchContext?.env, {
             quotaGoverned: true,
             processCustody: input.processCustody,
+            workerCwd: input.config.cwd,
             agentId: input.launchContext?.agentId,
           }),
         this.sessionDeps(),

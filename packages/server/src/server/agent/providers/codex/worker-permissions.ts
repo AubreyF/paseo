@@ -1,9 +1,18 @@
-import { isAbsolute, normalize } from "node:path";
+import { delimiter, isAbsolute, normalize } from "node:path";
 import { join } from "node:path";
 import { lstat, realpath } from "node:fs/promises";
 import { z } from "zod";
 
 const Unset = z.null().optional();
+
+/** Only the controller-owned toolchain and system tools enter a confined shell. */
+export function workerShellEnvironment(cwd: string | undefined): { PATH: string } {
+  if (!cwd || !isAbsolute(cwd) || normalize(cwd) !== cwd || cwd.includes(delimiter)) {
+    throw new Error("Native worker shell requires a canonical workspace without PATH separators.");
+  }
+  return { PATH: [join(cwd, ".git/factory-tools/bin"), "/usr/bin", "/bin"].join(delimiter) };
+}
+
 const ProxyFeature = z
   .object({ enabled: z.literal(true), credential_broker: z.literal(false) })
   .strict();

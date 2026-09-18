@@ -1,8 +1,9 @@
 import { expect, test } from "vitest";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import {
+  workerShellEnvironment,
   verifyWorkerPhysicalWorkspace,
   verifyWorkerPermissionProfile,
 } from "./worker-permissions.js";
@@ -23,6 +24,13 @@ const denyAllProxy = {
 const proxyFeature = { enabled: true, credential_broker: false };
 // Policy validation requires an absolute path in the host's native syntax.
 const fixtureRoot = resolve("/fixture");
+test.each([`${fixtureRoot}${delimiter}extra`, `${fixtureRoot}${delimiter}${delimiter}extra`])(
+  "rejects a workspace that would add PATH search entries: %s",
+  (cwd) => {
+    expect(() => workerShellEnvironment(cwd)).toThrow("without PATH separators");
+  },
+);
+
 const workerProfile = {
   extends: null,
   workspace_roots: { [fixtureRoot]: true },

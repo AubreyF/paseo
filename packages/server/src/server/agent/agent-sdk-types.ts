@@ -714,6 +714,14 @@ export type QuotaAdmissionGuard = (request: QuotaAdmissionRequest) => Promise<Qu
 
 /** Trusted runtime input, never accepted from a worker tool or persisted as a callback. */
 export interface QuotaGovernedSessionInput {
+  /** Host-local retained placement, supplied only by the trusted controller. */
+  placement?: {
+    hostId: string;
+    projectId: string;
+    projectRoot: string;
+    projectKey: string;
+    workspaceId: string;
+  };
   /** Trusted controller callbacks, never accepted from public agent config. */
   inspection?: {
     executionId: string;

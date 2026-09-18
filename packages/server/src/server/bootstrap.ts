@@ -153,6 +153,7 @@ import { ScheduleService } from "./schedule/service.js";
 import { QuotaSchedulePreflight } from "./schedule/quota-preflight.js";
 import { ProviderQuotaObservationService } from "../services/quota-fetcher/governor-service.js";
 import type { CreateGovernedScheduleRuntime } from "./schedule/governed-runtime.js";
+import { createGovernedPlacementValidator } from "./schedule/governed-placement.js";
 import { QuotaGovernorStore } from "./agent/quota-reserve/governor-store.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
@@ -1348,7 +1349,15 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     store: new QuotaGovernorStore(path.join(config.paseoHome, "quota-governor")),
     readObservation: (provider) => governorObservations.read(provider),
-    captureClient: (provider) => agentManager.captureGovernedExecutionClient(provider),
+    captureClient: (provider) =>
+      agentManager.captureGovernedExecutionClient(
+        provider,
+        createGovernedPlacementValidator({
+          hostId: serverId,
+          projects: projectRegistry,
+          workspaces: workspaceRegistry,
+        }),
+      ),
   });
   const quotaPreflight = new QuotaSchedulePreflight({
     readObservation: (provider) =>

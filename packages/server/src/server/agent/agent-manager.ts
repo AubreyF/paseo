@@ -1235,7 +1235,12 @@ export class AgentManager {
     return this.clients.get(provider) ?? null;
   }
 
-  captureGovernedExecutionClient(provider: AgentProvider): CapturedQuotaExecutionClient {
+  captureGovernedExecutionClient(
+    provider: AgentProvider,
+    validatePlacement?: (
+      input: Parameters<CapturedQuotaExecutionClient["openSession"]>[0],
+    ) => Promise<void>,
+  ): CapturedQuotaExecutionClient {
     const client = this.clients.get(provider);
     const open = client?.openQuotaGovernedSession;
     if (
@@ -1261,41 +1266,61 @@ export class AgentManager {
       assertCurrent,
       openSession: (input) => {
         assertCurrent();
-        if (!input.inspection) return open.call(client, input);
-        const inspection = input.inspection;
-        const id = validateAgentId(inspection.executionId, "governed execution inspection");
-        if (this.agents.has(id) || this.controllerSessions.has(id))
-          throw new Error("Governed execution inspection identity already exists.");
-        return open.call(client, input).then(async (session) => {
-          try {
+        return (async () => {
+          // Capture scalar placement before awaiting registry reads. Provider startup
+          // must not race a controller mutating the caller's placement object.
+          input = {
+            ...input,
+            config: { ...input.config },
+            placement: input.placement && { ...input.placement },
+          };
+          const checkPlacement = async () => {
+            if (input.placement) {
+              if (!input.inspection || !validatePlacement)
+                throw new Error(
+                  "Governed workspace placement requires host validation and inspection.",
+                );
+              await validatePlacement(input);
+            }
             assertCurrent();
-            this.controllerSessions.set(id, inspection);
-            await this.registerSession(
-              controllerSessionView(session, inspection),
-              {
-                ...input.config,
-                controllerExecutionId: id,
-                title: inspection.title,
-              },
-              id,
-              { initialTitle: inspection.title },
-            );
-            assertCurrent();
-            const close = session.close.bind(session);
-            session.close = async () => {
-              await close();
+          };
+          await checkPlacement();
+          if (!input.inspection) return open.call(client, input);
+          const inspection = input.inspection;
+          const id = validateAgentId(inspection.executionId, "governed execution inspection");
+          if (this.agents.has(id) || this.controllerSessions.has(id))
+            throw new Error("Governed execution inspection identity already exists.");
+          return open.call(client, input).then(async (session) => {
+            try {
+              await checkPlacement();
+              this.controllerSessions.set(id, inspection);
+              await this.registerSession(
+                controllerSessionView(session, inspection),
+                {
+                  ...input.config,
+                  controllerExecutionId: id,
+                  title: inspection.title,
+                },
+                id,
+                { initialTitle: inspection.title, workspaceId: input.placement?.workspaceId },
+              );
+              await checkPlacement();
+              const close = session.close.bind(session);
+              session.close = async () => {
+                await close();
+                await inspection.assertSettled();
+                await this.closeAgent(id);
+              };
+              return session;
+            } catch (error) {
+              await session.close();
               await inspection.assertSettled();
-              await this.closeAgent(id);
-            };
-            return session;
-          } catch (error) {
-            await session.close();
-            await inspection.assertSettled();
-            if (this.agents.has(id)) await this.closeAgent(id);
-            else this.controllerSessions.delete(id);
-            throw error;
-          }
-        });
+              if (this.agents.has(id)) await this.closeAgent(id);
+              else this.controllerSessions.delete(id);
+              throw error;
+            }
+          });
+        })();
       },
     };
   }

@@ -9,6 +9,60 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+test.each(["before startup", "during startup"])(
+  "invalid placement %s prevents registration and settles opened custody",
+  async (timing) => {
+    const client = createTestAgentClient("codex");
+    let opened = 0;
+    let settled = false;
+    client.openQuotaGovernedSession = async (input) => {
+      opened++;
+      const session = await client.createSession(input.config);
+      const close = session.close.bind(session);
+      session.close = async () => {
+        await close();
+        settled = true;
+      };
+      return session;
+    };
+    const manager = new AgentManager({
+      logger: pino({ level: "silent" }),
+      clients: { codex: client },
+    });
+    const id = randomUUID();
+    const validate = vi.fn(async () => {
+      if (timing === "before startup" || opened) throw new Error("Placement removed");
+    });
+    await expect(
+      manager.captureGovernedExecutionClient("codex", validate).openSession({
+        config: { provider: "codex", cwd: "/fixture" },
+        placement: {
+          hostId: "srv_fixture",
+          projectId: "prj_product",
+          projectRoot: "/product",
+          projectKey: "remote:github.com/example/product",
+          workspaceId: "wks_task",
+        },
+        account: { issuer: "openai", accountId: "fixture" },
+        guard: async () => {
+          throw new Error("No inference");
+        },
+        inspection: {
+          executionId: id,
+          title: "Fixture",
+          async stop() {},
+          async assertSettled() {
+            expect(settled).toBe(true);
+          },
+        },
+      }),
+    ).rejects.toThrow("Placement removed");
+    expect(opened).toBe(timing === "before startup" ? 0 : 1);
+    expect(settled).toBe(timing === "during startup");
+    expect(manager.getAgent(id)).toBeNull();
+  },
+);
+
 test.each(["get", "applySnapshot"] as const)(
   "failed inspection registration cleans up after settlement (%s)",
   async (method) => {
@@ -99,7 +153,15 @@ test("governed sessions expose controller-run timeline but reject ordinary mutat
   context.onTestFinished(unsubscribeState);
   let settled = false;
   let stops = 0;
-  const raw = await manager.captureGovernedExecutionClient("codex").openSession({
+  const validatePlacement = vi.fn(async () => {});
+  const raw = await manager.captureGovernedExecutionClient("codex", validatePlacement).openSession({
+    placement: {
+      hostId: "srv_fixture",
+      projectId: "prj_product",
+      projectRoot: "/product",
+      projectKey: "remote:github.com/example/product",
+      workspaceId: "wks_task",
+    },
     config: { provider: "codex", cwd: "/fixture" },
     account: { issuer: "openai", accountId: "fixture" },
     guard: async () => {
@@ -119,6 +181,8 @@ test("governed sessions expose controller-run timeline but reject ordinary mutat
     },
   });
   const inspected = manager.getAgent(id);
+  expect(inspected?.workspaceId).toBe("wks_task");
+  expect(validatePlacement).toHaveBeenCalledTimes(3);
   expect(inspected?.config.controllerExecutionId).toBe(id);
   expect(inspected?.session).not.toBe(raw);
   await expect(manager.createAgent({ provider: "codex", cwd: root }, id, {})).rejects.toThrow(
@@ -140,6 +204,7 @@ test("governed sessions expose controller-run timeline but reject ordinary mutat
   await manager.closeAgent(id);
   expect((await registry.get(id))?.lastStatus).toBe("closed");
   expect((await registry.get(id))?.config?.controllerExecutionId).toBe(id);
+  expect((await registry.get(id))?.workspaceId).toBe("wks_task");
   expect(states.at(-1)).toBe("closed");
 });
 

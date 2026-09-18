@@ -11,7 +11,7 @@ StyleSheet.configure({
     xl: 1200,
   },
   settings: {
-    adaptiveThemes: true,
+    initialTheme: "darkClaude",
   },
 });
 

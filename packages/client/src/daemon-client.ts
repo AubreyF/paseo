@@ -3236,6 +3236,7 @@ export class DaemonClient {
     agentId: string;
     messageId: string;
     attachmentId: string;
+    download?: boolean;
   }) {
     return this.sendNamespacedCorrelatedSessionRequest<"agent.queue.attachment.get.response">({
       message: { type: "agent.queue.attachment.get.request", ...input },
@@ -4942,6 +4943,20 @@ export class DaemonClient {
         type: "provider.usage.list.request",
         forceRefresh: options?.forceRefresh,
       },
+    });
+  }
+
+  async previewProviderRemoval(providerId: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.connection.preview_remove.response">(
+      {
+        message: { type: "provider.connection.preview_remove.request", providerId },
+      },
+    );
+  }
+
+  async removeProvider(providerId: string, revision: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.connection.remove.response">({
+      message: { type: "provider.connection.remove.request", providerId, revision },
     });
   }
 

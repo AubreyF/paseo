@@ -70,9 +70,9 @@ const ROW_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
 <View style={[settingsStyles.row, settingsStyles.rowBorder]} />;
 ```
 
-Paseo starts with adaptive themes, then applies the persisted theme after async settings load. A
-module-level read can therefore materialize the light style before a persisted dark theme is
-active. If the view mounts after that theme change, React Native receives the stale light object;
+Paseo starts with Claude, then applies the persisted theme after async settings load. A
+module-level read can therefore materialize a style before the persisted theme is
+active. If the view mounts after that theme change, React Native receives the stale style object;
 Unistyles registers the node for future changes but does not retroactively replace its initial
 props. Settings dividers once rendered light `#e4e4e7` inside a dark `#252B2A` card for exactly
 this reason.

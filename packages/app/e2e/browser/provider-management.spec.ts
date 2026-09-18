@@ -51,11 +51,17 @@ for (const width of [1280, 402]) {
         const renamed = (await client.getDaemonConfig()).config.providers[id];
         expect(renamed.label).toBe(`Renamed ${name}`);
         expect(renamed.env).toEqual(provider.env);
-        page.once("dialog", (dialog) => void dialog.dismiss());
-        await page.getByTestId(`provider-remove-${id}`).click();
+        await expect
+          .poll(async () => {
+            const { entries } = await client.getProvidersSnapshot();
+            return entries.find((candidate) => candidate.provider === id)?.status ?? "loading";
+          })
+          .not.toBe("loading");
+        const cancelDialog = page.waitForEvent("dialog").then((dialog) => dialog.dismiss());
+        await Promise.all([page.getByTestId(`provider-remove-${id}`).click(), cancelDialog]);
         await expect(page.getByTestId(`provider-rename-${id}`)).toBeVisible();
-        page.once("dialog", (dialog) => void dialog.accept());
-        await page.getByTestId(`provider-remove-${id}`).click();
+        const confirmDialog = page.waitForEvent("dialog").then((dialog) => dialog.accept());
+        await Promise.all([page.getByTestId(`provider-remove-${id}`).click(), confirmDialog]);
         await expect(page.getByTestId(`provider-rename-${id}`)).toHaveCount(0);
         expect((await client.getDaemonConfig()).config.providers[id]).toBeUndefined();
       }

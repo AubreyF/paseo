@@ -129,13 +129,25 @@ describe("loadAppSettingsFromStorage", () => {
     expect((await loadAppSettingsFromStorage(deps)).sendBehavior).toBe("interrupt");
   });
 
-  it("defaults theme to auto when storage is empty", async () => {
+  it("defaults theme to Claude when storage is empty", async () => {
     const deps = makeDeps();
 
     const result = await loadAppSettingsFromStorage(deps);
 
-    expect(result.theme).toBe("auto");
+    expect(result.theme).toBe("claude");
   });
+
+  it.each([{}, { theme: "removed-theme" }])(
+    "defaults missing or invalid themes to Claude: %j",
+    async (stored) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify(stored),
+        }),
+      });
+      expect((await loadAppSettingsFromStorage(deps)).theme).toBe("claude");
+    },
+  );
 
   it.each(THEME_OPTIONS)("loads the persisted $name theme", async ({ name }) => {
     const deps = makeDeps({

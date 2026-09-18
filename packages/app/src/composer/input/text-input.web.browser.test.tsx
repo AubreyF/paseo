@@ -82,6 +82,27 @@ afterEach(() => {
 });
 
 describe("ComposerTextInput web IME composition", () => {
+  it.each(["insertFromPaste", "insertReplacementText"])(
+    "publishes externally populated text on %s without a keyboard event",
+    (inputType) => {
+      const recorder = createTextRecorder();
+      const mounted = mountInput(recorder.onChangeText);
+      act(() => {
+        mounted.textarea.value = "Dictated message";
+        // Reading the live draft must not consume its change notification.
+        expect(mounted.inputRef.current?.getText()).toBe("Dictated message");
+        mounted.textarea.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            inputType,
+            data: "Dictated message",
+          }),
+        );
+      });
+      expect(recorder.changes).toEqual(["Dictated message"]);
+    },
+  );
+
   it("keeps locally typed text when its parent rerenders with a stale value", () => {
     const recorder = createTextRecorder();
     const mounted = mountInput(recorder.onChangeText);
@@ -171,6 +192,18 @@ describe("ComposerTextInput web IME composition", () => {
     });
 
     expect(changes).toEqual(["한"]);
+  });
+
+  it("still publishes composition completion after reading the live draft", () => {
+    const recorder = createTextRecorder();
+    const mounted = mountInput(recorder.onChangeText);
+    act(() => {
+      dispatchComposition(mounted.textarea, "compositionstart");
+      typeFromIme(mounted.textarea, "Dictated composition");
+      expect(mounted.inputRef.current?.getText()).toBe("Dictated composition");
+      dispatchComposition(mounted.textarea, "compositionend");
+    });
+    expect(recorder.changes).toEqual(["Dictated composition"]);
   });
 
   it("reads the live DOM value for send-path text extraction during composition", () => {

@@ -1939,3 +1939,40 @@ describe("ProviderSnapshotManager cwd routing", () => {
     }
   });
 });
+
+test("provider deletion waits for catalog work even after its snapshot is replaced", async () => {
+  let finish = () => {};
+  let entered = () => {};
+  const pending = new Promise<void>((done) => {
+    finish = done;
+  });
+  const started = new Promise<void>((done) => {
+    entered = done;
+  });
+  const manager = new ProviderSnapshotManager({
+    logger: createTestLogger(),
+    extraClients: {
+      codex: createExtraClient("codex", {
+        async isAvailable() {
+          entered();
+          await pending;
+          return false;
+        },
+      }),
+    },
+  });
+  const refreshing = manager.refreshSettingsSnapshot({ providers: ["codex"] });
+  try {
+    await started;
+    expect(manager.isProviderRefreshing("codex")).toBe(true);
+    manager.stageMutableProviderConfig({ codex: { enabled: false } }, { replace: true });
+    expect(manager.isProviderRefreshing("codex")).toBe(true);
+    finish();
+    await refreshing;
+    expect(manager.isProviderRefreshing("codex")).toBe(false);
+  } finally {
+    finish();
+    await refreshing;
+    manager.destroy();
+  }
+});

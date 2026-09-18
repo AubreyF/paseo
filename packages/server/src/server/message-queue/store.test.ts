@@ -289,3 +289,44 @@ it("persists pause and order, and requires explicit resolution before retrying u
     }),
   ).rejects.toMatchObject({ code: "delivery_conflict" });
 });
+
+it("persists rewind suppression without erasing delivery receipts or earlier history", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-queue-rewind-"));
+  roots.push(root);
+  const store = new MessageQueueStore(root);
+  for (const id of ["earlier", "rewound"]) {
+    await store.mutate("agent", {
+      kind: "enqueue",
+      operationId: id,
+      messageId: id,
+      text: id,
+      attachments: [],
+    });
+    const item = await store.claim("agent");
+    if (item?.delivery.status !== "dispatching") throw new Error("Expected claim");
+    await store.settle({
+      agentId: "agent",
+      messageId: id,
+      attemptId: item.delivery.attemptId,
+      outcome: { status: "accepted", turnId: id },
+    });
+    await store.recordProviderMessageId({
+      agentId: "agent",
+      messageId: id,
+      providerMessageId: `native-${id}`,
+    });
+  }
+  await store.suppressHistoryRestoration("agent", ["native-rewound"]);
+  const restarted = new MessageQueueStore(root);
+  const history = await restarted.acceptedHistory("agent");
+  expect(history[0].restoreMissing).toBeUndefined();
+  expect(history[1].restoreMissing).toBe(false);
+  await restarted.mutate("agent", {
+    kind: "enqueue",
+    operationId: "rewound",
+    messageId: "rewound",
+    text: "rewound",
+    attachments: [],
+  });
+  expect((await restarted.read("agent")).items).toEqual([]);
+});

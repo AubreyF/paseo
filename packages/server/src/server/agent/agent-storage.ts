@@ -2,6 +2,7 @@ import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { Logger } from "pino";
+import { QueueGoalHoldSchema, type QueueGoalHold } from "../message-queue/goal-hold.js";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
 import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
@@ -62,6 +63,7 @@ export type GoalSubmission = z.infer<typeof GoalSubmissionSchema>;
 
 const STORED_AGENT_SCHEMA = z.object({
   goalSubmissions: z.array(GoalSubmissionSchema).optional(),
+  queueGoalHold: QueueGoalHoldSchema.optional(),
   id: z.string(),
   provider: z.string(),
   cwd: z.string(),
@@ -187,6 +189,16 @@ export class AgentStorage {
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
     await this.queueRecordWrite(record);
+  }
+
+  async updateQueueGoalHold(
+    agentId: string,
+    queueGoalHold: QueueGoalHold | undefined,
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (record) =>
+      record ? { ...record, queueGoalHold } : null,
+    );
   }
 
   async updateQuotaReserve(

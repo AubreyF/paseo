@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.7.2",
+  "version": "0.7.2-vorton.1",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -119,7 +119,9 @@
     "release:patch": "npm run release:check && npm run version:all:patch && npm run release:publish && npm run release:push",
     "release:minor": "npm run release:check && npm run version:all:minor && npm run release:publish && npm run release:push",
     "release:major": "npm run release:check && npm run version:all:major && npm run release:publish && npm run release:push",
-    "security:secrets": "gitleaks git . --config .gitleaks.toml --log-opts=\"--all --full-history\" --redact --ignore-gitleaks-allow --gitleaks-ignore-path .git/no-gitleaks-ignore --max-archive-depth 3 --no-banner"
+    "security:secrets": "gitleaks git . --config .gitleaks.toml --log-opts=\"--all --full-history\" --redact --ignore-gitleaks-allow --gitleaks-ignore-path .git/no-gitleaks-ignore --max-archive-depth 3 --no-banner",
+    "version:vorton": "node scripts/vorton-version.mjs",
+    "version:vorton:check": "node scripts/vorton-version.mjs --check"
   },
   "devDependencies": {
     "@types/ws": "^8.5.14",

@@ -1,3 +1,5 @@
+import { SharedQueueAttachments } from "@/message-queue/shared-attachments";
+import type { QueuePresentation } from "@getpaseo/protocol/message-queue";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { TaskListRow } from "@/components/task-list-row";
 import {
@@ -118,6 +120,8 @@ export type { AssistantForkTarget };
 import { useVortonMode } from "@/vorton-mode";
 
 interface UserMessageProps {
+  queue?: QueuePresentation;
+  queueMessageId?: string;
   intent?: "goal";
   serverId?: string;
   agentId?: string;
@@ -425,6 +429,8 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
 }
 
 export const UserMessage = memo(function UserMessage({
+  queue,
+  queueMessageId,
   intent,
   serverId,
   agentId,
@@ -514,6 +520,12 @@ export const UserMessage = memo(function UserMessage({
         onPointerLeave={handlePointerLeave}
       >
         <View style={userMessageStylesheet.bubble}>
+          <SharedQueueAttachments
+            serverId={serverId}
+            agentId={agentId}
+            messageId={queueMessageId}
+            presentation={queue}
+          />
           {hasImages ? (
             <View style={imagePreviewContainerStyle}>
               {images.map((image) => (

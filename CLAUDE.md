@@ -124,6 +124,8 @@ See [docs/development.md](docs/development.md) for full setup, build sync requir
 
 ## Critical rules
 
+- **Every new commit increments the Vorton version.** Use the installed pre-commit hook, which updates and stages synchronized versions. Stage intended manifest edits first; the hook refuses unstaged manifest changes. For build preparation use `npm run version:vorton`, then stage its manifest and lockfile changes. Never bypass the hook or use upstream release commands for a routine commit. See [Vorton commit versions](docs/release.md#vorton-commit-versions).
+
 - **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. If you're an agent, restarting it kills your own process.
 - **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.
 - **NEVER add auth checks to tests** — agent providers handle their own auth.

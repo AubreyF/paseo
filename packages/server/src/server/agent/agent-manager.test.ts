@@ -3614,6 +3614,7 @@ test("manual stop interrupts the provider even when queue pause persistence fail
     },
     acceptedHistory: async () => [],
     reconcileHistory: async () => {},
+    suppressHistoryRestoration: async () => {},
     recordProviderMessageId: async () => {},
   });
   try {
@@ -10989,11 +10990,13 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
   const allowProviderEcho = deferred<void>();
+  const rewindSteps: string[] = [];
 
   class SubmittedUserMessageSession extends TestAgentSession {
     override readonly capabilities = {
       ...TEST_CAPABILITIES,
       supportsRewindFiles: true,
+      supportsRewindConversation: true,
     };
     readonly rewindMessageIds: string[] = [];
     interruptCount = 0;
@@ -11036,6 +11039,10 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
         provider: this.provider,
         turnId: "turn-submitted-user-message",
       });
+    }
+
+    override async revertConversation({ messageId }: { messageId: string }): Promise<void> {
+      rewindSteps.push(`provider:${messageId}`);
     }
 
     override async revertFiles({ messageId }: { messageId: string }): Promise<void> {
@@ -11134,12 +11141,28 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       },
     ]);
 
+    manager.setMessageQueueControl({
+      pause: async () => {
+        rewindSteps.push("pause");
+      },
+      acceptedHistory: async () => [],
+      reconcileHistory: async () => {},
+      recordProviderMessageId: async () => {},
+      suppressHistoryRestoration: async (_id, ids) => {
+        expect(ids).toContain("msg-client-1");
+        expect(ids).toContain("provider-message-1");
+        rewindSteps.push("persist");
+      },
+    });
     await manager.rewind(snapshot.id, "msg-client-1", "files");
     await manager.rewind(snapshot.id, "provider-native-message", "files");
     expect(client.session?.rewindMessageIds).toEqual([
       "provider-message-1",
       "provider-native-message",
     ]);
+    expect(rewindSteps).toEqual([]);
+    await manager.rewind(snapshot.id, "msg-client-1", "conversation");
+    expect(rewindSteps).toEqual(["pause", "persist", "provider:provider-message-1"]);
   } finally {
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);
@@ -11822,6 +11845,36 @@ test("confirmed reset unlocks the same provider durably without restarting work"
     expect(() => manager.assertQuotaNotPaused(newer.id)).toThrow("paused");
   } finally {
     await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("provider deletion stays blocked during registration and for internal sessions", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "provider-deletion-busy-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const agentId = randomUUID();
+  try {
+    expect(manager.isProviderInUse("codex")).toBe(false);
+    const creating = manager.createAgent(
+      { provider: "codex", cwd: workdir, internal: true },
+      agentId,
+      { workspaceId: undefined },
+    );
+    expect(manager.isProviderInUse("codex")).toBe(true);
+    const agent = await creating;
+    expect(manager.listAgents()).toHaveLength(0);
+    expect(manager.isProviderInUse("codex")).toBe(true);
+    expect(manager.isProviderInUse("claude")).toBe(false);
+    await manager.archiveAgent(agent.id);
+    expect(manager.isProviderInUse("codex")).toBe(false);
+  } finally {
+    if (manager.getAgent(agentId)) await manager.closeAgent(agentId);
+    await manager.flushForShutdown();
     rmSync(workdir, { recursive: true, force: true });
   }
 });

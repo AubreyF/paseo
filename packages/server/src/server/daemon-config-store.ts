@@ -10,6 +10,10 @@ import {
 } from "@getpaseo/protocol/messages";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
 import { parseQuotaReservePolicy } from "@getpaseo/protocol/quota-reserve";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { planProviderRemoval, ProviderRemovalError } from "../services/provider-login/removal.js";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
@@ -392,6 +396,32 @@ export class DaemonConfigStore {
     }
     const { removeProviders = [], ...configPatch } = parsedPatch;
     const removedProviders = Array.from(new Set(removeProviders));
+    // Legacy config removal must not orphan an app-managed account directory.
+    // The connection removal operation cleans it before applying this patch.
+    for (const providerId of removedProviders) {
+      const provider = this.current.providers[providerId];
+      if (!provider || provider.extends !== "codex") continue;
+      const plan = planProviderRemoval({
+        paseoHome: this.paseoHome,
+        providers: Object.fromEntries(
+          Object.entries(this.current.providers).filter(
+            ([id]) => id === providerId || !removedProviders.includes(id),
+          ),
+        ),
+        providerId,
+        defaultCodexHome: process.env.CODEX_HOME ?? join(homedir(), ".codex"),
+      });
+      const parsed = ProviderOverrideSchema.parse(provider);
+      if (
+        plan.credentials === "managed" &&
+        parsed.env?.CODEX_HOME &&
+        existsSync(parsed.env.CODEX_HOME)
+      ) {
+        throw new ProviderRemovalError(
+          "Use connection deletion to remove this account and its saved credentials.",
+        );
+      }
+    }
     const merged = deepMerge(this.current, configPatch);
     if (parsedPatch.skills?.selection !== undefined) {
       merged.skills = { selection: parsedPatch.skills.selection };

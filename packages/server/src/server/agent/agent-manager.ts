@@ -1,4 +1,10 @@
 import { mergeQueueHistory } from "../message-queue/history.js";
+import {
+  pauseGoalForQueue,
+  resumeGoalAfterQueue,
+  type QueueGoalHold,
+  type QueueGoalPort,
+} from "../message-queue/goal-hold.js";
 import type { MessageQueueService } from "../message-queue/service.js";
 import type { QueueItem } from "@getpaseo/protocol/message-queue";
 import { mergeGoalHistory } from "./goal-history.js";
@@ -389,6 +395,7 @@ interface HandleStreamEventOptions {
 }
 
 interface ManagedAgentBase {
+  queueGoalHold?: import("../message-queue/goal-hold.js").QueueGoalHold;
   goalSubmissions?: import("./agent-storage.js").GoalSubmission[];
   goalState?: import("@getpaseo/protocol/agent-goals").AgentGoalState;
   id: string;
@@ -1113,8 +1120,13 @@ export class AgentManager {
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
   private messageQueueControl: Pick<
     MessageQueueService,
-    "pause" | "acceptedHistory" | "recordProviderMessageId" | "reconcileHistory"
+    | "pause"
+    | "acceptedHistory"
+    | "recordProviderMessageId"
+    | "reconcileHistory"
+    | "suppressHistoryRestoration"
   > | null = null;
+  private readonly queueGoalMutationTails = new Map<string, Promise<void>>();
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
@@ -1191,7 +1203,11 @@ export class AgentManager {
   setMessageQueueControl(
     control: Pick<
       MessageQueueService,
-      "pause" | "acceptedHistory" | "recordProviderMessageId" | "reconcileHistory"
+      | "pause"
+      | "acceptedHistory"
+      | "recordProviderMessageId"
+      | "reconcileHistory"
+      | "suppressHistoryRestoration"
     >,
   ): void {
     this.messageQueueControl = control;
@@ -1405,6 +1421,13 @@ export class AgentManager {
     return Array.from(this.agents.values())
       .filter((agent) => !agent.internal)
       .map((agent) => Object.assign({}, agent));
+  }
+
+  isProviderInUse(provider: AgentProvider): boolean {
+    // A registering session can already own credentials before entering agents.
+    // Its final provider is not indexed yet, so defer deletion until registration settles.
+    if (this.agentRegistrationTasks.size > 0) return true;
+    return Array.from(this.agents.values()).some((agent) => agent.provider === provider);
   }
 
   async listImportableSessions(
@@ -2360,6 +2383,17 @@ export class AgentManager {
     input: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput,
     options?: { clientMessageId?: string; recordSubmission?: boolean },
   ): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState> {
+    return this.withQueueGoalMutation(agentId, async () => {
+      await this.persistQueueGoalHold(agentId, undefined);
+      return this.setAgentGoalUnlocked(agentId, input, options);
+    });
+  }
+
+  private async setAgentGoalUnlocked(
+    agentId: string,
+    input: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput,
+    options?: { clientMessageId?: string; recordSubmission?: boolean },
+  ): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState> {
     if (
       input.status === "active" ||
       (input.objective !== undefined && input.status === undefined)
@@ -2388,11 +2422,98 @@ export class AgentManager {
   async clearAgentGoal(
     agentId: string,
   ): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState> {
-    const agent = this.requireSessionAgent(agentId);
-    if (!agent.session.goals) throw new Error("This provider does not support goals");
-    const state = await agent.session.goals.clear();
-    await this.drainSessionEvents(agentId);
-    return state;
+    return this.withQueueGoalMutation(agentId, async () => {
+      await this.persistQueueGoalHold(agentId, undefined);
+      const agent = this.requireSessionAgent(agentId);
+      if (!agent.session.goals) throw new Error("This provider does not support goals");
+      const state = await agent.session.goals.clear();
+      await this.drainSessionEvents(agentId);
+      return state;
+    });
+  }
+
+  private async withQueueGoalMutation<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.queueGoalMutationTails.get(agentId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(operation);
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.queueGoalMutationTails.set(agentId, tail);
+    try {
+      return await run;
+    } finally {
+      if (this.queueGoalMutationTails.get(agentId) === tail)
+        this.queueGoalMutationTails.delete(agentId);
+    }
+  }
+
+  private async persistQueueGoalHold(
+    agentId: string,
+    hold: QueueGoalHold | undefined,
+  ): Promise<void> {
+    const agent = this.agents.get(agentId);
+    const previous = agent?.queueGoalHold;
+    if (agent) agent.queueGoalHold = hold ? structuredClone(hold) : undefined;
+    try {
+      await this.registry?.updateQueueGoalHold(agentId, hold);
+    } catch (error) {
+      if (agent) agent.queueGoalHold = previous;
+      throw error;
+    }
+  }
+
+  async releaseQueueGoalHold(agentId: string): Promise<void> {
+    // Do not wait for an in-flight resume: its final eligibility check must see
+    // the stop and pause native continuation before releasing its goal lock.
+    await this.persistQueueGoalHold(agentId, undefined);
+  }
+
+  private queueGoalPort(
+    agentId: string,
+    mayResume: () => Promise<boolean>,
+    canPause = () => false,
+    mayRemainActive = mayResume,
+  ): QueueGoalPort {
+    return {
+      hold: () => this.requireAgent(agentId).queueGoalHold,
+      persist: (hold) => this.persistQueueGoalHold(agentId, hold),
+      read: () => this.readAgentGoal(agentId),
+      set: (status) => this.setAgentGoalUnlocked(agentId, { status }, { recordSubmission: false }),
+      mayResume,
+      mayRemainActive,
+      canPause,
+    };
+  }
+
+  async pauseGoalForQueuedMessages(agentId: string, canPause: () => boolean): Promise<void> {
+    await this.withQueueGoalMutation(agentId, () =>
+      pauseGoalForQueue(this.queueGoalPort(agentId, async () => false, canPause)),
+    );
+  }
+
+  async resumeGoalAfterQueuedMessages(
+    agentId: string,
+    queueIsEmpty: () => Promise<boolean>,
+  ): Promise<void> {
+    await this.withQueueGoalMutation(agentId, () =>
+      resumeGoalAfterQueue(
+        this.queueGoalPort(
+          agentId,
+          async () => {
+            const agent = this.requireAgent(agentId);
+            return (
+              agent.lifecycle === "idle" &&
+              !this.hasInFlightRun(agentId) &&
+              agent.pendingPermissions.size === 0 &&
+              (await queueIsEmpty())
+            );
+          },
+          undefined,
+          queueIsEmpty,
+        ),
+      ),
+    );
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
@@ -3625,6 +3746,7 @@ export class AgentManager {
     }
     const providerMessageId = submittedRow?.providerMessageId ?? messageId;
 
+    if (mode !== "files") await this.messageQueueControl?.pause(agentId);
     if (this.hasInFlightRun(agentId)) {
       await this.cancelAgentRunBefore(agentId, "rewind");
     }
@@ -3635,6 +3757,26 @@ export class AgentManager {
         { agentId, provider: agent.provider, messageId, mode },
         "agent.rewind.start",
       );
+      if (mode !== "files" && this.messageQueueControl) {
+        const rows = this.timelineStore.getRows(agentId);
+        const target = rows.findIndex(
+          (row) =>
+            row.item.type === "user_message" &&
+            (row.item.messageId === messageId ||
+              row.item.clientMessageId === messageId ||
+              row.providerMessageId === providerMessageId),
+        );
+        if (target < 0 && (await this.messageQueueControl.acceptedHistory(agentId)).length) {
+          throw new Error("Reload the conversation before rewinding queued message history.");
+        }
+        const removedIds = rows.slice(Math.max(0, target)).flatMap((row) => {
+          if (row.item.type !== "user_message") return [];
+          return [row.item.messageId, row.item.clientMessageId, row.providerMessageId].filter(
+            (id): id is string => typeof id === "string",
+          );
+        });
+        await this.messageQueueControl.suppressHistoryRestoration(agentId, removedIds);
+      }
       await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
       if (mode !== "files") {
         await this.hydrateTimelineFromProvider(agentId, {
@@ -3956,6 +4098,7 @@ export class AgentManager {
       });
 
       managed.goalSubmissions = (await this.registry?.get(resolvedAgentId))?.goalSubmissions;
+      managed.queueGoalHold = (await this.registry?.get(resolvedAgentId))?.queueGoalHold;
       this.assertAcceptingAgentRegistrations();
       this.restoreLatestQuotaReserve(resolvedAgentId, managed.config);
       this.agents.set(resolvedAgentId, managed);

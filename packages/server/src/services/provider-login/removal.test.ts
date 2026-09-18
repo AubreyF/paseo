@@ -1,0 +1,132 @@
+import { afterEach, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { MutableDaemonConfigSchema } from "@getpaseo/protocol/messages";
+import { planProviderRemoval, deleteManagedProviderCredentials } from "./removal.js";
+
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
+function fixture() {
+  const paseoHome = mkdtempSync(path.join(tmpdir(), "provider-removal-"));
+  homes.push(paseoHome);
+  const providerId = "codex-account-11111111-1111-4111-8111-111111111111";
+  const home = path.join(paseoHome, "codex-accounts", providerId);
+  mkdirSync(home, { recursive: true });
+  writeFileSync(path.join(home, "auth.json"), "test credential", { mode: 0o600 });
+  const providers = MutableDaemonConfigSchema.parse({
+    mcp: { injectIntoAgents: false },
+    providers: { [providerId]: { extends: "codex", label: "Work", env: { CODEX_HOME: home } } },
+  }).providers;
+  return {
+    paseoHome,
+    providerId,
+    home,
+    providers,
+    defaultCodexHome: path.join(paseoHome, "external"),
+  };
+}
+
+it("deletes an exclusively managed account including credentials without touching external files", () => {
+  const f = fixture();
+  mkdirSync(f.defaultCodexHome);
+  const externalAuth = path.join(f.defaultCodexHome, "auth.json");
+  writeFileSync(externalAuth, "external credential");
+  symlinkSync(f.defaultCodexHome, path.join(f.home, "external-link"));
+  const plan = planProviderRemoval(f);
+  expect(plan.credentials).toBe("managed");
+  deleteManagedProviderCredentials(f, plan.revision);
+  expect(existsSync(f.home)).toBe(false);
+  expect(existsSync(externalAuth)).toBe(true);
+});
+
+it("retains shared credentials even when the other connection is disabled or uses a symlink", () => {
+  const f = fixture();
+  const alias = path.join(f.paseoHome, "alias");
+  symlinkSync(f.home, alias);
+  f.providers.other = {
+    extends: "codex",
+    label: "Other account",
+    enabled: false,
+    env: { CODEX_HOME: alias },
+  };
+  const plan = planProviderRemoval(f);
+  expect(plan.credentials).toBe("shared");
+  expect(plan.sharedWith).toEqual(["Other account"]);
+  deleteManagedProviderCredentials(f, plan.revision);
+  expect(existsSync(path.join(f.home, "auth.json"))).toBe(true);
+});
+
+it("retains external CLI credentials and rejects changed confirmation revisions", () => {
+  const f = fixture();
+  const plan = planProviderRemoval(f);
+  f.providers[f.providerId].env = { CODEX_HOME: f.defaultCodexHome };
+  expect(() => deleteManagedProviderCredentials(f, plan.revision)).toThrow("changed");
+  expect(planProviderRemoval(f).credentials).toBe("shared");
+  f.providers[f.providerId].env = { CODEX_HOME: path.join(f.paseoHome, "another-cli") };
+  expect(planProviderRemoval(f).credentials).toBe("external");
+  expect(existsSync(path.join(f.home, "auth.json"))).toBe(true);
+});
+
+it("does not treat symlink escapes or arbitrary directory names as managed accounts", () => {
+  const f = fixture();
+  rmSync(f.home, { recursive: true });
+  mkdirSync(f.defaultCodexHome);
+  symlinkSync(f.defaultCodexHome, f.home);
+  expect(planProviderRemoval(f).credentials).toBe("shared");
+  f.providers[f.providerId].env = {
+    CODEX_HOME: path.join(f.paseoHome, "codex-accounts", "unowned"),
+  };
+  expect(planProviderRemoval(f).credentials).toBe("external");
+});
+
+it("handles accounts that have never signed in and refuses built-in deletion", () => {
+  const f = fixture();
+  rmSync(f.home, { recursive: true });
+  const plan = planProviderRemoval(f);
+  expect(() => deleteManagedProviderCredentials(f, plan.revision)).not.toThrow();
+  f.providers.codex = { enabled: true };
+  expect(() => planProviderRemoval({ ...f, providerId: "codex" })).toThrow("Built-in");
+});
+
+it("rejects legacy config removal that would orphan managed credentials, including shared batches", async () => {
+  const { DaemonConfigStore } = await import("../../server/daemon-config-store.js");
+  const f = fixture();
+  const store = new DaemonConfigStore(
+    f.paseoHome,
+    MutableDaemonConfigSchema.parse({ mcp: { injectIntoAgents: false }, providers: f.providers }),
+  );
+  expect(() => store.patch({ removeProviders: [f.providerId] })).toThrow("connection deletion");
+  store.patch({
+    providers: { alias: { extends: "codex", label: "Alias", env: { CODEX_HOME: f.home } } },
+  });
+  expect(() => store.patch({ removeProviders: [f.providerId, "alias"] })).toThrow(
+    "connection deletion",
+  );
+  store.patch({ removeProviders: [f.providerId] });
+  expect(existsSync(path.join(f.home, "auth.json"))).toBe(true);
+  const input = { ...f, providerId: "alias", providers: store.get().providers };
+  const plan = planProviderRemoval(input);
+  deleteManagedProviderCredentials(input, plan.revision);
+  store.patch({ removeProviders: ["alias"] });
+  expect(existsSync(f.home)).toBe(false);
+});
+
+it("refuses a managed-directory symlink instead of claiming its target credentials were deleted", () => {
+  const f = fixture();
+  const target = path.join(
+    f.paseoHome,
+    "codex-accounts",
+    "codex-account-22222222-2222-4222-8222-222222222222",
+  );
+  mkdirSync(target);
+  writeFileSync(path.join(target, "auth.json"), "test credential");
+  rmSync(f.home, { recursive: true });
+  symlinkSync(target, f.home);
+  const plan = planProviderRemoval(f);
+  expect(plan.credentials).toBe("managed");
+  expect(() => deleteManagedProviderCredentials(f, plan.revision)).toThrow("symbolic link");
+  expect(existsSync(path.join(target, "auth.json"))).toBe(true);
+});

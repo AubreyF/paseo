@@ -51,6 +51,9 @@ jobs:
         with:
           filters: .github/ci-paths.yml
 
+      - name: Test Vorton commit versioning
+        run: node --test scripts/vorton-version.test.mjs
+
       - name: Validate CI contracts
         run: node --test scripts/ci-workflow.test.mjs scripts/daemon-launch-contract.test.mjs scripts/sync-fdroid-changelogs.test.mjs
 

@@ -94,6 +94,7 @@ import type {
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
+import { createPauseGoalTool } from "./pause-goal.js";
 
 export interface PaseoToolHostDependencies {
   agentManager: AgentManager;
@@ -1209,6 +1210,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   if (options.voiceOnly) {
     return toCatalog();
+  }
+
+  if (callerAgentId) {
+    const pauseGoal = createPauseGoalTool(agentManager, callerAgentId);
+    registerTool(pauseGoal.name, pauseGoal, pauseGoal.handler);
   }
 
   if (options.browserToolsEnabled && options.browserToolsBroker) {

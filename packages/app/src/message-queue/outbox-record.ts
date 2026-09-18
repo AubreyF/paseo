@@ -21,6 +21,7 @@ export const OutboxRecordSchema = z.object({
   agentId: z.string().min(1),
   revision: z.number().int().nonnegative(),
   createdAt: z.number(),
+  order: z.number().int().nonnegative().optional(),
   operation: QueueOperationSchema,
   localAttachments: z.array(LocalQueueAttachmentSchema).max(32),
   prepared: QueueOperationSchema.nullable(),
@@ -76,4 +77,12 @@ export function validateOutboxExchange(
   ) {
     throw new Error("Invalid outbox record identity or revision");
   }
+}
+
+// Allocated inside the insertion transaction, so clocks and random IDs cannot
+// reorder same-millisecond commits or messages saved by another browser tab.
+export function nextOutboxOrder(records: OutboxRecord[]): number {
+  return (
+    records.reduce((latest, record) => Math.max(latest, record.order ?? record.createdAt), 0) + 1
+  );
 }

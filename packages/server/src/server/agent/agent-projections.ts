@@ -71,6 +71,7 @@ export function toStoredAgentRecord(
 
   return {
     goalSubmissions: agent.goalSubmissions,
+    queueGoalHold: agent.queueGoalHold,
     id: agent.id,
     provider: agent.provider,
     cwd: agent.cwd,

@@ -24,6 +24,7 @@ export interface QueueOutboxPort {
     error: { code: string; message: string } | null;
   }>;
   changed(snapshot: QueueSnapshot, serverId: string): void;
+  localChanged?(serverId: string, flush: boolean): void;
   acknowledged?(record: OutboxRecord): Promise<void>;
 }
 
@@ -32,6 +33,16 @@ export class QueueOutbox {
     private readonly storage: OutboxStorage,
     private readonly port: QueueOutboxPort,
   ) {}
+
+  private notifyLocalChange(serverId: string, flush: boolean): void {
+    // A UI/broadcast failure cannot turn a committed transaction into a failed
+    // submission and encourage the composer to send the same text again.
+    try {
+      this.port.localChanged?.(serverId, flush);
+    } catch {
+      /* Foreground refresh recovers. */
+    }
+  }
 
   // Callers may clear the composer only after this transaction completes.
   async commit(input: {
@@ -58,12 +69,14 @@ export class QueueOutbox {
     if (!(await this.storage.exchange(outboxKey(record), null, record))) {
       throw new Error("This operation is already in the message outbox");
     }
+    this.notifyLocalChange(input.serverId, true);
   }
 
   async list(): Promise<OutboxRecord[]> {
     return (await this.storage.list()).sort(
       (a, b) =>
-        a.createdAt - b.createdAt || a.operation.operationId.localeCompare(b.operation.operationId),
+        (a.order ?? a.createdAt) - (b.order ?? b.createdAt) ||
+        a.operation.operationId.localeCompare(b.operation.operationId),
     );
   }
 
@@ -75,6 +88,7 @@ export class QueueOutbox {
       revision: record.revision + 1,
       error: null,
     });
+    this.notifyLocalChange(key.serverId, true);
   }
 
   async flush(serverId: string): Promise<void> {
@@ -101,6 +115,7 @@ export class QueueOutbox {
       }))
     )
       throw new Error("The pending change was updated on another tab. Review it again.");
+    this.notifyLocalChange(key.serverId, true);
   }
 
   async removeRejectedCopy(key: OutboxKey): Promise<void> {
@@ -109,6 +124,7 @@ export class QueueOutbox {
       throw new Error("This operation still owns an unsynchronized message or attachment.");
     if (!(await this.storage.exchange(key, record.revision, null)))
       throw new Error("The local copy changed. Review it again.");
+    this.notifyLocalChange(key.serverId, false);
   }
 
   private async prepare(record: OutboxRecord): Promise<OutboxRecord | null> {
@@ -143,12 +159,16 @@ export class QueueOutbox {
         revision: record.revision + 1,
         error: result.error,
       });
+      this.notifyLocalChange(record.serverId, false);
       return false;
     }
     if (!result.snapshot) throw new Error("Host did not acknowledge the queue operation");
     const removed = await this.storage.exchange(key, record.revision, null);
     this.port.changed(result.snapshot, record.serverId);
-    if (removed) await this.port.acknowledged?.(record);
+    if (removed) {
+      this.notifyLocalChange(record.serverId, false);
+      await this.port.acknowledged?.(record);
+    }
     return true;
   }
 }

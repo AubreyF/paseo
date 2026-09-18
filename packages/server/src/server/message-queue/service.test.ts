@@ -72,3 +72,39 @@ it("reconciles unfinished delivery before exposing a restarted queue", async () 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it("retries and clears an empty queue's persisted completion error", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-queue-completion-retry-"));
+  const store = new MessageQueueStore(root);
+  const service = new MessageQueueService(store, new QueueAttachmentStore(root));
+  try {
+    await store.setDeliveryError("agent", "Goal confirmation pending");
+    let blocked = true;
+    let observedBlock = false;
+    await service.startDelivery({
+      prepare: async () => true,
+      load: async (item) => item.text,
+      start: () => null,
+      complete: async () => {
+        if (blocked) throw new Error("Goal confirmation pending");
+      },
+      failed: () => {
+        observedBlock = true;
+      },
+    });
+    await expect.poll(() => observedBlock).toBe(true);
+    expect((await service.read("agent")).deliveryError).toBe("Goal confirmation pending");
+    blocked = false;
+    const snapshot = await service.read("agent");
+    await service.mutate("agent", {
+      kind: "pause",
+      operationId: "retry",
+      paused: false,
+      expectedRevision: snapshot.revision,
+    });
+    await expect.poll(async () => (await service.read("agent")).deliveryError).toBeUndefined();
+  } finally {
+    service.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

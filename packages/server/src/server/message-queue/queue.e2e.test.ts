@@ -312,6 +312,20 @@ it("shares captured files and images and delivers them after the original upload
       attachmentId: notes.file.id,
     });
     if (!shared.file) throw new Error(shared.error?.message ?? "Expected shared attachment");
+    const tokenResult = await second.getMessageQueueAttachment({
+      agentId: agent.id,
+      messageId: "message",
+      attachmentId: notes.file.id,
+      download: true,
+    });
+    expect(tokenResult.file?.downloadToken).toBeTruthy();
+    const url = `http://127.0.0.1:${daemon.port}/api/files/download?token=${tokenResult.file?.downloadToken}`;
+    const response = await fetch(url);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toContain(notes.file.fileName);
+    expect(response.headers.get("content-type")).toContain(notes.file.mimeType);
+    expect(await response.text()).toBe("saved notes");
+    expect((await fetch(url)).status).toBe(403);
     const downloaded = await second.readFile(shared.file.cwd, shared.file.path);
     expect(Buffer.from(downloaded.bytes).toString()).toBe("saved notes");
     const snapshot = (await second.readMessageQueue(agent.id)).snapshot;

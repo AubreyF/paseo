@@ -406,10 +406,11 @@ function PresetRow({
   disabled?: boolean;
   onSelect: (id: string) => void;
 }) {
+  const vortonMode = useVortonMode();
   const press = useCallback(() => onSelect(row.id), [onSelect, row.id]);
   return (
     <ComboboxItem
-      style={styles.row}
+      style={[styles.row, vortonMode && styles.rowVorton]}
       labelStyle={styles.presetTitle}
       labelNumberOfLines={1}
       testID={`preset-row-${row.id}`}
@@ -506,6 +507,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  rowVorton: { height: "auto" },
   stacked: { flex: 1, flexDirection: "column" },
   list: { flex: 1, minWidth: 0, borderRightWidth: 1, borderRightColor: theme.colors.border },
   rows: { flex: 1, minHeight: 0 },

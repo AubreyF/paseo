@@ -7,6 +7,17 @@ const {
 } = require("./native-release-version");
 
 describe("native release version", () => {
+  it("orders Vorton builds within and across upstream bases", () => {
+    const first = getNativeReleaseVersion("0.7.2-vorton.9999");
+    const next = getNativeReleaseVersion("0.7.2-vorton.10000");
+    const upstream = getNativeReleaseVersion("0.7.3-vorton.1");
+    expect(first.appVersion).toBe("0.7.2");
+    expect(next.androidVersionCode).toBeGreaterThan(first.androidVersionCode);
+    expect(upstream.androidVersionCode).toBeGreaterThan(next.androidVersionCode);
+    expect(Number(next.iosBuildNumber)).toBeGreaterThan(Number(first.iosBuildNumber));
+    expect(() => getNativeReleaseVersion("0.7.2-vorton.100000")).toThrow("out of range");
+  });
+
   it("reserves the final iOS build slot for a stable release", () => {
     expect(getNativeReleaseVersion("0.2.6")).toEqual({
       appVersion: "0.2.6",

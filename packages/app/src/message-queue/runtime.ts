@@ -3,6 +3,7 @@ import type { QueueSnapshot } from "@getpaseo/protocol/message-queue";
 import { queryClient } from "@/data/query-client";
 import { queueAttachmentStore } from "./attachment-store";
 import { createOutboxStorage } from "./outbox-storage";
+import { notifyOutboxChange, watchOutboxChanges } from "./outbox-notifications";
 import { QueueOutbox } from "./outbox";
 import { useSessionStore } from "@/stores/session-store";
 import { isLegacyImportPending, legacyImportOperationId, withLegacyQueueLane } from "./legacy";
@@ -14,6 +15,7 @@ export const messageOutboxKey = (serverId: string) => ["messageOutbox", serverId
 const clients = new Map<string, DaemonClient>();
 const running = new Map<string, Promise<void>>();
 const requested = new Set<string>();
+const refreshGenerations = new Map<string, number>();
 const watched = new Map<string, Map<string, number>>();
 
 export function runLegacyQueueAction<T>(
@@ -90,6 +92,7 @@ export function applyQueueSnapshot(serverId: string, snapshot: QueueSnapshot): v
 }
 
 export const messageOutbox = new QueueOutbox(createOutboxStorage(), {
+  localChanged: notifyOutboxChange,
   async upload(serverId, attachment) {
     const base64 = await queueAttachmentStore.encodeBase64({ attachment: attachment.metadata });
     const binary = atob(base64);
@@ -134,8 +137,11 @@ export async function refreshMessageOutbox(
   serverId: string,
   error: string | null = null,
 ): Promise<void> {
+  const generation = (refreshGenerations.get(serverId) ?? 0) + 1;
+  refreshGenerations.set(serverId, generation);
   const records = (await messageOutbox.list()).filter((record) => record.serverId === serverId);
-  queryClient.setQueryData(messageOutboxKey(serverId), { records, error });
+  if (refreshGenerations.get(serverId) === generation)
+    queryClient.setQueryData(messageOutboxKey(serverId), { records, error });
 }
 
 export function flushMessageOutbox(serverId: string): Promise<void> {
@@ -167,6 +173,18 @@ export function flushMessageOutbox(serverId: string): Promise<void> {
 
 export function mountMessageQueueClient(serverId: string, client: DaemonClient): () => void {
   clients.set(serverId, client);
+  const stopWatchingOutbox = watchOutboxChanges((notice) => {
+    if (notice.serverId !== null && notice.serverId !== serverId) return;
+    void refreshMessageOutbox(serverId).catch(() => {});
+    if (
+      notice.flush &&
+      client.isConnected &&
+      client.getLastServerInfoMessage()?.features?.durableMessageQueue
+    )
+      void flushMessageOutbox(serverId);
+  });
+  // Render local pending records even when the host is offline or a request stalls.
+  void refreshMessageOutbox(serverId).catch(() => {});
   let synchronized = false;
   const synchronize = () => {
     if (!client.isConnected) {
@@ -192,6 +210,7 @@ export function mountMessageQueueClient(serverId: string, client: DaemonClient):
   const unsubscribeConnection = client.subscribeConnectionStatus(synchronize);
   synchronize();
   return () => {
+    stopWatchingOutbox();
     unsubscribe();
     unsubscribeStatus();
     unsubscribeConnection();

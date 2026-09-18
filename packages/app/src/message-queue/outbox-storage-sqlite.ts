@@ -1,6 +1,7 @@
 import type { ReplicaSqliteConnection } from "@/runtime/replica-cache/row-store-sqlite";
 import {
   encodeOutboxKey,
+  nextOutboxOrder,
   OutboxRecordSchema,
   validateOutboxExchange,
   type OutboxStorage,
@@ -50,16 +51,24 @@ export function createSqliteOutboxStorage(
           "SELECT payload FROM operations WHERE key = ?",
           [encoded],
         );
-        const revision = rows.length
-          ? OutboxRecordSchema.parse(JSON.parse(rows[0].payload)).revision
-          : null;
+        const current = rows.length ? OutboxRecordSchema.parse(JSON.parse(rows[0].payload)) : null;
+        const revision = current?.revision ?? null;
         if (revision !== expectedRevision) return;
-        if (value)
+        if (value) {
+          const order =
+            current?.order ??
+            (current
+              ? undefined
+              : nextOutboxOrder(
+                  (await tx.all<{ payload: string }>("SELECT payload FROM operations")).map((row) =>
+                    OutboxRecordSchema.parse(JSON.parse(row.payload)),
+                  ),
+                ));
           await tx.run("INSERT OR REPLACE INTO operations (key, payload) VALUES (?, ?)", [
             encoded,
-            JSON.stringify(value),
+            JSON.stringify({ ...value, order }),
           ]);
-        else await tx.run("DELETE FROM operations WHERE key = ?", [encoded]);
+        } else await tx.run("DELETE FROM operations WHERE key = ?", [encoded]);
         exchanged = true;
       });
       return exchanged;

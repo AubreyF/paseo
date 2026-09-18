@@ -4,7 +4,10 @@ import { MessageQueueStore } from "./store.js";
 
 export interface QueueDeliveryPort {
   history?(agentId: string): Promise<AgentStreamEvent[]>;
-  prepare(agentId: string, item: QueueItem): Promise<boolean>;
+  prepare(agentId: string, item: QueueItem, canStart: () => boolean): Promise<boolean>;
+  complete?(agentId: string, queueIsEmpty: () => Promise<boolean>): Promise<void>;
+  needsCompletion?(agentId: string): boolean;
+  abandonGoal?(agentId: string): Promise<void>;
   load(item: QueueItem): Promise<AgentPromptInput>;
   // Synchronous admission must reserve the foreground turn before yielding.
   // Null means no provider call occurred; the persisted claim may be released.
@@ -36,7 +39,7 @@ export class QueueDeliveryWorker {
     const current = this.running.get(agentId);
     if (current) return current;
     const run = this.pump(agentId)
-      .catch((error: unknown) => this.port.failed(error, agentId))
+      .catch((error: unknown) => this.reportFailure(error, agentId))
       .finally(() => {
         this.running.delete(agentId);
         // A state event can arrive after pump's final check but before this cleanup.
@@ -45,6 +48,22 @@ export class QueueDeliveryWorker {
       });
     this.running.set(agentId, run);
     return run;
+  }
+
+  private async reportFailure(error: unknown, agentId: string): Promise<void> {
+    const message = error instanceof Error ? error.message : "Queue delivery could not continue.";
+    try {
+      const snapshot = await this.store.setDeliveryError(agentId, message);
+      if (snapshot) this.port.changed(snapshot);
+    } catch (storageError) {
+      this.port.failed(storageError, agentId);
+    }
+    this.port.failed(error, agentId);
+  }
+
+  private async clearFailure(agentId: string): Promise<void> {
+    const snapshot = await this.store.setDeliveryError(agentId, undefined);
+    if (snapshot) this.port.changed(snapshot);
   }
 
   halt(agentId: string): boolean {
@@ -66,7 +85,7 @@ export class QueueDeliveryWorker {
       this.port.changed(await this.store.read(agentId));
       await this.deliver(agentId, item);
     })()
-      .catch((error: unknown) => this.port.failed(error, agentId))
+      .catch((error: unknown) => this.reportFailure(error, agentId))
       .finally(() => {
         this.immediate.delete(agentId);
         void this.wake(agentId);
@@ -104,8 +123,29 @@ export class QueueDeliveryWorker {
         this.port.changed(reconciled.snapshot);
         continue;
       }
-      if (!head || (snapshot.paused && !head.sendNow) || head.delivery.status !== "queued") return;
-      if (!head.sendNow && !(await this.port.prepare(agentId, head))) return;
+      if (!head) {
+        if (!snapshot.paused) {
+          await this.port.complete?.(agentId, async () => {
+            if (this.closed || this.halted.has(agentId)) return false;
+            const current = await this.store.read(agentId);
+            return (
+              !this.closed &&
+              !this.halted.has(agentId) &&
+              !current.paused &&
+              current.items.length === 0
+            );
+          });
+          await this.clearFailure(agentId);
+        }
+        return;
+      }
+      if ((snapshot.paused && !head.sendNow) || head.delivery.status !== "queued") return;
+      if (
+        !head.sendNow &&
+        !(await this.port.prepare(agentId, head, () => !this.closed && !this.halted.has(agentId)))
+      )
+        return;
+      await this.clearFailure(agentId);
       const item = await this.store.claim(agentId);
       if (!item || item.delivery.status !== "dispatching") return;
       this.port.changed(await this.store.read(agentId));
@@ -127,7 +167,10 @@ export class QueueDeliveryWorker {
         this.port.changed(await this.store.release(agentId, item));
         return false;
       }
-      if (item.sendNow && !(await this.port.prepare(agentId, item)))
+      if (
+        item.sendNow &&
+        !(await this.port.prepare(agentId, item, () => !this.closed && !this.halted.has(agentId)))
+      )
         throw new Error("The task is not ready to accept the selected message.");
       const prompt = await this.port.load(item);
       if (this.closed || this.halted.has(agentId)) {

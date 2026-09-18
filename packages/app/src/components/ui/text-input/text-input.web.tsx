@@ -5,8 +5,14 @@ import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
 interface WebTextInputElement extends TextInput {
   value?: string;
   setSelectionRange?: (start: number, end: number) => void;
-  addEventListener(type: "compositionstart" | "compositionend", listener: EventListener): void;
-  removeEventListener(type: "compositionstart" | "compositionend", listener: EventListener): void;
+  addEventListener(
+    type: "compositionstart" | "compositionend" | "input" | "change",
+    listener: EventListener,
+  ): void;
+  removeEventListener(
+    type: "compositionstart" | "compositionend" | "input" | "change",
+    listener: EventListener,
+  ): void;
 }
 
 export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextInputProps>(
@@ -28,6 +34,12 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     const onChangeTextRef = useRef(onChangeText);
     onChangeTextRef.current = onChangeText;
 
+    const handleChangeText = useCallback((nextText: string) => {
+      if (isComposingRef.current || nextText === textRef.current) return;
+      textRef.current = nextText;
+      onChangeTextRef.current?.(nextText);
+    }, []);
+
     useEffect(() => {
       const input = inputRef.current as WebTextInputElement | null;
       if (!input) return;
@@ -35,27 +47,26 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       const startComposition = () => {
         isComposingRef.current = true;
       };
+      const publishInput = () => handleChangeText(input.value ?? "");
       const endComposition = () => {
         isComposingRef.current = false;
-        const nextText = input.value ?? "";
-        if (nextText === textRef.current) return;
-        textRef.current = nextText;
-        onChangeTextRef.current?.(nextText);
+        publishInput();
       };
 
+      // Injected dictation can assign .value before emitting input. React's
+      // value tracker may suppress onChangeText for that already-tracked value.
+      // Observe the committed DOM value too, deduplicating both notification paths.
+      input.addEventListener("input", publishInput);
+      input.addEventListener("change", publishInput);
       input.addEventListener("compositionstart", startComposition);
       input.addEventListener("compositionend", endComposition);
       return () => {
+        input.removeEventListener("input", publishInput);
+        input.removeEventListener("change", publishInput);
         input.removeEventListener("compositionstart", startComposition);
         input.removeEventListener("compositionend", endComposition);
       };
-    }, []);
-
-    const handleChangeText = useCallback((nextText: string) => {
-      if (isComposingRef.current || nextText === textRef.current) return;
-      textRef.current = nextText;
-      onChangeTextRef.current?.(nextText);
-    }, []);
+    }, [handleChangeText]);
 
     useImperativeHandle(ref, () => ({
       focus: () => inputRef.current?.focus(),
@@ -63,9 +74,8 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       isFocused: () => document.activeElement === inputRef.current,
       getText: () => {
         const input = inputRef.current as WebTextInputElement | null;
-        const nextText = input?.value ?? textRef.current;
-        textRef.current = nextText;
-        return nextText;
+        // A read must not consume the next input/composition notification.
+        return input?.value ?? textRef.current;
       },
       replaceText: (nextText, selection) => {
         textRef.current = nextText;

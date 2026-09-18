@@ -11,6 +11,15 @@ import { providerConnectionAction } from "@/provider-usage/connection-action";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useVortonMode } from "@/vorton-mode";
 
+function resetLabel(resetsAt: string | null | undefined): string {
+  return (
+    formatResetLabel(resetsAt)
+      ?.replace(/^resets /, "resets in ")
+      .replace(/(\d+)d$/, (_, days) => `${days} ${days === "1" ? "day" : "days"}`) ??
+    "Reset time unavailable"
+  );
+}
+
 export function PresetUsageRail({
   view,
   now,
@@ -36,23 +45,27 @@ export function PresetUsageRail({
     usage,
   });
   const critical = Boolean(window && window.remainingPct < 5);
+  const showStatusBelow = vortonMode && Boolean(window && statusLabel);
+  const remaining = window?.remainingPct ?? 0;
   const fill = useMemo(
     () => [
       styles.fill,
       critical && styles.criticalFill,
-      { width: `${clampPct(window?.remainingPct ?? 0)}%` as `${number}%` },
+      { width: `${clampPct(remaining)}%` as `${number}%` },
     ],
-    [window?.remainingPct, critical],
+    [remaining, critical],
   );
-  const meterValue = useMemo(
-    () => ({ min: 0, max: 100, now: clampPct(window?.remainingPct ?? 0) }),
-    [window?.remainingPct],
-  );
-  const content = localStatus ? (
-    <Text style={styles.meta} numberOfLines={1}>
-      {localStatus}
-    </Text>
-  ) : (
+  const meterValue = useMemo(() => ({ min: 0, max: 100, now: clampPct(remaining) }), [remaining]);
+  if (localStatus) {
+    return (
+      <View style={styles.rail}>
+        <Text style={styles.meta} numberOfLines={1}>
+          {localStatus}
+        </Text>
+      </View>
+    );
+  }
+  const content = (
     <>
       {window ? (
         <>
@@ -67,27 +80,24 @@ export function PresetUsageRail({
           >
             <View style={fill} />
           </View>
-          <Text style={[styles.meta, critical && styles.critical]} numberOfLines={1}>
-            {statusLabel ??
-              formatResetLabel(window.resetsAt)
-                ?.replace(/^resets /, "resets in ")
-                .replace(/(\d+)d$/, (_, days) => `${days} ${days === "1" ? "day" : "days"}`) ??
-              "Reset time unavailable"}
-          </Text>
+          {!showStatusBelow ? (
+            <Text style={[styles.meta, critical && styles.critical]} numberOfLines={1}>
+              {statusLabel ?? resetLabel(window.resetsAt)}
+            </Text>
+          ) : null}
         </>
       ) : (
-        <Text style={[styles.meta, critical && styles.critical]} numberOfLines={1}>
+        <Text style={styles.meta} numberOfLines={1}>
           {formatProviderUsageSummary(usage) ?? statusLabel}
         </Text>
       )}
-      <View style={styles.resets}>
+      <View style={[styles.resets, vortonMode && styles.resetsVorton]}>
         {connectionAction ? (
           <ProviderReconnectControl
             usage={usage}
             serverId={serverId}
             providerId={providerId}
             name={name}
-            compact
           />
         ) : (
           <ProviderResetControl
@@ -102,7 +112,14 @@ export function PresetUsageRail({
       </View>
     </>
   );
-  return <View style={styles.rail}>{content}</View>;
+  const rail = <View style={[styles.rail, vortonMode && styles.railVorton]}>{content}</View>;
+  if (!showStatusBelow) return rail;
+  return (
+    <View style={styles.statusStack}>
+      {rail}
+      <Text style={[styles.status, critical && styles.critical]}>{statusLabel}</Text>
+    </View>
+  );
 }
 const styles = StyleSheet.create((theme) => ({
   rail: {
@@ -112,6 +129,17 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     gap: theme.spacing[2],
     height: Math.ceil(theme.fontSize.base * 1.4),
+  },
+  railVorton: {
+    height: "auto",
+    minHeight: Math.ceil(theme.fontSize.base * 1.4),
+  },
+  // Cached-usage warnings need the full row width, including when a reset badge is visible.
+  statusStack: { minWidth: 0, gap: theme.spacing[1] },
+  status: {
+    fontSize: theme.fontSize.base,
+    lineHeight: Math.ceil(theme.fontSize.base * 1.4),
+    color: theme.colors.foregroundMuted,
   },
   remaining: {
     flexShrink: 0,
@@ -129,6 +157,7 @@ const styles = StyleSheet.create((theme) => ({
     marginLeft: "auto",
     alignItems: "flex-end",
   },
+  resetsVorton: { width: "auto", height: "auto", justifyContent: "center" },
   meta: {
     flex: 1,
     minWidth: 0,

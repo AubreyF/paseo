@@ -86,6 +86,10 @@ buildNpmPackage {
     # Expo's web build pulls in some pre-bundled assets; ensure it doesn't try
     # to phone home during the build.
     CI = "1";
+  } // lib.optionalAttrs stdenv.hostPlatform.isDarwin {
+    # Preserve Node's fatal-error reason when a Metro worker aborts in CI.
+    # Reports omit environment variables and network interface information.
+    NODE_OPTIONS = "--report-on-fatalerror --report-exclude-env --report-exclude-network --report-filename=stderr";
   };
 
   buildPhase = ''

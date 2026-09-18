@@ -1,6 +1,7 @@
 import path from "node:path";
 import type pino from "pino";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { defaultForgeRegistry } from "../services/forge-registry.js";
 import type { CheckoutSnapshotFacts, CheckoutStatusGit } from "../utils/checkout-git.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import type { FileObserver } from "./file-observer/index.js";
@@ -210,9 +211,13 @@ async function flushPromises(): Promise<void> {
 describe("WorkspaceGitService checkout observation", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // These fixtures exercise Git observation, not host discovery. Real CLI
+    // probes for example.com can stall the initial refresh behind fake timers.
+    vi.spyOn(defaultForgeRegistry, "probeHost").mockResolvedValue(null);
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 

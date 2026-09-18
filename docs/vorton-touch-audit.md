@@ -6,7 +6,7 @@ September 10, 2026. Scope: sidebar navigation and workspace actions, footer over
 
 - Detect coarse pointer capability independently of viewport width. A wide iPad must not receive desktop hover interactions merely because its viewport is wide.
 - Keep workspace creation and row actions visible on touch devices. Prevent workspace hover cards and tooltip triggers from intercepting the first tap intended for an action.
-- Give semantic controls and dropdown triggers minimum 44 CSS pixel targets. Compact sidebar list rows use the desktop 32 pixel minimum to preserve list density; the sidebar toolbar retains its larger targets. Reserve space for trailing actions and increase footer slot spacing, preserving overflow icons.
+- Give semantic controls and dropdown triggers minimum 44 CSS pixel targets. Sidebar rows and their action buttons use that minimum on touch devices and in narrow windows with the full-screen sidebar. Increase the hitboxes themselves, preserving the spacing between rows. Reserve space for trailing actions and increase footer slot spacing, preserving overflow icons.
 - Apply a minimum UI base font size of 16 and message font size of 17 on Vorton touch devices. Preserve larger user settings and restore saved sizes when disabled. Input text has a 16 pixel minimum.
 - Provide visible keyboard focus and retain pinch zoom. Use dynamic viewport height in browser tabs and the large viewport in standalone mode. Preserve Apple installation metadata; runtime removal did not establish a fix for the reported iPhone gap.
 - Keep informational tooltips tappable. Touch pointer exit must not immediately dismiss them. Action tooltips remain bypassed so navigation takes one tap.

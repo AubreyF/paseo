@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/protocol",
-  "version": "0.7.2-vorton.19",
+  "version": "0.7.2-vorton.20",
   "description": "Paseo shared protocol schemas and wire types",
   "files": [
     "dist",

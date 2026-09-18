@@ -822,6 +822,7 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
       localStorage.setItem(
         "@paseo:create-agent-preferences",
         JSON.stringify({
+          vortonMode: false,
           provider: "mock",
           providerPreferences: {
             mock: { mode: "load-test", model: "ten-second-stream" },

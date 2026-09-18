@@ -14,6 +14,8 @@ The daemon binds container loopback. Compose publishes no host ports. Internal T
 
 Agent-managed workspace HTTPS previews use the [optional macOS broker](../docker/tailscale/README.md). Agent users do not receive Tailscale control privileges. Browser access to Paseo works without the broker.
 
+For an optional custom hostname, follow the [private-domain setup guide](private-domain.md).
+
 ## Lifecycle and recovery
 
 Use Paseo's service allocator and lifecycle. Persist a preview's allocated port and explicit restoration intent. Legacy HTTP recovery restores only unchanged registered services after a new daemon session, with bounded retries. The HTTPS broker conservatively requires explicit start after a service or daemon restart and removes stale owned mappings. A deliberate stop must remain stopped. Reject occupied ports without killing their owner.

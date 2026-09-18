@@ -31,18 +31,19 @@ No registry account, host Node or separate host Tailscale installation is needed
 
 ## Optional: your own domain with private access
 
-You can use an address such as `https://paseo.example.com` while keeping access restricted to your Tailscale network. Deliver the working installation address first. Set up a custom domain afterward when the user requests it.
+Use an address such as `https://paseo.example.com` while keeping the application accessible only through Tailscale. Give the user their working installation address first; configure a custom domain afterward when requested.
+
+The custom-domain gateway runs separately from the application. It consists of two containers: Tailscale provides private connectivity, and Caddy provides trusted HTTPS and forwards requests to the application. They share a network namespace and publish no host ports.
 
 **Instructions for agents:**
 
-1. Confirm the user’s chosen hostname, DNS provider, and authorized Tailscale users. Perform host administration through an authorized operator session.
-2. Create a dedicated private Tailscale endpoint with a Caddy reverse proxy. Preserve the existing installation and its working address. Publish no host ports and keep Tailscale Funnel disabled.
-3. Configure trusted HTTPS with DNS-01 validation and automatic renewal. Keep the DNS credential scoped to the required zone, available only to the certificate manager, and outside Git and logs. Persist certificate and Tailscale identity storage.
-4. Forward requests to the application’s stable service address. Configure the exact custom hostname and HTTPS origin in the application. Preserve authentication, origin checks, and upstream certificate verification.
-5. Verify the private listener and certificate before pointing DNS to its Tailscale address. For Cloudflare, use **DNS only**, with proxying disabled.
-6. Test the final address from an authorized device: page loading, login, and WebSocket connectivity. Confirm access is denied outside the authorized network. Fix failures before declaring success, then give the user the clickable address.
+1. Confirm the user’s hostname, DNS provider, and intended users. Follow the [custom-domain setup guide](docs/private-domain.md) and supplied templates through an authorized operator session.
+2. Preserve the existing installation and working address. Keep Tailscale Funnel disabled, retain application authentication, and configure the exact custom hostname and origin.
+3. Configure automatic certificate renewal through DNS validation. Keep credentials outside Git and logs, restrict them to the required DNS zone, and provide them only to Caddy. Persist certificate and Tailscale identity storage.
+4. Verify the gateway before pointing the hostname to its private Tailscale address. For Cloudflare, use **DNS only**.
+5. Verify the final address from an authorized device, including login and live connectivity. Confirm access is denied outside the authorized network. Fix failures before declaring success, then give the user the clickable address.
 
-Keep updates brief. If a check requires the user’s device or administrator access, request that specific action and state what remains unverified.
+Keep updates brief. Request only the specific user or administrator action needed to complete a blocked check. DNS records are public; access to the application remains private.
 
 ## Work and contribute
 

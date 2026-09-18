@@ -61,6 +61,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/android.md](docs/android.md)                                   | App variants, local/cloud builds, EAS workflows, version codes, F-Droid source builds and store metadata                       |
 | [docs/docker.md](docs/docker.md)                                     | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
 | [docs/container-tailscale.md](docs/container-tailscale.md)           | Reusable single-container Tailscale architecture and private installation boundaries                                           |
+| [docs/private-domain.md](docs/private-domain.md)                     | Optional custom-domain gateway: private Tailscale endpoint, Caddy templates, DNS, verification and removal                     |
 | [docs/host-handoff.md](docs/host-handoff.md)                         | Team handoff entry point, fresh installation, migration and acceptance                                                         |
 | [docs/instance-continuity.md](docs/instance-continuity.md)           | Persistent web publication and active-instance development                                                                     |
 | [docs/agent-presets.md](docs/agent-presets.md)                       | Saved presets, managed workers, quota lifecycle and implementation status                                                      |

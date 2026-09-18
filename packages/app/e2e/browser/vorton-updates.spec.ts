@@ -39,12 +39,14 @@ test("Vorton checks main and opens a separate update draft without overwriting e
   await page.goto("/settings/about");
   await expect(page.getByText("This device", { exact: true })).toBeVisible();
   await expect(page.getByTestId("vorton-updates-section")).toHaveCount(0);
+  await expect(page.getByTestId("settings-sidebar-version")).toHaveCount(0);
   expect(requests).toBe(0);
 
   await page.goto("/settings/general");
   await page.getByTestId("settings-vorton-mode").getByLabel("Vorton mode", { exact: true }).click();
   // Client navigation retains the selected mode; the initialization above only applies to document loads.
-  await page.getByTestId("settings-sidebar").getByText("About", { exact: true }).click();
+  await page.getByTestId("settings-sidebar-version").click();
+  await expect(page).toHaveURL(/\/settings\/about$/);
   await expect(page.getByTestId("vorton-update-status")).toHaveText(
     "3 new commits are available on main.",
   );

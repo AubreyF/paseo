@@ -1050,6 +1050,7 @@ function SettingsSidebar({
   layout,
 }: SettingsSidebarProps) {
   const vorton = useVortonMode();
+  const openAbout = useCallback(() => onSelectSection("about"), [onSelectSection]);
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const hosts = useHosts();
@@ -1198,9 +1199,15 @@ function SettingsSidebar({
             {sidebarBody}
           </ScrollView>
           {vorton && (
-            <Text style={sidebarStyles.version} testID="settings-sidebar-version">
-              {appVersionText}
-            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${appVersionText}, ${t("settings.sections.about")}`}
+              onPress={openAbout}
+              style={sidebarStyles.versionButton}
+              testID="settings-sidebar-version"
+            >
+              <Text style={sidebarStyles.version}>{appVersionText}</Text>
+            </Pressable>
           )}
         </View>
       ) : (
@@ -1801,6 +1808,10 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     textAlign: "center",
+  },
+  versionButton: {
+    minHeight: 44,
+    justifyContent: "center",
     padding: theme.spacing[3],
   },
   modeHeader: {

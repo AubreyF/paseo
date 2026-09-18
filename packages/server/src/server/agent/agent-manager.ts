@@ -3901,13 +3901,14 @@ export class AgentManager {
     }
     const providerMessageId = submittedRow?.providerMessageId ?? messageId;
 
-    if (mode !== "files") await this.messageQueueControl?.pause(agentId);
-    if (this.hasInFlightRun(agentId)) {
-      await this.cancelAgentRunBefore(agentId, "rewind");
-    }
-
-    const lock = this.runs.createPendingRun(agentId);
+    // Reserve an idle agent before queue persistence yields to new prompts.
+    let lock = this.hasInFlightRun(agentId) ? undefined : this.runs.createPendingRun(agentId);
     try {
+      if (mode !== "files") await this.messageQueueControl?.pause(agentId);
+      if (!lock) {
+        await this.cancelAgentRunBefore(agentId, "rewind");
+        lock = this.runs.createPendingRun(agentId);
+      }
       this.logger.info(
         { agentId, provider: agent.provider, messageId, mode },
         "agent.rewind.start",
@@ -3958,7 +3959,7 @@ export class AgentManager {
       );
       throw error;
     } finally {
-      this.runs.settleForegroundRun(agentId, lock.token);
+      if (lock) this.runs.settleForegroundRun(agentId, lock.token);
     }
   }
 

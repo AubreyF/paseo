@@ -150,6 +150,50 @@ describe("AgentManager rewind", () => {
     });
   });
 
+  test("blocks prompts while queue pause is pending", async () => {
+    const pauseGate = new RewindHistoryGate();
+    pauseGate.hold();
+    const { manager, session, agentId } = await createRewindHarness();
+    manager.setMessageQueueControl({
+      pause: () => pauseGate.wait(),
+      acceptedHistory: async () => [],
+      reconcileHistory: async () => {},
+      recordProviderMessageId: async () => {},
+      suppressHistoryRestoration: async () => {},
+    });
+    const rewind = manager.rewind(agentId, "message-1", "both");
+    try {
+      expect(() => manager.streamAgent(agentId, "too early")).toThrow("already has an active run");
+      expect(session.recordedRewinds).toEqual([]);
+    } finally {
+      pauseGate.release();
+      await rewind;
+    }
+    expect(session.recordedRewinds).toEqual([{ mode: "both", messageId: "message-1" }]);
+  });
+
+  test("releases the rewind lock when queue pause fails", async () => {
+    const { manager, session, agentId } = await createRewindHarness();
+    let failPause = true;
+    manager.setMessageQueueControl({
+      pause: async () => {
+        if (failPause) throw new Error("Queue pause persistence failed");
+      },
+      acceptedHistory: async () => [],
+      reconcileHistory: async () => {},
+      recordProviderMessageId: async () => {},
+      suppressHistoryRestoration: async () => {},
+    });
+    await expect(manager.rewind(agentId, "message-1", "both")).rejects.toThrow(
+      "Queue pause persistence failed",
+    );
+    expect(session.recordedRewinds).toEqual([]);
+    expect(manager.hasInFlightRun(agentId)).toBe(false);
+    failPause = false;
+    await manager.rewind(agentId, "message-1", "both");
+    expect(session.recordedRewinds).toEqual([{ mode: "both", messageId: "message-1" }]);
+  });
+
   test("blocks new prompts until the rehydrate epoch broadcasts", async () => {
     const historyGate = new RewindHistoryGate();
     historyGate.hold();

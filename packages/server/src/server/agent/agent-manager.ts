@@ -2487,6 +2487,7 @@ export class AgentManager {
       read: () => this.readAgentGoal(agentId),
       set: (status) => this.setAgentGoalUnlocked(agentId, { status }, { recordSubmission: false }),
       mayResume,
+      prepareResume: () => this.prepareQuotaReserveAdmission(agentId),
       mayRemainActive,
       canPause,
     };
@@ -2501,6 +2502,7 @@ export class AgentManager {
   async resumeGoalAfterQueuedMessages(
     agentId: string,
     queueIsEmpty: () => Promise<boolean>,
+    canContinueGoal: () => boolean = () => true,
   ): Promise<void> {
     await this.withQueueGoalMutation(agentId, () =>
       resumeGoalAfterQueue(
@@ -2509,14 +2511,15 @@ export class AgentManager {
           async () => {
             const agent = this.requireAgent(agentId);
             return (
+              canContinueGoal() &&
               agent.lifecycle === "idle" &&
               !this.hasInFlightRun(agentId) &&
               agent.pendingPermissions.size === 0 &&
               (await queueIsEmpty())
             );
           },
-          undefined,
-          queueIsEmpty,
+          canContinueGoal,
+          async () => canContinueGoal() && (await queueIsEmpty()),
         ),
       ),
     );
@@ -3574,9 +3577,10 @@ export class AgentManager {
     if (options?.reason === "manual") {
       try {
         await this.messageQueueControl?.pause(agentId);
+        await this.pauseGoalForManualStop(agentId);
       } catch (error) {
-        // The worker is halted synchronously before pause persistence. A full
-        // disk must not prevent the user's stop from reaching the provider.
+        // Queue persistence and goal confirmation failures must not prevent
+        // the user's stop from reaching the current provider turn.
         if (this.hasInFlightRun(agentId)) {
           await this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
         }
@@ -3589,6 +3593,23 @@ export class AgentManager {
       if (!hadRun) return { status: "not_running" };
     }
     return this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
+  }
+
+  private async pauseGoalForManualStop(agentId: string): Promise<void> {
+    if (!this.requireSessionAgent(agentId).session.goals) return;
+    await this.withQueueGoalMutation(agentId, async () => {
+      const current = await this.readAgentGoal(agentId);
+      if (current.status !== "ready")
+        throw new Error("The goal state could not be confirmed while stopping the task.");
+      if (current.goal?.status !== "active") return;
+      const paused = await this.setAgentGoalUnlocked(
+        agentId,
+        { status: "paused" },
+        { recordSubmission: false },
+      );
+      if (paused.status !== "ready" || paused.goal?.status !== "paused")
+        throw new Error("The goal pause could not be confirmed while stopping the task.");
+    });
   }
 
   private async stopQuotaReserveManually(agentId: string): Promise<boolean> {

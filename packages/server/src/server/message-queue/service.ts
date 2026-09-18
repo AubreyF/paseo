@@ -104,22 +104,18 @@ export class MessageQueueService {
     await this.initialize();
     const generation = this.stopGenerations.get(agentId) ?? 0;
     const pauseRequested = operation.kind === "pause" && operation.paused;
-    const temporarilyHalted = pauseRequested && this.delivery?.halt(agentId);
+    const releaseSuspension = pauseRequested ? this.delivery?.suspend(agentId) : undefined;
     let snapshot: QueueSnapshot;
     try {
       if (operation.kind === "enqueue" || operation.kind === "edit")
         await this.attachments.capture(operation.attachments);
       snapshot = await this.store.mutate(agentId, operation);
-      if (pauseRequested) await this.deliveryPort?.abandonGoal?.(agentId);
     } catch (error) {
-      // A rejected pause must not leave an invisible runtime stop behind. A
-      // concurrent manual stop remains authoritative even if this edit failed.
-      const current = await this.store.read(agentId);
-      const unchangedStop = generation === (this.stopGenerations.get(agentId) ?? 0);
-      if (temporarilyHalted && !current.paused && unchangedStop) this.delivery?.resume(agentId);
+      releaseSuspension?.();
       this.wake(agentId);
       throw error;
     }
+    releaseSuspension?.();
     this.publish(snapshot);
     this.resumeAfterMutation(agentId, operation, snapshot, generation);
     this.wake(agentId);

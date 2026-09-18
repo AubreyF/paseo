@@ -206,3 +206,39 @@ it("does not present stale or ambiguous ownership as enabled continuation", asyn
     queueContinuationHeld: false,
   });
 });
+
+it("retains continuation when new queued work arrives during native resume", async () => {
+  const { port, calls } = fixture();
+  await pauseGoalForQueue(port);
+  let empty = true;
+  port.mayResume = async () => empty;
+  port.mayRemainActive = async () => empty;
+  const set = port.set;
+  port.set = async (status) => {
+    const result = await set(status);
+    if (status === "active") empty = false;
+    return result;
+  };
+  await resumeGoalAfterQueue(port);
+  expect(calls).toEqual(["paused", "active", "paused"]);
+  expect(projectQueueGoalState(await port.read(), port.hold()).queueContinuationHeld).toBe(true);
+  empty = true;
+  port.set = set;
+  await resumeGoalAfterQueue(port);
+  expect(calls).toEqual(["paused", "active", "paused", "active"]);
+  expect(port.hold()).toBeUndefined();
+});
+
+it("keeps a confirmed hold retryable when quota preflight blocks goal resume", async () => {
+  const { port, calls } = fixture();
+  await pauseGoalForQueue(port);
+  port.prepareResume = async () => {
+    throw new Error("Quota reserve paused");
+  };
+  await expect(resumeGoalAfterQueue(port)).rejects.toThrow("Quota reserve paused");
+  expect(port.hold()?.phase).toBe("held");
+  expect(calls).toEqual(["paused"]);
+  port.prepareResume = async () => {};
+  await resumeGoalAfterQueue(port);
+  expect(calls).toEqual(["paused", "active"]);
+});

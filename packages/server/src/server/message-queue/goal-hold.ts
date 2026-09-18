@@ -38,6 +38,7 @@ export interface QueueGoalPort {
   read(): Promise<AgentGoalState>;
   set(status: "paused" | "active"): Promise<AgentGoalState>;
   mayResume(): Promise<boolean>;
+  prepareResume?(): Promise<void>;
   mayRemainActive(): Promise<boolean>;
   canPause(): boolean;
 }
@@ -93,6 +94,9 @@ export async function resumeGoalAfterQueue(port: QueueGoalPort): Promise<void> {
     await port.persist(undefined);
     return;
   }
+  // Quota preflight can fail without contacting the provider. Keep the confirmed
+  // hold retryable rather than recording an ambiguous native resume intent.
+  await port.prepareResume?.();
   if (!(await port.mayResume())) return;
   await port.persist({ ...hold, phase: "resuming" });
   if (!(await port.mayResume())) {
@@ -107,18 +111,22 @@ export async function resumeGoalAfterQueue(port: QueueGoalPort): Promise<void> {
     resumed.goal.status !== "active"
   )
     throw new Error("The goal resume could not be confirmed. Review the goal before continuing.");
-  // A stop received during the provider RPC must also stop goal continuation.
-  if (!(await port.mayRemainActive())) {
-    const paused = await port.set("paused");
-    if (
-      paused.status !== "ready" ||
-      !paused.goal ||
-      !sameGoal(hold.goal, paused.goal) ||
-      paused.goal.status !== "paused"
-    )
-      throw new Error("The goal stop could not be confirmed. Review the goal before continuing.");
-  }
+  // A stop or new queued work can arrive during the provider RPC.
+  if (!(await port.mayRemainActive())) return pauseResumedGoal(port, hold);
   await port.persist(undefined);
+}
+
+async function pauseResumedGoal(port: QueueGoalPort, hold: QueueGoalHold): Promise<void> {
+  const paused = await port.set("paused");
+  if (
+    paused.status !== "ready" ||
+    !paused.goal ||
+    !sameGoal(hold.goal, paused.goal) ||
+    paused.goal.status !== "paused"
+  )
+    throw new Error("The goal stop could not be confirmed. Review the goal before continuing.");
+  // New queued work still owns continuation; task Stop revokes that ownership.
+  await port.persist(port.canPause() ? { phase: "held", goal: paused.goal } : undefined);
 }
 
 /** Preserve native status while exposing who owns a confirmed temporary pause. */

@@ -1,7 +1,9 @@
 import { mergeQueueHistory } from "../message-queue/history.js";
 import {
   pauseGoalForQueue,
+  projectQueueGoalState,
   resumeGoalAfterQueue,
+  setGoalWithQueueOwnership,
   type QueueGoalHold,
   type QueueGoalPort,
 } from "../message-queue/goal-hold.js";
@@ -2375,7 +2377,7 @@ export class AgentManager {
     if (!agent.session.goals) throw new Error("This provider does not support goals");
     const state = await agent.session.goals.read();
     await this.drainSessionEvents(agentId);
-    return state;
+    return projectQueueGoalState(state, agent.queueGoalHold);
   }
 
   async setAgentGoal(
@@ -2383,10 +2385,13 @@ export class AgentManager {
     input: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput,
     options?: { clientMessageId?: string; recordSubmission?: boolean },
   ): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState> {
-    return this.withQueueGoalMutation(agentId, async () => {
-      await this.persistQueueGoalHold(agentId, undefined);
-      return this.setAgentGoalUnlocked(agentId, input, options);
-    });
+    return this.withQueueGoalMutation(agentId, () =>
+      setGoalWithQueueOwnership(
+        input,
+        this.queueGoalPort(agentId, async () => false),
+        (next) => this.setAgentGoalUnlocked(agentId, next, options),
+      ),
+    );
   }
 
   private async setAgentGoalUnlocked(
@@ -2457,6 +2462,7 @@ export class AgentManager {
     if (agent) agent.queueGoalHold = hold ? structuredClone(hold) : undefined;
     try {
       await this.registry?.updateQueueGoalHold(agentId, hold);
+      if (agent) this.emitState(agent, { persist: false });
     } catch (error) {
       if (agent) agent.queueGoalHold = previous;
       throw error;

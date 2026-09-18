@@ -3,6 +3,7 @@ import {
   AgentGoalSchema,
   type AgentGoal,
   type AgentGoalState,
+  type AgentGoalSetInput,
 } from "@getpaseo/protocol/agent-goals";
 
 export const QueueGoalHoldSchema = z.object({
@@ -10,6 +11,26 @@ export const QueueGoalHoldSchema = z.object({
   goal: AgentGoalSchema,
 });
 export type QueueGoalHold = z.infer<typeof QueueGoalHoldSchema>;
+
+/** A repeated Play press must not activate native continuation ahead of the queue. */
+export async function setGoalWithQueueOwnership(
+  input: AgentGoalSetInput,
+  port: Pick<QueueGoalPort, "read" | "hold" | "persist">,
+  set: (input: AgentGoalSetInput) => Promise<AgentGoalState>,
+): Promise<AgentGoalState> {
+  if (
+    input.status === "active" &&
+    input.objective === undefined &&
+    input.tokenBudget === undefined
+  ) {
+    const state = projectQueueGoalState(await port.read(), port.hold());
+    if (state.status === "ready" && state.queueContinuationHeld) return state;
+  }
+  // Explicit edits and pauses take ownership from the queue. Ambiguous or stale
+  // holds must also go through the provider, never appear as a successful resume.
+  await port.persist(undefined);
+  return set(input);
+}
 
 export interface QueueGoalPort {
   hold(): QueueGoalHold | undefined;
@@ -98,4 +119,22 @@ export async function resumeGoalAfterQueue(port: QueueGoalPort): Promise<void> {
       throw new Error("The goal stop could not be confirmed. Review the goal before continuing.");
   }
   await port.persist(undefined);
+}
+
+/** Preserve native status while exposing who owns a confirmed temporary pause. */
+export function projectQueueGoalState(
+  state: AgentGoalState,
+  hold: QueueGoalHold | undefined,
+): AgentGoalState {
+  if (state.status !== "ready") return state;
+  const goal = state.goal;
+  return {
+    ...state,
+    queueContinuationHeld: Boolean(
+      hold?.phase === "held" &&
+      goal?.status === "paused" &&
+      sameGoal(hold.goal, goal) &&
+      hold.goal.updatedAt === goal.updatedAt,
+    ),
+  };
 }

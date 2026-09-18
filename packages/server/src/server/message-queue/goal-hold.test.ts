@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { AgentGoal, AgentGoalState } from "@getpaseo/protocol/agent-goals";
 import {
   pauseGoalForQueue,
+  projectQueueGoalState,
   resumeGoalAfterQueue,
+  setGoalWithQueueOwnership,
   type QueueGoalHold,
   type QueueGoalPort,
 } from "./goal-hold.js";
@@ -54,6 +56,37 @@ function fixture(status: AgentGoal["status"] = "active") {
 }
 
 describe("queue goal ownership", () => {
+  it("keeps Play enabled while messages drain without resuming native continuation early", async () => {
+    const { port, calls } = fixture();
+    await pauseGoalForQueue(port);
+    const set = async () => port.set("active");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await setGoalWithQueueOwnership({ status: "active" }, port, set)).toMatchObject({
+        goal: { status: "paused" },
+        queueContinuationHeld: true,
+      });
+    }
+    expect(calls).toEqual(["paused"]);
+    await resumeGoalAfterQueue(port);
+    expect(calls).toEqual(["paused", "active"]);
+    expect(port.hold()).toBeUndefined();
+  });
+  it("honors an explicit Pause while the queue owns continuation", async () => {
+    const { port, calls } = fixture();
+    await pauseGoalForQueue(port);
+    await setGoalWithQueueOwnership({ status: "paused" }, port, () => port.set("paused"));
+    await resumeGoalAfterQueue(port);
+    expect(port.hold()).toBeUndefined();
+    expect(calls).toEqual(["paused", "paused"]);
+  });
+  it("requires provider confirmation when Play resolves an ambiguous queue hold", async () => {
+    const { port, calls } = fixture();
+    await pauseGoalForQueue(port);
+    await port.persist({ ...port.hold()!, phase: "pausing" });
+    await setGoalWithQueueOwnership({ status: "active" }, port, () => port.set("active"));
+    expect(calls).toEqual(["paused", "active"]);
+    expect(port.hold()).toBeUndefined();
+  });
   it("resumes only its own unchanged paused goal", async () => {
     const { port, calls } = fixture();
     await pauseGoalForQueue(port);
@@ -137,5 +170,39 @@ describe("queue goal ownership", () => {
     await resumeGoalAfterQueue(port);
     expect(calls).toEqual(["paused"]);
     expect(port.hold()).toBeUndefined();
+  });
+});
+
+it("projects queue-owned continuation and clears it after drain or explicit pause", async () => {
+  const { port } = fixture();
+  await pauseGoalForQueue(port);
+  const held = projectQueueGoalState(await port.read(), port.hold());
+  expect(held).toMatchObject({ goal: { status: "paused" }, queueContinuationHeld: true });
+  await resumeGoalAfterQueue(port);
+  expect(projectQueueGoalState(await port.read(), port.hold())).toMatchObject({
+    goal: { status: "active" },
+    queueContinuationHeld: false,
+  });
+  await pauseGoalForQueue(port);
+  await port.persist(undefined); // Explicit user pause abandons queue ownership.
+  await port.set("paused");
+  await resumeGoalAfterQueue(port);
+  expect(projectQueueGoalState(await port.read(), port.hold())).toMatchObject({
+    goal: { status: "paused" },
+    queueContinuationHeld: false,
+  });
+});
+it("does not present stale or ambiguous ownership as enabled continuation", async () => {
+  const { port, edit } = fixture();
+  await pauseGoalForQueue(port);
+  const held = port.hold()!;
+  for (const phase of ["pausing", "resuming"] as const) {
+    expect(projectQueueGoalState(await port.read(), { ...held, phase })).toMatchObject({
+      queueContinuationHeld: false,
+    });
+  }
+  edit();
+  expect(projectQueueGoalState(await port.read(), held)).toMatchObject({
+    queueContinuationHeld: false,
   });
 });

@@ -781,6 +781,7 @@ export interface ResolveAgentDefaultModeInput {
 
 export interface ProviderResetCreditSession {
   readonly canRedeem: boolean;
+  readonly canSelectCredit?: boolean;
   read(): Promise<ProviderResetSnapshot>;
   consume(attempt: ProviderResetAttempt): Promise<ProviderResetOutcome>;
   dispose(): Promise<void>;

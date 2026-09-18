@@ -1,4 +1,4 @@
-import type { AgentGoal } from "@getpaseo/protocol/agent-goals";
+import type { AgentGoal, AgentGoalState } from "@getpaseo/protocol/agent-goals";
 
 export const GOAL_STATUS_LABELS: Record<AgentGoal["status"], string> = {
   active: "Pursuing goal",
@@ -36,4 +36,17 @@ export function goalElapsedAt(
 // must finish before destructive controls become available.
 export function goalQueryConfirmed(isDraft: boolean, fetching: boolean, error: unknown): boolean {
   return isDraft || (!fetching && !error);
+}
+
+export function isGoalContinuationEnabled(state: AgentGoalState | undefined): boolean {
+  return (
+    state?.goal?.status === "active" ||
+    (state?.status === "ready" && state.queueContinuationHeld === true)
+  );
+}
+
+export function goalStatusLabel(state: AgentGoalState | undefined): string {
+  if (state?.status !== "ready") return "Goal state unconfirmed";
+  if (state.queueContinuationHeld) return "Goal waiting for queue";
+  return state.goal ? GOAL_STATUS_LABELS[state.goal.status] : "No goal";
 }

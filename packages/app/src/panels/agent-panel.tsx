@@ -1481,7 +1481,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   const vortonMode = useVortonMode();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const hasVisibleComposerTracks =
-    hasActiveComposer && (hasVisibleAgentTracks || (!vortonMode && hasWorkspaceDiffStat));
+    hasActiveComposer && !vortonMode && (hasVisibleAgentTracks || hasWorkspaceDiffStat);
   const bottomOverlayTailClearance = hasVisibleComposerTracks
     ? resolveComposerTrackTailClearance(isCompactFormFactor)
     : 0;
@@ -1535,6 +1535,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
 
   return (
     <AgentStreamView
+      showTaskCards
       ref={streamViewRef}
       agentId={agent.id}
       serverId={serverId}
@@ -1637,6 +1638,7 @@ function ActiveAgentComposer({
     { initialIsBelow: isCompactFormFactor },
   );
   const paneContext = usePaneContext();
+  const useVortonCards = useVortonMode();
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const { workspaceId, tabId, retargetCurrentTab } = paneContext;
   const { archiveAgent } = useArchiveAgent();
@@ -1716,6 +1718,7 @@ function ActiveAgentComposer({
   return (
     <View style={inputAreaStyle} onLayout={onInputAreaLayout}>
       <Composer
+        taskCardsInHistory={useVortonCards}
         agentId={agentId}
         serverId={serverId}
         workspaceId={workspaceId}

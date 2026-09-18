@@ -103,6 +103,28 @@ describe("ComposerTextInput web IME composition", () => {
     },
   );
 
+  it("publishes silent dictation replacements and clearing without input or key events", async () => {
+    const recorder = createTextRecorder();
+    const mounted = mountInput(recorder.onChangeText);
+    mounted.textarea.focus();
+    mounted.textarea.value = "Silent dictation";
+    await expect.poll(() => recorder.changes).toEqual(["Silent dictation"]);
+    mounted.textarea.value = "";
+    await expect.poll(() => recorder.changes).toEqual(["Silent dictation", ""]);
+  });
+
+  it("does not publish silent intermediate IME composition", async () => {
+    const recorder = createTextRecorder();
+    const mounted = mountInput(recorder.onChangeText);
+    mounted.textarea.focus();
+    act(() => dispatchComposition(mounted.textarea, "compositionstart"));
+    mounted.textarea.value = "未完";
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    expect(recorder.changes).toEqual([]);
+    act(() => dispatchComposition(mounted.textarea, "compositionend"));
+    expect(recorder.changes).toEqual(["未完"]);
+  });
+
   it("keeps locally typed text when its parent rerenders with a stale value", () => {
     const recorder = createTextRecorder();
     const mounted = mountInput(recorder.onChangeText);

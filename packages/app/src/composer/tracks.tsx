@@ -191,6 +191,8 @@ export function ComposerTrackActions({
 export interface ComposerTrackRowProps {
   /** A function child receives the row's own hover/press state, for hover-revealed actions. */
   children: ReactNode | ((state: { active: boolean }) => ReactNode);
+  /** Inline cards use ordinary navigation; popover rows select and dismiss their menu. */
+  inline?: boolean;
   /** Rows that open something are pressable and fill on press or hover. A read-only row is not. */
   onPress?: () => void;
   /**
@@ -216,30 +218,38 @@ export interface ComposerTrackRowProps {
  * and on iOS the wait for UIKit to finish tearing the sheet down before the action runs — belongs
  * to the engine that opened it. The row only decides whether choosing it ends the panel.
  */
-export function ComposerTrackRow({
+export function ComposerTrackRow(props: ComposerTrackRowProps): ReactElement {
+  return props.inline ? <TrackRowContent {...props} /> : <MenuTrackRow {...props} />;
+}
+
+function MenuTrackRow(props: ComposerTrackRowProps): ReactElement {
+  const { selectItem } = useMenuContext("ComposerTrackRow");
+  const onPress = useCallback(
+    () => selectItem(props.onPress, props.closeOnSelect ?? true),
+    [selectItem, props.onPress, props.closeOnSelect],
+  );
+  return <TrackRowContent {...props} onPress={props.onPress ? onPress : undefined} />;
+}
+
+function TrackRowContent({
   children,
   onPress,
-  closeOnSelect = true,
+  inline,
   disabled = false,
   accessibilityLabel,
   testID,
 }: ComposerTrackRowProps): ReactElement {
-  const { selectItem } = useMenuContext("ComposerTrackRow");
   const [hovered, setHovered] = useState(false);
   const handlePointerEnter = useCallback(() => setHovered(true), []);
   const handlePointerLeave = useCallback(() => setHovered(false), []);
-  const handleSelect = useCallback(
-    () => selectItem(onPress, closeOnSelect),
-    [closeOnSelect, onPress, selectItem],
-  );
 
   const renderRow = useCallback(
     (active: boolean) => (
-      <View style={active ? styles.rowActive : styles.row}>
+      <View style={[active ? styles.rowActive : styles.row, inline && styles.inlineRow]}>
         {typeof children === "function" ? children({ active }) : children}
       </View>
     ),
-    [children],
+    [children, inline],
   );
   const renderPressed = useCallback(
     ({ pressed }: { pressed: boolean }) => renderRow(hovered || pressed),
@@ -257,7 +267,7 @@ export function ComposerTrackRow({
         accessibilityLabel={accessibilityLabel}
         testID={testID}
         disabled={disabled}
-        onPress={handleSelect}
+        onPress={onPress}
       >
         {renderPressed}
       </Pressable>
@@ -344,6 +354,12 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: theme.spacing[2],
       paddingVertical: theme.spacing[1],
       borderRadius: theme.borderRadius.md,
+    },
+    inlineRow: {
+      minHeight: 40,
+      marginHorizontal: 0,
+      paddingLeft: theme.spacing[2],
+      paddingRight: theme.spacing[1],
     },
     rowActive: {
       flexDirection: "row",

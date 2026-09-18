@@ -2,24 +2,12 @@ import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef 
 import { TextInput } from "react-native";
 import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
 
-interface WebTextInputElement extends TextInput {
-  value?: string;
-  setSelectionRange?: (start: number, end: number) => void;
-  addEventListener(
-    type: "compositionstart" | "compositionend" | "input" | "change",
-    listener: EventListener,
-  ): void;
-  removeEventListener(
-    type: "compositionstart" | "compositionend" | "input" | "change",
-    listener: EventListener,
-  ): void;
-}
-
 export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextInputProps>(
   function EditingTextInputWeb(allProps, ref) {
     const {
       initialValue = "",
       onChangeText,
+      onExternalTextChange,
       onPasteImages: _,
       onPasteError: __,
       variant: ___,
@@ -33,6 +21,8 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     const isComposingRef = useRef(false);
     const onChangeTextRef = useRef(onChangeText);
     onChangeTextRef.current = onChangeText;
+    const externalChangeRef = useRef(onExternalTextChange);
+    externalChangeRef.current = onExternalTextChange;
 
     const handleChangeText = useCallback((nextText: string) => {
       if (isComposingRef.current || nextText === textRef.current) return;
@@ -41,13 +31,22 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     }, []);
 
     useEffect(() => {
-      const input = inputRef.current as WebTextInputElement | null;
+      const input = inputRef.current as unknown as HTMLTextAreaElement | null;
       if (!input) return;
 
       const startComposition = () => {
         isComposingRef.current = true;
       };
       const publishInput = () => handleChangeText(input.value ?? "");
+      // Assigning .value does not emit input or trigger a MutationObserver.
+      // Check only the focused, visible editor, and publish only actual changes.
+      const reconcileExternalValue = () => {
+        if (document.hidden || document.activeElement !== input || isComposingRef.current) return;
+        if ((input.value ?? "") === textRef.current) return;
+        externalChangeRef.current?.();
+        publishInput();
+      };
+      const reconciliation = window.setInterval(reconcileExternalValue, 200);
       const endComposition = () => {
         isComposingRef.current = false;
         publishInput();
@@ -61,6 +60,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       input.addEventListener("compositionstart", startComposition);
       input.addEventListener("compositionend", endComposition);
       return () => {
+        window.clearInterval(reconciliation);
         input.removeEventListener("input", publishInput);
         input.removeEventListener("change", publishInput);
         input.removeEventListener("compositionstart", startComposition);
@@ -73,13 +73,13 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       blur: () => inputRef.current?.blur(),
       isFocused: () => document.activeElement === inputRef.current,
       getText: () => {
-        const input = inputRef.current as WebTextInputElement | null;
+        const input = inputRef.current as unknown as HTMLTextAreaElement | null;
         // A read must not consume the next input/composition notification.
         return input?.value ?? textRef.current;
       },
       replaceText: (nextText, selection) => {
         textRef.current = nextText;
-        const input = inputRef.current as WebTextInputElement | null;
+        const input = inputRef.current as unknown as HTMLTextAreaElement | null;
         if (input && "value" in input) input.value = nextText;
         if (selection && typeof input?.setSelectionRange === "function") {
           input.setSelectionRange(selection.start, selection.end);

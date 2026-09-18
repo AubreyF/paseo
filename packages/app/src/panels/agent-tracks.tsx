@@ -1,3 +1,7 @@
+import { View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import { useSubagentsForParent, useArchiveFinishedSubagents } from "@/subagents";
+import { useHasPluginComposerPills } from "@/plugins";
 import { memo, useCallback, type ReactElement } from "react";
 import { useVortonMode } from "@/vorton-mode";
 import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
@@ -23,11 +27,8 @@ import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
 import { openComposerChanges } from "@/workspace-tabs/open-supporting-view";
 
 /**
- * The pane's ambient context — workspace changes, subagents, and tasks — as a row of pills above
- * the composer.
- *
- * The row shares the composer's keyboard transform and owns the space between itself and the
- * transcript. Each pill owns its action while tab placement stays behind the workspace boundary.
+ * Paseo keeps the composer pill rail. Vorton renders the same context and actions in
+ * the conversation footer, so navigation and lifecycle behavior have one owner.
  */
 export const AgentTracks = memo(function AgentTracks({
   serverId,
@@ -39,7 +40,9 @@ export const AgentTracks = memo(function AgentTracks({
   archiveFinishedStatus,
   onArchiveFinished,
   hasPluginComposerPills,
+  inline = false,
 }: {
+  inline?: boolean;
   serverId: string;
   workspaceId: string;
   agentId: string;
@@ -114,8 +117,10 @@ export const AgentTracks = memo(function AgentTracks({
     });
   }, [cwd, isCompact, openInSidePane, serverId, workspaceKey]);
 
+  if (vortonMode !== inline) return null;
+
   if (
-    (vortonMode || !hasWorkspaceDiffStat) &&
+    (inline || !hasWorkspaceDiffStat) &&
     !hasAgentTracks({
       subagentRows,
       tasks,
@@ -124,6 +129,35 @@ export const AgentTracks = memo(function AgentTracks({
     })
   ) {
     return null;
+  }
+
+  if (inline) {
+    return (
+      <View style={styles.cards} testID="agent-history-tracks">
+        {hasPluginComposerPills ? (
+          <View style={styles.pills} testID="agent-history-plugin-pills">
+            <PluginComposerPills
+              serverId={serverId}
+              workspaceId={workspaceId}
+              agentId={agentId}
+              compact={isCompact}
+            />
+          </View>
+        ) : null}
+        <SubagentsTrack
+          inline
+          serverId={serverId}
+          rows={subagentRows}
+          onOpenSubagent={handleOpenSubagent}
+          onOpenProviderSubagent={handleOpenProviderSubagent}
+          onArchiveSubagent={archiveSubagent}
+          onArchiveFinished={onArchiveFinished}
+          archiveFinishedStatus={archiveFinishedStatus}
+          onDetachSubagent={canDetachSubagents ? detachSubagent : undefined}
+        />
+        <AgentTaskList inline tasks={tasks} />
+      </View>
+    );
   }
 
   return (
@@ -174,3 +208,43 @@ export function hasAgentTracks({
     hasPluginComposerPills
   );
 }
+
+export function AgentHistoryTracks({
+  serverId,
+  workspaceId,
+  agentId,
+  cwd,
+}: {
+  serverId: string;
+  workspaceId: string;
+  agentId: string;
+  cwd: string;
+}) {
+  const subagentRows = useSubagentsForParent({ serverId, parentAgentId: agentId });
+  const tasks = useSessionStore((state) => state.sessions[serverId]?.agentTasks.get(agentId));
+  const archive = useArchiveFinishedSubagents({
+    serverId,
+    parentAgentId: agentId,
+    rows: subagentRows,
+  });
+  const hasPluginComposerPills = useHasPluginComposerPills(serverId, workspaceId, agentId);
+  return (
+    <AgentTracks
+      inline
+      serverId={serverId}
+      workspaceId={workspaceId}
+      agentId={agentId}
+      cwd={cwd}
+      subagentRows={subagentRows}
+      tasks={tasks}
+      archiveFinishedStatus={archive.status}
+      onArchiveFinished={archive.archiveFinished}
+      hasPluginComposerPills={hasPluginComposerPills}
+    />
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  cards: { gap: theme.spacing[2] },
+  pills: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[1], alignItems: "center" },
+}));

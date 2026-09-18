@@ -41,6 +41,8 @@ export interface DraggableListProps<T> {
    * passed to `renderItem` (prevents nested lists from fighting).
    */
   useDragHandle?: boolean;
+  /** Dedicated handles can start touch drags on movement without a hold. */
+  touchActivation?: "hold" | "movement";
   refreshing?: boolean;
   onRefresh?: () => void;
   /** Fill remaining space when content is smaller than container */

@@ -3,6 +3,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { useTranslation } from "react-i18next";
 import { DiffStat } from "@/components/diff-stat";
+import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { Button } from "@/components/ui/button";
 import { useVisibleWorkspaceDiffStat } from "@/composer/workspace-diff-stat";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -46,6 +47,22 @@ export function WorkspaceDiffCounter({
   }, [diffStat]);
   if (!vortonMode || !diffStat || !cwd) return null;
 
+  if (isCompact) {
+    return (
+      <HeaderToggleButton
+        testID="workspace-diff-counter"
+        accessibilityLabel={t("workspace.git.diff.openChangesTab")}
+        tooltipLabel={t("workspace.git.diff.openChangesTab")}
+        tooltipKeys={[]}
+        tooltipSide="bottom"
+        onPress={handlePress}
+        style={styles.compactToolbar}
+      >
+        {counter}
+      </HeaderToggleButton>
+    );
+  }
+
   return (
     <Button
       testID="workspace-diff-counter"
@@ -60,6 +77,7 @@ export function WorkspaceDiffCounter({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  compactToolbar: { width: "auto", paddingHorizontal: theme.spacing[2] },
   toolbar: {
     height: HEADER_CONTROL_HEIGHT,
     minHeight: HEADER_CONTROL_HEIGHT,

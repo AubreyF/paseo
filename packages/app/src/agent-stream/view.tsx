@@ -1,3 +1,6 @@
+import { QueueDragScrollContext, useQueueDragScroll } from "@/message-queue/drag-scroll";
+import { AgentTaskCards } from "./task-cards";
+import { JumpToLatest } from "./jump-to-latest";
 import { useVortonMode } from "@/vorton-mode";
 import { isQuotaExhaustionMessage } from "./quota-notice";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -112,12 +115,54 @@ import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 
+function StreamJumpButton({
+  vorton,
+  serverId,
+  agentId,
+  onPress,
+  label,
+}: {
+  vorton: boolean;
+  serverId?: string;
+  agentId: string;
+  onPress: () => void;
+  label: string;
+}) {
+  if (vorton && serverId)
+    return <JumpToLatest serverId={serverId} agentId={agentId} onPress={onPress} />;
+  return (
+    <Pressable
+      style={stylesheet.scrollToBottomButton}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      testID="scroll-to-bottom-button"
+    >
+      <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
+    </Pressable>
+  );
+}
+
+function shouldRenderTaskCards(
+  show: boolean | undefined,
+  vorton: boolean,
+  serverId: string | undefined,
+): boolean {
+  return !!show && vorton && !!serverId;
+}
+
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
   turnFooter: ReactNode;
   bottomOverlayInset: number;
+  taskCards: ReactNode;
 }): ReactNode {
-  if (!input.pendingPermissions && !input.turnFooter && input.bottomOverlayInset === 0) {
+  if (
+    !input.pendingPermissions &&
+    !input.turnFooter &&
+    !input.taskCards &&
+    input.bottomOverlayInset === 0
+  ) {
     return null;
   }
   return (
@@ -128,6 +173,7 @@ function renderLiveAuxiliaryNode(input: {
           <View style={stylesheet.listHeaderContent}>{input.pendingPermissions}</View>
         </View>
       ) : null}
+      {input.taskCards ? <View style={stylesheet.contentWrapper}>{input.taskCards}</View> : null}
       {input.bottomOverlayInset > 0 ? (
         <BottomOverlayInset height={input.bottomOverlayInset} />
       ) : null}
@@ -275,6 +321,8 @@ export interface AgentStreamViewHandle {
 }
 
 export interface AgentStreamViewProps {
+  showTaskCards?: boolean;
+  trailingCards?: ReactNode;
   agentId: string;
   serverId?: string;
   context: AgentScreenAgent;
@@ -331,6 +379,8 @@ function resolveBottomOverlayControlOffset(clearance: number | undefined): numbe
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
   function AgentStreamView(
     {
+      showTaskCards,
+      trailingCards,
       agentId,
       serverId,
       context,
@@ -1070,9 +1120,30 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return renderLiveAuxiliaryNode({
         pendingPermissions: auxiliary.pendingPermissions,
         turnFooter: auxiliary.turnFooter,
+        taskCards:
+          trailingCards ??
+          (shouldRenderTaskCards(showTaskCards, vortonMode, serverId) ? (
+            <AgentTaskCards
+              serverId={serverId!}
+              agentId={agentId}
+              workspaceId={context.workspaceId}
+              cwd={context.cwd}
+            />
+          ) : null),
         bottomOverlayInset,
       });
-    }, [auxiliary.pendingPermissions, auxiliary.turnFooter, bottomOverlayTailClearance]);
+    }, [
+      auxiliary.pendingPermissions,
+      auxiliary.turnFooter,
+      bottomOverlayTailClearance,
+      showTaskCards,
+      trailingCards,
+      vortonMode,
+      serverId,
+      agentId,
+      context.cwd,
+      context.workspaceId,
+    ]);
 
     const renderers = useMemo<StreamSegmentRenderers>(
       () => ({
@@ -1092,6 +1163,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const streamScrollEnabled =
       !streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion() ||
       expandedInlineToolCallIds.size === 0;
+    const queueDragScroll = useQueueDragScroll(streamScrollEnabled);
     const historyRowRevision = useMemo(
       () => ({
         contentById: projectedToolCalls.historyGroupUpdatesByHostId,
@@ -1104,30 +1176,32 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     return (
       <ToolCallSheetProvider>
         <AssistantSelectionCopySurface style={stylesheet.container}>
-          <MessageOuterSpacingProvider disableOuterSpacing>
-            {streamRenderStrategy.render({
-              agentId,
-              segments: renderModel.segments,
-              historyRowRevision,
-              liveHeadRowRevision: expandedToolCallGroupIds,
-              boundary,
-              renderers,
-              listEmptyComponent,
-              viewportRef,
-              routeBottomAnchorRequest,
-              isAuthoritativeHistoryReady,
-              onNearBottomChange: setIsNearBottom,
-              onReadingPositionChange: chatOutline.reportReadingPosition,
-              onNearHistoryStart: loadOlder,
-              isLoadingOlderHistory: isLoadingOlder,
-              hasOlderHistory: hasOlder,
-              olderHistoryProgressKey: progressKey,
-              scrollEnabled: streamScrollEnabled,
-              listStyle: stylesheet.list,
-              baseListContentContainerStyle: stylesheet.listContentContainer,
-              forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
-            })}
-          </MessageOuterSpacingProvider>
+          <QueueDragScrollContext.Provider value={queueDragScroll.onDragActive}>
+            <MessageOuterSpacingProvider disableOuterSpacing>
+              {streamRenderStrategy.render({
+                agentId,
+                segments: renderModel.segments,
+                historyRowRevision,
+                liveHeadRowRevision: expandedToolCallGroupIds,
+                boundary,
+                renderers,
+                listEmptyComponent,
+                viewportRef,
+                routeBottomAnchorRequest,
+                isAuthoritativeHistoryReady,
+                onNearBottomChange: setIsNearBottom,
+                onReadingPositionChange: chatOutline.reportReadingPosition,
+                onNearHistoryStart: loadOlder,
+                isLoadingOlderHistory: isLoadingOlder,
+                hasOlderHistory: hasOlder,
+                olderHistoryProgressKey: progressKey,
+                scrollEnabled: queueDragScroll.scrollEnabled,
+                listStyle: stylesheet.list,
+                baseListContentContainerStyle: stylesheet.listContentContainer,
+                forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
+              })}
+            </MessageOuterSpacingProvider>
+          </QueueDragScrollContext.Provider>
           <ChatOutlineRail
             prompts={chatOutline.prompts}
             activePrompt={chatOutline.activePrompt}
@@ -1136,15 +1210,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           {(!isNearBottom || isTimelineDetached) && (
             <View style={scrollToBottomContainerStyle} pointerEvents="box-none">
               <Animated.View entering={scrollIndicatorFadeIn} exiting={scrollIndicatorFadeOut}>
-                <Pressable
-                  style={stylesheet.scrollToBottomButton}
+                <StreamJumpButton
+                  vorton={vortonMode}
+                  serverId={serverId}
+                  agentId={agentId}
                   onPress={scrollToBottom}
-                  accessibilityRole="button"
-                  accessibilityLabel={t("agentStream.scrollToBottom")}
-                  testID="scroll-to-bottom-button"
-                >
-                  <ChevronDown size={24} color={stylesheet.scrollToBottomIcon.color} />
-                </Pressable>
+                  label={t("agentStream.scrollToBottom")}
+                />
               </Animated.View>
             </View>
           )}
@@ -1247,6 +1319,8 @@ function agentStreamViewPropsEqual(
 ): boolean {
   const reasons: string[] = [];
   if (left.agentId !== right.agentId) reasons.push("agentId");
+  if (left.trailingCards !== right.trailingCards) reasons.push("trailingCards");
+  if (left.showTaskCards !== right.showTaskCards) reasons.push("showTaskCards");
   if (left.serverId !== right.serverId) reasons.push("serverId");
   reasons.push(...collectAgentScreenAgentDiffs(left.context, right.context));
   if (left.streamItems !== right.streamItems) reasons.push("streamItems");

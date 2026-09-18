@@ -29,6 +29,21 @@ The installer builds locally, creates private storage and starts the container. 
 
 No registry account, host Node or separate host Tailscale installation is needed. Existing checkout? See [installation details](docker/multiplex/README.md).
 
+## Optional: your own domain with private access
+
+You can use an address such as `https://paseo.example.com` while keeping access restricted to your Tailscale network. Deliver the working installation address first. Set up a custom domain afterward when the user requests it.
+
+**Instructions for agents:**
+
+1. Confirm the user’s chosen hostname, DNS provider, and authorized Tailscale users. Perform host administration through an authorized operator session.
+2. Create a dedicated private Tailscale endpoint with a Caddy reverse proxy. Preserve the existing installation and its working address. Publish no host ports and keep Tailscale Funnel disabled.
+3. Configure trusted HTTPS with DNS-01 validation and automatic renewal. Keep the DNS credential scoped to the required zone, available only to the certificate manager, and outside Git and logs. Persist certificate and Tailscale identity storage.
+4. Forward requests to the application’s stable service address. Configure the exact custom hostname and HTTPS origin in the application. Preserve authentication, origin checks, and upstream certificate verification.
+5. Verify the private listener and certificate before pointing DNS to its Tailscale address. For Cloudflare, use **DNS only**, with proxying disabled.
+6. Test the final address from an authorized device: page loading, login, and WebSocket connectivity. Confirm access is denied outside the authorized network. Fix failures before declaring success, then give the user the clickable address.
+
+Keep updates brief. If a check requires the user’s device or administrator access, request that specific action and state what remains unverified.
+
 ## Work and contribute
 
 Agents can access the container's home and mounted projects. Keep personal files, Docker's socket and other users' homes outside those mounts. See the [security boundaries](docs/container-tailscale.md).

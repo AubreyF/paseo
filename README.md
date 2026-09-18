@@ -1,6 +1,27 @@
 # Paseo with Vorton
 
-Run your coding agents in a container and control them from your browser or phone. This fork adds multiple provider accounts, usage reporting, named presets, bounded local workers and a visual goal bar for Codex. Vorton and standard Paseo share the same installation.
+Run multiple Codex accounts at the same time, choose a profile for each task, and control your agents from your browser or phone. Vorton builds on [Paseo](https://github.com/getpaseo/paseo) for developers managing agents across accounts and projects, adding account switching, usage visibility, reusable profiles, Codex goals, shared message queues and local workers. You keep Paseo's workspaces, terminals and support for Claude Code, Codex, GitHub Copilot, OpenCode and Pi, with your existing subscriptions and endpoints supplying the models.
+
+## Multiple accounts, one place to work
+
+Connect your Codex accounts once and run tasks under different accounts simultaneously. Choose the account for each task without repeatedly signing out and back in. Keep work moving across accounts while seeing which account each profile uses and when its usage limits reset.
+
+Save named profiles that combine an account, model, reasoning level, permissions and instructions. Switch from a fast everyday profile to a deeper reasoning profile, or choose a different account for your next task, directly from the composer. Set a default for new tasks and use short profile nicknames on smaller screens.
+
+<img width="1200" height="686" alt="Animated demo of Vorton account switching and profiles" src="https://github.com/user-attachments/assets/ae3f9872-f3d6-4efa-8f23-a032aa3133de" />
+
+_Account switching and profiles in action._
+
+For an existing task, changing profiles opens a handoff you can review and edit before starting a successor task. The original stays available. This transfers selected conversation context, not the provider's entire session history.
+
+## More control over your agents
+
+- **Give agents room to work without handing them your whole machine.** The installer automatically builds and starts a local container for Vorton and your agents. This limits the damage an accidental destructive command can do to your host: agents can modify the container home and mounted projects, while unmounted personal files stay outside their filesystem access. Keep backups of mounted projects; the container does not protect those files from deletion. See the [security boundaries](docs/container-tailscale.md).
+- **See your available capacity.** Check account usage and reset times beside your profiles. Use existing reset credits where the provider supports them.
+- **Give Codex a goal.** Set an objective with an optional token budget. Follow progress, elapsed time and token usage from the goal bar, and pause or resume when you need to intervene.
+- **Line up the next steps.** Queue messages with files or images, then edit, reorder, pause or send them from another connected device. The host owns the queue and can keep delivering messages after you close the client. Saved queues do not guarantee uninterrupted execution of an active turn during a host restart.
+- **Put local workers to work.** Configure a Pi profile for a local or private OpenAI-compatible endpoint, then let a supervisor delegate work with a limit on concurrent workers.
+- **Work from your phone or tablet.** Compact profiles, visible touch controls and responsive task views keep account selection and task management within reach.
 
 ## Install
 
@@ -25,7 +46,7 @@ Provider authentication happens afterward in the web interface. Do not ask the u
 
 Keep progress messages brief. If verification requires access only the user has, request that specific check and state what remains unverified.
 
-The installer builds locally, creates private storage and starts the container. Complete the Tailscale login, open the printed HTTPS address, and use the password in `$HOME/paseo-instance/.env`. Enable **Vorton** in the sidebar and connect your provider accounts.
+The installer builds locally, creates private storage and starts the container. Complete the Tailscale login, open the printed HTTPS address, and use the password in `$HOME/paseo-instance/.env`. Connect your provider accounts in the web interface. Vorton is enabled by default on a fresh installation.
 
 No registry account, host Node or separate host Tailscale installation is needed. Existing checkout? See [installation details](docker/multiplex/README.md).
 
@@ -47,7 +68,7 @@ Keep updates brief. Request only the specific user or administrator action neede
 
 ## Work and contribute
 
-Agents can access the container's home and mounted projects. Keep personal files, Docker's socket and other users' homes outside those mounts. See the [security boundaries](docs/container-tailscale.md).
+Keep personal files, Docker's socket and other users' homes outside the container mounts. See the [security boundaries](docs/container-tailscale.md).
 
 - [Accounts and presets](docs/agent-presets.md)
 - [Development inside the container](docs/development.md)

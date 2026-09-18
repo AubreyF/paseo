@@ -4327,11 +4327,11 @@ export class CodexAppServerAgentSession implements AgentSession {
   private applyTurnWorkflowPolicy(
     params: Record<string, unknown>,
     preset: CodexModePreset,
+    hasWorkflowModeOverride = this.hasWorkflowModeOverride,
   ): { approvalPolicy?: string; sandboxPolicyType?: string } {
-    const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
+    const approvalPolicy = hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
     const sandboxPolicyType =
-      this.providerOptions.sandbox_mode ??
-      (this.hasWorkflowModeOverride ? preset.sandbox : undefined);
+      this.providerOptions.sandbox_mode ?? (hasWorkflowModeOverride ? preset.sandbox : undefined);
     if (approvalPolicy && this.providerOptions.approval_policy === undefined) {
       params.approvalPolicy = approvalPolicy;
     }
@@ -4346,7 +4346,7 @@ export class CodexAppServerAgentSession implements AgentSession {
           ? this.resolvedSandboxPolicy
           : toSandboxPolicy(sandboxPolicyType, workspaceWrite);
     }
-    if (this.hasWorkflowModeOverride) {
+    if (hasWorkflowModeOverride) {
       applyApprovalsReviewerParam(params, preset);
     }
     return { approvalPolicy, sandboxPolicyType };
@@ -4707,6 +4707,15 @@ export class CodexAppServerAgentSession implements AgentSession {
     validateCodexMode(modeId);
     if (this.quotaAdmissionGuard && modeId === "auto-review") {
       throw new Error("Native automatic review is unavailable for quota-governed sessions.");
+    }
+    if (this.goalsEnabled && this.client && this.currentThreadId) {
+      // Native goal continuations bypass turn/start and reuse the thread's settings.
+      // Commit the selected mode only after native subsequent-turn policy is accepted.
+      const params: Record<string, unknown> = { threadId: this.currentThreadId };
+      this.applyTurnWorkflowPolicy(params, MODE_PRESETS[modeId], true);
+      if (this.quotaGovernance) params.approvalsReviewer = "user";
+      this.applyGovernedPermissionProfile(params);
+      await this.client.request("thread/settings/update", params);
     }
     this.currentMode = modeId;
     this.hasWorkflowModeOverride = true;

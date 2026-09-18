@@ -1945,6 +1945,69 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("updates native thread permissions for autonomous goal continuations without interrupting", async () => {
+    const session = createSession({ modeId: "auto-review" }, { goalsEnabled: true });
+    const request = vi.fn(async () => ({}));
+    session.client = { request };
+
+    await expect(session.setMode("full-access")).resolves.toEqual({
+      type: "warning",
+      message: "Permission mode applies next turn",
+    });
+
+    expect(request.mock.calls).toEqual([
+      [
+        "thread/settings/update",
+        {
+          threadId: "test-thread",
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "dangerFullAccess" },
+          approvalsReviewer: "user",
+        },
+      ],
+    ]);
+    expect(session.activeForegroundTurnId).toBe("test-turn");
+    expect(await session.getCurrentMode()).toBe("full-access");
+  });
+
+  test("does not acknowledge a goal task mode when native thread settings reject it", async () => {
+    const session = createSession({ modeId: "auto-review" }, { goalsEnabled: true });
+    session.client = {
+      request: vi.fn(async () => {
+        throw new Error("settings rejected");
+      }),
+    };
+
+    await expect(session.setMode("full-access")).rejects.toThrow("settings rejected");
+    expect(await session.getCurrentMode()).toBe("auto-review");
+    expect(session.activeForegroundTurnId).toBe("test-turn");
+  });
+
+  test("preserves provider policy overrides when updating autonomous goal permissions", async () => {
+    const session = createSession(
+      {
+        modeId: undefined,
+        providerOptions: { approval_policy: "on-request", sandbox_mode: "read-only" },
+      },
+      { goalsEnabled: true },
+    );
+    const request = vi.fn(async () => ({}));
+    session.client = { request };
+
+    await session.setMode("full-access");
+
+    expect(request.mock.calls).toEqual([
+      [
+        "thread/settings/update",
+        {
+          threadId: "test-thread",
+          sandboxPolicy: { type: "readOnly" },
+          approvalsReviewer: "user",
+        },
+      ],
+    ]);
+  });
+
   test("setMode and setThinkingOption return a next-turn notice while a turn is active", async () => {
     const session = createSession({ modeId: "auto", thinkingOptionId: "medium" });
 

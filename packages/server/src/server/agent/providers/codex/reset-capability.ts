@@ -19,7 +19,7 @@ const RequestSchema = z.object({
 });
 
 /** Require the installed binary to advertise an idempotent mutation contract. */
-export function supportsResetRedemption(input: unknown): boolean {
+export function supportsResetRedemption(input: unknown, requireCreditSelection = false): boolean {
   const parsed = RequestSchema.safeParse(input);
   if (!parsed.success) return false;
   return parsed.data.oneOf.some((request) => {
@@ -32,14 +32,21 @@ export function supportsResetRedemption(input: unknown): boolean {
     const definition = parsed.data.definitions[params.data.$ref.slice("#/definitions/".length)];
     if (!definition?.required?.includes("idempotencyKey")) return false;
     const key = SchemaNode.safeParse(definition.properties?.idempotencyKey);
-    return key.success && key.data.type === "string";
+    const credit = z
+      .object({ type: z.union([z.string(), z.array(z.string())]) })
+      .safeParse(definition.properties?.creditId);
+    const supportsCredit =
+      credit.success &&
+      (credit.data.type === "string" ||
+        (Array.isArray(credit.data.type) && credit.data.type.includes("string")));
+    return key.success && key.data.type === "string" && (!requireCreditSelection || supportsCredit);
   });
 }
 
 export async function probeResetRedemption(
   launch: { command: string; args: string[] },
   runtimeSettings?: ProviderRuntimeSettings,
-): Promise<boolean> {
+): Promise<{ canRedeem: boolean; canSelectCredit: boolean }> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-reset-capability-"));
   try {
     await execCommand(
@@ -51,12 +58,16 @@ export async function probeResetRedemption(
         maxBuffer: 1024 * 1024,
       },
     );
-    return supportsResetRedemption(
-      JSON.parse(await fs.readFile(path.join(directory, "ClientRequest.json"), "utf8")),
+    const schema: unknown = JSON.parse(
+      await fs.readFile(path.join(directory, "ClientRequest.json"), "utf8"),
     );
+    return {
+      canRedeem: supportsResetRedemption(schema),
+      canSelectCredit: supportsResetRedemption(schema, true),
+    };
   } catch {
     // Reading counts still works when the binary cannot prove mutation support.
-    return false;
+    return { canRedeem: false, canSelectCredit: false };
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

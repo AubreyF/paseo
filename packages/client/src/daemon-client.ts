@@ -4991,9 +4991,9 @@ export class DaemonClient {
     });
   }
 
-  async prepareProviderReset(providerId: string, accountId: string) {
+  async prepareProviderReset(providerId: string, accountId: string, creditId?: string) {
     return this.sendNamespacedCorrelatedSessionRequest<"provider.reset.prepare.response">({
-      message: { type: "provider.reset.prepare.request", providerId, accountId },
+      message: { type: "provider.reset.prepare.request", providerId, accountId, creditId },
       timeout: 120_000,
     });
   }

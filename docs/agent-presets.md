@@ -38,7 +38,7 @@ The active Vorton composer preloads preset catalogs, usage, and reset credits be
 
 With Vorton Mode enabled on supported hosts, preset rows and provider Usage cards show the number of reset credits reported for that account. Unknown availability is not zero. Credit details include the account identity, grant date, expiry when reported, and last refresh time. The reported total remains authoritative when the provider supplies only a partial list of credits.
 
-Opening the badge only reads account details. Review reset prepares an account-bound operation; Confirm reset explicitly submits it. The daemon verifies the configured account again before submission. Read access alone cannot prepare or redeem a reset, and agent tools do not expose redemption.
+Opening the badge only reads account details. Where the provider supports credit selection, the earliest-expiring available credit is selected initially. Review reset opens a separate confirmation showing only the credit bound to the operation. Use 1 reset credit submits that exact credit; an unavailable selection requires another review. Providers without selection support show “Provider chooses the credit.” The daemon verifies the configured account again before submission. Read access alone cannot prepare or redeem a reset, and agent tools do not expose redemption.
 
 Reset management uses separate account-scoped RPCs so older hosts and clients can continue using existing usage messages. The daemon checks the configured CLI's actual reset and idempotency support before enabling redemption. It does not guess support from a version number or use an unrelated desktop account.
 

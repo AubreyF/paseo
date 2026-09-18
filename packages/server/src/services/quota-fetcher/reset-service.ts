@@ -51,7 +51,7 @@ export class ProviderResetService {
     return this.withSession(providerId, (session) => this.view(providerId, session));
   }
 
-  prepare(providerId: string, accountId: string): Promise<ProviderResetView> {
+  prepare(providerId: string, accountId: string, creditId?: string): Promise<ProviderResetView> {
     return this.withSession(providerId, async (session) => {
       const snapshot = await this.requireAccount(session, accountId);
       const existing = await this.options.store.read(accountId);
@@ -61,7 +61,30 @@ export class ProviderResetService {
           "This account has no available reset credits.",
         );
       }
-      await this.options.store.prepare({ accountId, providerId });
+      // An uncertain attempt must keep its original credit and idempotency key.
+      if (existing?.state !== "pending") {
+        if (creditId && !session.canSelectCredit) {
+          throw new ProviderResetServiceError(
+            "unavailable",
+            "This provider cannot select a reset credit.",
+          );
+        }
+        const credit = creditId
+          ? snapshot.credits?.find((entry) => entry.id === creditId)
+          : undefined;
+        if (
+          creditId &&
+          (!credit ||
+            credit.status !== "available" ||
+            (credit.expiresAt !== null && credit.expiresAt <= Date.now() / 1000))
+        ) {
+          throw new ProviderResetServiceError(
+            "no_credit",
+            "The selected credit is no longer available. Go back and review the current credits.",
+          );
+        }
+        await this.options.store.prepare({ accountId, providerId, creditId, credit });
+      }
       return this.view(providerId, session, snapshot);
     });
   }
@@ -72,8 +95,22 @@ export class ProviderResetService {
     operationId: string,
   ): Promise<ProviderResetResult> {
     return this.withSession(providerId, async (session) => {
-      await this.requireAccount(session, accountId);
+      const snapshot = await this.requireAccount(session, accountId);
       const operation = await this.options.store.read(accountId);
+      if (operation?.state === "prepared" && operation.creditId) {
+        const credit = snapshot.credits?.find((entry) => entry.id === operation.creditId);
+        if (
+          !session.canSelectCredit ||
+          !credit ||
+          credit.status !== "available" ||
+          (credit.expiresAt !== null && credit.expiresAt <= Date.now() / 1000)
+        ) {
+          throw new ProviderResetServiceError(
+            "no_credit",
+            "The selected credit is no longer available. Go back and review the current credits.",
+          );
+        }
+      }
       const outcome = await this.options.store.confirm({ accountId, operationId }, (attempt) =>
         session.consume(attempt),
       );
@@ -138,9 +175,11 @@ export class ProviderResetService {
       fetchedAt: new Date().toISOString(),
       snapshot,
       canRedeem: session.canRedeem && snapshot.status === "available",
+      canSelectCredit: session.canSelectCredit === true,
       operation: operation
         ? {
             operationId: operation.idempotencyKey,
+            credit: operation.credit ?? null,
             state: operation.state,
             outcome: operation.state === "completed" ? operation.outcome : null,
           }

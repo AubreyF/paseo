@@ -1,11 +1,12 @@
 import { test, expect, type Page } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
+import { gotoAppShell, setVortonMode } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import {
   closeSidebarDisplayPreferences,
   selectSidebarStatusGrouping,
 } from "../support/helpers/sidebar";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 function workspaceRowTestId(workspaceId: string): string {
   return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
@@ -82,6 +83,37 @@ test.describe("Vorton workspace double-click rename", () => {
   // A touchscreen laptop or iPad with a trackpad still receives mouse clicks.
   test.use({ hasTouch: true });
 
+  test("double-clicking title text opens rename in both sidebar groupings", async ({ page }) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "sidebar-title-double-click-",
+      title: "Rename gesture test",
+    });
+    try {
+      await openAgentRoute(page, workspace);
+      const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
+      const title = row.getByText("main", { exact: true });
+      const input = page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "input"));
+      const cancel = page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "cancel"));
+      await expect(title).toBeVisible();
+      await setVortonMode(page, true);
+      await title.click();
+      await expect(input).toHaveCount(0);
+      await title.dblclick();
+      await expect(input).toBeVisible();
+      await expect(input).toHaveValue("main");
+      await cancel.click();
+      await selectSidebarStatusGrouping(page);
+      await title.dblclick();
+      await expect(input).toBeVisible();
+      await cancel.click();
+      await setVortonMode(page, false);
+      await title.dblclick();
+      await expect(input).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("preserves single-click navigation and gates double-click rename by mode", async ({
     page,
   }) => {
@@ -91,10 +123,10 @@ test.describe("Vorton workspace double-click rename", () => {
       const row = page.getByTestId(workspaceRowTestId(workspace.workspaceId));
       const input = page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "input"));
       await expect(row).toBeVisible({ timeout: 30_000 });
-      await page.getByLabel("Paseo mode", { exact: true }).click();
+      await setVortonMode(page, false);
       await row.dblclick();
       await expect(input).toHaveCount(0);
-      await page.getByLabel("Vorton mode", { exact: true }).click();
+      await setVortonMode(page, true);
       await row.click();
       await expect(page).toHaveURL(new RegExp(`/workspace/${workspace.workspaceId}`));
       await expect(input).toHaveCount(0);
@@ -104,7 +136,14 @@ test.describe("Vorton workspace double-click rename", () => {
       await input.fill("Unsaved suggestion draft");
       await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "cancel")).click();
       await expect(row).toContainText("main");
-      await page.getByLabel("Paseo mode", { exact: true }).click();
+      await selectSidebarStatusGrouping(page);
+      await row.dblclick();
+      await expect(input).toBeVisible();
+      await input.fill("Renamed from status view");
+      await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "submit")).click();
+      await expect(input).toHaveCount(0);
+      await expect(row).toContainText("Renamed from status view");
+      await setVortonMode(page, false);
       await row.dblclick();
       await expect(input).toHaveCount(0);
       await selectSidebarStatusGrouping(page);
@@ -112,13 +151,13 @@ test.describe("Vorton workspace double-click rename", () => {
       await expect(row).toBeVisible();
       await row.dblclick();
       await expect(input).toHaveCount(0);
-      await page.getByLabel("Vorton mode", { exact: true }).click();
+      await setVortonMode(page, true);
       await row.click();
       await expect(page).toHaveURL(new RegExp(`/workspace/${workspace.workspaceId}`));
       await expect(input).toHaveCount(0);
       await row.dblclick();
       await expect(input).toBeVisible();
-      await expect(input).toHaveValue("main");
+      await expect(input).toHaveValue("Renamed from status view");
       await page.getByTestId(workspaceRenameModalTestId(workspace.workspaceId, "cancel")).click();
     } finally {
       await workspace.cleanup();

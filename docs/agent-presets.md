@@ -50,7 +50,7 @@ Results distinguish applied, already redeemed, no credit, and nothing to reset. 
 
 Vorton Mode defaults off and is saved per device. General settings and the sidebar's Paseo/Vorton selector control the same preference. Enabling it exposes named launch presets, usage rails, reset controls, and supervisor configuration. Disabling it restores standard composer controls without deleting accounts or presets or stopping running tasks. Manage profiles lives inside the preset picker.
 
-The approved reserve policy is described below. Its daemon enforcement and controls are not implemented yet. The current quota-exhaustion stop does not enforce it.
+Check [implementation and deployment status](#implementation-and-deployment-status) before relying on the reserve policy below.
 
 The Docker recipe is optional. Upstream core does not require Docker, MTPLX, a particular account naming scheme, or an inference gateway. Keep deployment changes reviewable separately from profile UI, launch resolution, and quota lifecycle changes. Local builds must be reviewed before any upstream publication.
 
@@ -59,6 +59,14 @@ The Docker recipe is optional. Upstream core does not require Docker, MTPLX, a p
 Manage profiles in host settings includes Default configuration. The selected profile stores `isDefault: true` in the host's profile list. The settings control writes false on other profiles so only one is selected. Vorton uses the first configuration when no default exists and persists that choice on the next profile save. Removing the default selects the first remaining configuration. Both profile editors retain this marker when editing a profile.
 
 New Vorton drafts visibly apply the available default, or the first available configuration when the default is unavailable. An existing draft selection is retained. Submission and audio start remain blocked while no configuration is available. The new-workspace creation handler also rejects a missing Vorton profile. Existing chats are not changed. Standard Paseo behavior is unchanged.
+
+## Implementation and deployment status
+
+Source review on September 16, 2026 found reserve policy validation, frozen launch policy, admission checks, usage polling, transitions, persistence and startup reconciliation in the daemon. See `packages/server/src/server/agent/quota-reserve/` and `create-agent/profile.ts`; bootstrap wires the observer into the manager. These foundations have focused tests, including `bootstrap-quota-reserve.e2e.test.ts`.
+
+The app has no reserve-policy controls or launch selection wired to this policy. Complete the Vorton controls, capability gating, task-control transport and end-to-end acceptance before presenting Cruise Reserve or Redline as available to users. A saved preset alone does not attach reserve protection: the launch must explicitly request a policy. Existing tasks do not acquire one automatically.
+
+This describes the checkout, not an installed image or private web release. Record the tested daemon revision, image digest, served web receipt and feature-specific results in the private handoff. Current deployment status is unverified by this source review. Do not infer it from a version label, an old acceptance note or the existence of tests. The contract below remains the acceptance target.
 
 ## Quota reserve implementation contract
 

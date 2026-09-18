@@ -1,9 +1,10 @@
 import { useCallback, useRef } from "react";
 import { Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFetchQuery } from "@/data/query";
 import { Button } from "@/components/ui/button";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useHostFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import type { RenamableWorkspace } from "./workspace-rename-modal";
@@ -13,6 +14,10 @@ interface Props {
   onSelect: (title: string) => void;
   disabled: boolean;
 }
+
+const SuggestionSpinner = withUnistyles(LoadingSpinner, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
 
 export function WorkspaceTitleSuggestions(props: Props) {
   // COMPAT(workspaceTitleSuggestions): added in v0.7.2, remove gate after 2027-03-10.
@@ -54,6 +59,8 @@ function AvailableSuggestions({ workspace, onSelect, disabled }: Props) {
     refreshRequested.current = true;
     void refetch({ cancelRefetch: false });
   }, [refetch]);
+  const showError = suggestions.isError && !suggestions.isFetching;
+  const showTitles = !suggestions.isError && !suggestions.isFetching;
   return (
     <View style={styles.body} testID="workspace-title-suggestions">
       <View style={styles.header}>
@@ -68,19 +75,30 @@ function AvailableSuggestions({ workspace, onSelect, disabled }: Props) {
           {suggestions.isError ? "Retry" : "Regenerate"}
         </Button>
       </View>
-      {suggestions.isFetching ? (
-        <Text style={styles.hint} accessibilityLiveRegion="polite">
-          Generating suggestions...
-        </Text>
-      ) : null}
-      {suggestions.isError ? (
-        <Text style={styles.error} accessibilityRole="alert">
-          {suggestions.error.message}
-        </Text>
-      ) : null}
-      {suggestions.data?.map((title) => (
-        <SuggestedTitle key={title} title={title} disabled={disabled} onSelect={onSelect} />
-      ))}
+      <View style={styles.slots} testID="workspace-title-suggestion-slots">
+        {suggestions.isFetching ? (
+          <View
+            style={styles.status}
+            accessibilityLiveRegion="polite"
+            accessibilityLabel="Generating title suggestions"
+          >
+            <SuggestionSpinner size="small" />
+            <Text style={styles.hint}>Generating suggestions...</Text>
+          </View>
+        ) : null}
+        {showError ? (
+          <View style={styles.status}>
+            <Text style={styles.error} accessibilityRole="alert">
+              {suggestions.error.message}
+            </Text>
+          </View>
+        ) : null}
+        {showTitles
+          ? suggestions.data?.map((title) => (
+              <SuggestedTitle key={title} title={title} disabled={disabled} onSelect={onSelect} />
+            ))
+          : null}
+      </View>
     </View>
   );
 }
@@ -94,22 +112,35 @@ function SuggestedTitle({
   return (
     <Button
       variant="ghost"
-      size="md"
+      size="sm"
       style={styles.suggestion}
       textStyle={styles.suggestionText}
       disabled={disabled}
       onPress={select}
+      accessibilityLabel={title}
     >
-      {title}
+      <Text numberOfLines={2}>{title}</Text>
     </Button>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  body: { gap: theme.spacing[1] },
+  body: { marginVertical: theme.spacing[3] },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   hint: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
   error: { color: theme.colors.palette.red[300], fontSize: theme.fontSize.sm },
-  suggestion: { justifyContent: "flex-start", minHeight: 44, height: "auto" },
-  suggestionText: { textAlign: "left", flexShrink: 1 },
+  // Loading, errors and all three two-line titles occupy the same space.
+  slots: { height: Math.max(32, theme.fontSize.base * 2 + 4) * 3 },
+  status: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing[2] },
+  suggestion: {
+    justifyContent: "flex-start",
+    minHeight: 32,
+    height: Math.max(32, theme.fontSize.base * 2 + 4),
+    paddingVertical: 0,
+  },
+  suggestionText: {
+    textAlign: "left",
+    flex: 1,
+    lineHeight: theme.fontSize.base,
+  },
 }));

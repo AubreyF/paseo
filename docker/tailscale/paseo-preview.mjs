@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { brokerClient } from "./preview-broker-client.mjs";
+if (await brokerClient(process.argv.slice(2))) process.exit(process.exitCode ?? 0);
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {

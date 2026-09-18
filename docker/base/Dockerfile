@@ -31,7 +31,7 @@ FROM ${NODE_IMAGE}
 
 ENV HOME=/home/paseo \
     PASEO_HOME=/home/paseo/.paseo \
-    PASEO_LISTEN=0.0.0.0:6767 \
+    PASEO_LISTEN=127.0.0.1:6767 \
     PASEO_WEB_UI_ENABLED=true \
     PASEO_LOG_FORMAT=json \
     PASEO_LOG_LEVEL=info \
@@ -71,8 +71,8 @@ RUN set -eux; \
 
 # Fork and downstream images can add one agent package without copying this
 # Dockerfile or baking provider credentials into an image layer.
-ARG PASEO_EXTRA_NPM_PACKAGE=""
-ARG PASEO_PI_PACKAGE=""
+ARG PASEO_EXTRA_NPM_PACKAGE="@openai/codex@0.153.4"
+ARG PASEO_PI_PACKAGE="@earendil-works/pi-coding-agent@0.84.4"
 RUN set -eux; \
     if [ -n "$PASEO_EXTRA_NPM_PACKAGE" ]; then \
       npm install -g "$PASEO_EXTRA_NPM_PACKAGE"; \
@@ -117,7 +117,36 @@ WORKDIR /workspace
 EXPOSE 6767
 VOLUME ["/home/paseo"]
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD node -e "const listen=process.env.PASEO_LISTEN||'0.0.0.0:6767'; const m=listen.match(/:(\\d+)$/); const port=m?Number(m[1]):6767; require('http').get({hostname:'127.0.0.1',port,path:'/api/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+# One runtime for both Paseo and Vorton. Tailscale state is never an image layer.
+ARG TARGETARCH
+ARG TAILSCALE_VERSION=1.102.4
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) checksum=50748df1045e60b5b695f19f4c56b0da36c019948b440fb456b6584a50f0d8b9 ;; \
+      arm64) checksum=9dd1e6a592a014bbaea0103167ffe299adeda4ba14e078ce9c2895364f6c4c3f ;; \
+      *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends supervisor python3 util-linux iproute2 iptables; \
+    curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_${TARGETARCH}.tgz" -o /tmp/tailscale.tgz; \
+    echo "$checksum  /tmp/tailscale.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/tailscale.tgz -C /tmp; \
+    install -m 0755 "/tmp/tailscale_${TAILSCALE_VERSION}_${TARGETARCH}/tailscale" /usr/local/bin/tailscale; \
+    install -m 0755 "/tmp/tailscale_${TAILSCALE_VERSION}_${TARGETARCH}/tailscaled" /usr/local/sbin/tailscaled; \
+    rm -rf /tmp/tailscale* /var/lib/apt/lists/*; \
+    entry="$(cat /etc/paseo-server-entry)"; \
+    test -s "$(dirname "$entry")/../server/web-ui/index.html"; \
+    command -v setpriv
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/paseo-docker-entrypoint"]
+COPY --chown=root:root docker/tailscale/entrypoint docker/tailscale/start-paseo docker/tailscale/healthcheck docker/tailscale/initialize-web.mjs docker/tailscale/network.py /opt/personal-tailscale/
+COPY --chown=root:root docker/tailscale/supervisord.conf /etc/personal-tailscale/supervisord.conf
+COPY --chown=root:root docker/tailscale/paseo-preview.mjs /usr/local/bin/paseo-preview
+COPY --chown=root:root docker/tailscale/preview-broker-client.mjs /usr/local/bin/preview-broker-client.mjs
+RUN chmod 0755 /opt/personal-tailscale /opt/personal-tailscale/* /usr/local/bin/paseo-preview \
+ && chmod 0755 /etc/personal-tailscale \
+ && chmod 0644 /etc/personal-tailscale/supervisord.conf
+ENV PASEO_WEB_UI_DIST_DIR=/home/paseo/.paseo/web-ui \
+    PASEO_RELAY_ENABLED=false
+LABEL sh.paseo.container-contract="tailscale-v1"
+ENTRYPOINT ["/usr/bin/tini", "--", "/bin/bash", "/opt/personal-tailscale/entrypoint"]
+HEALTHCHECK --interval=15s --timeout=10s --start-period=60s --retries=3 CMD ["/usr/bin/python3", "-I", "/opt/personal-tailscale/healthcheck"]

@@ -10,7 +10,7 @@ September 10, 2026. Scope: sidebar navigation and workspace actions, footer over
 - Apply a minimum UI base font size of 16 and message font size of 17 on Vorton touch devices. Preserve larger user settings and restore saved sizes when disabled. Input text has a 16 pixel minimum.
 - Provide visible keyboard focus and retain pinch zoom. Use dynamic viewport height in browser tabs and the large viewport in standalone mode. Preserve Apple installation metadata; runtime removal did not establish a fix for the reported iPhone gap.
 - Keep informational tooltips tappable. Touch pointer exit must not immediately dismiss them. Action tooltips remain bypassed so navigation takes one tap.
-- Keep composer preset and permission selectors on one row, centered between the other mobile controls and left-aligned on desktop. Center the permission caption inside its 44 pixel hit target. Abbreviate captions only when measured content exceeds available width; retain full menu and accessibility labels.
+- The September 10 layout kept preset and permission selectors on one row. Current Vorton permissions live in the profile editor; use [launch presets](agent-presets.md) for the current control placement. The measurements below describe that historical build.
 - Separate dictation from submit with a 44 pixel outlined microphone at the top right of the message field. The recording panel fills the existing composer footprint; edit occupies the microphone position, cancel stays bottom left, and submit stays bottom right. Keep its passive volume display out of button hit testing. Hide the desktop focus hint on touch devices; the browser does not provide reliable hardware-keyboard presence detection.
 - On compact Vorton touch layouts, separate messaging from the conversation with a full-width top rule. The idle input has no visible outline, rounded container, or contrasting background. Keep the green recording state and desktop/Paseo surfaces.
 - Give running mobile chats an explicit Queue action above Send. Queueing a recording must retain that intent if the active turn finishes during transcription. An empty running composer shows Stop without a second disabled Send control. Keep the preset inspector on desktop; mobile details remain accessible through Manage presets.
@@ -18,11 +18,13 @@ September 10, 2026. Scope: sidebar navigation and workspace actions, footer over
 
 ## Mode contract
 
-Paseo is the default. The selector remains available to enable Vorton. All custom interaction and appearance rules require Vorton; touch enhancements additionally require touch capability. Turning Vorton off restores standard controls and saved appearance. It does not delete credentials, profiles or workspaces, change accounts, or interrupt existing tasks.
+Paseo is the default. The selector remains available to enable Vorton. All custom interaction and appearance rules require Vorton. Compact viewports use the full mobile controls and appearance, including desktop PWA windows with a mouse. Wide viewports retain touch enhancements when a coarse pointer is available. Use the shared compact breakpoint, never a user agent, to select mobile layout. Turning Vorton off restores standard controls and saved appearance. It does not delete credentials, profiles or workspaces, change accounts, or interrupt existing tasks.
 
-Agent instructions in CLAUDE.md, also reached through AGENTS.md, require this contract and publication to the real private instance for every interface request. The same requirements appear in the continuity prompt.
+Agent instructions in CLAUDE.md, also reached through AGENTS.md, require this contract and publication to the real private instance for every interface request. Use [instance continuity](instance-continuity.md) for publication.
 
 ## Verification and limits
+
+These dated results are historical evidence, not acceptance of the current checkout or a new deployment. Repeat affected checks using the [handoff checklist](host-handoff.md#acceptance).
 
 The September 10 composer and recording changes passed 23 focused tests for tooltip interaction, permission captions, metadata preservation, and independent recording actions. Workspace typechecks and focused lint passed. Repository lint still reports unrelated errors in pending persistence and workspace-title work.
 

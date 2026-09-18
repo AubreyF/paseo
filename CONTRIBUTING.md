@@ -1,6 +1,8 @@
 # Contributing to Paseo
 
-Thank you for taking the time to contribute to Paseo.
+For this fork, start with the [container installer](docker/multiplex/README.md) and [team acceptance checklist](docs/host-handoff.md). Report fork issues to this repository's maintainer. Do not send Vorton-specific issues to upstream Paseo.
+
+The remaining contribution policy describes upstream Paseo.
 
 ## Philosophy
 

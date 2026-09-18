@@ -1,5 +1,3 @@
-import { useVortonMode } from "@/vorton-mode";
-import { isWorkspaceRenamePress } from "./workspace-rename-press";
 import { useVortonTouch } from "@/vorton-touch";
 import { memo, useCallback, useMemo, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
@@ -226,7 +224,6 @@ function WorkspaceRowBody({
   onMarkAsRead,
   archiveShortcutKeys,
 }: WorkspaceRowBodyProps) {
-  const vortonMode = useVortonMode();
   const isCompact = useIsCompactFormFactor();
   const vortonTouch = useVortonTouch();
   const isTouchPlatform = platformIsNative || isCompact || vortonTouch;
@@ -244,18 +241,14 @@ function WorkspaceRowBody({
     ...dragAttributes
   } = dragHandleProps?.attributes ?? {};
 
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      if (interaction.didLongPressRef.current) {
-        interaction.didLongPressRef.current = false;
-        return;
-      }
-      if (isDragging) return;
-      onPress();
-      if (isWorkspaceRenamePress(event, vortonMode)) onRename?.();
-    },
-    [interaction.didLongPressRef, onPress, onRename, isDragging, vortonMode],
-  );
+  const handlePress = useCallback(() => {
+    if (interaction.didLongPressRef.current) {
+      interaction.didLongPressRef.current = false;
+      return;
+    }
+    if (isDragging) return;
+    onPress();
+  }, [interaction.didLongPressRef, onPress, isDragging]);
   const handleWorkspacePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);

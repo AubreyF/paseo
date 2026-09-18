@@ -1,5 +1,5 @@
 import { expect, test } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
+import { gotoAppShell, setVortonMode } from "../support/helpers/app";
 import {
   addFakeScheduleHostAndReload,
   buildFakeScheduleHostWorkspace,
@@ -130,12 +130,7 @@ test.describe("Schedules", () => {
       });
       expect(paused.error).toBeNull();
       await page.goto(buildSchedulesRoute());
-      const modeButton = page.getByRole("button", {
-        name: vortonMode ? "Vorton mode" : "Paseo mode",
-        exact: true,
-      });
-      await modeButton.click();
-      await expect(modeButton).toHaveCSS("background-color", "rgb(49, 70, 58)");
+      await setVortonMode(page, vortonMode);
       const row = page.getByTestId(`schedule-row-${scheduleId}`);
       await expect(row).toBeVisible({ timeout: 30_000 });
       await row.click();

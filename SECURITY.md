@@ -2,7 +2,9 @@
 
 Paseo follows a client-server architecture, similar to Docker. The daemon runs on your machine and manages your coding agents. Clients (the mobile app, CLI, or web interface) connect to the daemon to monitor and control those agents.
 
-Your code never leaves your machine. Paseo is a local-first tool that connects directly to your development environment.
+This fork runs the daemon and agents inside a container with narrowly scoped project mounts. Provider tools can send source and prompts to their configured model services. Containerization does not prevent that traffic.
+
+The installation uses internal Tailscale, private HTTPS and password authentication. Agents run without Linux capabilities and cannot access the protected Tailscale socket or identity state. They can access credentials and projects mounted into their own container. The Docker host administrator remains trusted. See [container security boundaries](docs/container-tailscale.md).
 
 ## Architecture
 

@@ -2,7 +2,6 @@ import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
-import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { settingsStyles } from "@/styles/settings";
@@ -14,7 +13,7 @@ export function useVortonMode() {
   return preferences.vortonMode === true;
 }
 
-export function VortonModeToggle({ compact = false }: { compact?: boolean }) {
+export function VortonModeToggle() {
   const { preferences, updatePreferences } = useFormPreferences();
   const [saving, setSaving] = useState(false);
   const toast = useToast();
@@ -32,9 +31,19 @@ export function VortonModeToggle({ compact = false }: { compact?: boolean }) {
     },
     [updatePreferences, toast],
   );
-  if (compact) {
-    return (
-      <View style={styles.segmented} testID="sidebar-vorton-mode">
+  return (
+    <View style={settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>Vorton Mode</Text>
+        <Text style={settingsStyles.rowHint}>
+          {enabled
+            ? "On: named presets, usage rails, reset credits, and local-worker supervision."
+            : "Off: standard Paseo model, reasoning, and permission controls."}{" "}
+          Saved accounts and presets are retained. Applies on this device; running tasks are
+          unchanged.
+        </Text>
+      </View>
+      <View style={styles.segmented} testID="settings-vorton-mode">
         {[false, true].map((mode) => (
           <ModeSegment
             key={String(mode)}
@@ -45,32 +54,10 @@ export function VortonModeToggle({ compact = false }: { compact?: boolean }) {
           />
         ))}
       </View>
-    );
-  }
-  return (
-    <View style={compact ? styles.compact : settingsStyles.row}>
-      <View style={compact ? styles.caption : settingsStyles.rowContent}>
-        <Text style={compact ? styles.label : settingsStyles.rowTitle}>Vorton Mode</Text>
-        {!compact ? (
-          <Text style={settingsStyles.rowHint}>
-            {enabled
-              ? "On: named presets, usage rails, reset credits, and local-worker supervision."
-              : "Off: standard Paseo model, reasoning, and permission controls."}{" "}
-            Saved accounts and presets are retained. Applies on this device; running tasks are
-            unchanged.
-          </Text>
-        ) : null}
-      </View>
-      <Switch
-        value={enabled}
-        onValueChange={change}
-        disabled={saving}
-        accessibilityLabel="Vorton Mode"
-        testID={compact ? "sidebar-vorton-mode" : "settings-vorton-mode"}
-      />
     </View>
   );
 }
+
 function ModeSegment({
   mode,
   enabled,
@@ -113,11 +100,15 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
     flexShrink: 0,
   },
-  segment: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6 },
+  segment: {
+    minWidth: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
   selectedSegment: { backgroundColor: "#31463a" },
   segmentText: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted },
   selectedText: { color: "#e1eee5" },
-  compact: { flexDirection: "row", alignItems: "center", gap: theme.spacing[1], flexShrink: 0 },
-  caption: { flexShrink: 0 },
-  label: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
 }));

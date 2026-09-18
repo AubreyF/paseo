@@ -1,5 +1,4 @@
 import { useVortonMode } from "@/vorton-mode";
-import { isWorkspaceRenamePress } from "./sidebar/workspace-rename-press";
 import { DiffStat } from "@/components/diff-stat";
 import { aggregateProjectTasks, type ProjectTaskSummary } from "./sidebar/project-task-summary";
 import { useVortonTouch, VORTON_ACTION_SLOT } from "@/vorton-touch";
@@ -235,8 +234,9 @@ interface SidebarWorkspaceListProps {
   onAddProject?: () => void;
   onImportSession?: () => void;
   listFooterComponent?: ReactElement | null;
-  // Rendered inside the scroll area, below the Pinned section and above the workspace
-  // list. Holds the "Workspaces" section header so pinned items sit above it.
+  // Navigation scrolls before both pinned items and the workspace section header.
+  listTopComponent?: ReactElement | null;
+  // Rendered below the Pinned section and above the workspace list.
   listHeaderComponent?: ReactElement | null;
   /** Gesture ref for coordinating with parent gestures (e.g., sidebar close) */
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
@@ -1122,19 +1122,14 @@ function WorkspaceRowInner({
     ...dragAttributes
   } = dragHandleProps?.attributes ?? {};
 
-  const vortonMode = useVortonMode();
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      if (interaction.didLongPressRef.current) {
-        interaction.didLongPressRef.current = false;
-        return;
-      }
-      if (isDragging) return;
-      onPress();
-      if (isWorkspaceRenamePress(event, vortonMode)) onRename?.();
-    },
-    [interaction.didLongPressRef, onPress, onRename, isDragging, vortonMode],
-  );
+  const handlePress = useCallback(() => {
+    if (interaction.didLongPressRef.current) {
+      interaction.didLongPressRef.current = false;
+      return;
+    }
+    if (isDragging) return;
+    onPress();
+  }, [interaction.didLongPressRef, onPress, isDragging]);
   const handleWorkspacePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);
@@ -1933,6 +1928,7 @@ export function SidebarWorkspaceList({
   onAddProject,
   onImportSession,
   listFooterComponent,
+  listTopComponent,
   listHeaderComponent,
   parentGestureRef,
   dragGestureHostActive,
@@ -2009,6 +2005,7 @@ export function SidebarWorkspaceList({
         supportsPinningByServerId={supportsPinningByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
+        listTopComponent={listTopComponent}
         listHeaderComponent={listHeaderComponent}
         sidebarFilterEmpty={sidebarFilterEmpty}
         parentGestureRef={parentGestureRef}
@@ -2027,6 +2024,7 @@ export function SidebarWorkspaceList({
         onAddProject={onAddProject}
         onImportSession={onImportSession}
         listFooterComponent={listFooterComponent}
+        listTopComponent={listTopComponent}
         listHeaderComponent={listHeaderComponent}
         sidebarFilterEmpty={sidebarFilterEmpty}
         hasActiveProjectFilter={hasActiveProjectFilter}
@@ -2061,6 +2059,7 @@ function SidebarGroupedModeList({
   supportsPinningByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
+  listTopComponent,
   listHeaderComponent,
   sidebarFilterEmpty,
   parentGestureRef,
@@ -2076,6 +2075,7 @@ function SidebarGroupedModeList({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
+  listTopComponent?: ReactElement | null;
   listHeaderComponent?: ReactElement | null;
   sidebarFilterEmpty: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
@@ -2103,6 +2103,7 @@ function SidebarGroupedModeList({
       supportsPinningByServerId={supportsPinningByServerId}
       onToggleWorkspacePin={onToggleWorkspacePin}
       onPinnedWorkspaceReorder={onPinnedWorkspaceReorder}
+      listTopComponent={listTopComponent}
       listHeaderComponent={listHeaderComponent}
       sidebarFilterEmpty={sidebarFilterEmpty}
       parentGestureRef={parentGestureRef}
@@ -2123,6 +2124,7 @@ function ProjectModeList({
   onAddProject,
   onImportSession,
   listFooterComponent,
+  listTopComponent,
   listHeaderComponent,
   sidebarFilterEmpty,
   hasActiveProjectFilter,
@@ -2450,6 +2452,7 @@ function ProjectModeList({
 
   const content = (
     <>
+      {listTopComponent}
       {pinnedChats.length > 0 ? (
         <View style={styles.pinnedSection} testID="sidebar-pinned-section">
           <PinnedSectionHeader collapsed={pinnedCollapsed} onToggle={togglePinnedCollapsed} />

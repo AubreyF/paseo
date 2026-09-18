@@ -241,3 +241,37 @@ describe("builtinSidebarNavShortcutAction", () => {
     expect(builtinSidebarNavShortcutAction("schedules")).toBeNull();
   });
 });
+
+describe("sidebar items moved to the toolbar", () => {
+  it("reorders only sidebar rows and preserves excluded preferences", () => {
+    const previous = [
+      { key: "new-workspace", visible: false },
+      { key: "history", visible: true },
+      { key: "search", visible: false },
+      { key: "schedules", visible: true },
+    ];
+    const items = resolveSidebarNavItems({
+      pluginGroups: [],
+      preferences: previous,
+      excludedKeys: ["new-workspace", "search"],
+    });
+    expect(items.map((item) => item.key)).toEqual(["history", "schedules"]);
+    const reordered = moveSidebarNavItem({ items, key: "schedules", direction: "up", previous });
+    expect(reordered).toEqual([
+      { key: "new-workspace", visible: false },
+      { key: "schedules", visible: true },
+      { key: "search", visible: false },
+      { key: "history", visible: true },
+    ]);
+    const toggled = setSidebarNavItemVisible({ items, key: "history", visible: false, previous });
+    expect(toggled).toEqual([
+      { key: "new-workspace", visible: false },
+      { key: "history", visible: false },
+      { key: "search", visible: false },
+      { key: "schedules", visible: true },
+    ]);
+    expect(
+      resolveSidebarNavItems({ pluginGroups: [], preferences: reordered }).map((item) => item.key),
+    ).toEqual(["new-workspace", "schedules", "search", "history"]);
+  });
+});

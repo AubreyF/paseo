@@ -7,8 +7,6 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { useVortonMode } from "@/vorton-mode";
-import { isWorkspaceRenamePress } from "./workspace-rename-press";
 import { useTranslation } from "react-i18next";
 import {
   View,
@@ -124,6 +122,7 @@ interface StatusWorkspaceListProps {
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspaceEntry[]) => void;
+  listTopComponent?: ReactNode;
   listHeaderComponent?: ReactNode;
   /** Swaps the group list for the label filter's empty state. Never the header above it. */
   sidebarFilterEmpty?: boolean;
@@ -142,6 +141,7 @@ export function SidebarStatusWorkspaceList({
   supportsPinningByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
+  listTopComponent,
   listHeaderComponent,
   sidebarFilterEmpty = false,
   parentGestureRef,
@@ -201,6 +201,7 @@ export function SidebarStatusWorkspaceList({
   );
   const content = (
     <>
+      {listTopComponent}
       {pinnedWorkspaces.length > 0 ? (
         <View style={styles.pinnedSection} testID="sidebar-pinned-section">
           <PinnedSectionHeader collapsed={pinnedCollapsed} onToggle={togglePinnedCollapsed} />
@@ -797,19 +798,14 @@ function StatusWorkspaceRowInnerContent({
   const startDragPress = dragInteraction?.handlePressIn;
   const moveDragPress = dragInteraction?.handleTouchMove;
   const endDragPress = dragInteraction?.handlePressOut;
-  const vortonMode = useVortonMode();
-  const handlePress = useCallback(
-    (event: GestureResponderEvent) => {
-      if (didLongPressRef?.current) {
-        didLongPressRef.current = false;
-        return;
-      }
-      if (isDragging) return;
-      onPress();
-      if (isWorkspaceRenamePress(event, vortonMode)) onRename?.();
-    },
-    [didLongPressRef, onPress, onRename, isDragging, vortonMode],
-  );
+  const handlePress = useCallback(() => {
+    if (didLongPressRef?.current) {
+      didLongPressRef.current = false;
+      return;
+    }
+    if (isDragging) return;
+    onPress();
+  }, [didLongPressRef, isDragging, onPress]);
   const handlePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);

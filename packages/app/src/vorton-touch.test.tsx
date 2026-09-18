@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const state = vi.hoisted(() => ({ enabled: false, touch: false }));
+const state = vi.hoisted(() => ({ enabled: false, touch: false, compact: false }));
 vi.mock("@/constants/platform", () => ({ isWeb: true }));
+vi.mock("@/constants/layout", () => ({
+  useIsCompactFormFactor: () => state.compact,
+}));
 vi.mock("@/hooks/use-form-preferences", () => ({
   useFormPreferences: () => ({ preferences: { vortonMode: state.enabled } }),
 }));
@@ -13,6 +16,7 @@ const remove = vi.fn();
 beforeEach(() => {
   state.enabled = false;
   state.touch = true;
+  state.compact = false;
   remove.mockClear();
   window.matchMedia = vi.fn().mockImplementation(() => ({
     get matches() {
@@ -25,6 +29,25 @@ beforeEach(() => {
   }));
 });
 describe("Vorton touch gate", () => {
+  it("switches a mouse-only window into mobile controls when narrow and restores when widened", () => {
+    state.touch = false;
+    state.enabled = true;
+    const { result, rerender, unmount } = renderHook(useVortonTouch);
+    expect(result.current).toBe(false);
+    state.compact = true;
+    rerender();
+    expect(result.current).toBe(true);
+    state.enabled = false;
+    rerender();
+    expect(result.current).toBe(false);
+    state.enabled = true;
+    rerender();
+    expect(result.current).toBe(true);
+    state.compact = false;
+    rerender();
+    expect(result.current).toBe(false);
+    unmount();
+  });
   it("keeps the compact mode selector at its authored height while enlarging other actions", () => {
     const segment = document.createElement("button");
     segment.dataset.vortonCompactMode = "true";

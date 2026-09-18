@@ -23,6 +23,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 
 | Doc                                                                  | What's in it                                                                                                                   |
 | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| [docs/roadmap.md](docs/roadmap.md)                                   | Planned fork work, separate from shipped capabilities                                                                          |
 | [docs/product.md](docs/product.md)                                   | What Paseo is, who it's for, where it's going                                                                                  |
 | [docs/architecture.md](docs/architecture.md)                         | System design, package layering, WebSocket protocol, agent lifecycle, data flow                                                |
 | [docs/agent-lifecycle.md](docs/agent-lifecycle.md)                   | Agent states, parent/child relationships, archive semantics, tabs vs archive, subagents track                                  |
@@ -60,6 +61,10 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/android.md](docs/android.md)                                   | App variants, local/cloud builds, EAS workflows, version codes, F-Droid source builds and store metadata                       |
 | [docs/docker.md](docs/docker.md)                                     | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
 | [docs/container-tailscale.md](docs/container-tailscale.md)           | Reusable single-container Tailscale architecture and private installation boundaries                                           |
+| [docs/host-handoff.md](docs/host-handoff.md)                         | Team handoff entry point, fresh installation, migration and acceptance                                                         |
+| [docs/instance-continuity.md](docs/instance-continuity.md)           | Persistent web publication and active-instance development                                                                     |
+| [docs/agent-presets.md](docs/agent-presets.md)                       | Saved presets, managed workers, quota lifecycle and implementation status                                                      |
+| [docs/vorton-touch-audit.md](docs/vorton-touch-audit.md)             | Vorton touch contract, historical checks and physical-device limits                                                            |
 | [docs/publication-hygiene.md](docs/publication-hygiene.md)           | Public source boundaries, secret checks and history cleanup                                                                    |
 | [docs/release.md](docs/release.md)                                   | Release playbook, draft releases, completion checklist                                                                         |
 | [docs/terminal-activity.md](docs/terminal-activity.md)               | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
@@ -92,7 +97,13 @@ Do not:
 - Hedge with "generally", "typically", or "you may want to" when the answer is "do this".
 - Clear your throat: "It's worth noting that", "In order to", "This section covers".
 
+## Container installation
+
+Use [docker/multiplex/README.md](docker/multiplex/README.md) for all new installations. The installer builds the checkout locally and enrolls Tailscale inside the container. Run Paseo, Vorton and provider tools there. Do not install a host daemon or require host Tailscale for this workflow. Host Docker administration belongs to the operator; never mount the Docker socket into the agent environment. See [container operations](docs/docker.md) for updates and migration.
+
 ## Quick start
+
+Run these source-development commands inside the container checkout:
 
 ```bash
 npm run dev                          # Start the dev daemon

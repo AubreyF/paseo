@@ -5,6 +5,7 @@ import {
   seedAgentProfiles,
   seedModelProvider,
 } from "../support/helpers/agent-profiles";
+import { setVortonMode } from "../support/helpers/app";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { installProviderUsageFixture } from "../support/helpers/provider-usage";
@@ -99,7 +100,7 @@ test("account usage stays in Vorton presets while Paseo retains its model picker
     expect(usageFixture.requestCount()).toBe(0);
     await closeModelPicker(page);
 
-    await page.getByLabel("Vorton mode", { exact: true }).click();
+    await setVortonMode(page, true);
     await page.getByTestId("agent-preset-selector").filter({ visible: true }).first().click();
     await usageFixture.waitForRequestCount(1);
     const primaryPreset = page.getByTestId("preset-row-agent_profile_primary_usage");

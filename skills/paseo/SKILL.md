@@ -5,6 +5,8 @@ description: Paseo reference for managing projects, workspaces, workspace script
 
 Paseo is a remote daemon that manages coding agents, terminals. Control it through MCP tools or the CLI.
 
+In this fork, daemon commands, provider credentials and project paths belong to the container. Use the checkout's `docs/docker.md` for installation and lifecycle operations. Host Docker administration belongs to the operator; never mount the Docker socket into the agent environment.
+
 ## Projects
 
 Manage the daemon's project registry through the CLI:
@@ -71,16 +73,11 @@ Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false`
 
 **`list_profiles`** — named launch bundles configured by the human. Before choosing how to launch a delegated agent, call this tool and read every profile's `notes`. Pick a named profile the user requested, or the profile whose notes best match the work.
 
-There is no `profile` parameter on `create_agent`. Materialize the selected profile into the call:
+Launch a saved preset with `create_agent.profileId` set to its `id` and `provider` set to its `provider/model` pair. The preset must have an explicit model. Copy its `modeId`, when present, into `settings.modeId` to preserve permissions. The daemon resolves the preset's model, reasoning, features, instructions and worker configuration, then freezes them for this task. Later preset edits affect new tasks.
 
-- combine `provider` and `model` as the `provider/model` value for `create_agent.provider`
-- copy `modeId` to `settings.modeId`
-- copy `thinkingOptionId` to `settings.thinkingOptionId`
-- copy `featureValues` to `settings.features`
+If your launch instructions name a configured worker preset, use that exact `profileId` and provider/model pair. The daemon enforces that worker selection and concurrency limit. Do not substitute another profile or omit `profileId`; copying individual fields does not carry preset instructions or supervision settings.
 
-Omit absent values. Do not remember a selected profile or infer drift later; a profile is only launch configuration.
-
-If no profile fits, or no profiles are configured, use the provider discovery tools below rather than guessing. Tell the user when you fall back because no configured profile fits.
+Without a configured worker constraint, if no profile fits or none are configured, use the provider discovery tools below rather than guessing. Tell the user when you fall back to a direct provider launch. If the installed `create_agent` schema lacks `profileId`, a preset launch requires a host update; do not silently flatten the preset into individual fields.
 
 **`list_providers`** — compact provider availability and modes.
 

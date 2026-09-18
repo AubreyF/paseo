@@ -2978,9 +2978,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       description:
         "List agent profiles: named provider/model/mode bundles a human configured for specific " +
         "kinds of work. Read each profile's `notes` to pick the one that fits the task you're " +
-        "delegating, then copy its `provider`, `model`, `modeId`, `thinkingOptionId`, and " +
-        "`featureValues` into create_agent (there is no `profile` parameter). Returns an empty " +
-        "list if none are configured.",
+        "delegating. Launch with create_agent.profileId set to its id and provider set to " +
+        "its provider/model pair; copy modeId to settings.modeId when present. The preset " +
+        "must have an explicit model. The daemon resolves its instructions, reasoning, " +
+        "features, and worker configuration. Supervisors must use their configured worker " +
+        "preset. Returns an empty list if none are configured.",
       inputSchema: {},
       outputSchema: {
         profiles: z.array(AgentProfileSchema),

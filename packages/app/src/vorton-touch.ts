@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 
@@ -18,8 +19,10 @@ function serverSnapshot() {
 }
 export function useVortonTouch() {
   const { preferences } = useFormPreferences();
+  const compact = useIsCompactFormFactor();
   const touch = useSyncExternalStore(subscribe, getSnapshot, serverSnapshot);
-  return preferences.vortonMode === true && touch;
+  // Narrow desktop windows need the same controls as phones, even with a mouse.
+  return preferences.vortonMode === true && (compact || touch);
 }
 
 export const VORTON_ACTION_SLOT = { vortonActionSlot: "true" };

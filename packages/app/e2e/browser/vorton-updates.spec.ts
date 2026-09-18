@@ -95,3 +95,40 @@ test("a failed update check exposes a retry and recovers", async ({ page }) => {
     "This interface was built ahead of main.",
   );
 });
+
+test("manual checks show lasting feedback and the version footer starts a fresh check", async ({
+  page,
+}) => {
+  let requests = 0;
+  await page.addInitScript(() => {
+    const key = "@paseo:create-agent-preferences";
+    localStorage.setItem(
+      key,
+      JSON.stringify({ ...JSON.parse(localStorage.getItem(key) ?? "{}"), vortonMode: true }),
+    );
+  });
+  await page.route(`${API}/**`, async (route) => {
+    requests += 1;
+    await route.fulfill({
+      json: route.request().url().includes("/commits/")
+        ? { sha: latestCommit }
+        : { status: "identical", ahead_by: 0 },
+    });
+  });
+  await page.goto("/settings/about");
+  await expect(page.getByTestId("vorton-update-status")).toHaveText(
+    "This interface is up to date with main.",
+  );
+  const button = page.getByTestId("vorton-check-update");
+  await button.click();
+  await expect(button).toBeDisabled();
+  await expect(button).toHaveText("Checking GitHub...");
+  await expect(page.getByTestId("vorton-check-success")).toHaveText("You're up to date");
+  await expect(button).toBeEnabled();
+  await page.getByTestId("settings-sidebar").getByText("General", { exact: true }).click();
+  const before = requests;
+  await page.getByTestId("settings-sidebar-version").click();
+  await expect(page).toHaveURL(/\/settings\/about$/);
+  await expect.poll(() => requests).toBeGreaterThan(before);
+  await expect(page.getByTestId("vorton-check-success")).toHaveText("You're up to date");
+});

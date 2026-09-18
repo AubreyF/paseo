@@ -15,6 +15,7 @@ import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useVortonMode } from "@/vorton-mode";
 import { buildUpdatePrompt, VORTON_REPOSITORY, type VortonUpdate } from "./check";
 import { useVortonUpdate, VORTON_BUILD_COMMIT } from "./use-update";
+import { UpdateSuccessBadge } from "./success-badge";
 
 function statusText(update: VortonUpdate | undefined, t: TFunction): string {
   if (!update) return t("settings.about.vortonUpdates.idle");
@@ -27,10 +28,7 @@ export function VortonUpdatesSection() {
   const { t } = useTranslation();
   const update = useVortonUpdate();
   const router = useRouter();
-  const { refetch } = update;
-  const check = useCallback(() => {
-    void refetch();
-  }, [refetch]);
+  const checking = update.isFetching || update.feedback.phase === "checking";
   const help = useCallback(() => {
     const draftId = generateDraftId();
     useDraftStore.getState().saveDraftInput({
@@ -52,7 +50,7 @@ export function VortonUpdatesSection() {
   if (!vorton || preferencesLoading) return null;
   let message = statusText(update.data, t);
   if (!VORTON_BUILD_COMMIT) message = t("settings.about.vortonUpdates.unknown");
-  else if (update.isFetching) message = t("settings.about.vortonUpdates.checking");
+  else if (checking) message = t("settings.about.vortonUpdates.checking");
   else if (update.isError)
     message = t("settings.about.vortonUpdates.failed", { error: update.error.message });
   return (
@@ -80,12 +78,20 @@ export function VortonUpdatesSection() {
           <Button
             variant="outline"
             size="md"
-            onPress={check}
-            disabled={!VORTON_BUILD_COMMIT || update.isFetching}
+            onPress={update.checkNow}
+            loading={checking}
+            disabled={!VORTON_BUILD_COMMIT}
             testID="vorton-check-update"
           >
-            {t("settings.about.vortonUpdates.check")}
+            {t(`settings.about.vortonUpdates.${checking ? "checking" : "check"}`)}
           </Button>
+          {update.feedback.phase === "success" && !update.isFetching && (
+            <UpdateSuccessBadge
+              label={t(
+                `settings.about.vortonUpdates.${update.feedback.result?.status === "current" ? "confirmedCurrent" : "checkComplete"}`,
+              )}
+            />
+          )}
           <Button variant="outline" size="md" onPress={changes}>
             {t("settings.about.vortonUpdates.changes")}
           </Button>

@@ -49,7 +49,8 @@ export function useMessageQueue(serverId: string, agentId: string) {
     queryKey: ["messageQueueSubscriptionError", serverId, agentId],
     queryFn: async () => null,
     enabled: false,
-    staleTimeMs: Infinity,
+    // Runtime writes this disabled query; the fetch policy still requires a finite value.
+    staleTimeMs: 0,
   });
   useEffect(() => {
     if (!enabled) return;

@@ -33,25 +33,34 @@ test("saved profile permissions do not hide the task mode in Vorton", async ({ p
     await setVortonMode(page, true);
     const permissions = page.getByTestId("preset-permission-trigger");
     await expect(permissions).toBeVisible();
-    await expect(permissions).toHaveAttribute("aria-label", "Permissions (Load test)");
+    await expect(permissions).toHaveAttribute("aria-label", "Permissions (Load Test)");
     await page.getByTestId("agent-preset-selector").click();
     await expect(page.getByText("Saved profile permissions", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("profile-customization-details")).toContainText("Approval test");
+    await expect(page.getByTestId("profile-customization-details")).toContainText("Approval Test");
     await page.keyboard.press("Escape");
-    await expect(permissions).toHaveAttribute("aria-label", "Permissions (Load test)");
+    await expect(permissions).toHaveAttribute("aria-label", "Permissions (Load Test)");
     await permissions.click();
     await page
       .getByTestId("combobox-desktop-container")
       .last()
-      .getByText("Approval test", { exact: true })
+      .getByText("Approval Test", { exact: true })
       .click();
-    await expect(permissions).toHaveAttribute("aria-label", "Permissions (Approval test)");
+    await expect(permissions).toHaveAttribute("aria-label", "Permissions (Approval Test)");
     await expectWorkspaceAgentConfiguration(workspace, {
       id: workspace.agentId,
       provider: "mock",
       model: "e2e-fast-stream",
       modeId: "approval-test",
     });
+    await page.screenshot({ path: test.info().outputPath("permissions-desktop.png") });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(permissions).toBeVisible();
+    await expect(permissions).toHaveAttribute("aria-label", "Permissions (Approval Test)");
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.screenshot({ path: test.info().outputPath("permissions-mobile.png") });
+    await page.setViewportSize({ width: 1280, height: 720 });
     await setVortonMode(page, false);
     await expect(
       page.getByRole("button", { name: "Select agent mode (Approval test)" }),

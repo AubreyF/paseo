@@ -18,6 +18,9 @@ for (const width of [1280, 402]) {
         const key = "@paseo:create-agent-preferences";
         const preferences = JSON.parse(localStorage.getItem(key) ?? "{}");
         localStorage.setItem(key, JSON.stringify({ ...preferences, vortonMode: true }));
+        const nonce = localStorage.getItem("@paseo:e2e-seed-nonce");
+        if (!nonce) throw new Error("Missing isolated browser seed nonce");
+        localStorage.setItem("@paseo:e2e-disable-default-seed-once", nonce);
       });
       await page.goto(`/settings/hosts/${getServerId()}/providers`);
       await expect(

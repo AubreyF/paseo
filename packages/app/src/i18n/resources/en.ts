@@ -2168,6 +2168,30 @@ export const en = {
       },
     },
     about: {
+      vortonUpdates: {
+        title: "Vorton updates",
+        notice: "Vorton update available",
+        review: "Review update",
+        idle: "Check for new commits on main.",
+        current: "This interface is up to date with main.",
+        ahead: "This interface was built ahead of main.",
+        available: "{{count}} new commits are available on main.",
+        diverged:
+          "{{count}} incoming commits. This build has changes outside main; an agent can help merge them.",
+        unpublished:
+          "This build's commit is not available on GitHub. An agent can check your local checkout.",
+        unknown: "This build has no source commit recorded. An agent can check your checkout.",
+        checking: "Checking GitHub...",
+        failed: "Could not check for updates. {{error}}",
+        commit: "Interface commit {{commit}}.",
+        interval:
+          "Checks public main every 30 minutes while the app is open. Commits may not be tested releases.",
+        check: "Check now",
+        changes: "View changes",
+        help: "Help me update",
+        instructions:
+          "Choose your Vorton source checkout and agent preset, then send the prepared task. The agent will preserve local changes and help resolve conflicts. Restarting the instance requires your approval.",
+      },
       title: "About",
       appVersion: "App version",
       thisDevice: "This device",

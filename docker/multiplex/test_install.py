@@ -57,7 +57,9 @@ elif args[0]=='compose' and '--url' in args: print('https://test.example.ts.net'
     def test_default_builds_checkout_without_registry(self):
         result = subprocess.run(['bash', str(SOURCE / 'install.sh'), str(self.deployment)], env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(any(call[0] == 'build' for call in self.calls()))
+        build = next(call for call in self.calls() if call[0] == 'build')
+        source_commit = subprocess.check_output(['git', '-C', str(SOURCE.parent.parent), 'rev-parse', 'HEAD'], text=True).strip()
+        self.assertIn('PASEO_BUILD_COMMIT=' + source_commit, build)
         self.assertFalse(any(call[0] == 'pull' for call in self.calls()))
 
     def test_existing_directory_is_never_touched(self):

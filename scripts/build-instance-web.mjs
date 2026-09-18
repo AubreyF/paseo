@@ -58,7 +58,15 @@ try {
 } catch (error) {
   if (error.code !== "ENOENT") throw error;
 }
-const env = { ...process.env, LEFTHOOK: "0", APP_VARIANT: "production" };
+const env = {
+  ...process.env,
+  LEFTHOOK: "0",
+  APP_VARIANT: "production",
+  PASEO_BUILD_COMMIT: execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: source,
+    encoding: "utf8",
+  }).trim(),
+};
 function run(command, args, cwd = root) {
   execFileSync(command, args, { cwd, env, stdio: "inherit" });
 }

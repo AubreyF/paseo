@@ -63,6 +63,68 @@ test.each(["before startup", "during startup"])(
   },
 );
 
+test("placement removed after registration closes custody and retains placement history", async () => {
+  const root = await mkdtemp(join(tmpdir(), "governed-placement-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const logger = pino({ level: "silent" });
+  const registry = new AgentStorage(root, logger);
+  await registry.initialize();
+  const client = createTestAgentClient("codex");
+  let settled = false;
+  client.openQuotaGovernedSession = async (input) => {
+    const session = await client.createSession(input.config);
+    const close = session.close.bind(session);
+    session.close = async () => {
+      await close();
+      settled = true;
+    };
+    return session;
+  };
+  const manager = new AgentManager({ logger, registry, clients: { codex: client } });
+  const id = randomUUID();
+  let checks = 0;
+  let registeredWorkspace: string | undefined;
+  const validate = async () => {
+    if (++checks === 3) {
+      registeredWorkspace = manager.getAgent(id)?.workspaceId;
+      throw new Error("Placement removed after registration");
+    }
+  };
+  await expect(
+    manager.captureGovernedExecutionClient("codex", validate).openSession({
+      config: { provider: "codex", cwd: root },
+      placement: {
+        hostId: "srv_fixture",
+        projectId: "prj_product",
+        projectRoot: root,
+        projectKey: "remote:github.com/example/product",
+        workspaceId: "wks_task",
+      },
+      account: { issuer: "openai", accountId: "fixture" },
+      guard: async () => {
+        throw new Error("No inference");
+      },
+      inspection: {
+        executionId: id,
+        title: "Fixture",
+        async stop() {},
+        async assertSettled() {
+          expect(settled).toBe(true);
+        },
+      },
+    }),
+  ).rejects.toThrow("Placement removed after registration");
+  expect(checks).toBe(3);
+  expect(registeredWorkspace).toBe("wks_task");
+  expect(settled).toBe(true);
+  expect(manager.getAgent(id)).toBeNull();
+  expect(await registry.get(id)).toMatchObject({
+    workspaceId: "wks_task",
+    lastStatus: "closed",
+    config: { controllerExecutionId: id },
+  });
+});
+
 test.each(["get", "applySnapshot"] as const)(
   "failed inspection registration cleans up after settlement (%s)",
   async (method) => {

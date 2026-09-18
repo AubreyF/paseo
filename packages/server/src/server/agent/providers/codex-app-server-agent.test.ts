@@ -1820,6 +1820,65 @@ process.stdin.on("data", (chunk) => {
 }
 
 describe("Codex app-server provider", () => {
+  test("switching a loaded automatic-review task to Full access clears the reviewer next turn", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: ["thread-1"] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ modeId: "auto-review" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      await session.connect();
+      await session.getRuntimeInfo();
+      expect(await appServer.waitForRequest("thread/start")).toMatchObject({
+        sandbox: "workspace-write",
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
+      });
+      await session.setMode("full-access");
+      await session.startTurn("read status only");
+      expect(await appServer.waitForTurnStart()).toMatchObject({
+        sandboxPolicy: { type: "dangerFullAccess" },
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("resumes Full access with its sandbox and clears an inherited automatic reviewer", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ modeId: "full-access" }),
+      { sessionId: "retained-thread" },
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      await session.connect();
+      expect(await appServer.waitForRequest("thread/resume")).toMatchObject({
+        threadId: "retained-thread",
+        sandbox: "danger-full-access",
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+      });
+      await session.startTurn("read status only");
+      expect(await appServer.waitForTurnStart()).toMatchObject({
+        sandboxPolicy: { type: "dangerFullAccess" },
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("getAvailableModes includes auto-review when the Codex version supports it", async () => {
     const session = createSession({}, { autoReviewEnabled: true });
 
@@ -5960,7 +6019,14 @@ describe("Codex app-server provider", () => {
     expect(session.currentThreadId).toBe("archived-thread-id");
     expect(requests).toEqual([
       { method: "thread/loaded/list", params: {} },
-      { method: "thread/resume", params: { threadId: "archived-thread-id" } },
+      {
+        method: "thread/resume",
+        params: {
+          threadId: "archived-thread-id",
+          approvalPolicy: "on-request",
+          sandbox: "workspace-write",
+        },
+      },
     ]);
   });
 

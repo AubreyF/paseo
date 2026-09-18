@@ -306,7 +306,7 @@ interface CodexAppServerAgentDeps {
 interface CodexModePreset {
   approvalPolicy: string;
   sandbox: string;
-  approvalsReviewer?: "auto_review";
+  approvalsReviewer?: "auto_review" | "user";
 }
 
 const MODE_PRESETS: Record<string, CodexModePreset> = {
@@ -326,6 +326,7 @@ const MODE_PRESETS: Record<string, CodexModePreset> = {
   "full-access": {
     approvalPolicy: "never",
     sandbox: "danger-full-access",
+    approvalsReviewer: "user",
   },
 };
 
@@ -4069,11 +4070,24 @@ export class CodexAppServerAgentSession implements AgentSession {
     params.approvalPolicy = "never";
   }
 
+  private applyResumedWorkflowPolicy(params: Record<string, unknown>): void {
+    // A resumed native thread otherwise retains its old sandbox and reviewer.
+    // Reapply the task's frozen mode, never the current saved profile.
+    if (this.hasWorkflowModeOverride) {
+      const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
+      if (this.providerOptions.approval_policy === undefined)
+        params.approvalPolicy = preset.approvalPolicy;
+      if (this.providerOptions.sandbox_mode === undefined) params.sandbox = preset.sandbox;
+      applyApprovalsReviewerParam(params, preset);
+    }
+  }
+
   private async ensureThreadLoaded(
     options: { allowArchivedHistory?: boolean } = {},
   ): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
     const params: Record<string, unknown> = { threadId: this.currentThreadId };
+    this.applyResumedWorkflowPolicy(params);
     if (this.quotaGovernance) params.approvalsReviewer = "user";
     this.applyGovernedPermissionProfile(params);
     const developerInstructions = composeSystemPromptParts(

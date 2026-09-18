@@ -15,6 +15,17 @@ describe("profile launch", () => {
   };
   const worker = { id: "local", name: "Local fast", provider: "pi", model: "local-model" };
 
+  it("applies and freezes profile permissions when the launch omits a mode", () => {
+    const saved = { ...profile, modeId: "full-access" };
+    const config = resolveProfileLaunch({ provider: "stale", cwd: "/work", profileId: saved.id }, [
+      saved,
+      worker,
+    ]);
+    expect(config.modeId).toBe("full-access");
+    saved.modeId = "auto-review";
+    expect(resolveProfileLaunch(config, [saved, worker]).modeId).toBe("full-access");
+  });
+
   it("resolves on the server without overriding the separately selected permissions", () => {
     const config = resolveProfileLaunch(
       {

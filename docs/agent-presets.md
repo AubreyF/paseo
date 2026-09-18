@@ -4,13 +4,13 @@ Launch presets extend the existing `daemon.agentProfiles` collection. There is n
 
 For the experimental fork's host migration, pending work and destination acceptance checks, read [the host handoff](host-handoff.md).
 
-Wide Vorton composers show the full profile name. Mobile and composers narrower than 640 CSS pixels show its nickname. Permissions are edited in the profile, not in a separate Vorton composer control.
+Wide Vorton composers show the full profile name. Mobile and composers narrower than 640 CSS pixels show its nickname. The composer permission control shows the task's selected mode. The profile inspector shows saved profile permissions; editing them does not change an existing task or draft. Reselect a profile to apply it to a draft, or change the task permission control explicitly. Changes during a running turn apply on the next turn.
 
 ## Configuration and compatibility
 
 A profile can include `instructions`, `workerProfileId`, and `maxWorkers` in addition to its existing provider, model, reasoning and feature values. Worker profiles require an explicit model and cannot reference another worker. Names and model IDs remain user configuration.
 
-New hosts advertise `agentProfileLaunch`. A launch request carries `profileId`; the server resolves the current profile and freezes its instructions and worker configuration into the stored session. Later profile edits affect new tasks, not resumed tasks. The Vorton client applies the profile permission mode to drafts and sends it explicitly on handoff launches. Profiles without a mode use the provider default. Classic mode remains available.
+New hosts advertise `agentProfileLaunch`. A launch request carries `profileId`; the server resolves the current profile and freezes its instructions and worker configuration into the stored session. Later profile edits affect new tasks, not resumed tasks. The profile supplies the permission mode when the launch has no explicit task override. The Vorton client applies the profile permission mode to drafts and sends it explicitly on handoff launches. Profiles without a mode use the provider default. Native resumption reapplies the frozen task mode. Governed Factory workers retain their coordinator-selected confinement independently of supervisor permissions. Classic mode remains available.
 
 New editors send `expectedAgentProfiles` for stale-write detection. The server preserves omitted instruction and worker fields from older editors. Empty strings explicitly clear instructions and worker references. An older host does not expose these launch-only controls.
 

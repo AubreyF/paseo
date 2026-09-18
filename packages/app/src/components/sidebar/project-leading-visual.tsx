@@ -1,3 +1,4 @@
+import { useVortonMode } from "@/vorton-mode";
 import { ActivityIndicator, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
@@ -227,14 +228,17 @@ function ProjectIcon({
   placeholderInitial: string;
   projectViewKey: string;
 }) {
+  const vorton = useVortonMode();
   return (
-    <ProjectIconView
-      iconDataUri={iconDataUri}
-      initial={placeholderInitial}
-      projectViewKey={projectViewKey}
-      size={ICON_SIZE.md}
-      textStyle={styles.projectIconFallbackText}
-    />
+    <View style={vorton ? styles.monochromeIcon : undefined}>
+      <ProjectIconView
+        iconDataUri={iconDataUri}
+        initial={placeholderInitial}
+        projectViewKey={projectViewKey}
+        size={ICON_SIZE.md}
+        textStyle={styles.projectIconFallbackText}
+      />
+    </View>
   );
 }
 
@@ -285,6 +289,8 @@ const styles = StyleSheet.create((theme) => {
       width: theme.iconSize.md,
       height: theme.iconSize.md,
     },
+    // Filter only the artwork; the sibling status badge keeps its semantic color.
+    monochromeIcon: { filter: "grayscale(1)" },
     projectIconFallbackText: {
       fontSize: 9,
     },

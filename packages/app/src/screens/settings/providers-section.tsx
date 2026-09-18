@@ -1,3 +1,9 @@
+import { AdaptiveRenameModal } from "@/components/rename-modal";
+import { Button } from "@/components/ui/button";
+import { ProviderReconnectControl } from "@/provider-usage/reconnect-control";
+import { useProviderUsage } from "@/provider-usage/use-provider-usage";
+import type { ProviderUsage } from "@/provider-usage/types";
+import { useVortonMode } from "@/vorton-mode";
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -77,6 +83,7 @@ function getProviderStatus(
 }
 
 interface ProviderRowProps {
+  usage: ProviderUsage | undefined;
   serverId: string;
   def: ProviderDefinition;
   entry: ProviderEntry;
@@ -88,6 +95,7 @@ interface ProviderRowProps {
   onPress: (providerId: string) => void;
   onToggleEnabled: (providerId: string, enabled: boolean) => void;
   onRemove: (providerId: string, providerLabel: string) => void;
+  onRename: (provider: ProviderDefinition) => void;
 }
 
 function stopPressInPropagation(event: GestureResponderEvent) {
@@ -168,6 +176,7 @@ function ProviderActionsMenu({
 }
 
 function ProviderRow({
+  usage,
   serverId,
   def,
   entry,
@@ -179,7 +188,9 @@ function ProviderRow({
   onPress,
   onToggleEnabled,
   onRemove,
+  onRename,
 }: ProviderRowProps) {
+  const vortonMode = useVortonMode();
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
@@ -197,6 +208,20 @@ function ProviderRow({
   const handlePress = useCallback(() => {
     onPress(def.id);
   }, [def.id, onPress]);
+  const handleRename = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onRename(def);
+    },
+    [def, onRename],
+  );
+  const handleRemove = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onRemove(def.id, def.label);
+    },
+    [def.id, def.label, onRemove],
+  );
   const handleToggleValueChange = useCallback(
     (value: boolean) => {
       onToggleEnabled(def.id, value);
@@ -208,10 +233,11 @@ function ProviderRow({
       settingsStyles.row,
       !isFirst && settingsStyles.rowBorder,
       styles.row,
+      vortonMode && isCompact && styles.compactRow,
       hovered && styles.rowHovered,
       pressed && styles.rowPressed,
     ],
-    [isFirst],
+    [isFirst, vortonMode, isCompact],
   );
 
   return (
@@ -245,26 +271,56 @@ function ProviderRow({
             </View>
           </View>
           <View style={styles.trailingControls}>
+            <ProviderReconnectControl
+              serverId={serverId}
+              providerId={def.id}
+              name={def.label}
+              usage={usage}
+            />
             <Switch
               value={enabled}
               onValueChange={handleToggleValueChange}
               disabled={isToggling || isRemoving}
               accessibilityLabel={t("settings.providers.enableProvider", { name: def.label })}
             />
-            <View style={styles.menuSlot}>
-              {canRemove ? (
-                <ProviderActionsMenu
-                  providerId={def.id}
-                  providerLabel={def.label}
-                  isRemoving={isRemoving}
-                  iconSize={theme.iconSize.sm}
-                  foregroundColor={theme.colors.foreground}
-                  foregroundMutedColor={theme.colors.foregroundMuted}
-                  dangerColor={theme.colors.statusDanger}
-                  onRemove={onRemove}
-                />
-              ) : null}
-            </View>
+            {vortonMode ? (
+              <View style={styles.trailingControls}>
+                <Button
+                  variant="ghost"
+                  onPress={handleRename}
+                  disabled={isRemoving}
+                  testID={`provider-rename-${def.id}`}
+                >
+                  Rename
+                </Button>
+                {canRemove ? (
+                  <Button
+                    variant="ghost"
+                    onPress={handleRemove}
+                    disabled={isRemoving}
+                    loading={isRemoving}
+                    testID={`provider-remove-${def.id}`}
+                  >
+                    Delete
+                  </Button>
+                ) : null}
+              </View>
+            ) : (
+              <View style={styles.menuSlot}>
+                {canRemove ? (
+                  <ProviderActionsMenu
+                    providerId={def.id}
+                    providerLabel={def.label}
+                    isRemoving={isRemoving}
+                    iconSize={theme.iconSize.sm}
+                    foregroundColor={theme.colors.foreground}
+                    foregroundMutedColor={theme.colors.foregroundMuted}
+                    dangerColor={theme.colors.statusDanger}
+                    onRemove={onRemove}
+                  />
+                ) : null}
+              </View>
+            )}
           </View>
         </>
       )}
@@ -324,6 +380,17 @@ export interface ProvidersSectionProps {
 }
 
 export function ProvidersSection({ serverId }: ProvidersSectionProps) {
+  const vortonMode = useVortonMode();
+  const { view } = useProviderUsage(serverId, { enabled: vortonMode });
+  const usageByProvider = useMemo(
+    () =>
+      new Map(
+        view.kind === "ready"
+          ? view.payload.providers.map((usage) => [usage.providerId, usage])
+          : [],
+      ),
+    [view],
+  );
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
@@ -334,9 +401,22 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
   const removingProviderIdRef = useRef<string | null>(null);
   const [installingProviderId, setInstallingProviderId] = useState<string | null>(null);
+  const [renamingProvider, setRenamingProvider] = useState<ProviderDefinition | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
   const hasServer = serverId.length > 0;
+  const closeRename = useCallback(() => setRenamingProvider(null), []);
+  const renameProvider = useCallback(
+    async (value: string) => {
+      if (!renamingProvider) return;
+      const result = await patchConfig({
+        providers: { [renamingProvider.id]: { label: value.trim() } },
+      });
+      if (!result) throw new Error("Reconnect to the host and try again.");
+    },
+    [patchConfig, renamingProvider],
+  );
 
   const handleOpenProviderSettings = useCallback(
     (providerId: string) => {
@@ -367,6 +447,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
       if (removingProviderIdRef.current) return;
       removingProviderIdRef.current = providerId;
       setRemovingProviderId(providerId);
+      setRemoveError(null);
       try {
         const confirmed = await confirmDialog({
           title: t("settings.providers.remove.confirmTitle", { name: providerLabel }),
@@ -378,12 +459,17 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
           return;
         }
 
-        await patchConfig({ removeProviders: [providerId] });
+        const result = await patchConfig({ removeProviders: [providerId] });
+        if (!result) throw new Error("Reconnect to the host and try again.");
       } catch (error) {
-        Alert.alert(
-          t("settings.providers.remove.errorTitle"),
-          error instanceof Error ? error.message : String(error),
-        );
+        if (vortonMode) {
+          setRemoveError(error instanceof Error ? error.message : String(error));
+        } else {
+          Alert.alert(
+            t("settings.providers.remove.errorTitle"),
+            error instanceof Error ? error.message : String(error),
+          );
+        }
       } finally {
         if (removingProviderIdRef.current === providerId) {
           removingProviderIdRef.current = null;
@@ -391,7 +477,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
         setRemovingProviderId((current) => (current === providerId ? null : current));
       }
     },
-    [patchConfig, t],
+    [patchConfig, t, vortonMode],
   );
 
   const handleInstall = useCallback(
@@ -425,6 +511,11 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
             <Text style={styles.emptyText}>{t("settings.providers.unavailable")}</Text>
           </View>
         ) : null}
+        {vortonMode && removeError ? (
+          <Text style={styles.errorText} accessibilityLiveRegion="polite">
+            {removeError}
+          </Text>
+        ) : null}
         {hasServer && isConnected && isLoading ? (
           <View style={[settingsStyles.card, styles.emptyCard]}>
             <Text style={styles.emptyText}>{t("settings.providers.loading")}</Text>
@@ -440,6 +531,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                   key={def.id}
                   serverId={serverId}
                   def={def}
+                  usage={usageByProvider.get(def.id)}
                   entry={entry}
                   enabled={entry.enabled ?? true}
                   isToggling={pendingProviderId === def.id}
@@ -449,6 +541,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                   onPress={handleOpenProviderSettings}
                   onToggleEnabled={handleToggleEnabled}
                   onRemove={handleRemoveProvider}
+                  onRename={setRenamingProvider}
                 />
               );
             })}
@@ -468,6 +561,17 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
             onInstall={handleInstall}
           />
         </SettingsSection>
+      ) : null}
+      {vortonMode && renamingProvider ? (
+        <AdaptiveRenameModal
+          key={renamingProvider.id}
+          visible
+          title="Rename provider"
+          initialValue={renamingProvider.label}
+          onClose={closeRename}
+          onSubmit={renameProvider}
+          testID="provider-rename-dialog"
+        />
       ) : null}
     </>
   );
@@ -494,6 +598,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowHovered: {
     backgroundColor: theme.colors.surface2,
+  },
+  compactRow: {
+    flexDirection: "column",
+    alignItems: "stretch",
   },
   rowPressed: {
     backgroundColor: theme.colors.surface3,

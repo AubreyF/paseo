@@ -27,6 +27,10 @@
     },
     "typecheck": {
       "command": "npm run typecheck"
+    },
+    "preview": {
+      "type": "service",
+      "command": "node ./scripts/preview-instance.mjs"
     }
   }
 }

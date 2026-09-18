@@ -4,6 +4,7 @@ import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 
 export interface PendingWorkspaceDraftSubmission {
+  goal?: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput;
   profileId?: string;
   serverId: string;
   workspaceId: string;

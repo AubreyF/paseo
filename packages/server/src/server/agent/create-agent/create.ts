@@ -1,3 +1,4 @@
+import { setAgentGoalWithContext } from "../agent-goal.js";
 import type { Logger } from "pino";
 
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
@@ -63,6 +64,7 @@ export interface CreateAgentFromSessionInput {
   workspaceId: string;
   worktreeName?: string;
   initialPrompt?: string;
+  initialGoal?: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput;
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
   images?: Array<{ data: string; mimeType: string }>;
@@ -202,7 +204,10 @@ export async function createAgentCommand(
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
   let initialPromptError: unknown | null = null;
-  if (resolved.prompt !== undefined) {
+  if (input.kind === "session" && input.initialGoal) {
+    liveSnapshot = await startInitialGoal(dependencies, input, resolved, snapshot);
+    initialPromptStarted = true;
+  } else if (resolved.prompt !== undefined) {
     const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot);
     initialPromptStarted = sendResult.started;
     liveSnapshot = sendResult.liveSnapshot;
@@ -230,11 +235,42 @@ export async function createAgentCommand(
   };
 }
 
+async function startInitialGoal(
+  dependencies: CreateAgentCommandDependencies,
+  input: CreateAgentFromSessionInput,
+  resolved: ResolvedCreateAgent,
+  snapshot: ManagedAgent,
+): Promise<ManagedAgent> {
+  const initialGoal = input.initialGoal;
+  if (!initialGoal) return snapshot;
+  const hasAttachments = (input.images?.length ?? 0) > 0 || (input.attachments?.length ?? 0) > 0;
+  await setAgentGoalWithContext({
+    manager: dependencies.agentManager,
+    agentId: snapshot.id,
+    goal: initialGoal,
+    clientMessageId: input.clientMessageId,
+    sendContext: hasAttachments
+      ? async () => {
+          const sent = await sendInitialPrompt(
+            dependencies,
+            { ...resolved, runOptions: { ...resolved.runOptions, intent: "goal" } },
+            snapshot,
+          );
+          if (sent.error || !sent.started)
+            throw sent.error ?? new Error("Goal context was not accepted");
+        }
+      : undefined,
+  });
+  return dependencies.agentManager.getAgent(snapshot.id) ?? snapshot;
+}
+
 async function resolveSessionCreateAgent(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentFromSessionInput,
 ): Promise<ResolvedCreateAgent> {
-  const trimmedPrompt = input.initialPrompt?.trim();
+  const trimmedPrompt = (input.initialGoal?.objective ?? input.initialPrompt)?.trim();
+  if (input.initialGoal && !input.initialGoal.objective?.trim())
+    throw new Error("A new goal requires an objective");
   const {
     sessionConfig: builtSessionConfig,
     setupContinuation,

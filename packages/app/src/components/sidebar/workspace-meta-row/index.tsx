@@ -281,19 +281,30 @@ const CHECK_STATE_ACCESSIBLE_KEYS = {
  * A failed health check turns the whole item danger, glyph and name together. Colouring only the
  * glyph would leave the name reading as fine, and the name is the part you look at.
  */
-function ServiceItem({ summary }: { summary: WorkspaceServiceSummary }) {
+export function ServiceItem({
+  summary,
+  iconOnly = false,
+}: {
+  summary: WorkspaceServiceSummary;
+  iconOnly?: boolean;
+}) {
   const { t } = useTranslation();
   const unhealthy = summary.health === "unhealthy";
   return (
     <View
-      style={styles.serviceItem}
+      style={[styles.serviceItem, iconOnly && styles.serviceIcon]}
       accessibilityLabel={t(workspaceServiceLabelKey(summary), { name: summary.name })}
       testID={unhealthy ? "workspace-service-unhealthy" : "workspace-service"}
     >
       <ThemedGlobe size={META_ICON_SIZE} uniProps={unhealthy ? dangerMapping : successMapping} />
-      <Text style={unhealthy ? styles.serviceNameUnhealthy : styles.serviceName} numberOfLines={1}>
-        {summary.name}
-      </Text>
+      {!iconOnly && (
+        <Text
+          style={unhealthy ? styles.serviceNameUnhealthy : styles.serviceName}
+          numberOfLines={1}
+        >
+          {summary.name}
+        </Text>
+      )}
     </View>
   );
 }
@@ -310,6 +321,7 @@ function pressableItemStyle({ pressed }: { pressed: boolean }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  serviceIcon: { height: 20 },
   row: {
     flexDirection: "row",
     alignItems: "center",

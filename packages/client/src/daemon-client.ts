@@ -258,6 +258,10 @@ export type ConnectionState =
 
 export type DaemonEvent =
   | {
+      type: "agent.queue.changed";
+      payload: import("@getpaseo/protocol/message-queue").QueueSnapshot;
+    }
+  | {
       type: "agent_update";
       agentId: string;
       payload: Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
@@ -366,6 +370,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   workspaceId?: string;
   callerAgentId?: string;
   initialPrompt?: string;
+  initialGoal?: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput;
   clientMessageId?: string;
   outputSchema?: Record<string, unknown>;
   images?: CreateAgentRequestMessage["images"];
@@ -2506,6 +2511,7 @@ export class DaemonClient {
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
+      ...(options.initialGoal ? { initialGoal: options.initialGoal } : {}),
       ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
       ...(options.images && options.images.length > 0 ? { images: options.images } : {}),
@@ -3224,6 +3230,73 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentModel rejected");
     }
+  }
+
+  async getMessageQueueAttachment(input: {
+    agentId: string;
+    messageId: string;
+    attachmentId: string;
+  }) {
+    return this.sendNamespacedCorrelatedSessionRequest<"agent.queue.attachment.get.response">({
+      message: { type: "agent.queue.attachment.get.request", ...input },
+    });
+  }
+
+  async readMessageQueue(agentId: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"agent.queue.read.response">({
+      message: { type: "agent.queue.read.request", agentId },
+    });
+  }
+
+  async mutateMessageQueue(
+    agentId: string,
+    operation: import("@getpaseo/protocol/message-queue").QueueOperation,
+  ) {
+    return this.sendNamespacedCorrelatedSessionRequest<"agent.queue.mutate.response">({
+      message: { type: "agent.queue.mutate.request", agentId, operation },
+    });
+  }
+
+  async subscribeMessageQueue(input: { agentId: string; subscribed: boolean }) {
+    return this.sendNamespacedCorrelatedSessionRequest<"agent.queue.subscribe.response">({
+      message: { type: "agent.queue.subscribe.request", ...input },
+    });
+  }
+
+  async getAgentGoal(
+    agentId: string,
+  ): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"agent.goal.get.response">({
+      message: { type: "agent.goal.get.request", agentId },
+    });
+    if (result.error || !result.state) throw new Error(result.error ?? "Goal state unavailable");
+    return result.state;
+  }
+
+  async setAgentGoal(
+    agentId: string,
+    input: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput,
+    context?: {
+      clientMessageId?: string;
+      images?: CreateAgentRequestMessage["images"];
+      attachments?: CreateAgentRequestMessage["attachments"];
+    },
+  ): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"agent.goal.set.response">({
+      message: { type: "agent.goal.set.request", agentId, input, ...context },
+    });
+    if (result.error || !result.state) throw new Error(result.error ?? "Goal update unconfirmed");
+    return result.state;
+  }
+
+  async clearAgentGoal(
+    agentId: string,
+  ): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState> {
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"agent.goal.clear.response">({
+      message: { type: "agent.goal.clear.request", agentId },
+    });
+    if (result.error || !result.state) throw new Error(result.error ?? "Goal removal unconfirmed");
+    return result.state;
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
@@ -4872,6 +4945,12 @@ export class DaemonClient {
     });
   }
 
+  async createCodexAccount(creationId: string, name: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.codex.create_account.response">({
+      message: { type: "provider.codex.create_account.request", creationId, name },
+    });
+  }
+
   async readProviderLogin(providerId: string) {
     return this.sendNamespacedCorrelatedSessionRequest<"provider.login.read.response">({
       message: { type: "provider.login.read.request", providerId },
@@ -6276,6 +6355,8 @@ export class DaemonClient {
           requestId: msg.payload.requestId,
           resolution: msg.payload.resolution,
         };
+      case "agent.queue.changed":
+        return { type: "agent.queue.changed", payload: msg.payload };
       case "providers_snapshot_update":
         return {
           type: "providers_snapshot_update",

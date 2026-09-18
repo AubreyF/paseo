@@ -4844,12 +4844,26 @@ describe("Codex app-server provider", () => {
         if (method === "thread/loaded/list") {
           return { data: ["test-thread"] };
         }
+        if (method === "thread/goal/set")
+          return {
+            goal: {
+              threadId: "test-thread",
+              objective: "ship feature",
+              status: "active",
+              tokenBudget: null,
+              tokensUsed: 0,
+              timeUsedSeconds: 0,
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          };
         return {};
       }),
     };
 
     const handler = session.tryHandleOutOfBand?.("/goal ship feature");
     expect(handler).not.toBeNull();
+    expect(handler?.intent).toBe("goal");
 
     const events: AgentStreamEvent[] = [];
     await handler?.run({ emit: (event) => events.push(event) });
@@ -6148,4 +6162,48 @@ describe("Codex denied plan approvals", () => {
       metadata: { approved: false },
     });
   });
+});
+
+test("concurrent first goal mutations create only one native thread", async () => {
+  const native = createFakeCodexAppServer({
+    "thread/goal/get": () => ({ goal: null }),
+    "thread/goal/set": (params) => {
+      const input = params as { objective: string; status: "paused" };
+      return {
+        goal: {
+          threadId: "thread-1",
+          objective: input.objective,
+          status: input.status,
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      };
+    },
+  });
+  const session = new CodexAppServerAgentSession(
+    createConfig(),
+    null,
+    createTestLogger(),
+    async () => native.child,
+    {},
+    false,
+    true,
+  );
+  try {
+    await session.connect();
+    await Promise.all([
+      session.goals!.set({ objective: "First objective", status: "paused" }),
+      session.goals!.set({ objective: "Second objective", status: "paused" }),
+    ]);
+    expect(native.requests().filter((request) => request.method === "thread/start")).toHaveLength(
+      1,
+    );
+    expect(session.goals!.state.goal?.objective).toBe("Second objective");
+    native.assertNoErrors();
+  } finally {
+    await session.close();
+  }
 });

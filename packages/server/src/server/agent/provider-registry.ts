@@ -446,6 +446,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     provider,
     id: inner.id,
     capabilities: inner.capabilities,
+    goals: inner.goals,
     get features() {
       return inner.features;
     },

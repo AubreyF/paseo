@@ -63,6 +63,8 @@ interface SendActionContext {
   handleQueueMessage: () => void;
 }
 
+export type DictationSubmitIntent = "insert" | "default" | "send" | "queue";
+
 interface DictationTranscriptContext {
   value: string;
   defaultSendBehavior: SendBehavior;
@@ -72,8 +74,7 @@ interface DictationTranscriptContext {
   replaceText: (text: string) => void;
   attachments: MessagePayload["attachments"];
   cwd: string;
-  autoSend: boolean;
-  queueRequested?: boolean;
+  intent: DictationSubmitIntent;
 }
 
 export function applyDictationTranscript(text: string, ctx: DictationTranscriptContext): void {
@@ -81,7 +82,7 @@ export function applyDictationTranscript(text: string, ctx: DictationTranscriptC
   const shouldPad = ctx.value.length > 0 && !/\s$/.test(ctx.value);
   const nextValue = `${ctx.value}${shouldPad ? " " : ""}${text}`;
 
-  if (!ctx.autoSend) {
+  if (ctx.intent === "insert") {
     ctx.replaceText(nextValue);
     return;
   }
@@ -90,7 +91,8 @@ export function applyDictationTranscript(text: string, ctx: DictationTranscriptC
 
   if (
     ctx.onQueue &&
-    (ctx.queueRequested || (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning))
+    (ctx.intent === "queue" ||
+      (ctx.intent === "default" && ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning))
   ) {
     ctx.onQueue({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });
     ctx.replaceText("");
@@ -101,7 +103,8 @@ export function applyDictationTranscript(text: string, ctx: DictationTranscriptC
     text: nextValue,
     attachments: ctx.attachments,
     cwd: ctx.cwd,
-    forceSend: ctx.isAgentRunning || undefined,
+    // Preserve the selected send action if the agent starts a turn during transcription.
+    forceSend: true,
   });
 }
 

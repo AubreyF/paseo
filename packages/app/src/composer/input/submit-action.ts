@@ -48,7 +48,10 @@ export function resolveSubmitAction(input: {
   isAgentRunning: boolean;
   canQueue: boolean;
   defaultActionQueues: boolean;
+  separateQueueAction?: boolean;
 }) {
+  // Touch composers expose Queue separately, so their primary button always sends.
+  if (input.separateQueueAction) return { action: "send", queues: false } as const;
   if (!input.enabled) return { action: "default", queues: false } as const;
   if (input.modifier === "newline") return { action: "newline", queues: false } as const;
   const alternate =

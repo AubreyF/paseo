@@ -67,6 +67,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/vorton-touch-audit.md](docs/vorton-touch-audit.md)             | Vorton touch contract, historical checks and physical-device limits                                                            |
 | [docs/publication-hygiene.md](docs/publication-hygiene.md)           | Public source boundaries, secret checks and history cleanup                                                                    |
 | [docs/release.md](docs/release.md)                                   | Release playbook, draft releases, completion checklist                                                                         |
+| [docs/desktop-auto-builds.md](docs/desktop-auto-builds.md)           | Proposed private desktop build and update pipeline, findings, acceptance work, and effort estimate                             |
 | [docs/terminal-activity.md](docs/terminal-activity.md)               | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
 | [SECURITY.md](SECURITY.md)                                           | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
 | [public-docs/hub/security.md](public-docs/hub/security.md)           | Public Hub guide — trust boundaries, untrusted triggers, provider controls, and output authority                               |
@@ -202,10 +203,10 @@ Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log
 
 ## Vorton customization contract
 
-All fork-specific interface behavior must be gated by the existing Vorton toggle, which defaults off. Paseo mode retains standard controls, appearance, interactions, and navigation. The mode selector itself remains available so users can enable Vorton. Do not use host capability, browser width, or the presence of saved profiles as a substitute for this mode gate.
+All fork-specific interface behavior must be gated by the existing Vorton toggle. Follow the [mode default and persistence contract](docs/agent-presets.md#review-boundaries). Paseo mode retains standard controls, appearance, interactions, and navigation. The mode selector itself remains available so users can enable Vorton. Do not use host capability, browser width, or the presence of saved profiles as a substitute for this mode gate.
 
 Use `useVortonMode` for custom UI and `useVortonTouch` for touch enhancements. Gate styles as well as rendering and event handlers. Switching back to Paseo must restore baseline appearance without overwriting saved settings, deleting profiles, changing accounts, or interrupting tasks. Account state and server capability support remain persistent; the toggle controls use and presentation, not credentials or daemon lifetime.
 
-Every interface request requires an off/on comparison, focused tests, and publishing a tested web export to the private preview instance. Follow docs/instance-continuity.md. Localhost development changes alone are not delivery. Verify the served release and assets, preserve active sessions, and ask for physical device confirmation where emulation cannot prove behavior. Never launch macOS Playwright WebKit.
+Every interface request requires an off/on comparison, focused tests, and delivery to the existing primary Vorton installation. Follow [instance continuity](docs/instance-continuity.md) for publication, destination verification, and session preservation. Ask for physical device confirmation where emulation cannot prove behavior. Never launch macOS Playwright WebKit.
 
 For Vorton touch layouts, detect touch capability independently of screen width. Essential actions must be visible without hover, primary targets should be at least 44 CSS pixels, and hover cards must not intercept a touch intended for navigation. Keep pinch zoom, keyboard focus indicators, scrolling, and independently selectable permissions.

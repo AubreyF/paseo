@@ -1,0 +1,160 @@
+import type { QueueOperation, QueueSnapshot } from "@getpaseo/protocol/message-queue";
+import { QueueAttachmentStore } from "./attachments.js";
+import { MessageQueueStore, QueueStoreError } from "./store.js";
+import { QueueDeliveryWorker, type QueueDeliveryPort } from "./delivery.js";
+import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
+
+type QueueListener = (snapshot: QueueSnapshot) => void;
+
+/** One instance belongs to the daemon. Subscriptions never own stored messages. */
+export class MessageQueueService {
+  private readonly listeners = new Map<string, Set<QueueListener>>();
+  private readonly queuedAgents = new Set<string>();
+  private initialization: Promise<void> | null = null;
+  private delivery: QueueDeliveryWorker | null = null;
+  private readonly stopGenerations = new Map<string, number>();
+  constructor(
+    private readonly store: MessageQueueStore,
+    private readonly attachments: QueueAttachmentStore,
+  ) {}
+
+  async startDelivery(port: Omit<QueueDeliveryPort, "changed">): Promise<void> {
+    await this.initialize();
+    if (this.delivery) throw new Error("Queue delivery is already started");
+    this.delivery = new QueueDeliveryWorker(this.store, {
+      ...port,
+      changed: (snapshot) => this.publish(snapshot),
+    });
+    for (const agentId of await this.store.listAgentIds()) this.wake(agentId);
+  }
+
+  wake(agentId: string): void {
+    if (this.queuedAgents.has(agentId)) void this.delivery?.wake(agentId);
+  }
+
+  close(): void {
+    this.delivery?.close();
+  }
+
+  async pause(agentId: string): Promise<void> {
+    this.delivery?.halt(agentId);
+    this.stopGenerations.set(agentId, (this.stopGenerations.get(agentId) ?? 0) + 1);
+    await this.initialize();
+    this.publish(await this.store.pause(agentId));
+  }
+
+  initialize(): Promise<void> {
+    this.initialization ??= this.recover();
+    return this.initialization;
+  }
+
+  private async recover(): Promise<void> {
+    for (const agentId of await this.store.listAgentIds()) {
+      this.publish(await this.store.recover(agentId));
+    }
+  }
+
+  async read(agentId: string): Promise<QueueSnapshot> {
+    await this.initialize();
+    return this.store.read(agentId);
+  }
+
+  async acceptedHistory(agentId: string) {
+    await this.initialize();
+    return this.store.acceptedHistory(agentId);
+  }
+
+  async reconcileHistory(agentId: string, history: readonly AgentStreamEvent[]): Promise<void> {
+    await this.initialize();
+    const result = await this.store.reconcileHistory(agentId, history);
+    if (result.changed) {
+      this.publish(result.snapshot);
+      this.wake(agentId);
+    }
+  }
+
+  async recordProviderMessageId(input: {
+    agentId: string;
+    messageId: string;
+    providerMessageId: string;
+  }): Promise<void> {
+    await this.initialize();
+    await this.store.recordProviderMessageId(input);
+  }
+
+  async attachment(input: { agentId: string; messageId: string; attachmentId: string }) {
+    await this.initialize();
+    const attachment = await this.store.attachment(input);
+    if (!attachment)
+      throw new QueueStoreError("missing", "The attachment is not part of this message.");
+    const location = await this.attachments.location(attachment);
+    return { attachment, ...location };
+  }
+
+  async mutate(agentId: string, operation: QueueOperation): Promise<QueueSnapshot> {
+    await this.initialize();
+    const generation = this.stopGenerations.get(agentId) ?? 0;
+    const pauseRequested = operation.kind === "pause" && operation.paused;
+    const temporarilyHalted = pauseRequested && this.delivery?.halt(agentId);
+    let snapshot: QueueSnapshot;
+    try {
+      if (operation.kind === "enqueue" || operation.kind === "edit")
+        await this.attachments.capture(operation.attachments);
+      snapshot = await this.store.mutate(agentId, operation);
+    } catch (error) {
+      // A rejected pause must not leave an invisible runtime stop behind. A
+      // concurrent manual stop remains authoritative even if this edit failed.
+      const current = await this.store.read(agentId);
+      const unchangedStop = generation === (this.stopGenerations.get(agentId) ?? 0);
+      if (temporarilyHalted && !current.paused && unchangedStop) this.delivery?.resume(agentId);
+      this.wake(agentId);
+      throw error;
+    }
+    this.publish(snapshot);
+    this.resumeAfterMutation(agentId, operation, snapshot, generation);
+    this.wake(agentId);
+    return snapshot;
+  }
+
+  private resumeAfterMutation(
+    agentId: string,
+    operation: QueueOperation,
+    snapshot: QueueSnapshot,
+    generation: number,
+  ): void {
+    const currentGeneration = this.stopGenerations.get(agentId) ?? 0;
+    if (operation.kind === "pause" && !operation.paused && generation === currentGeneration)
+      this.delivery?.resume(agentId);
+    if (
+      operation.kind === "send_now" &&
+      snapshot.items[0]?.sendNow &&
+      generation === currentGeneration
+    ) {
+      this.delivery?.resume(agentId);
+      void this.delivery?.wakeImmediate(agentId);
+    }
+  }
+
+  // Register before reading the initial snapshot. Changes may precede the read
+  // response; clients retain the highest revision, so reconnect has no gap.
+  subscribe(agentId: string, listener: QueueListener): () => void {
+    let listeners = this.listeners.get(agentId);
+    if (!listeners) {
+      listeners = new Set();
+      this.listeners.set(agentId, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.listeners.delete(agentId);
+    };
+  }
+
+  private publish(snapshot: QueueSnapshot): void {
+    if (snapshot.items.length > 0) this.queuedAgents.add(snapshot.agentId);
+    else this.queuedAgents.delete(snapshot.agentId);
+    const listeners = this.listeners.get(snapshot.agentId);
+    if (!listeners) return;
+    for (const listener of listeners) listener(structuredClone(snapshot));
+  }
+}

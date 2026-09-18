@@ -4,6 +4,7 @@ export type ImageAttachment = AttachmentMetadata;
 
 export interface MessagePayload {
   text: string;
+  goal?: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput;
   attachments: ComposerAttachment[];
   cwd: string;
   forceSend?: boolean;

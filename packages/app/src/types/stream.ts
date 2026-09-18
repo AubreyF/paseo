@@ -1,3 +1,4 @@
+import type { QueuePresentation } from "@getpaseo/protocol/message-queue";
 import type {
   AgentProvider,
   AgentTimelineItem,
@@ -99,6 +100,8 @@ export interface UserMessageItem {
   timelineCursor?: TimelinePosition;
   text: string;
   timestamp: Date;
+  intent?: "goal";
+  queue?: QueuePresentation;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
 }
@@ -111,6 +114,8 @@ export interface UserMessageInput {
   timelineCursor?: TimelinePosition;
   text: string;
   timestamp: Date;
+  intent?: "goal";
+  queue?: QueuePresentation;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
 }
@@ -127,6 +132,8 @@ export function createUserMessage(input: UserMessageInput): UserMessageItem {
     ...(input.messageId ? { messageId: input.messageId } : {}),
     ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.timelineCursor ? { timelineCursor: input.timelineCursor } : {}),
+    ...(input.intent ? { intent: input.intent } : {}),
+    ...(input.queue ? { queue: input.queue } : {}),
     text: input.text,
     timestamp: input.timestamp,
     ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
@@ -260,23 +267,38 @@ function produceUserMessage(
     ...presentation,
     clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
     messageId: incoming.messageId ?? existing.messageId,
+    intent: incoming.intent ?? existing.intent,
+    queue: incoming.queue ?? existing.queue,
     timelineCursor: incoming.timelineCursor ?? existing.timelineCursor,
   });
-  if (
-    existing.id === merged.id &&
-    existing.clientMessageId === merged.clientMessageId &&
-    existing.messageId === merged.messageId &&
-    existing.timelineCursor === merged.timelineCursor &&
-    existing.text === merged.text &&
-    existing.timestamp === merged.timestamp &&
-    existing.images === merged.images &&
-    existing.attachments === merged.attachments
-  ) {
+  if (sameUserMessage(existing, merged)) {
     return { items, index, message: existing, matched: true };
   }
   const next = [...items];
   next[index] = merged;
   return { items: next, index, message: merged, matched: true };
+}
+
+function sameUserMessage(existing: UserMessageItem, merged: UserMessageItem): boolean {
+  return (
+    existing.id === merged.id &&
+    existing.clientMessageId === merged.clientMessageId &&
+    existing.messageId === merged.messageId &&
+    existing.timelineCursor === merged.timelineCursor &&
+    existing.intent === merged.intent &&
+    existing.queue === merged.queue &&
+    existing.text === merged.text &&
+    existing.timestamp === merged.timestamp &&
+    existing.images === merged.images &&
+    existing.attachments === merged.attachments
+  );
+}
+
+function hasUserMessageContent(input: {
+  hasText: boolean;
+  queue: QueuePresentation | undefined;
+}): boolean {
+  return input.hasText || !!input.queue?.attachments.length || !!input.queue?.context?.length;
 }
 
 export interface UserMessageStreamUpsertInput {
@@ -890,9 +912,11 @@ function appendUserMessage(
   clientMessageId?: string,
   timelineCursor?: TimelinePosition,
   turnId?: string,
+  intent?: "goal",
+  queue?: QueuePresentation,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
-  if (!hasContent) {
+  if (!hasUserMessageContent({ hasText: hasContent, queue })) {
     return state;
   }
 
@@ -905,6 +929,8 @@ function appendUserMessage(
     turnId,
     text: chunk,
     timestamp,
+    intent,
+    queue,
   });
   return upsertUserMessage(state, nextItem);
 }
@@ -1516,6 +1542,8 @@ function reduceTimelineEvent(
           item.clientMessageId,
           timelineCursor,
           event.turnId,
+          item.intent,
+          item.queue,
         ),
       );
     case "assistant_message":
@@ -1960,17 +1988,23 @@ function applyCanonicalUserMessageEvent(params: {
       createUniqueTimelineId([...tail, ...head], "user", normalized.chunk.trim(), timestamp),
     messageId: event.item.messageId,
     clientMessageId: event.item.clientMessageId,
+    intent: event.item.intent,
+    queue: event.item.queue,
     turnId: event.turnId,
     timelineCursor,
     text: normalized.chunk,
     timestamp,
+  });
+  const hasPresentation = hasUserMessageContent({
+    hasText: normalized.hasContent,
+    queue: event.item.queue,
   });
   if (unmatchedInsert === "head") {
     const reconciled = upsertUserMessageAcrossStream({
       tail,
       head,
       message: canonical,
-      insert: normalized.hasContent ? "head" : "none",
+      insert: hasPresentation ? "head" : "none",
       presentation: "existing",
     });
     const reconciledTail = canonical.clientMessageId
@@ -1998,7 +2032,7 @@ function applyCanonicalUserMessageEvent(params: {
           : [],
     };
   }
-  const reconciled = placeCanonicalUserMessageAtTail(flushedTail, canonical, normalized.hasContent);
+  const reconciled = placeCanonicalUserMessageAtTail(flushedTail, canonical, hasPresentation);
   const reconciledTail = canonical.clientMessageId
     ? reconcileCanonicalUserTurnMembership(
         reconciled.items,

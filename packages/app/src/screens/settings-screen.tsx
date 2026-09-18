@@ -406,9 +406,6 @@ function GeneralSection({
   return (
     <SettingsSection title={t("settings.general.title")}>
       <View style={settingsStyles.card}>
-        <VortonModeToggle />
-      </View>
-      <View style={settingsStyles.card}>
         <View style={settingsStyles.row}>
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>{t("settings.general.defaultSend.label")}</Text>
@@ -1502,6 +1499,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           case "general":
             return (
               <>
+                <SettingsSection title="Vorton" testID="settings-vorton-section">
+                  <View style={settingsStyles.card}>
+                    <VortonModeToggle />
+                  </View>
+                </SettingsSection>
                 <GeneralSection
                   settings={settings}
                   isDesktopApp={isDesktopApp}

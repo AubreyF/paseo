@@ -1,10 +1,8 @@
 import { spawn } from "node:child_process";
-import { createReadStream, createWriteStream } from "node:fs";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
-import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
+import { compressFile } from "./compress-web-asset.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -51,23 +49,6 @@ async function cleanTarget() {
 async function copyAssets() {
   console.log(`Copying assets to ${path.relative(REPO_ROOT, TARGET_DIST)}...`);
   await cp(SOURCE_DIST, TARGET_DIST, { recursive: true, force: true });
-}
-
-async function compressFile(filePath) {
-  const brotliPath = `${filePath}.br`;
-  const gzipPath = `${filePath}.gz`;
-  await Promise.all([
-    pipeline(
-      createReadStream(filePath),
-      createBrotliCompress({
-        params: {
-          [zlibConstants.BROTLI_PARAM_QUALITY]: zlibConstants.BROTLI_MAX_QUALITY,
-        },
-      }),
-      createWriteStream(brotliPath),
-    ),
-    pipeline(createReadStream(filePath), createGzip(), createWriteStream(gzipPath)),
-  ]);
 }
 
 async function precompressAssets(dir) {

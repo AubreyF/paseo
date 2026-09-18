@@ -115,7 +115,10 @@ import { capAssistantMessageForRender, getUtf8ByteLength } from "./assistant-mes
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
+import { useVortonMode } from "@/vorton-mode";
+
 interface UserMessageProps {
+  intent?: "goal";
   serverId?: string;
   agentId?: string;
   messageId?: string;
@@ -422,6 +425,7 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
 }
 
 export const UserMessage = memo(function UserMessage({
+  intent,
   serverId,
   agentId,
   messageId,
@@ -436,6 +440,7 @@ export const UserMessage = memo(function UserMessage({
   isPending = false,
   disableOuterSpacing,
 }: UserMessageProps) {
+  const vorton = useVortonMode();
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
@@ -545,6 +550,11 @@ export const UserMessage = memo(function UserMessage({
             </Text>
           ) : null}
         </View>
+        {vorton && intent === "goal" ? (
+          <Text style={userMessageStylesheet.timestampText} testID="user-message-goal">
+            Sent as goal
+          </Text>
+        ) : null}
         {hasText ? (
           <View
             style={trailingRowStyle}

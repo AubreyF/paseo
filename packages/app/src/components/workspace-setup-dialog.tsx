@@ -116,6 +116,7 @@ function failureMessageForCreationMethod(
 function buildCreateAgentOptions({
   composerState,
   text,
+  goal,
   attachments,
   encodedImages,
   workspaceDirectory,
@@ -129,6 +130,7 @@ function buildCreateAgentOptions({
     effectiveThinkingOptionId: string | null;
   };
   text: string;
+  goal?: MessagePayload["goal"];
   attachments: NonNullable<CreateAgentRequestOptions["attachments"]>;
   encodedImages: NonNullable<CreateAgentRequestOptions["images"]> | null;
   workspaceDirectory: string;
@@ -146,6 +148,7 @@ function buildCreateAgentOptions({
     : (modeOptionIds[0] ?? "");
   return {
     provider,
+    initialGoal: goal,
     cwd: workspaceDirectory,
     workspaceId,
     ...(reconciledMode !== "" ? { modeId: reconciledMode } : {}),
@@ -302,7 +305,7 @@ export function WorkspaceSetupDialog() {
   ]);
 
   const handleCreateChatAgent = useCallback(
-    async ({ text, attachments, cwd }: MessagePayload) => {
+    async ({ text, attachments, cwd, goal }: MessagePayload) => {
       try {
         setPendingAction("chat");
         setErrorMessage(null);
@@ -329,6 +332,7 @@ export function WorkspaceSetupDialog() {
           buildCreateAgentOptions({
             composerState,
             text,
+            goal,
             attachments: wirePayload.attachments,
             encodedImages: encodedImages ?? null,
             workspaceDirectory,
@@ -357,6 +361,7 @@ export function WorkspaceSetupDialog() {
         const message = toErrorMessage(error);
         setErrorMessage(message);
         toast.error(message);
+        if (goal) throw error;
       } finally {
         if (getIsStillActive()) {
           setPendingAction(null);
@@ -435,6 +440,7 @@ export function WorkspaceSetupDialog() {
           serverId={serverId}
           isPaneFocused={true}
           onSubmitMessage={handleCreateChatAgent}
+          onSubmitGoal={handleCreateChatAgent}
           isSubmitLoading={pendingAction === "chat"}
           blurOnSubmit={true}
           value={chatDraft.text}

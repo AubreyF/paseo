@@ -843,7 +843,7 @@ interface SendButtonPresentation {
 }
 
 function resolveModifiedSendButton(input: {
-  action: "default" | "alternate" | "newline";
+  action: "default" | "alternate" | "newline" | "send";
   queues: boolean;
   disabled: boolean;
   t: ReturnType<typeof useTranslation>["t"];
@@ -851,6 +851,10 @@ function resolveModifiedSendButton(input: {
 }): SendButtonPresentation {
   const presentation = { ...input.baseline };
   if (input.queues) presentation.buttonIcon = "queue";
+  if (input.action === "send") {
+    presentation.submitAccessibilityLabel = input.t("composer.input.sendMessage");
+    presentation.sendTooltipLabel = presentation.submitAccessibilityLabel;
+  }
   if (input.action === "alternate") {
     presentation.buttonKeys = ALTERNATE_SEND_KEYS;
     presentation.submitAccessibilityLabel = input.t(
@@ -994,7 +998,7 @@ function sendMessageImpl(ctx: SendMessageContext): void {
     text: trimmed,
     attachments: ctx.attachments,
     cwd: ctx.cwd,
-    forceSend: ctx.isAgentRunning || undefined,
+    forceSend: true,
   });
   // When the host preserves and locks the composer (e.g. new-workspace creation),
   // the text stays put — collapsing the height would clip it. Keep it grown.
@@ -1365,7 +1369,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           focusInput: () => textInputRef.current?.focus(),
           isDictationRecording: isDictationActive,
           markTranscriptForSend: () => {
-            sendAfterTranscriptRef.current = true;
+            dictationIntentRef.current = "default";
           },
           confirmDictation,
           cancelDictation,
@@ -1376,8 +1380,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         }),
       getNativeElement: () => (isWeb ? getTextInputNativeElement(textInputRef.current) : null),
     }));
-    const sendAfterTranscriptRef = useRef(false);
-    const queueAfterTranscriptRef = useRef(false);
+    const dictationIntentRef = useRef<"insert" | "default" | "send" | "queue">("insert");
     const serverInfo = useSessionStore(
       useCallback(
         (state) => {
@@ -1407,10 +1410,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const handleDictationTranscript = useCallback(
       (text: string, _meta: { requestId: string }) => {
-        const autoSend = sendAfterTranscriptRef.current;
-        const queueRequested = queueAfterTranscriptRef.current;
-        queueAfterTranscriptRef.current = false;
-        sendAfterTranscriptRef.current = false;
+        const intent = dictationIntentRef.current;
+        dictationIntentRef.current = "insert";
         applyDictationTranscript(text, {
           value: valueRef.current,
           defaultSendBehavior,
@@ -1420,8 +1421,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           replaceText,
           attachments,
           cwd,
-          autoSend,
-          queueRequested,
+          intent,
         });
       },
       [replaceText, onSubmit, onQueue, attachments, cwd, isAgentRunning, defaultSendBehavior],
@@ -1497,10 +1497,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const surfacePresentation = resolveComposerSurfacePresentation(showOverlay);
 
     useEffect(() => {
-      if (isDictating || isDictationProcessing) {
+      if (dictationStatus !== "idle") {
         return;
       }
-      sendAfterTranscriptRef.current = false;
+      dictationIntentRef.current = "insert";
     }, [dictationStatus, isDictating, isDictationProcessing]);
 
     const startDictationIfAvailable = useCallback(
@@ -1509,7 +1509,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           dictationUnavailableMessage,
           canStartDictation,
           toast,
-          startDictation,
+          startDictation: () => {
+            dictationIntentRef.current = "insert";
+            return startDictation();
+          },
         }),
       [canStartDictation, dictationUnavailableMessage, startDictation, toast],
     );
@@ -1533,25 +1536,22 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
 
     const handleCancelRecording = useCallback(async () => {
-      queueAfterTranscriptRef.current = false;
+      dictationIntentRef.current = "insert";
       await cancelDictation();
     }, [cancelDictation]);
 
     const handleAcceptRecording = useCallback(async () => {
-      queueAfterTranscriptRef.current = false;
-      sendAfterTranscriptRef.current = false;
+      dictationIntentRef.current = "insert";
       await confirmDictation();
     }, [confirmDictation]);
 
     const handleAcceptAndSendRecording = useCallback(async () => {
-      queueAfterTranscriptRef.current = false;
-      sendAfterTranscriptRef.current = true;
+      dictationIntentRef.current = "send";
       await confirmDictation();
     }, [confirmDictation]);
 
     const handleAcceptAndQueueRecording = useCallback(async () => {
-      queueAfterTranscriptRef.current = true;
-      sendAfterTranscriptRef.current = true;
+      dictationIntentRef.current = "queue";
       await confirmDictation();
     }, [confirmDictation]);
 
@@ -1560,6 +1560,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [retryFailedDictation]);
 
     const handleDiscardFailedRecording = useCallback(() => {
+      dictationIntentRef.current = "insert";
       discardFailedDictation();
     }, [discardFailedDictation]);
 
@@ -1802,6 +1803,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       isAgentRunning,
       canQueue: Boolean(onQueue),
       defaultActionQueues,
+      separateQueueAction: useMemo(
+        () => mobileComposer.enabled && inputMode === "chat" && !readOnly,
+        [mobileComposer.enabled, inputMode, readOnly],
+      ),
     });
     const buttonPresentation = resolveModifiedSendButton({
       action: submitAction.action,
@@ -1818,6 +1823,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       },
     });
     const buttonActions = {
+      send: handleSendMessage,
       default: handleDefaultSendAction,
       alternate: handleAlternateSendAction,
       newline: handleInsertNewline,

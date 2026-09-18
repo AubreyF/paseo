@@ -52,7 +52,16 @@ const PERSISTENCE_HANDLE_SCHEMA = z
   .nullable()
   .optional();
 
+export const GoalSubmissionSchema = z.object({
+  text: z.string(),
+  clientMessageId: z.string(),
+  messageId: z.string().optional(),
+  timestamp: z.string(),
+});
+export type GoalSubmission = z.infer<typeof GoalSubmissionSchema>;
+
 const STORED_AGENT_SCHEMA = z.object({
+  goalSubmissions: z.array(GoalSubmissionSchema).optional(),
   id: z.string(),
   provider: z.string(),
   cwd: z.string(),

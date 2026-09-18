@@ -2,6 +2,8 @@
 
 All workspaces share one version and release together.
 
+For pending custom-branch distribution work, see the [automatic desktop builds and updates proposal](desktop-auto-builds.md).
+
 ## Two steps
 
 A release has exactly two steps. The agent does the first, the user authorizes the second.

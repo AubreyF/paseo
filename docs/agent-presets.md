@@ -48,7 +48,7 @@ Results distinguish applied, already redeemed, no credit, and nothing to reset. 
 
 ## Review boundaries
 
-Vorton Mode defaults off and is saved per device. General settings and the sidebar's Paseo/Vorton selector control the same preference. Enabling it exposes named launch presets, usage rails, reset controls, and supervisor configuration. Disabling it restores standard composer controls without deleting accounts or presets or stopping running tasks. Manage profiles lives inside the preset picker.
+Vorton Mode defaults on when no mode preference is saved. An explicit Paseo or Vorton choice is saved per device and survives updates. The Vorton group above General and the sidebar's Paseo/Vorton selector control the same preference. Enabling it exposes named launch presets, usage rails, reset controls, and supervisor configuration. Disabling it restores standard composer controls without deleting accounts or presets or stopping running tasks. Manage profiles lives inside the preset picker.
 
 Check [implementation and deployment status](#implementation-and-deployment-status) before relying on the reserve policy below.
 

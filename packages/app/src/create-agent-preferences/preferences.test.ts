@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CreateAgentPreferencesService } from "./service";
 import {
+  DEFAULT_FORM_PREFERENCES,
   applyAgentProfilePreferences,
   mergeCreateAgentSelectionPreferences,
   mergeProviderPreferences,
@@ -9,9 +10,17 @@ import {
 import { FakeCreateAgentPreferenceStorage } from "./test-utils/fake-preference-storage";
 
 describe("create agent preferences", () => {
-  it("defaults Vorton Mode off, including installations with the legacy preset flag", () => {
-    expect(parseFormPreferences({}).vortonMode).not.toBe(true);
-    expect(parseFormPreferences({ presetMode: true }).vortonMode).not.toBe(true);
+  it.each([null, {}, { presetMode: true }, { vortonMode: undefined }])(
+    "defaults Vorton Mode on when no choice is saved: %j",
+    async (stored) => {
+      const storage = new FakeCreateAgentPreferenceStorage({ stored });
+      expect((await new CreateAgentPreferencesService(storage).load()).vortonMode).toBe(true);
+      expect(DEFAULT_FORM_PREFERENCES.vortonMode).toBe(true);
+    },
+  );
+  it.each([true, false])("preserves an explicit saved Vorton choice: %s", async (vortonMode) => {
+    const storage = new FakeCreateAgentPreferenceStorage({ stored: { vortonMode } });
+    expect((await new CreateAgentPreferencesService(storage).load()).vortonMode).toBe(vortonMode);
   });
   it("persists Vorton Mode without losing model or permission preferences", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
@@ -66,6 +75,7 @@ describe("create agent preferences", () => {
     await modeWrite;
 
     expect(storage.savedPreferences()).toEqual({
+      vortonMode: true,
       provider: "codex",
       providerPreferences: {
         codex: {
@@ -86,14 +96,14 @@ describe("create agent preferences", () => {
     storage.failOldestWrite(new Error("disk full"));
     await expect(failedWrite).rejects.toThrow("disk full");
 
-    expect(await preferences.load()).toEqual({});
+    expect(await preferences.load()).toEqual({ vortonMode: true });
 
     const successfulWrite = preferences.update({ isolation: "worktree" });
     await storage.nextWrite();
     storage.finishOldestWrite();
     await successfulWrite;
 
-    expect(storage.savedPreferences()).toEqual({ isolation: "worktree" });
+    expect(storage.savedPreferences()).toEqual({ vortonMode: true, isolation: "worktree" });
   });
 
   it("flushes the full create-agent selection into provider preferences", async () => {
@@ -116,6 +126,7 @@ describe("create agent preferences", () => {
     await saveSelection;
 
     expect(storage.savedPreferences()).toEqual({
+      vortonMode: true,
       provider: "codex",
       providerPreferences: {
         codex: {
@@ -205,8 +216,10 @@ describe("create agent preferences", () => {
     });
   });
 
-  it("loads invalid stored preferences as empty preferences", () => {
-    expect(parseFormPreferences({ providerPreferences: { codex: { mode: 42 } } })).toEqual({});
+  it("loads invalid stored preferences as default preferences", () => {
+    expect(parseFormPreferences({ providerPreferences: { codex: { mode: 42 } } })).toEqual({
+      vortonMode: true,
+    });
   });
 
   it("strips the explicitly supported legacy location fields", () => {
@@ -224,6 +237,7 @@ describe("create agent preferences", () => {
         serverId: "old-host",
       }),
     ).toEqual({
+      vortonMode: true,
       provider: "codex",
       providerPreferences: {
         codex: {
@@ -236,7 +250,9 @@ describe("create agent preferences", () => {
   });
 
   it("rejects unknown persisted fields outside the explicit legacy shape", () => {
-    expect(parseFormPreferences({ provider: "codex", surprise: true })).toEqual({});
+    expect(parseFormPreferences({ provider: "codex", surprise: true })).toEqual({
+      vortonMode: true,
+    });
   });
 
   it("persists and reloads the workspace isolation choice", async () => {
@@ -248,8 +264,9 @@ describe("create agent preferences", () => {
     storage.finishOldestWrite();
     await save;
 
-    expect(storage.savedPreferences()).toEqual({ isolation: "worktree" });
+    expect(storage.savedPreferences()).toEqual({ vortonMode: true, isolation: "worktree" });
     expect(await new CreateAgentPreferencesService(storage).load()).toEqual({
+      vortonMode: true,
       isolation: "worktree",
     });
   });
@@ -264,7 +281,11 @@ describe("create agent preferences", () => {
     storage.finishOldestWrite();
     await save;
 
-    expect(storage.savedPreferences()).toEqual({ favoriteModels, isolation: "worktree" });
+    expect(storage.savedPreferences()).toEqual({
+      vortonMode: true,
+      favoriteModels,
+      isolation: "worktree",
+    });
   });
 
   it("treats stored preferences without an isolation choice as undefined", () => {
@@ -272,7 +293,9 @@ describe("create agent preferences", () => {
   });
 
   it("rejects an unknown isolation value as invalid stored preferences", () => {
-    expect(parseFormPreferences({ provider: "codex", isolation: "sandbox" })).toEqual({});
+    expect(parseFormPreferences({ provider: "codex", isolation: "sandbox" })).toEqual({
+      vortonMode: true,
+    });
   });
 
   it("persists and reloads a terminal launch target", async () => {
@@ -285,9 +308,11 @@ describe("create agent preferences", () => {
     await save;
 
     expect(storage.savedPreferences()).toEqual({
+      vortonMode: true,
       launchTarget: { kind: "terminal", profileId: "claude" },
     });
     expect(await new CreateAgentPreferencesService(storage).load()).toEqual({
+      vortonMode: true,
       launchTarget: { kind: "terminal", profileId: "claude" },
     });
   });
@@ -297,10 +322,12 @@ describe("create agent preferences", () => {
   });
 
   it("rejects a terminal launch target missing a profileId as invalid stored preferences", () => {
-    expect(parseFormPreferences({ launchTarget: { kind: "terminal" } })).toEqual({});
+    expect(parseFormPreferences({ launchTarget: { kind: "terminal" } })).toEqual({
+      vortonMode: true,
+    });
   });
 
   it("rejects an unknown launch target kind as invalid stored preferences", () => {
-    expect(parseFormPreferences({ launchTarget: { kind: "shell" } })).toEqual({});
+    expect(parseFormPreferences({ launchTarget: { kind: "shell" } })).toEqual({ vortonMode: true });
   });
 });

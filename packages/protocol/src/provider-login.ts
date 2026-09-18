@@ -1,5 +1,16 @@
 import { z } from "zod";
 
+export const CodexAccountCreateRequestSchema = z.object({
+  type: z.literal("provider.codex.create_account.request"),
+  requestId: z.string(),
+  creationId: z.string().uuid(),
+  name: z.string().min(1).max(100),
+});
+export const CodexAccountCreateResponseSchema = z.object({
+  type: z.literal("provider.codex.create_account.response"),
+  payload: z.object({ requestId: z.string(), providerId: z.string(), name: z.string() }),
+});
+
 export const ProviderLoginStateSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("idle") }),
   z.object({ status: z.literal("starting"), attemptId: z.string() }),

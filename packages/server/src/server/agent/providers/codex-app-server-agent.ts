@@ -53,6 +53,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
+import { CodexGoals } from "./codex/goals.js";
+import type { AgentGoals } from "../agent-sdk-types.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { curateAgentActivity } from "../activity-curator.js";
@@ -3296,7 +3298,12 @@ interface ConsumedRootCompaction {
 
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
-  readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+  get capabilities(): AgentCapabilityFlags {
+    return { ...CODEX_APP_SERVER_CAPABILITIES, supportsGoals: this.goalsEnabled };
+  }
+  readonly goals: AgentGoals | undefined;
+  private readonly goalState: CodexGoals;
+  private goalMutationTail: Promise<unknown> = Promise.resolve();
 
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
@@ -3411,6 +3418,29 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.hasWorkflowModeOverride = config.modeId !== undefined;
     this.currentMode = config.modeId ?? DEFAULT_CODEX_MODE_ID;
     this.providerOptions = CodexProviderOptionsSchema.parse(config.providerOptions ?? {});
+    this.goalState = new CodexGoals({
+      request: async (method, params) => {
+        if (!this.client) throw new Error("Codex session is not connected");
+        return this.client.request(method, params);
+      },
+      onChange: (state) =>
+        this.emitEvent({ type: "goal_changed", provider: CODEX_PROVIDER, state }),
+    });
+    this.goals = this.goalsEnabled
+      ? {
+          get state() {
+            return goalState.state;
+          },
+          read: async () => {
+            await this.connect();
+            this.goalState.bind(this.currentThreadId);
+            return this.goalState.read();
+          },
+          set: (input) => this.mutateGoal(() => this.goalState.set(input)),
+          clear: () => this.mutateGoal(() => this.goalState.clear()),
+        }
+      : undefined;
+    const goalState = this.goalState;
     this.config = config;
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (this.config.featureValues?.fast_mode && codexModelSupportsFastMode(this.config.model)) {
@@ -3422,6 +3452,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
     if (this.resumeHandle?.sessionId) {
       this.currentThreadId = this.resumeHandle.sessionId;
+      this.goalState.bind(this.currentThreadId);
       this.historyPending = true;
     }
   }
@@ -3499,6 +3530,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         throw this.createClosedError();
       }
       this.connected = true;
+      if (this.goalsEnabled) await this.refreshGoalState();
     } catch (error) {
       try {
         if (this.client === client) {
@@ -3550,6 +3582,8 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private handleUnexpectedTermination(error: Error): void {
     this.connected = false;
+    if (this.goalsEnabled)
+      this.goalState.invalidate("Codex disconnected. Refresh to confirm goal state.");
     const hasActiveRootTurn = this.activeForegroundTurnId !== null || this.currentTurnId !== null;
     this.clearPendingPermissions({ preservePlanApprovals: !hasActiveRootTurn });
     if (hasActiveRootTurn) {
@@ -4738,6 +4772,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       userMessageTurns: this.codexUserMessageTurns(),
       setThreadId: async (threadId) => {
         this.currentThreadId = threadId;
+        if (this.goalsEnabled) await this.refreshGoalState();
         this.cachedRuntimeInfo = null;
         this.persistedHistory = [];
         this.historyPending = false;
@@ -4802,6 +4837,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {
+    if (this.goalsEnabled) this.goalState.invalidate("Codex session is closed");
     this.closed = true;
     this.clearPendingPermissions();
     this.pendingSubAgentNotificationsByThreadId.clear();
@@ -4877,7 +4913,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   tryHandleOutOfBand(
     prompt: AgentPromptInput,
-  ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
+  ): ReturnType<NonNullable<AgentSession["tryHandleOutOfBand"]>> {
     if (typeof prompt !== "string") return null;
     const parsed = this.parseSlashCommandInput(prompt);
     if (!parsed) return null;
@@ -4901,6 +4937,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
     const subcommand = parseGoalSubcommand(parsed.args);
     return {
+      intent: subcommand.kind === "set" ? "goal" : undefined,
       run: async ({ emit }) => {
         const text = formatOutOfBandStatusMessage(await this.executeGoalSubcommand(subcommand));
         emit({
@@ -4939,49 +4976,58 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
-  private async executeGoalSubcommand(subcommand: GoalSubcommand): Promise<string> {
-    if (subcommand.kind === "usage") {
-      return "Usage: /goal <objective>|pause|resume|clear";
-    }
+  private mutateGoal(
+    operation: () => ReturnType<AgentGoals["set"]>,
+  ): ReturnType<AgentGoals["set"]> {
+    // Include first-thread creation in the queue. Two clients starting a goal on
+    // a fresh conversation must not create two native threads.
+    const result = this.goalMutationTail.then(async () => {
+      await this.prepareGoalMutation();
+      return operation();
+    });
+    this.goalMutationTail = result.catch(() => {});
+    return result;
+  }
+
+  private async prepareGoalMutation(): Promise<void> {
+    await this.connect();
+    if (this.currentThreadId) await this.ensureThreadLoaded();
+    else await this.ensureThread();
+    this.goalState.bind(this.currentThreadId);
+  }
+
+  private async refreshGoalState(): Promise<void> {
+    this.goalState.bind(this.currentThreadId);
     try {
-      await this.connect();
-      if (this.currentThreadId) {
-        await this.ensureThreadLoaded();
-      } else {
-        await this.ensureThread();
-      }
-      if (!this.client || !this.currentThreadId) {
-        throw new Error("Codex thread is not available");
-      }
+      await this.goalState.read();
+    } catch (error) {
+      // A failed goal read must remain visible without preventing chat recovery.
+      this.logger.warn({ err: error }, "Could not read Codex goal state");
+    }
+  }
+
+  private async executeGoalSubcommand(subcommand: GoalSubcommand): Promise<string> {
+    if (!this.goals) return "Goals are unavailable for this Codex session.";
+    try {
       switch (subcommand.kind) {
-        case "set": {
-          await this.client.request("thread/goal/set", {
-            threadId: this.currentThreadId,
-            objective: subcommand.objective,
-            status: "active",
-          });
+        case "usage": {
+          const state = await this.goals.read();
+          if (!state.goal) return "No goal set. Use /goal <objective> to start one.";
+          const goal = state.goal;
+          return `Goal (${goal.status}): ${goal.objective}\n${goal.tokensUsed} tokens used; ${goal.timeUsedSeconds}s elapsed.`;
+        }
+        case "set":
+          await this.goals.set({ objective: subcommand.objective, status: "active" });
           return `Goal set: ${subcommand.objective}`;
-        }
-        case "pause": {
-          await this.client.request("thread/goal/set", {
-            threadId: this.currentThreadId,
-            status: "paused",
-          });
+        case "pause":
+          await this.goals.set({ status: "paused" });
           return "Goal paused.";
-        }
-        case "resume": {
-          await this.client.request("thread/goal/set", {
-            threadId: this.currentThreadId,
-            status: "active",
-          });
+        case "resume":
+          await this.goals.set({ status: "active" });
           return "Goal resumed.";
-        }
-        case "clear": {
-          await this.client.request("thread/goal/clear", {
-            threadId: this.currentThreadId,
-          });
+        case "clear":
+          await this.goals.clear();
           return "Goal cleared.";
-        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
@@ -5075,6 +5121,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.cachedRuntimeInfo = null;
     }
     this.currentThreadId = threadId;
+    if (this.goalsEnabled) await this.refreshGoalState();
   }
 
   private buildThreadStartRequest(model: string): {
@@ -5166,6 +5213,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private handleNotification(method: string, params: unknown): void {
+    if (this.goalsEnabled && this.goalState.handleNotification(method, params)) return;
     const notificationParams = toObjectRecord(params);
     if (method === "serverRequest/resolved" && typeof notificationParams?.requestId === "number") {
       const requestId = this.mcpElicitationPermissionIds.get(notificationParams.requestId);
@@ -5866,6 +5914,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     parsed: Extract<ParsedCodexNotification, { kind: "thread_started" }>,
   ): void {
     this.currentThreadId = parsed.threadId;
+    if (this.goalsEnabled) this.goalState.bind(parsed.threadId);
     this.emitEvent({
       type: "thread_started",
       provider: CODEX_PROVIDER,

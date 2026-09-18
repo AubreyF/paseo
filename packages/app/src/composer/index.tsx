@@ -1,4 +1,12 @@
+import { commitComposerQueue } from "@/message-queue/commit-composer";
+import { SharedQueueView } from "@/message-queue/queue-view";
+import { LegacyQueueImport } from "@/message-queue/legacy-import";
+import { runLegacyQueueAction } from "@/message-queue/runtime";
+import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
 import { useMobileComposerLayout, MOBILE_COMPOSER_MARGIN } from "./mobile-layout";
+import { GoalBar } from "@/goals/goal-bar";
+import { GoalDetails } from "@/goals/goal-details";
+import { useAgentGoal } from "@/goals/use-agent-goal";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
@@ -35,6 +43,7 @@ import {
   Image as ImageIcon,
   ClipboardPaste,
   Paperclip,
+  Target,
 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
@@ -923,6 +932,7 @@ interface ComposerProps {
   workspaceId?: string | null;
   isPaneFocused: boolean;
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>;
+  onSubmitGoal?: (payload: MessagePayload) => Promise<void>;
   onClientSlashCommand?: (command: ClientSlashCommand) => Promise<void>;
   /** When true, the submit button is enabled even without text or images (e.g. external attachment selected). */
   hasExternalContent?: boolean;
@@ -1152,6 +1162,7 @@ function ComposerContentImpl({
   serverId,
   workspaceId,
   onSubmitMessage,
+  onSubmitGoal,
   onClientSlashCommand,
   hasExternalContent = false,
   allowEmptySubmit = false,
@@ -1194,6 +1205,9 @@ function ComposerContentImpl({
   const { t } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
+  const [goalDetailsOpen, setGoalDetailsOpen] = useState(false);
+  const openGoalDetails = useCallback(() => setGoalDetailsOpen(true), []);
+  const closeGoalDetails = useCallback(() => setGoalDetailsOpen(false), []);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
   const toast = useToast();
@@ -1246,6 +1260,9 @@ function ComposerContentImpl({
   const checkoutStatusQuery = useCheckoutStatusQuery({ serverId, cwd });
   const supportsForgeSearch = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
+  );
+  const supportsMessageQueue = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.durableMessageQueue === true,
   );
   const forgeAutoAttach = useComposerForgeAutoAttach({
     text: userInput,
@@ -1552,14 +1569,25 @@ function ComposerContentImpl({
   );
 
   const queueMessage = useCallback(
-    (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
-      const result = queueComposerMessage({
-        agentId,
-        text: queuedMessage,
-        attachments: queuedAttachments,
-        queue: queueWriter,
-      });
-      if (!result.queued) return;
+    async (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
+      if (!queuedMessage.trim() && queuedAttachments.length === 0) return;
+      if (formPreferences.vortonMode) {
+        if (!supportsMessageQueue) throw new Error("Update the host to use shared message queues.");
+        await commitComposerQueue({
+          serverId,
+          agentId,
+          cwd,
+          text: queuedMessage.trim(),
+          attachments: queuedAttachments,
+        });
+      } else {
+        queueComposerMessage({
+          agentId,
+          text: queuedMessage,
+          attachments: queuedAttachments,
+          queue: queueWriter,
+        });
+      }
 
       replaceUserInput("");
       setSelectedAttachments([]);
@@ -1568,6 +1596,10 @@ function ComposerContentImpl({
     },
     [
       agentId,
+      serverId,
+      cwd,
+      formPreferences.vortonMode,
+      supportsMessageQueue,
       clearSentAttachments,
       queueWriter,
       resetSuppression,
@@ -1596,7 +1628,7 @@ function ComposerContentImpl({
           !configurationRequired &&
           Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
         queueMessage: ({ message: queuedText, attachments: queuedAttachments }) => {
-          queueMessage(queuedText, queuedAttachments);
+          return queueMessage(queuedText, queuedAttachments);
         },
         submitMessage: async ({ message: submitText, attachments: submitAttachments }) => {
           if (submitBehavior !== "preserve-and-lock") {
@@ -1636,6 +1668,48 @@ function ComposerContentImpl({
       submitMessage,
       t,
     ],
+  );
+
+  const goalSubmissionAttachments = useRef<ComposerAttachment[]>([]);
+  const prepareGoalContext = useCallback(async () => {
+    const outgoing = buildOutgoingAttachments(attachments);
+    const context = splitComposerAttachmentsForSubmit(outgoing, {
+      format: resolveComposerAttachmentSubmitFormat({
+        supportsForgeAttachments: supportsForgeSearch,
+      }),
+    });
+    const images = await encodeImages(context.images);
+    goalSubmissionAttachments.current = outgoing;
+    return { images, attachments: context.attachments };
+  }, [attachments, buildOutgoingAttachments, supportsForgeSearch]);
+  const createDraftGoal = useCallback(
+    async (goal: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput) => {
+      if (!onSubmitGoal || !goal.objective) throw new Error("A goal objective is required.");
+      await onSubmitGoal({
+        text: goal.objective,
+        goal,
+        attachments: buildOutgoingAttachments(attachments),
+        cwd,
+      });
+    },
+    [onSubmitGoal, attachments, buildOutgoingAttachments, cwd],
+  );
+  const goalControl = useAgentGoal(serverId, agentId, {
+    config: commandDraftConfig,
+    create: onSubmitGoal ? createDraftGoal : undefined,
+    context: prepareGoalContext,
+  });
+  const clearGoalDraft = useCallback(
+    (submittedDraft: string) => {
+      if (userInput === submittedDraft) replaceUserInput("");
+      const sent = goalSubmissionAttachments.current;
+      setSelectedAttachments((current) =>
+        current.filter((attachment) => !sent.includes(attachment)),
+      );
+      clearSentAttachments(sent);
+      goalSubmissionAttachments.current = [];
+    },
+    [replaceUserInput, userInput, setSelectedAttachments, clearSentAttachments],
   );
 
   const handleSubmit = useCallback(
@@ -1874,40 +1948,52 @@ function ComposerContentImpl({
   }, [agentId, hasAgent, isConnected, serverId, voice]);
 
   const handleEditQueuedMessage = useCallback(
-    (id: string) => {
-      const result = editQueuedComposerMessage({
-        agentId,
-        messageId: id,
-        queue: queueWriter,
-      });
-      if (!result) return;
-      replaceUserInput(result.text);
-      setSelectedAttachments(result.attachments);
+    async (id: string) => {
+      try {
+        await runLegacyQueueAction(serverId, agentId, id, async () => {
+          const result = editQueuedComposerMessage({
+            agentId,
+            messageId: id,
+            queue: queueWriter,
+          });
+          if (!result) return;
+          replaceUserInput(result.text);
+          setSelectedAttachments(result.attachments);
+        });
+      } catch (error) {
+        setSendError(error instanceof Error ? error.message : "Could not edit the queued message.");
+      }
     },
-    [agentId, queueWriter, replaceUserInput, setSelectedAttachments],
+    [serverId, agentId, queueWriter, replaceUserInput, setSelectedAttachments],
   );
 
   const handleSendQueuedNow = useCallback(
     async (id: string) => {
       if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
-      // Reuse the regular send path; server-side send atomically interrupts any active run.
-      const result = await sendQueuedComposerMessageNow({
-        agentId,
-        messageId: id,
-        queue: queueWriter,
-        submitMessage: ({ text, attachments: queuedAttachments }) =>
-          submitMessage(text, queuedAttachments),
-        failedToSendMessage: t("composer.errors.failedToSend"),
-      });
-      if (result.status === "failed") {
-        setSendError(result.errorMessage);
+      try {
+        await runLegacyQueueAction(serverId, agentId, id, async () => {
+          // Reuse the regular send path; server-side send atomically interrupts any active run.
+          const result = await sendQueuedComposerMessageNow({
+            agentId,
+            messageId: id,
+            queue: queueWriter,
+            submitMessage: ({ text, attachments: queuedAttachments }) =>
+              submitMessage(text, queuedAttachments),
+            failedToSendMessage: t("composer.errors.failedToSend"),
+          });
+          if (result.status === "failed") {
+            setSendError(result.errorMessage);
+          }
+        });
+      } catch (error) {
+        setSendError(error instanceof Error ? error.message : "Could not send the queued message.");
       }
     },
-    [agentId, queueWriter, submitMessage, t],
+    [serverId, agentId, queueWriter, submitMessage, t],
   );
 
   const handleQueue = useCallback(
-    (payload: MessagePayload) => {
+    async (payload: MessagePayload) => {
       const outgoingAttachments = buildOutgoingAttachments(attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,
@@ -1922,7 +2008,15 @@ function ComposerContentImpl({
         commands: pluginClientSlashCommands,
       });
       if (pluginSlashCommand && runPluginClientSlashCommand(pluginSlashCommand)) return;
-      queueMessage(payload.text, outgoingAttachments);
+      setSendError(null);
+      setIsProcessing(true);
+      try {
+        await queueMessage(payload.text, outgoingAttachments);
+      } catch (error) {
+        setSendError(error instanceof Error ? error.message : "Could not save the queued message.");
+      } finally {
+        setIsProcessing(false);
+      }
     },
     [
       attachments,
@@ -2108,6 +2202,14 @@ function ComposerContentImpl({
         },
       },
     ];
+    if (goalControl.supported) {
+      items.push({
+        id: "goal",
+        label: goalControl.state?.goal ? "Manage goal" : "Add goal",
+        icon: <ThemedTarget size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+        onSelect: openGoalDetails,
+      });
+    }
     if (isNative) {
       items.push({
         id: "paste-image",
@@ -2141,6 +2243,9 @@ function ComposerContentImpl({
     );
     return items;
   }, [
+    goalControl.supported,
+    goalControl.state?.goal,
+    openGoalDetails,
     forgePresentation,
     handlePasteImage,
     handlePickFile,
@@ -2279,14 +2384,16 @@ function ComposerContentImpl({
 
   const queueList = useMemo(
     () =>
-      renderQueueTrack({
-        queuedMessages,
-        handleEditQueuedMessage,
-        handleSendQueuedNow,
-        editLabel: t("composer.attachments.editQueuedMessage"),
-        sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
-      }),
-    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
+      formPreferences.vortonMode
+        ? null
+        : renderQueueTrack({
+            queuedMessages,
+            handleEditQueuedMessage,
+            handleSendQueuedNow,
+            editLabel: t("composer.attachments.editQueuedMessage"),
+            sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
+          }),
+    [formPreferences.vortonMode, handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
   );
 
   const messageInputContainerRef = useRef<View>(null);
@@ -2351,6 +2458,21 @@ function ComposerContentImpl({
           <View style={styles.inputAreaContent}>
             {!mobileComposer.enabled ? queueList : null}
             {sendErrorNode}
+            {formPreferences.vortonMode ? (
+              <SharedQueueView serverId={serverId} agentId={agentId} />
+            ) : null}
+            {formPreferences.vortonMode ? (
+              <LegacyQueueImport serverId={serverId} agentId={agentId} cwd={cwd} />
+            ) : null}
+            <GoalBar control={goalControl} onExpand={openGoalDetails} />
+            {goalDetailsOpen && goalControl.supported ? (
+              <GoalDetails
+                control={goalControl}
+                draft={userInput}
+                onClose={closeGoalDetails}
+                onCreated={clearGoalDraft}
+              />
+            ) : null}
 
             <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
               <ComposerAutocomplete
@@ -2476,7 +2598,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexShrink: 1,
   },
   mobileInputArea: {
-    paddingHorizontal: MOBILE_COMPOSER_MARGIN,
+    paddingHorizontal: theme.spacing[2],
     paddingBottom: MOBILE_COMPOSER_MARGIN,
     paddingTop: theme.spacing[2],
     borderTopWidth: theme.borderWidth[1],
@@ -2596,6 +2718,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
 })) as unknown as Record<string, object>;
 
+const ThemedTarget = withUnistyles(Target);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);

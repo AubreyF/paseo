@@ -2,10 +2,14 @@ import { createExpoAttachmentFileSystem } from "@/attachments/attachment-file-sy
 import { createLocalFileAttachmentStore } from "@/attachments/local-file-attachment-store";
 import { isAbsolutePath } from "@/utils/path";
 
-export function createNativeFileAttachmentStore() {
+export function createNativeFileAttachmentStore(
+  baseDirectoryName = "paseo-native-attachments",
+  persistent = false,
+) {
   return createLocalFileAttachmentStore({
     storageType: "native-file",
-    baseDirectoryName: "paseo-native-attachments",
+    baseDirectoryName,
+    persistent,
     fileSystem: createExpoAttachmentFileSystem(),
     resolvePreviewUrl: async (attachment) => {
       if (attachment.storageKey.startsWith("file://")) {

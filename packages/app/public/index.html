@@ -84,6 +84,85 @@
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"></div>
+    <div id="root">
+      <!-- React replaces this shell when it mounts, including its timeout UI. -->
+      <div id="boot-status" hidden>
+        <div class="boot-spinner" aria-hidden="true"></div>
+        <p role="status">Loading app</p>
+        <div id="boot-help" hidden role="status">
+          <p>Taking longer than expected.</p>
+          <p>Check your internet connection and VPN, if required.</p>
+          <p>Make sure the host is awake and Paseo is running, then reload.</p>
+          <button type="button" onclick="window.location.reload()">Reload</button>
+        </div>
+      </div>
+    </div>
+    <style>
+      #boot-status {
+        margin: auto;
+        padding: 24px;
+        max-width: 360px;
+        text-align: center;
+        font:
+          14px system-ui,
+          sans-serif;
+        color: #647068;
+      }
+      #boot-help {
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      #boot-help button {
+        min-height: 44px;
+        padding: 8px 20px;
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      .boot-spinner {
+        margin: auto;
+        width: 20px;
+        height: 20px;
+        border: 2px solid #64706840;
+        border-top-color: currentColor;
+        border-radius: 50%;
+        animation: boot-spin 1s linear infinite;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-spinner {
+          animation: none;
+        }
+      }
+      @media (prefers-color-scheme: dark) {
+        #boot-status {
+          color: #a9b5ad;
+        }
+      }
+    </style>
+    <script>
+      // Preferences must be read before the application bundle is available.
+      try {
+        var bootPreferences = JSON.parse(
+          localStorage.getItem("@paseo:create-agent-preferences") || "{}",
+        );
+        if (bootPreferences.vortonMode === true) {
+          document.getElementById("boot-status").hidden = false;
+          setTimeout(function () {
+            var help = document.getElementById("boot-help");
+            if (help) help.hidden = false;
+          }, 10000);
+        }
+      } catch (_) {
+        // Unavailable or invalid storage retains the default Paseo presentation.
+      }
+    </script>
   </body>
 </html>

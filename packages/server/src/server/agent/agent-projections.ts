@@ -70,6 +70,7 @@ export function toStoredAgentRecord(
   const runtimeInfo = sanitizeRuntimeInfo(agent.runtimeInfo);
 
   return {
+    goalSubmissions: agent.goalSubmissions,
     id: agent.id,
     provider: agent.provider,
     cwd: agent.cwd,
@@ -146,6 +147,7 @@ export function toAgentPayload(
         }
       : null,
     capabilities: cloneCapabilities(agent.capabilities),
+    ...(agent.goalState ? { goalState: agent.goalState } : {}),
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),
     features: normalizeFeatures(agent.features),

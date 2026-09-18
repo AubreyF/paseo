@@ -23,8 +23,6 @@ export async function captureQueueSubmission(
 ): Promise<{ operation: QueueOperation; localAttachments: LocalQueueAttachment[] }> {
   const context = input.attachments.filter((attachment) => attachment.type !== "uploaded_file");
   const files = input.attachments.filter((attachment) => attachment.type === "uploaded_file");
-  if (input.images.length + files.length > 32)
-    throw new Error("A queued message can include at most 32 files and images.");
   const operation = QueueOperationSchema.parse({
     kind: "enqueue",
     operationId: input.operationId,
@@ -33,6 +31,29 @@ export async function captureQueueSubmission(
     context,
     attachments: [],
   });
+  return captureQueueContent(operation, input.images, files, port);
+}
+
+type QueueEditOperation = Extract<QueueOperation, { kind: "edit" }>;
+
+export function captureQueueEdit(
+  operation: QueueEditOperation,
+  images: AttachmentMetadata[],
+  port: QueueAttachmentCapturePort,
+): Promise<{ operation: QueueOperation; localAttachments: LocalQueueAttachment[] }> {
+  return captureQueueContent(QueueOperationSchema.parse(operation), images, [], port);
+}
+
+async function captureQueueContent(
+  operation: QueueOperation,
+  images: AttachmentMetadata[],
+  files: UploadedFileAttachment[],
+  port: QueueAttachmentCapturePort,
+): Promise<{ operation: QueueOperation; localAttachments: LocalQueueAttachment[] }> {
+  if (operation.kind !== "enqueue" && operation.kind !== "edit")
+    throw new Error("Only queue content operations can capture attachments.");
+  if (operation.attachments.length + images.length + files.length > 32)
+    throw new Error("A queued message can include at most 32 files and images.");
   const localAttachments: LocalQueueAttachment[] = [];
   let totalBytes = 0;
   function countBytes(size: number): void {
@@ -40,8 +61,10 @@ export async function captureQueueSubmission(
     if (size > 25 * 1024 * 1024 || totalBytes > 50 * 1024 * 1024)
       throw new Error("Queued attachments exceed the 25 MB per file or 50 MB per message limit.");
   }
+  // Retained host references contribute to limits without being copied or uploaded again.
+  for (const attachment of operation.attachments) countBytes(attachment.size);
   try {
-    for (const image of input.images) {
+    for (const image of images) {
       const base64 = await port.original.encodeBase64({ attachment: image });
       countBytes(Math.floor((base64.replace(/=+$/, "").length * 3) / 4));
       const metadata = await port.owned.save({

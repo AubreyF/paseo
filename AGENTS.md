@@ -1,228 +1,45 @@
-# AGENTS.md
+# Agent guide
 
-Paseo is a mobile app for monitoring and controlling your local AI coding agents from anywhere. Your dev environment, in your pocket. Connects directly to your actual development environment — your code stays on your machine.
+Vorton extends Paseo with multi-account agent workflows. This npm monorepo runs agents in your environment and exposes web, mobile and desktop clients. `CLAUDE.md` links here; edit `AGENTS.md`.
 
-**Supported agents:** Claude Code, Codex, GitHub Copilot, OpenCode, and Pi.
+## Before editing
 
-## Repository map
+1. Check the working tree and preserve unrelated changes.
+2. Read the relevant rules below and the owning docs. “The docs” means `docs/`, not the web. Use the [docs index](docs/README.md) for other subjects; do not load the whole catalog.
+3. Verify behavior in code and tests before changing it or documenting it as shipped.
 
-This is an npm workspace monorepo:
+| Task                           | Read first                                                                                                                       |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| App or interface work          | [App instructions](packages/app/AGENTS.md)                                                                                       |
+| Protocol or WebSocket changes  | [Compatibility](docs/protocol-compatibility.md), [RPC names](docs/rpc-namespacing.md), [validation](docs/protocol-validation.md) |
+| Implementation or tests        | [Coding standards](docs/coding-standards.md), [testing](docs/testing.md)                                                         |
+| README or other documentation  | [Writing rules](docs/writing.md)                                                                                                 |
+| Installation or deployment     | [Container installer](docker/multiplex/README.md), [instance continuity](docs/instance-continuity.md)                            |
+| Commit, publication or release | [Versioning](docs/release.md#vorton-commit-versions), [publication hygiene](docs/publication-hygiene.md)                         |
 
-- `packages/server` — Daemon: agent lifecycle, WebSocket API, MCP server
-- `packages/app` — Mobile + web client (Expo)
-- `packages/cli` — Docker-style CLI (`paseo run/ls/logs/wait`)
-- `packages/relay` — E2E encrypted relay for remote access
-- `packages/desktop` — Electron desktop wrapper
-- `packages/website` — Marketing site (paseo.sh)
+## Boundaries
 
-## Docs
+- Never restart the main daemon on port `6767` without explicit permission. It owns running agents. A timeout is not a reason to restart it.
+- Use the container installer for new installations. Run agents and provider tools inside it; do not install a host daemon, require host Tailscale or mount Docker's socket. Host Docker administration belongs to the operator.
+- Keep credentials, deployment details, account inventories, backups and acceptance receipts outside Git.
+- Preserve wire compatibility: new fields are optional, existing fields are not removed or narrowed, and wire schemas stay pure. Gate new features on their advertised capability; tag compatibility shims as required by the compatibility doc.
 
-`docs/` is the source of truth for system-level and process-level knowledge. **"The docs", "check the docs", or "check the X docs" always mean this directory — not the web.** Look here before fetching anything online; the docs capture gotchas and conventions you cannot derive from the code or external sources.
+## Check your work
 
-At the start of non-trivial work, list `docs/` and skim anything relevant to the task.
+- Run `npm run typecheck` and `npm run lint` after changes. Use npm scripts for linting and formatting; run `npm run format` before committing. For selected files, use `npm run format:files -- <paths>`.
+- Run only focused tests: `npx vitest run <file> --bail=1`. Never run the full suite locally or a workspace test suite without an explicit request. Use CI for broad coverage; redirect explicitly requested broad runs to a file.
+- Reuse passing test evidence from another agent for unchanged code. Do not add provider-auth checks or auth-dependent skips to tests.
+- Before diagnosing cross-package type errors, rebuild declarations with `npm run build:client` or `npm run build:server` as appropriate. Do not patch types to hide stale declarations. See [development](docs/development.md).
+- Every commit increments the Vorton version through the installed hook. Stage intended manifest changes first; never bypass hooks or use upstream release commands for routine commits.
 
-| Doc                                                                  | What's in it                                                                                                                   |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| [docs/roadmap.md](docs/roadmap.md)                                   | Planned fork work, separate from shipped capabilities                                                                          |
-| [docs/product.md](docs/product.md)                                   | What Paseo is, who it's for, where it's going                                                                                  |
-| [docs/architecture.md](docs/architecture.md)                         | System design, package layering, WebSocket protocol, agent lifecycle, data flow                                                |
-| [docs/agent-lifecycle.md](docs/agent-lifecycle.md)                   | Agent states, parent/child relationships, archive semantics, tabs vs archive, subagents track                                  |
-| [docs/data-model.md](docs/data-model.md)                             | File-based JSON persistence, Zod schemas, atomic writes, no migrations                                                         |
-| [docs/glossary.md](docs/glossary.md)                                 | Authoritative terminology — UI label wins, no synonyms                                                                         |
-| [docs/coding-standards.md](docs/coding-standards.md)                 | Type hygiene, error handling, state design, React patterns, file organization                                                  |
-| [docs/design.md](docs/design.md)                                     | Design system — tokens, buttons, hierarchy, density, alignment rails, states, what's forbidden                                 |
-| [docs/forms.md](docs/forms.md)                                       | Form architecture — non-React form model, form kit, load-state gating; the schedule form is the golden example                 |
-| [docs/hover.md](docs/hover.md)                                       | Hover — the canonical pattern (plain View + onPointerEnter/Leave, separate inner Pressable) and the three ways agents break it |
-| [docs/unistyles.md](docs/unistyles.md)                               | Unistyles gotchas — `useUnistyles()` is forbidden, alternatives in order                                                       |
-| [docs/floating-panels.md](docs/floating-panels.md)                   | Anchored popovers — Portal/Modal escape for Android, lifecycle gates, keyboard-shared-value, status-bar offset, the flash      |
-| [docs/menus.md](docs/menus.md)                                       | The menu engine — popover vs sheet, submenu pages, hover intent, when a decision earns a submenu                               |
-| [docs/expo-router.md](docs/expo-router.md)                           | Expo Router route ownership, startup restore, and native blank-screen gotchas                                                  |
-| [docs/file-icons.md](docs/file-icons.md)                             | Material icon theme integration for the file explorer                                                                          |
-| [docs/providers.md](docs/providers.md)                               | Adding a new agent provider end-to-end                                                                                         |
-| [docs/forge-providers.md](docs/forge-providers.md)                   | Adding a git forge: registry/manifest, drop-in checklist, self-host/GHES, the two facts tiers                                  |
-| [docs/custom-providers.md](docs/custom-providers.md)                 | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries                                              |
-| [docs/plugins.md](docs/plugins.md)                                   | Local plugin manifest, directory source config, RPCs, native surfaces, and attachment sources                                  |
-| [docs/service-proxy.md](docs/service-proxy.md)                       | Service proxy: exposing workspace scripts at public URLs, DNS setup, reverse proxy config                                      |
-| [docs/development.md](docs/development.md)                           | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP                                                     |
-| [docs/rpc-namespacing.md](docs/rpc-namespacing.md)                   | WebSocket RPC naming convention — dotted namespaces and `.request`/`.response` pairs                                           |
-| [docs/protocol-compatibility.md](docs/protocol-compatibility.md)     | Why app/daemon versions drift, protocol vs feature contract, capability gating, COMPAT tagging                                 |
-| [docs/protocol-validation.md](docs/protocol-validation.md)           | zod-aot generated inbound WebSocket validation, patched compiler regressions, schema-purity rules                              |
-| [docs/permissions.md](docs/permissions.md)                           | Semantic daemon permissions, principals, credentials, pairing invitations, and Hub authority                                   |
-| [docs/terminal-performance.md](docs/terminal-performance.md)         | Terminal latency pipeline, coalescing/backpressure invariants, benchmark + perf spec usage                                     |
-| [docs/agent-stream-performance.md](docs/agent-stream-performance.md) | Assistant text pipeline — coalescing window, paced reveal, why arrival lumps are smoothed at render                            |
-| [docs/file-observation.md](docs/file-observation.md)                 | Recursive watcher ownership, Linux constraints, teardown invariants, and Parcel comparison                                     |
-| [docs/testing.md](docs/testing.md)                                   | TDD workflow, determinism, real dependencies over mocks, test organization                                                     |
-| [docs/qa.md](docs/qa.md)                                             | QA evidence bar for pull requests — platform matrix, version drift, performance, UI proof                                      |
-| [docs/mobile-testing.md](docs/mobile-testing.md)                     | Maestro and mobile test workflows                                                                                              |
-| [docs/mobile-panels.md](docs/mobile-panels.md)                       | Compact left/center/right panel ownership, worklet motion, gesture revisions, and Fabric constraints                           |
-| [docs/explorer-sidebar.md](docs/explorer-sidebar.md)                 | Explorer sidebar and ordinary side-pane host contracts, lifecycle, placement, and routing preferences                          |
-| [docs/ad-hoc-daemon-testing.md](docs/ad-hoc-daemon-testing.md)       | Isolated in-process daemon test harness                                                                                        |
-| [docs/browser-capture-harness.md](docs/browser-capture-harness.md)   | Real-Electron browser screenshot harness and compositor-surface gotcha                                                         |
-| [docs/android.md](docs/android.md)                                   | App variants, local/cloud builds, EAS workflows, version codes, F-Droid source builds and store metadata                       |
-| [docs/docker.md](docs/docker.md)                                     | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
-| [docs/container-tailscale.md](docs/container-tailscale.md)           | Reusable single-container Tailscale architecture and private installation boundaries                                           |
-| [docs/private-domain.md](docs/private-domain.md)                     | Optional custom-domain gateway: private Tailscale endpoint, Caddy templates, DNS, verification and removal                     |
-| [docs/host-handoff.md](docs/host-handoff.md)                         | Team handoff entry point, fresh installation, migration and acceptance                                                         |
-| [docs/instance-continuity.md](docs/instance-continuity.md)           | Persistent web publication and active-instance development                                                                     |
-| [docs/agent-presets.md](docs/agent-presets.md)                       | Saved presets, managed workers, quota lifecycle and implementation status                                                      |
-| [docs/vorton-touch-audit.md](docs/vorton-touch-audit.md)             | Vorton touch contract, historical checks and physical-device limits                                                            |
-| [docs/publication-hygiene.md](docs/publication-hygiene.md)           | Public source boundaries, secret checks and history cleanup                                                                    |
-| [docs/release.md](docs/release.md)                                   | Release playbook, draft releases, completion checklist                                                                         |
-| [docs/desktop-auto-builds.md](docs/desktop-auto-builds.md)           | Proposed private desktop build and update pipeline, findings, acceptance work, and effort estimate                             |
-| [docs/terminal-activity.md](docs/terminal-activity.md)               | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
-| [SECURITY.md](SECURITY.md)                                           | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
-| [public-docs/hub/security.md](public-docs/hub/security.md)           | Public Hub guide — trust boundaries, untrusted triggers, provider controls, and output authority                               |
+## Finish the task
 
-### Writing docs
+- Update the README in the same change when shipped user-facing behavior changes. Follow the [writing rules](docs/writing.md); preserve the author's animation and other demos.
+- Report what changed, validation results and remaining limitations. Link the README update or explain why the change does not affect it.
+- Follow the user's requested delivery stage. A request for a preview stops before committing or publishing.
 
-Keep actual deployment paths, tailnet hostnames, device IDs, account inventories, credential state, backups and acceptance receipts outside Git. Public documentation contains reusable instructions and placeholders only. Read [publication hygiene](docs/publication-hygiene.md) before publishing or rewriting history.
+## Find the code
 
-- **Integrate, don't append.** Find the doc that owns the subject and rewrite the part that is now wrong. The standard failure is finishing a task and adding a paragraph to the bottom of the closest-looking doc; ten tasks later the doc is a pile of paragraphs in discovery order. `docs/custom-providers.md` is what that looks like.
-- **Don't document logic.** Prose that restates code drifts from the code and loses. Write down what the code can't tell you: why something is shaped the way it is, the gotcha that cost an afternoon, conventions nothing enforces, constraints that span packages or versions. If a reader could get it in two minutes by opening the file, cut it.
-- **One fact, one doc.** Every other mention is a link. If you are about to write the same paragraph in two docs, one of them is a link.
-- **Respect the layers.** `CONTRIBUTING.md` and this file name things and link out. Activity docs like `docs/qa.md` and `docs/testing.md` set the bar for a kind of work. Subject docs like `docs/unistyles.md` own one thing completely. A layer never re-explains the one below it.
-- **One subject per doc.** If the subject doesn't fit in a sentence, split the doc. A section per provider, vendor, or platform is a table plus one worked example.
-- **Delete.** Obsolete sections go. Prefer a `packages/app/src/thing.ts:120` reference over a pasted block.
-- **New doc?** Add a row to the table above and link it from the docs that should send readers there.
-- Code-level facts belong in comments next to the code, not here.
+Under `packages/`: `server` owns the daemon and agent lifecycle; `app` owns the Expo clients; `protocol` and `client` own shared transport contracts; `cli` owns commands; `relay` owns encrypted remote transport; `desktop` owns Electron; `website` owns marketing.
 
-### Keep the README current
-
-[README.md](README.md) is the overview of shipped features for developers deciding whether to use Vorton. Maintaining it is part of shipping a user-facing feature.
-
-- **Review it with every feature change.** When adding, changing or removing user-facing behavior, update the relevant README section in the same change. Before declaring the feature shipped, confirm the README describes what users can actually use. For internal changes with no effect on that overview, state why no README update is needed in the completion report.
-- **Verify claims before writing them.** Check the implementation, relevant tests and delivery status. Keep planned features in the roadmap. Do not present source-only work awaiting required deployment as available, or imply guarantees the implementation cannot support.
-- **Explain the reason to use it.** Lead with user workflows and outcomes for an expert developer. Give multiple accounts, account switching and reusable profiles appropriate prominence alongside other shipped capabilities. Keep storage mechanics, protocol details and operational procedures in their owning docs and link to them.
-- **Integrate the change.** Revise the section that owns the feature, remove obsolete claims and keep the overview balanced. Do not turn the README into a changelog or let the most recently implemented feature dominate it. Credit inherited Paseo capabilities and verify any comparison with another product.
-- **Preserve the author's demos.** Keep existing animations, screenshots and demo embeds unless the user explicitly asks to remove or replace them. The account-switching animation belongs beside the account and profile overview. Preserve its original asset URL, verify it still loads as an animation when editing that section, and report a broken link instead of silently deleting it or substituting a still image.
-- **Check the finished document.** Preserve working installation and onboarding instructions, check changed links and media, and read the full README for repetition and stale claims. The completion report must link the README update or give the concrete reason it was unnecessary.
-
-`AGENTS.md` is the authoritative instruction file. `CLAUDE.md` is a symlink to it so both entry points read the same instructions. Edit `AGENTS.md`.
-
-### Doc voice
-
-Plain and short. Second person. State the rule, then the reason when the reason isn't obvious. Match the doc you're editing.
-
-Do not:
-
-- Write a sentence to land a point. "It's not X, it's Y", "That's not a Z, that's a W", and every other setup-and-punchline shape.
-- Add a clause that only asserts importance: "and that matters", "which is what keeps it working", "this is critical".
-- Use "honest", "robust", "seamless", "powerful", "simply", "just", "delightful".
-- Restate something you already said, in different words, for emphasis.
-- Hedge with "generally", "typically", or "you may want to" when the answer is "do this".
-- Clear your throat: "It's worth noting that", "In order to", "This section covers".
-
-## Container installation
-
-Use [docker/multiplex/README.md](docker/multiplex/README.md) for all new installations. The installer builds the checkout locally and enrolls Tailscale inside the container. Run Paseo, Vorton and provider tools there. Do not install a host daemon or require host Tailscale for this workflow. Host Docker administration belongs to the operator; never mount the Docker socket into the agent environment. See [container operations](docs/docker.md) for updates and migration.
-
-## Quick start
-
-Run these source-development commands inside the container checkout:
-
-```bash
-npm run dev                          # Start the dev daemon
-npm run dev:app                      # Start Expo against the dev daemon
-npm run dev:desktop                  # Start Electron desktop dev
-npm run cli -- ls -a -g              # List all agents
-npm run cli -- daemon status         # Check daemon status
-npm run typecheck                    # Always run after changes
-npm run lint                         # Always run after changes
-npm run format                       # Auto-format with Biome
-npm run format:check                 # Check formatting without writing
-```
-
-Repo dev commands use checkout-local state by default. In this checkout, `PASEO_HOME` resolves to `.dev/paseo-home`, and `npm run cli -- ...` targets that same dev home automatically. The packaged desktop app and production-style daemon keep using `~/.paseo` on port `6767`.
-
-See [docs/development.md](docs/development.md) for full setup, build sync requirements, and debugging.
-
-## Critical rules
-
-- **Every new commit increments the Vorton version.** Use the installed pre-commit hook, which updates and stages synchronized versions. Stage intended manifest edits first; the hook refuses unstaged manifest changes. For build preparation use `npm run version:vorton`, then stage its manifest and lockfile changes. Never bypass the hook or use upstream release commands for a routine commit. See [Vorton commit versions](docs/release.md#vorton-commit-versions).
-
-- **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. If you're an agent, restarting it kills your own process.
-- **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.
-- **NEVER add auth checks to tests** — agent providers handle their own auth.
-- **Before changing app routes, startup routing, remembered workspace restore, or active workspace selection, read [docs/expo-router.md](docs/expo-router.md).**
-- **NEVER run the full test suite locally.** The test suites are heavy and will freeze the machine, especially if multiple agents run them in parallel. Rules:
-  - Run only the specific test file you changed: `npx vitest run <file> --bail=1`
-  - Never run `npm run test` for an entire workspace unless explicitly asked.
-  - If you must run a broad suite, pipe output to a file and read it afterward: `npx vitest run <file> --bail=1 > /tmp/test-output.txt 2>&1` then read the file.
-  - Never re-run a test suite that another agent already ran and reported green — trust the result.
-  - For full suite verification, push to CI and check GitHub Actions instead.
-- **Always run typecheck and lint after every change.**
-- **Build workspace packages before diagnosing cross-package type errors.** This repo consumes generated declarations across workspaces. If typecheck fails in a package that depends on another workspace, rebuild the owning stack first so `dist` declarations are current:
-  - `npm run build:client` — rebuild protocol and client declarations.
-  - `npm run build:server` — rebuild highlight, relay, protocol, client, server, and CLI when server/CLI types may be stale.
-  - Do not patch inferred callback parameters or add local duplicate types just to silence stale declaration errors.
-- **Run `npm run format` before committing.** This repo uses Biome for formatting. Do not manually fix formatting — let the formatter handle it.
-- **Always use npm scripts for linting and formatting.** Do not run tools directly with `npx eslint`, `npx oxfmt`, `npx oxlint`, or package-local binaries. For targeted checks, pass file paths through the npm script:
-  - `npm run lint -- packages/app/src/components/message.tsx`
-  - `npm run format:files -- CLAUDE.md packages/app/src/components/message.tsx`
-- **The protocol stays backward-compatible. Features don't have to.** Read [docs/protocol-compatibility.md](docs/protocol-compatibility.md) before touching `packages/protocol`. The short version:
-  - **Protocol contract (always):** an old client parses messages from a new daemon, and a new daemon parses messages from an old client. New fields are optional; never narrow, never remove, never require. Wire schemas stay pure — no `.transform()`, `.catch()`, or `.preprocess()`.
-  - **Feature contract (per-feature):** gate the capability once on `server_info.features.*`, then run the feature or tell the user to update the host. No fallback paths, no defensive branches.
-  - **Every shim is tagged.** `// COMPAT(name): added in vX, remove after <date>` at the site that has to be deleted. `rg "COMPAT\("` is the cleanup backlog; untagged back-compat is permanent by accident.
-  - **New RPCs use dotted namespaces with direction suffixes.** Follow [docs/rpc-namespacing.md](docs/rpc-namespacing.md): `domain.provider.operation.request` pairs with `domain.provider.operation.response`. Existing flat RPC names will migrate over time; don't add new ones.
-
-## Platform gating
-
-The app runs on iOS, Android, web (browser), and web (Electron desktop). Code is cross-platform by default. Gate only when you must. Import gates from `@/constants/platform`.
-
-### The four gates
-
-| Gate                       | Type      | When to use                                                                                                                 |
-| -------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `isWeb`                    | constant  | DOM APIs — `document`, `window`, `<div>`, `addEventListener`, `ResizeObserver`. This is the **exception**, not the default. |
-| `isNative`                 | constant  | Native-only APIs — Haptics, `StatusBar.currentHeight`, push tokens, camera/scanner, `expo-av`.                              |
-| `getIsElectron()`          | cached fn | Desktop wrapper features — file dialogs, titlebar drag region, daemon management, app updates, dock badges.                 |
-| `useIsCompactFormFactor()` | hook      | Layout decisions — sidebar overlay vs pinned, modal vs full screen, single-panel vs split. From `@/constants/layout`.       |
-
-### Decision matrix
-
-| I need to...                                                   | Use                                                                       |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Access DOM (`document`, `window`, `<div>`, `addEventListener`) | `if (isWeb)`                                                              |
-| Use a native-only API (Haptics, push tokens, camera)           | `if (isNative)`                                                           |
-| Use an Electron bridge (file dialog, titlebar, updates)        | `if (getIsElectron())`                                                    |
-| Switch layout between phone and tablet/desktop                 | `useIsCompactFormFactor()`                                                |
-| Show something on hover, always-visible on native              | `isHovered \|\| isNative \|\| isCompact` (hover only works on web)        |
-| Gate to iOS or Android specifically                            | `Platform.OS === "ios"` / `Platform.OS === "android"` (rare, keep inline) |
-
-### Rules
-
-- **Default is cross-platform.** Don't gate unless you have a specific reason.
-- **Prefer Metro file extensions over `if` statements.** When a module has fundamentally different implementations per platform, use `.web.ts` / `.native.ts` file extensions instead of runtime `if (isWeb)` branches. Metro resolves the correct file at build time — the unused platform code is never bundled. Reserve `if (isWeb)` for small, inline checks (a single line or a few props). If you find yourself writing a large `if (isWeb) { ... } else { ... }` block, split into separate files instead.
-  ```
-  hooks/
-    use-audio-recorder.web.ts    ← uses Web Audio API
-    use-audio-recorder.native.ts ← uses expo-audio
-  ```
-  Import as `@/hooks/use-audio-recorder` — Metro picks the right file automatically.
-- **Use `.electron.ts` / `.electron.tsx` for Electron-only web modules.** Electron is still the Metro `web` platform, but desktop dev/build sets `PASEO_WEB_PLATFORM=electron`, so Metro first looks for `.electron.*` files and falls back to normal `.web.*` files. Use this when the implementation depends on Electron-only behavior such as `webviewTag`, desktop preload APIs, or the Electron bridge. Keep plain browser web in `.web.*`, and keep native fallbacks in the base file or `.native.*`.
-  ```
-  desktop/browser/pane/
-    index.electron.tsx ← Electron <webview> implementation
-    index.web.tsx      ← plain web fallback
-    index.tsx          ← native fallback
-  ```
-  Import as `@/desktop/browser/pane` — Electron desktop gets the `.electron.tsx` file, browser web gets `.web.tsx`, and native gets the native/base implementation.
-- **NEVER use raw DOM APIs without `isWeb` guard.** DOM APIs crash native. Casting a RN ref to `HTMLElement` is a red flag — ensure the block is web-only.
-- **NEVER use `onPointerEnter`/`onPointerLeave`.** They don't fire on native iOS.
-- **Hover only works on web.** React Native's `onHoverIn`/`onHoverOut` on `Pressable` does NOT fire on native iOS/iPad — the underlying W3C pointer events are behind disabled experimental flags. For hover-to-show UI (kebab menus, action buttons), use `isHovered || isNative || isCompact` so the controls are always visible on native and hover-to-show on web.
-- **Don't use Platform.OS as a proxy for layout capabilities.** Use breakpoints for layout decisions, not platform checks.
-- **Import `isWeb`/`isNative` from `@/constants/platform`.** Never write `const isWeb = Platform.OS === "web"` locally.
-
-## Debugging
-
-Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log
-
-## Vorton customization contract
-
-All fork-specific interface behavior must be gated by the existing Vorton toggle. Follow the [mode default and persistence contract](docs/agent-presets.md#review-boundaries). Paseo mode retains standard controls, appearance, interactions, and navigation. The mode selector itself remains available so users can enable Vorton. Do not use host capability, browser width, or the presence of saved profiles as a substitute for this mode gate.
-
-Use `useVortonMode` for custom UI and `useVortonTouch` for touch enhancements. Gate styles as well as rendering and event handlers. Switching back to Paseo must restore baseline appearance without overwriting saved settings, deleting profiles, changing accounts, or interrupting tasks. Account state and server capability support remain persistent; the toggle controls use and presentation, not credentials or daemon lifetime.
-
-Every interface request requires an off/on comparison, focused tests, and delivery to the existing primary Vorton installation. Follow [instance continuity](docs/instance-continuity.md) for publication, destination verification, and session preservation. Ask for physical device confirmation where emulation cannot prove behavior. Never launch macOS Playwright WebKit.
-
-For Vorton touch layouts, detect touch capability independently of screen width. Essential actions must be visible without hover, primary targets should be at least 44 CSS pixels, and hover cards must not intercept a touch intended for navigation. Keep pinch zoom, keyboard focus indicators, scrolling, and independently selectable permissions.
+For setup, commands, development state and build troubleshooting, use [development](docs/development.md). Daemon logs are at `$PASEO_HOME/daemon.log`.

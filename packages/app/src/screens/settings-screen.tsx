@@ -94,6 +94,7 @@ import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
+import { VortonUpdatesSection } from "@/vorton-updates/section";
 import { resolveAppVersion } from "@/utils/app-version";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
 import { settingsStyles } from "@/styles/settings";
@@ -611,6 +612,7 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
           {isDesktopApp ? <DesktopAppUpdateRow /> : null}
         </View>
       </SettingsSection>
+      <VortonUpdatesSection />
       <ConnectedHostsSection clientVersion={appVersion} />
       <View style={styles.aboutCommunity}>
         <CommunityLinks />
@@ -1025,6 +1027,7 @@ function HostPicker({
 }
 
 interface SettingsSidebarProps {
+  appVersionText: string;
   view: SettingsView;
   onSelectSection: (section: SettingsSectionSlug) => void;
   onSelectHostSection: (section: HostSectionSlug) => void;
@@ -1036,6 +1039,7 @@ interface SettingsSidebarProps {
 }
 
 function SettingsSidebar({
+  appVersionText,
   view,
   onSelectSection,
   onSelectHostSection,
@@ -1046,6 +1050,7 @@ function SettingsSidebar({
   layout,
 }: SettingsSidebarProps) {
   const vorton = useVortonMode();
+  const openAbout = useCallback(() => onSelectSection("about"), [onSelectSection]);
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const hosts = useHosts();
@@ -1193,6 +1198,17 @@ function SettingsSidebar({
           >
             {sidebarBody}
           </ScrollView>
+          {vorton && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${appVersionText}, ${t("settings.sections.about")}`}
+              onPress={openAbout}
+              style={sidebarStyles.versionButton}
+              testID="settings-sidebar-version"
+            >
+              <Text style={sidebarStyles.version}>{appVersionText}</Text>
+            </Pressable>
+          )}
         </View>
       ) : (
         sidebarBody
@@ -1608,6 +1624,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         <BackHeader title={t("settings.title")} onBack={handleBackToWorkspace} />
         <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
           <SettingsSidebar
+            appVersionText={appVersionText}
             view={view}
             onSelectSection={handleSelectSection}
             onSelectHostSection={handleSelectHostSection}
@@ -1647,6 +1664,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       <View style={desktopStyles.row}>
         <WindowChromeRegion corners="top-left">
           <SettingsSidebar
+            appVersionText={appVersionText}
             view={view}
             onSelectSection={handleSelectSection}
             onSelectHostSection={handleSelectHostSection}
@@ -1785,6 +1803,16 @@ const sidebarStyles = StyleSheet.create((theme) => ({
   },
   scrollBody: {
     flex: 1,
+  },
+  version: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    textAlign: "center",
+  },
+  versionButton: {
+    minHeight: 44,
+    justifyContent: "center",
+    padding: theme.spacing[3],
   },
   modeHeader: {
     flexDirection: "row",

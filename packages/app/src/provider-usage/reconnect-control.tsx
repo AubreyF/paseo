@@ -31,13 +31,11 @@ export function ProviderReconnectControl({
   serverId,
   name,
   providerId = usage?.providerId ?? "",
-  compact = false,
 }: {
   usage: ProviderUsage | undefined;
   serverId: string | null;
   name: string;
   providerId?: string;
-  compact?: boolean;
 }) {
   const vortonMode = useVortonMode();
   const { config } = useDaemonConfig(serverId);
@@ -93,7 +91,6 @@ export function ProviderReconnectControl({
       {action ? (
         <CompactAccountButton
           tone="danger"
-          style={compact ? styles.compactBadge : undefined}
           leftIcon={action === "Reconnect" ? reconnectIcon : undefined}
           accessibilityLabel={`${name}: ${action} account`}
           testID={`provider-${action.toLowerCase()}-${providerId}`}
@@ -148,14 +145,6 @@ export function ProviderReconnectControl({
   );
 }
 const styles = StyleSheet.create((theme) => ({
-  compactBadge: {
-    position: "absolute",
-    right: 0,
-    top: (Math.ceil(theme.fontSize.base * 1.4) - 44) / 2,
-    height: 44,
-    minHeight: 44,
-    maxWidth: "100%",
-  },
   warning: { color: theme.colors.destructive, fontSize: theme.fontSize.base },
   text: { color: theme.colors.foreground, fontSize: theme.fontSize.base },
   body: { padding: theme.spacing[4], gap: theme.spacing[4] },

@@ -12,6 +12,7 @@ export class MessageQueueService {
   private readonly queuedAgents = new Set<string>();
   private initialization: Promise<void> | null = null;
   private delivery: QueueDeliveryWorker | null = null;
+  private deliveryPort: Omit<QueueDeliveryPort, "changed"> | null = null;
   private readonly stopGenerations = new Map<string, number>();
   constructor(
     private readonly store: MessageQueueStore,
@@ -21,15 +22,17 @@ export class MessageQueueService {
   async startDelivery(port: Omit<QueueDeliveryPort, "changed">): Promise<void> {
     await this.initialize();
     if (this.delivery) throw new Error("Queue delivery is already started");
+    this.deliveryPort = port;
     this.delivery = new QueueDeliveryWorker(this.store, {
       ...port,
       changed: (snapshot) => this.publish(snapshot),
     });
-    for (const agentId of await this.store.listAgentIds()) this.wake(agentId);
+    for (const agentId of await this.store.listAgentIds()) void this.delivery.wake(agentId);
   }
 
   wake(agentId: string): void {
-    if (this.queuedAgents.has(agentId)) void this.delivery?.wake(agentId);
+    if (this.queuedAgents.has(agentId) || this.deliveryPort?.needsCompletion?.(agentId))
+      void this.delivery?.wake(agentId);
   }
 
   close(): void {
@@ -39,6 +42,7 @@ export class MessageQueueService {
   async pause(agentId: string): Promise<void> {
     this.delivery?.halt(agentId);
     this.stopGenerations.set(agentId, (this.stopGenerations.get(agentId) ?? 0) + 1);
+    await this.deliveryPort?.abandonGoal?.(agentId);
     await this.initialize();
     this.publish(await this.store.pause(agentId));
   }
@@ -62,6 +66,11 @@ export class MessageQueueService {
   async acceptedHistory(agentId: string) {
     await this.initialize();
     return this.store.acceptedHistory(agentId);
+  }
+
+  async suppressHistoryRestoration(agentId: string, messageIds: readonly string[]): Promise<void> {
+    await this.initialize();
+    await this.store.suppressHistoryRestoration(agentId, messageIds);
   }
 
   async reconcileHistory(agentId: string, history: readonly AgentStreamEvent[]): Promise<void> {
@@ -91,7 +100,11 @@ export class MessageQueueService {
     return { attachment, ...location };
   }
 
-  async mutate(agentId: string, operation: QueueOperation): Promise<QueueSnapshot> {
+  async mutate(
+    agentId: string,
+    operation: QueueOperation,
+    beforeCommit?: () => Promise<void>,
+  ): Promise<QueueSnapshot> {
     await this.initialize();
     const generation = this.stopGenerations.get(agentId) ?? 0;
     const pauseRequested = operation.kind === "pause" && operation.paused;
@@ -100,7 +113,8 @@ export class MessageQueueService {
     try {
       if (operation.kind === "enqueue" || operation.kind === "edit")
         await this.attachments.capture(operation.attachments);
-      snapshot = await this.store.mutate(agentId, operation);
+      snapshot = await this.store.mutate(agentId, operation, beforeCommit);
+      if (pauseRequested) await this.deliveryPort?.abandonGoal?.(agentId);
     } catch (error) {
       // A rejected pause must not leave an invisible runtime stop behind. A
       // concurrent manual stop remains authoritative even if this edit failed.
@@ -151,7 +165,8 @@ export class MessageQueueService {
   }
 
   private publish(snapshot: QueueSnapshot): void {
-    if (snapshot.items.length > 0) this.queuedAgents.add(snapshot.agentId);
+    if (snapshot.items.length > 0 || snapshot.deliveryError)
+      this.queuedAgents.add(snapshot.agentId);
     else this.queuedAgents.delete(snapshot.agentId);
     const listeners = this.listeners.get(snapshot.agentId);
     if (!listeners) return;

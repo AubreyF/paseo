@@ -1,6 +1,8 @@
 pre-commit:
-  parallel: true
+  parallel: false
   jobs:
+    - name: vorton-version
+      run: node scripts/vorton-version.mjs --hook
     - name: format
       glob: "*.{css,js,json,jsonc,jsx,md,ts,tsx,yaml,yml}"
       exclude:

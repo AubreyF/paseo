@@ -2,6 +2,8 @@
 
 One container includes Paseo, its web UI, Codex, Pi and Tailscale. Each installation has its own accounts, workspace and private network identity. Linux AMD64 and ARM64 are supported; macOS runs it through Docker Desktop.
 
+Installation agents: follow the [installation agent instructions](../../README.md#instructions-for-installation-agents).
+
 1. Install Docker with Compose on the host and Tailscale on the devices you will connect from. The host does not need a separate Tailscale installation.
 2. From this checkout, run:
 

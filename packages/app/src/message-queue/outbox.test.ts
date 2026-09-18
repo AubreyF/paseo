@@ -241,3 +241,34 @@ it("keeps rejected content visible and blocks later operations for the same task
     ["later", null],
   ]);
 });
+
+it("notifies after durable commit and does not request retries for delivery results", async () => {
+  const changes: boolean[] = [];
+  const storage = memoryStorage();
+  const outbox = new QueueOutbox(storage, {
+    ...port,
+    localChanged: (_server, flush) => {
+      changes.push(flush);
+    },
+  });
+  await outbox.commit(input);
+  expect(
+    await storage.read({ serverId: "host", agentId: "agent", operationId: "op" }),
+  ).not.toBeNull();
+  expect(changes).toEqual([true]);
+  await outbox.flush("host");
+  expect(changes).toEqual([true, false]);
+  await outbox.flush("host");
+  expect(changes).toEqual([true, false]);
+});
+
+it("does not report a persisted submission as failed when notification fails", async () => {
+  const outbox = new QueueOutbox(memoryStorage(), {
+    ...port,
+    localChanged: () => {
+      throw new Error("Broadcast unavailable");
+    },
+  });
+  await expect(outbox.commit(input)).resolves.toBeUndefined();
+  expect(await outbox.list()).toHaveLength(1);
+});

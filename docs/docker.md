@@ -42,7 +42,7 @@ Local inference is optional. MTPLX runs natively on a Mac and is reached from Pi
 Updates interrupt this instance's tasks. Coordinate a maintenance window and back up its state first. Build your updated checkout from its repository root, then update the deployment:
 
 ```sh
-docker build -f docker/base/Dockerfile -t paseo-multiplex:review .
+docker build --build-arg PASEO_BUILD_COMMIT="$(git rev-parse HEAD)" -f docker/base/Dockerfile -t paseo-multiplex:review .
 "$HOME/paseo-instance/update.sh" paseo-multiplex:review
 ```
 

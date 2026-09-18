@@ -46,6 +46,29 @@ test("does not grant owner provenance to agent, service, or absent admission", a
   expect(await readdir(root)).toEqual([]);
 });
 
+test("queue operation metadata survives restart and cannot be replaced on replay", async () => {
+  const { root, store } = await setup();
+  const queued = {
+    ...message,
+    text: "",
+    queueOperation: {
+      kind: "delete" as const,
+      operationId: "delete",
+      messageId: "queued",
+      expectedRevision: 1,
+    },
+  };
+  await store.record(queued);
+  const restored = new TaskOwnerEvidenceStore(root);
+  expect((await restored.list(message.taskId))[0]?.queueOperation).toEqual(queued.queueOperation);
+  await expect(
+    restored.record({
+      ...queued,
+      queueOperation: { ...queued.queueOperation, messageId: "different" },
+    }),
+  ).rejects.toThrow("reused");
+});
+
 test("concurrent duplicate deliveries retain one immutable private receipt", async () => {
   const { root, store } = await setup();
   await Promise.all([store.record(message), new TaskOwnerEvidenceStore(root).record(message)]);

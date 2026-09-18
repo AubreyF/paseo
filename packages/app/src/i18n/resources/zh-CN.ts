@@ -2045,6 +2045,7 @@ export const zhCN: TranslationResources = {
       },
     },
     about: {
+      vortonUpdates: en.settings.about.vortonUpdates,
       title: "关于",
       appVersion: "应用版本",
       thisDevice: "此设备",

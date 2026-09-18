@@ -1,4 +1,10 @@
 import {
+  ProviderPreviewRemovalRequestSchema,
+  ProviderPreviewRemovalResponseSchema,
+  ProviderRemoveRequestSchema,
+  ProviderRemoveResponseSchema,
+} from "./provider-removal.js";
+import {
   ForgeChangeRequestAttachmentSchema,
   ForgeIssueAttachmentSchema,
   TextAttachmentSchema,
@@ -3126,6 +3132,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderResetPrepareRequestSchema,
   ProviderResetConfirmRequestSchema,
   CodexAccountCreateRequestSchema,
+  ProviderPreviewRemovalRequestSchema,
+  ProviderRemoveRequestSchema,
   ProviderLoginReadRequestSchema,
   ProviderLoginStartRequestSchema,
   ProviderLoginCancelRequestSchema,
@@ -3515,6 +3523,7 @@ export const ServerInfoStatusPayloadSchema = z
         providerResetManagement: z.boolean().optional(),
         providerAccountLogin: z.boolean().optional(),
         codexAccountCreation: z.boolean().optional(),
+        providerCredentialRemoval: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
         agentGoals: z.boolean().optional(),
@@ -6636,6 +6645,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderUsageListResponseMessageSchema,
   ProviderQuotaObservationResponseMessageSchema,
   CodexAccountCreateResponseSchema,
+  ProviderPreviewRemovalResponseSchema,
+  ProviderRemoveResponseSchema,
   ProviderLoginReadResponseSchema,
   ProviderLoginStartResponseSchema,
   ProviderLoginCancelResponseSchema,

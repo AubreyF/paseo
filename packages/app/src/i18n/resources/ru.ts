@@ -2104,6 +2104,7 @@ export const ru: TranslationResources = {
       },
     },
     about: {
+      vortonUpdates: en.settings.about.vortonUpdates,
       title: "О приложении",
       appVersion: "Версия приложения",
       thisDevice: "Это устройство",

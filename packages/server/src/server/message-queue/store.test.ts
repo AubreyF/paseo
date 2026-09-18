@@ -9,6 +9,34 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+it("refuses queue visibility when ingress evidence cannot be retained", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-queue-ingress-"));
+  roots.push(root);
+  const store = new MessageQueueStore(root);
+  const operation = {
+    kind: "enqueue" as const,
+    operationId: "add",
+    messageId: "message",
+    text: "Draft only",
+    attachments: [],
+  };
+  await expect(
+    store.mutate("agent", operation, async () => {
+      throw new Error("evidence unavailable");
+    }),
+  ).rejects.toThrow("evidence unavailable");
+  expect((await store.read("agent")).items).toEqual([]);
+  let calls = 0;
+  await store.mutate("agent", operation, async () => {
+    calls++;
+  });
+  await new MessageQueueStore(root).mutate("agent", operation, async () => {
+    throw new Error("replay must retain original attribution");
+  });
+  expect(calls).toBe(1);
+  expect((await store.read("agent")).items).toHaveLength(1);
+});
+
 it("reconciles an uncertain attempt only from provider identity and retains its captured content", async () => {
   const root = await mkdtemp(join(tmpdir(), "paseo-queue-evidence-"));
   roots.push(root);
@@ -288,4 +316,45 @@ it("persists pause and order, and requires explicit resolution before retrying u
       outcome: { status: "accepted", turnId: "old" },
     }),
   ).rejects.toMatchObject({ code: "delivery_conflict" });
+});
+
+it("persists rewind suppression without erasing delivery receipts or earlier history", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-queue-rewind-"));
+  roots.push(root);
+  const store = new MessageQueueStore(root);
+  for (const id of ["earlier", "rewound"]) {
+    await store.mutate("agent", {
+      kind: "enqueue",
+      operationId: id,
+      messageId: id,
+      text: id,
+      attachments: [],
+    });
+    const item = await store.claim("agent");
+    if (item?.delivery.status !== "dispatching") throw new Error("Expected claim");
+    await store.settle({
+      agentId: "agent",
+      messageId: id,
+      attemptId: item.delivery.attemptId,
+      outcome: { status: "accepted", turnId: id },
+    });
+    await store.recordProviderMessageId({
+      agentId: "agent",
+      messageId: id,
+      providerMessageId: `native-${id}`,
+    });
+  }
+  await store.suppressHistoryRestoration("agent", ["native-rewound"]);
+  const restarted = new MessageQueueStore(root);
+  const history = await restarted.acceptedHistory("agent");
+  expect(history[0].restoreMissing).toBeUndefined();
+  expect(history[1].restoreMissing).toBe(false);
+  await restarted.mutate("agent", {
+    kind: "enqueue",
+    operationId: "rewound",
+    messageId: "rewound",
+    text: "rewound",
+    attachments: [],
+  });
+  expect((await restarted.read("agent")).items).toEqual([]);
 });

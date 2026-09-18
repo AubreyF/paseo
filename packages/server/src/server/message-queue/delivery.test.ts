@@ -6,32 +6,35 @@ import { expect, it } from "vitest";
 import { MessageQueueStore } from "./store.js";
 import { QueueDeliveryWorker, type QueueDeliveryPort } from "./delivery.js";
 
-it("uses restart evidence to advance without resending the accepted message", async () => {
-  const root = await mkdtemp(join(tmpdir(), "paseo-delivery-recovery-"));
+it("holds a restarted claim until provider identity confirms acceptance, then advances without replay", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-delivery-restart-"));
   try {
-    const store = new MessageQueueStore(root);
-    for (const id of ["accepted", "next"])
-      await store.mutate("agent", {
+    const original = new MessageQueueStore(root);
+    for (const id of ["unconfirmed", "next"])
+      await original.mutate("agent", {
         kind: "enqueue",
         operationId: id,
         messageId: id,
-        text: id,
+        text: "The same prompt",
         attachments: [],
       });
-    await store.claim("agent");
-    await store.recover("agent");
-    const started: string[] = [];
-    const worker = new QueueDeliveryWorker(store, {
+    // Model a crash after the durable claim and before the acceptance receipt.
+    await original.claim("agent");
+    const restarted = new MessageQueueStore(root);
+    await restarted.recover("agent");
+    const received: string[] = [];
+    let confirmed = false;
+    const worker = new QueueDeliveryWorker(restarted, {
       history: async () => [
         {
           type: "timeline",
           provider: "codex",
-          turnId: "accepted-turn",
+          turnId: "original-turn",
           item: {
             type: "user_message",
-            text: "accepted",
-            messageId: "provider-id",
-            clientMessageId: "accepted",
+            messageId: "native-message",
+            ...(confirmed ? { clientMessageId: "unconfirmed" } : {}),
+            text: "The same prompt",
           },
         },
       ],
@@ -39,7 +42,7 @@ it("uses restart evidence to advance without resending the accepted message", as
       load: async (item) => item.text,
       start: (_agentId, item) =>
         (async function* () {
-          started.push(item.id);
+          received.push(item.id);
           yield { type: "turn_started", provider: "codex", turnId: item.id };
         })(),
       changed: () => {},
@@ -48,10 +51,19 @@ it("uses restart evidence to advance without resending the accepted message", as
       },
     });
     await worker.wake("agent");
-    expect(started).toEqual(["next"]);
-    expect((await store.read("agent")).items).toEqual([]);
-    expect((await store.acceptedHistory("agent")).map((entry) => entry.item.id)).toEqual([
-      "accepted",
+    await worker.wake("agent");
+    expect(received).toEqual([]);
+    expect((await restarted.read("agent")).items.map((item) => item.delivery.status)).toEqual([
+      "uncertain",
+      "queued",
+    ]);
+    confirmed = true;
+    await worker.wake("agent");
+    expect(received).toEqual(["next"]);
+    expect((await restarted.read("agent")).items).toEqual([]);
+    const again = new MessageQueueStore(root);
+    expect((await again.acceptedHistory("agent")).map((entry) => entry.item.id)).toEqual([
+      "unconfirmed",
       "next",
     ]);
     worker.close();
@@ -285,6 +297,75 @@ it("honors a stop received while admission preparation is pending", async () => 
     await delivery;
     expect(started).toBe(false);
     expect((await store.read("agent")).items[0].delivery.status).toBe("queued");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("persists admission blocks without claiming and clears them after successful admission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-delivery-block-"));
+  try {
+    const store = new MessageQueueStore(root);
+    await store.mutate("agent", {
+      kind: "enqueue",
+      operationId: "add",
+      messageId: "message",
+      text: "work",
+      attachments: [],
+    });
+    let blocked = true;
+    let starts = 0;
+    const worker = new QueueDeliveryWorker(store, {
+      prepare: async () => {
+        if (blocked) throw new Error("Quota reserve is paused");
+        return true;
+      },
+      load: async (item) => item.text,
+      start: () =>
+        (async function* () {
+          starts++;
+          yield { type: "turn_started" as const, provider: "codex" as const, turnId: "turn" };
+        })(),
+      changed: () => {},
+      failed: () => {},
+    });
+    await worker.wake("agent");
+    const snapshot = await new MessageQueueStore(root).read("agent");
+    expect(snapshot.deliveryError).toBe("Quota reserve is paused");
+    expect(snapshot.items[0].delivery.status).toBe("queued");
+    expect(starts).toBe(0);
+    await worker.wake("agent");
+    expect((await store.read("agent")).revision).toBe(snapshot.revision);
+    blocked = false;
+    await worker.wake("agent");
+    expect(starts).toBe(1);
+    expect((await store.read("agent")).deliveryError).toBeUndefined();
+    worker.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("keeps goal completion errors visible even when the message queue is empty", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-delivery-goal-block-"));
+  try {
+    const store = new MessageQueueStore(root);
+    const worker = new QueueDeliveryWorker(store, {
+      prepare: async () => true,
+      load: async (item) => item.text,
+      start: () => null,
+      complete: async () => {
+        throw new Error("Review the unconfirmed goal resume");
+      },
+      changed: () => {},
+      failed: () => {},
+    });
+    await worker.wake("agent");
+    expect(await new MessageQueueStore(root).read("agent")).toMatchObject({
+      items: [],
+      deliveryError: "Review the unconfirmed goal resume",
+    });
+    worker.close();
   } finally {
     await rm(root, { recursive: true, force: true });
   }

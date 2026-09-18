@@ -1,0 +1,52 @@
+name: ${COMPOSE_PROJECT_NAME:?Set a unique project name in .env}
+
+services:
+  tailscale:
+    image: tailscale/tailscale@sha256:2667499ed87ae29218f292556ba062918402dd5e92e93637af14867e4df12dd3
+    hostname: ${GATEWAY_HOSTNAME:?Set GATEWAY_HOSTNAME in .env}
+    restart: unless-stopped
+    environment:
+      TS_HOSTNAME: ${GATEWAY_HOSTNAME}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_AUTH_ONCE: "true"
+      TS_BOOT_TIMEOUT: 20m
+      TS_EXTRA_ARGS: --accept-dns=true --accept-routes=false --ssh=false
+      TS_SERVE_CONFIG: /etc/gateway/serve.json
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./tailscale:/etc/gateway:ro
+    logging:
+      driver: json-file
+      options: { max-size: 5m, max-file: "3" }
+
+  caddy:
+    build: .
+    network_mode: service:tailscale
+    depends_on: [tailscale]
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?Set PUBLIC_HOSTNAME in .env}
+      UPSTREAM_HOST: ${UPSTREAM_HOST:?Set UPSTREAM_HOST in .env}
+      UPSTREAM_PORT: ${UPSTREAM_PORT:?Set UPSTREAM_PORT in .env}
+      XDG_DATA_HOME: /data
+      XDG_CONFIG_HOME: /config
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./secrets/cloudflare_dns_token:/run/secrets/cloudflare_dns_token:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options: { max-size: 5m, max-file: "3" }
+
+volumes:
+  tailscale-state:
+  caddy-data:
+  caddy-config:

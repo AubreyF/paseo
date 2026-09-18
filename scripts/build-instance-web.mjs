@@ -9,6 +9,10 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const root = path.join(os.homedir(), ".cache", "paseo-instance-build");
+const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], {
+  cwd: source,
+  encoding: "utf8",
+}).trim();
 const files = execFileSync("git", ["ls-files", "-co", "--exclude-standard", "-z"], { cwd: source })
   .toString()
   .split("\0")
@@ -46,6 +50,7 @@ for (const relative of files) {
   await fs.copyFile(from, to);
 }
 await fs.writeFile(previousPath, JSON.stringify(files));
+await fs.writeFile(path.join(root, ".build-source-commit"), sourceCommit + "\n");
 const fingerprint = crypto
   .createHash("sha256")
   .update(await fs.readFile(path.join(root, "package-lock.json")))
@@ -58,7 +63,12 @@ try {
 } catch (error) {
   if (error.code !== "ENOENT") throw error;
 }
-const env = { ...process.env, LEFTHOOK: "0", APP_VARIANT: "production" };
+const env = {
+  ...process.env,
+  LEFTHOOK: "0",
+  APP_VARIANT: "production",
+  PASEO_BUILD_COMMIT: sourceCommit,
+};
 function run(command, args, cwd = root) {
   execFileSync(command, args, { cwd, env, stdio: "inherit" });
 }

@@ -61,6 +61,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/android.md](docs/android.md)                                   | App variants, local/cloud builds, EAS workflows, version codes, F-Droid source builds and store metadata                       |
 | [docs/docker.md](docs/docker.md)                                     | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
 | [docs/container-tailscale.md](docs/container-tailscale.md)           | Reusable single-container Tailscale architecture and private installation boundaries                                           |
+| [docs/private-domain.md](docs/private-domain.md)                     | Optional custom-domain gateway: private Tailscale endpoint, Caddy templates, DNS, verification and removal                     |
 | [docs/host-handoff.md](docs/host-handoff.md)                         | Team handoff entry point, fresh installation, migration and acceptance                                                         |
 | [docs/instance-continuity.md](docs/instance-continuity.md)           | Persistent web publication and active-instance development                                                                     |
 | [docs/agent-presets.md](docs/agent-presets.md)                       | Saved presets, managed workers, quota lifecycle and implementation status                                                      |
@@ -123,6 +124,8 @@ Repo dev commands use checkout-local state by default. In this checkout, `PASEO_
 See [docs/development.md](docs/development.md) for full setup, build sync requirements, and debugging.
 
 ## Critical rules
+
+- **Every new commit increments the Vorton version.** Use the installed pre-commit hook, which updates and stages synchronized versions. Stage intended manifest edits first; the hook refuses unstaged manifest changes. For build preparation use `npm run version:vorton`, then stage its manifest and lockfile changes. Never bypass the hook or use upstream release commands for a routine commit. See [Vorton commit versions](docs/release.md#vorton-commit-versions).
 
 - **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. If you're an agent, restarting it kills your own process.
 - **NEVER assume a timeout means the service needs restarting** — timeouts can be transient.

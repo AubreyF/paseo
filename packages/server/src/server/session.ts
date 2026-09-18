@@ -1,3 +1,8 @@
+import {
+  planProviderRemoval,
+  deleteManagedProviderCredentials,
+  ProviderRemovalError,
+} from "../services/provider-login/removal.js";
 import { QueueStoreError } from "./message-queue/store.js";
 import type { MessageQueueService } from "./message-queue/service.js";
 import { setAgentGoalWithContext } from "./agent/agent-goal.js";
@@ -707,6 +712,7 @@ export class Session {
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
   private readonly messageQueue: MessageQueueService | undefined;
+  private readonly queueDownloadTokens: DownloadTokenStore;
   private readonly queueSubscriptions = new Map<string, () => void>();
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
@@ -758,6 +764,7 @@ export class Session {
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
+  private readonly assertProviderCanBeRemoved: (providerId: string) => void;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
@@ -827,6 +834,7 @@ export class Session {
       getWebSocketRuntimeMetrics,
     } = options;
     this.messageQueue = options.messageQueue;
+    this.queueDownloadTokens = downloadTokenStore;
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
     this.principalId = options.principalId;
@@ -936,6 +944,27 @@ export class Session {
       scheduleService,
       logger: this.sessionLogger,
     });
+    this.assertProviderCanBeRemoved = (providerId) => {
+      if (providerSnapshotManager.isProviderRefreshing(providerId)) {
+        throw new ProviderRemovalError(
+          "Wait for this provider's refresh to finish before deleting the connection.",
+        );
+      }
+      if (this.agentManager.isProviderInUse(providerId)) {
+        throw new ProviderRemovalError(
+          "Wait for task creation to finish and archive this provider's open tasks before deleting the connection.",
+        );
+      }
+      const login = providerLoginService?.read(providerId);
+      if (
+        login &&
+        (login.status === "starting" || login.status === "waiting" || login.status === "verifying")
+      ) {
+        throw new ProviderRemovalError(
+          "Cancel the active sign-in before deleting this connection.",
+        );
+      }
+    };
     this.providerCatalogSession = new ProviderCatalogSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -2672,6 +2701,30 @@ export class Session {
 
   private dispatchProviderMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "provider.connection.preview_remove.request":
+      case "provider.connection.remove.request": {
+        this.assertProviderCanBeRemoved(msg.providerId);
+        const input = {
+          paseoHome: this.paseoHome,
+          providers: this.daemonConfigStore.get().providers,
+          providerId: msg.providerId,
+          defaultCodexHome: process.env.CODEX_HOME ?? resolve(homedir(), ".codex"),
+        };
+        if (msg.type === "provider.connection.preview_remove.request") {
+          this.emit({
+            type: "provider.connection.preview_remove.response",
+            payload: { requestId: msg.requestId, plan: planProviderRemoval(input) },
+          });
+        } else {
+          const plan = deleteManagedProviderCredentials(input, msg.revision);
+          this.daemonConfigStore.patch({ removeProviders: [msg.providerId] });
+          this.emit({
+            type: "provider.connection.remove.response",
+            payload: { requestId: msg.requestId, plan },
+          });
+        }
+        return undefined;
+      }
       case "list_provider_models_request":
         return this.providerCatalogSession.handleListProviderModelsRequest(msg);
       case "list_provider_modes_request":
@@ -4395,7 +4448,17 @@ export class Session {
         throw new QueueStoreError("missing", "The message queue is unavailable.");
       if (!(await this.agentStorage.get(msg.agentId)))
         throw new QueueStoreError("missing", "The task no longer exists.");
-      const file = await this.messageQueue.attachment(msg);
+      const captured = await this.messageQueue.attachment(msg);
+      const downloadToken = msg.download
+        ? this.queueDownloadTokens.issueToken({
+            path: captured.path,
+            absolutePath: resolve(captured.cwd, captured.path),
+            fileName: captured.attachment.fileName,
+            mimeType: captured.attachment.mimeType,
+            size: captured.attachment.size,
+          }).token
+        : undefined;
+      const file = { ...captured, ...(downloadToken ? { downloadToken } : {}) };
       this.emit({
         type: "agent.queue.attachment.get.response",
         payload: { requestId: msg.requestId, file, error: null },
@@ -4450,7 +4513,19 @@ export class Session {
       }
       const snapshot =
         msg.type === "agent.queue.mutate.request"
-          ? await this.messageQueue.mutate(msg.agentId, msg.operation)
+          ? await this.messageQueue.mutate(msg.agentId, msg.operation, () =>
+              this.ownerEvidence.record({
+                taskId: msg.agentId,
+                principalId: this.principalId,
+                clientId: this.clientId,
+                messageId: `queue:${msg.operation.operationId}`,
+                text:
+                  msg.operation.kind === "enqueue" || msg.operation.kind === "edit"
+                    ? msg.operation.text
+                    : "",
+                queueOperation: msg.operation,
+              }),
+            )
           : await this.messageQueue.read(msg.agentId);
       this.emit({
         type: responseType[msg.type],

@@ -24,7 +24,9 @@ const RecordSchema = z.object({
   accepted: z.array(
     z.object({ messageId: IdSchema, attemptId: IdSchema, turnId: z.string().nullable() }),
   ),
-  submissions: z.array(QueueAcceptedMessageSchema),
+  submissions: z.array(
+    QueueAcceptedMessageSchema.extend({ restoreMissing: z.boolean().optional() }),
+  ),
   providerMessageIds: z.array(z.object({ messageId: IdSchema, providerMessageId: z.string() })),
 });
 const OutcomeSchema = z.discriminatedUnion("status", [
@@ -180,6 +182,18 @@ export class MessageQueueStore {
     return ids;
   }
 
+  setDeliveryError(agentId: string, error: string | undefined): Promise<QueueSnapshot | null> {
+    return this.serial(agentId, async () => {
+      const record = await this.load(agentId);
+      const reason = error?.slice(0, 4000);
+      if (record.snapshot.deliveryError === reason) return null;
+      record.snapshot.deliveryError = reason;
+      record.snapshot.revision += 1;
+      await this.commit(record);
+      return record.snapshot;
+    });
+  }
+
   claim(agentId: string): Promise<QueueItem | null> {
     return this.serial(agentId, async () => {
       const record = await this.load(agentId);
@@ -220,6 +234,27 @@ export class MessageQueueStore {
 
   acceptedHistory(agentId: string): Promise<QueueRecord["submissions"]> {
     return this.serial(agentId, async () => (await this.load(agentId)).submissions);
+  }
+
+  suppressHistoryRestoration(agentId: string, messageIds: readonly string[]): Promise<void> {
+    return this.serial(agentId, async () => {
+      const record = await this.load(agentId);
+      const ids = new Set(messageIds);
+      let changed = false;
+      for (const submission of record.submissions) {
+        if (
+          submission.restoreMissing !== false &&
+          (ids.has(submission.item.id) ||
+            (!!submission.providerMessageId && ids.has(submission.providerMessageId)))
+        ) {
+          submission.restoreMissing = false;
+          changed = true;
+        }
+      }
+      // Keep acceptance receipts and captured bytes. Rewinding must never make
+      // an old enqueue retry eligible for delivery again.
+      if (changed) await this.commit(record);
+    });
   }
 
   reconcileHistory(
@@ -363,7 +398,11 @@ export class MessageQueueStore {
     });
   }
 
-  mutate(agentId: string, input: QueueOperation): Promise<QueueSnapshot> {
+  mutate(
+    agentId: string,
+    input: QueueOperation,
+    beforeCommit?: () => Promise<void>,
+  ): Promise<QueueSnapshot> {
     const operation = OperationSchema.parse(input);
     if (JSON.stringify(operation).length > 1_000_000)
       throw new QueueStoreError("full", "The queued message exceeds the content limit.");
@@ -388,6 +427,9 @@ export class MessageQueueStore {
         fingerprint,
         revision: record.snapshot.revision,
       });
+      // Retain authenticated ingress evidence after validation but before this
+      // operation can become visible to delivery. Replays keep original evidence.
+      await beforeCommit?.();
       await this.commit(record);
       return record.snapshot;
     });

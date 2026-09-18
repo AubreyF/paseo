@@ -40,6 +40,7 @@ import { SplitContainer } from "@/components/split-container";
 import { RetainedPanel } from "@/components/retained-panel";
 import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
+import { WorkspaceDiffCounter } from "@/screens/workspace/workspace-diff-counter";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
@@ -1042,6 +1043,9 @@ function WorkspaceHeaderTitleBar({
             onCopyBranchName={onCopyBranchName}
             onOpenSetupTab={onOpenSetupTab}
           />
+        )}
+        {isMobile && (
+          <WorkspaceDiffCounter serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
         )}
         {isMobile && workspaceScripts.length > 0 ? (
           <WorkspaceScriptsButton
@@ -3742,6 +3746,9 @@ function WorkspaceScreenContent({
   const headerRight = useMemo(
     () => (
       <View style={styles.headerRight}>
+        {!isMobile && (
+          <WorkspaceDiffCounter serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
+        )}
         {!isMobile && workspaceDescriptor && workspaceDescriptor.scripts.length > 0 ? (
           <WorkspaceScriptsButton
             serverId={normalizedServerId}

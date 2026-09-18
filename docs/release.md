@@ -1,6 +1,22 @@
 # Release
 
-All workspaces share one version and release together.
+All workspaces share one version.
+
+## Vorton commit versions
+
+This fork uses `<upstream-base>-vorton.<counter>`, starting at `0.7.2-vorton.1`. Every new local commit, including documentation and tooling changes, advances the counter. Change the upstream base only when adopting that upstream release; the new base starts at counter 1. Record source provenance with the Git commit, not build metadata in the version.
+
+The installed Lefthook pre-commit hook runs `scripts/vorton-version.mjs` before validation. It synchronizes the root, workspace manifests, internal dependency pins and lockfile, then stages those files. It refuses unstaged manifest edits so it cannot include unrelated work. Stage intended manifest changes before committing. Other unstaged files stay untouched.
+
+Use `npm run version:vorton` to prepare the same bump before a build or review, then stage the changed manifests and lockfile. Repeated preparation or a failed commit retry retains the same next version relative to HEAD. An amend advances from the version currently in HEAD. After a rebase or cherry-pick, prepare a fresh version before creating another commit. Do not bypass hooks to avoid versioning. Run `npm run prepare` after installing dependencies to install hooks in a new checkout. `npm run version:vorton:check` checks the staged version and synchronization.
+
+Use ordinary Git commits for Vorton work. Do not use `npm version` or the upstream `release:*` commands for these bumps: they perform upstream release preparation and publication. Commit versioning does not publish, tag, deploy or restart anything. The private desktop feed and distribution identity remain pending in [desktop builds](desktop-auto-builds.md).
+
+Vorton native metadata reserves 100,000 build slots per upstream base and fails when a counter or platform integer limit is exhausted. This supports Expo configuration; it does not configure a separate mobile store distribution.
+
+## Upstream release procedure
+
+The procedures below describe the upstream stable and beta release tracks.
 
 For pending custom-branch distribution work, see the [automatic desktop builds and updates proposal](desktop-auto-builds.md).
 

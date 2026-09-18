@@ -3,6 +3,8 @@ import { constants } from "node:fs";
 import { link, lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
+import { QueueOperationSchema, type QueueOperation } from "@getpaseo/protocol/message-queue";
 
 const ReceiptSchema = z
   .object({
@@ -14,6 +16,7 @@ const ReceiptSchema = z
     receivedAt: z.string().datetime(),
     sequence: z.number().int().positive().safe(),
     text: z.string(),
+    queueOperation: QueueOperationSchema.optional(),
   })
   .strict();
 
@@ -30,6 +33,8 @@ export interface OwnerMessageEvidence {
   clientId: string;
   messageId: string;
   text: string;
+  /** Queue ingress, including edits and deletions; never proof of delivery. */
+  queueOperation?: QueueOperation;
 }
 
 function digest(value: string): string {
@@ -126,7 +131,8 @@ export class TaskOwnerEvidenceStore {
           previous.taskId !== input.taskId ||
           previous.clientId !== input.clientId ||
           previous.messageId !== input.messageId ||
-          previous.text !== input.text
+          previous.text !== input.text ||
+          !isDeepStrictEqual(previous.queueOperation, input.queueOperation)
         ) {
           throw new Error("Owner message identity was reused with different evidence", {
             cause: error,

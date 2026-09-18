@@ -41,7 +41,7 @@ const ThemePreferenceSchema = z.enum([
   PLUGIN_THEME_PREFERENCE,
 ]);
 /** Where the theme picker lands when the persisted preference cannot be honoured. */
-export const DEFAULT_THEME_PREFERENCE = "auto" satisfies ThemePreference;
+export const DEFAULT_THEME_PREFERENCE = "claude" satisfies ThemePreference;
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;

@@ -6,7 +6,7 @@ Unless dated separately, research findings below are from source inspection on S
 
 ### Automatic desktop builds and updates
 
-- [ ] Ship automatic custom-branch builds and private app updates for macOS, Windows, and Linux. See the [desktop build proposal](desktop-auto-builds.md) for findings, architecture, platform scope, open versioning decisions, acceptance criteria, and the 7 to 10 engineering-day estimate. Recorded September 16, 2026; implementation is pending.
+- [ ] Ship automatic custom-branch builds and private app updates for macOS, Windows, and Linux. See the [desktop build proposal](desktop-auto-builds.md) for findings, architecture, platform scope, versioning requirements, acceptance criteria, and the 7 to 10 engineering-day estimate. Recorded September 16, 2026; implementation is pending.
 
 ### Current implementation and acceptance work
 
@@ -31,7 +31,7 @@ Planning estimate: **18–32 machine-hours; budget 24**. Breakdown: tool/configu
 
 ### Cross-device message queues
 
-Queued composer messages currently live only in the originating client's memory. They are not visible on another device and are lost on a full reload. Unsent drafts are persisted locally; submitted messages and accepted steering enter the daemon timeline. See [queue actions](../packages/app/src/composer/actions.ts) and [client queue draining](../packages/app/src/runtime/host-runtime.ts).
+The working implementation uses a durable device outbox and daemon-owned queues in Vorton mode, gated by the host's `durableMessageQueue` capability. Standard Paseo mode retains the existing client queue. Source implementation does not establish deployment readiness; the acceptance and delivery checklist below remains open. See [queue persistence](data-model.md#message-queues) for backup and recovery boundaries.
 
 - [ ] Move explicit queues into durable per-agent daemon storage with stable message IDs, ordering, revisions, and attachment references accessible from other devices. Keep unsent drafts local initially.
 - [ ] Add capability-gated queue RPCs and revisioned subscriptions for viewing, adding, editing, removing, and sending now. Reconnect from an authoritative snapshot; reject conflicting edits.

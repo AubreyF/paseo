@@ -41,6 +41,7 @@ export const QueueSnapshotSchema = z.object({
   revision: z.number().int().nonnegative(),
   paused: z.boolean(),
   items: z.array(QueueItemSchema).max(100),
+  deliveryError: z.string().max(4000).optional(),
 });
 export const QueueOperationSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -139,6 +140,7 @@ export const QueueAttachmentGetRequestSchema = z.object({
   agentId: QueueIdSchema,
   messageId: QueueIdSchema,
   attachmentId: QueueIdSchema,
+  download: z.boolean().optional(),
   requestId: z.string(),
 });
 export const QueueAttachmentGetResponseSchema = z.object({
@@ -146,7 +148,12 @@ export const QueueAttachmentGetResponseSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     file: z
-      .object({ attachment: QueueAttachmentSchema, cwd: z.string(), path: z.string() })
+      .object({
+        attachment: QueueAttachmentSchema,
+        cwd: z.string(),
+        path: z.string(),
+        downloadToken: z.string().optional(),
+      })
       .nullable(),
     error: z.object({ code: z.string(), message: z.string() }).nullable(),
   }),

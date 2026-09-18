@@ -236,7 +236,6 @@ export function ProviderResetControl(props: {
           size="sm"
           onPress={show}
           accessibilityLabel={`${name}: ${badge}`}
-          style={props.compact ? styles.compactBadge : undefined}
           textStyle={[styles.text, criticalTextStyle]}
           testID={`provider-reset-${providerId}`}
         >
@@ -317,14 +316,6 @@ export function ProviderResetControl(props: {
 
 const styles = StyleSheet.create((theme) => ({
   critical: { color: theme.colors.destructive },
-  compactBadge: {
-    position: "absolute",
-    right: 0,
-    top: (Math.ceil(theme.fontSize.base * 1.4) - 44) / 2,
-    height: 44,
-    minHeight: 44,
-    maxWidth: "100%",
-  },
   body: { padding: theme.spacing[4], gap: theme.spacing[3] },
   text: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.base },
   credit: { gap: theme.spacing[1], paddingVertical: theme.spacing[2] },

@@ -76,3 +76,39 @@ it("joins a provider echo by turn identity without collapsing repeated text in a
     item: { messageId: "native", clientMessageId: "queued", queue: { attachments: [] } },
   });
 });
+
+it("does not resurrect rewound prompts but retains metadata if the provider kept them", () => {
+  const submission: QueueAcceptedMessage & { restoreMissing: boolean } = {
+    restoreMissing: false,
+    acceptedAt: "2026-09-17T00:00:01Z",
+    turnId: "turn",
+    providerMessageId: "native",
+    item: {
+      id: "queued",
+      text: "Captured content",
+      attachments: [],
+      revision: 1,
+      createdAt: "2026-09-17T00:00:00Z",
+      delivery: { status: "dispatching", attemptId: "attempt", startedAt: "2026-09-17T00:00:01Z" },
+    },
+  };
+  expect(mergeQueueHistory([], [submission], "codex")).toEqual([]);
+  expect(
+    mergeQueueHistory(
+      [
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId: "turn",
+          item: { type: "user_message", text: "Native content", messageId: "native" },
+        },
+      ],
+      [submission],
+      "codex",
+    ),
+  ).toMatchObject([
+    {
+      item: { text: "Captured content", clientMessageId: "queued", messageId: "native" },
+    },
+  ]);
+});

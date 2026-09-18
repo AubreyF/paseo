@@ -38,6 +38,16 @@ All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
 
 Store APIs own persistence atomicity and should not make services coordinate raw reads and writes. A good store method maps cleanly to one SQL statement or one SQL transaction, even when the current implementation is JSON files. If a caller needs a queue, lock, read-merge-write loop, or uniqueness race workaround, that behavior belongs behind the store surface.
 
+## Message queues
+
+Back up `message-queues/` and `message-queue-attachments/` together with agent state. Queue records retain operation receipts and accepted message content after delivery. An empty queue does not mean its record or attachments are disposable: they also prevent replay and preserve message history.
+
+Before host acknowledgement, the device outbox owns the message and its attachment bytes. Browser storage belongs to that origin and browser profile; clearing site data removes unacknowledged messages. Once the host acknowledges the operation, delivery no longer depends on the originating device staying open. A host backup cannot recover a message that has never reached it.
+
+An unfinished delivery claim becomes uncertain after restart. Only matching raw provider message identity can reconcile it automatically. Similar text, optimistic timeline rows and the absence of a provider message do not prove whether a send succeeded. Explicit retry can duplicate execution when the provider accepted the original send but supplies no usable receipt.
+
+Queue-owned native goal pauses persist separately from the queue record in agent state. An unconfirmed goal transition requires review before delivery continues; restart must not guess that it owns a user's paused goal.
+
 ---
 
 ## Directory layout

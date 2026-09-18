@@ -2122,6 +2122,7 @@ export const fr: TranslationResources = {
       },
     },
     about: {
+      vortonUpdates: en.settings.about.vortonUpdates,
       title: "À propos",
       appVersion: "Version de l'application",
       thisDevice: "Cet appareil",

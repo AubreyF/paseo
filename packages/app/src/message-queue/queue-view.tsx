@@ -1,3 +1,5 @@
+import { SharedQueueAttachments } from "./shared-attachments";
+import { QueueAttachmentSummary } from "./attachment-summary";
 import { useCallback, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -6,6 +8,31 @@ import { Button } from "@/components/ui/button";
 import { EditingTextInput } from "@/components/ui/text-input";
 import { useMessageQueue, type MessageQueueControl } from "./use-message-queue";
 import { canKeepRejectedChange, type OutboxRecord } from "./outbox-record";
+
+function describePendingChange(record: OutboxRecord): string {
+  const operation = record.operation;
+  switch (operation.kind) {
+    case "enqueue":
+    case "edit": {
+      if (operation.text.trim()) return operation.text;
+      const names = [
+        ...operation.attachments.map((attachment) => attachment.fileName),
+        ...record.localAttachments.map((attachment) => attachment.metadata.fileName ?? "Image"),
+      ];
+      return names.length ? [...new Set(names)].join(", ") : "Attached context";
+    }
+    case "pause":
+      return operation.paused ? "Pause queue" : "Resume queue";
+    case "reorder":
+      return "Reorder queued messages";
+    case "delete":
+      return "Remove queued message";
+    case "send_now":
+      return "Send queued message now";
+    case "resolve":
+      return operation.action === "retry" ? "Retry queued message" : "Discard queued message";
+  }
+}
 
 export function SharedQueueView({ serverId, agentId }: { serverId: string; agentId: string }) {
   const control = useMessageQueue(serverId, agentId);
@@ -16,16 +43,7 @@ export function SharedQueueView({ serverId, agentId }: { serverId: string; agent
         .mutate({ kind: "pause", paused: !snapshot.paused, expectedRevision: snapshot.revision })
         .catch(() => {});
   }, [control, snapshot]);
-  if (!control.visible) return null;
-  if (!control.supported && !control.pending.length) return null;
-  if (
-    !snapshot?.items.length &&
-    !snapshot?.paused &&
-    !control.pending.length &&
-    !control.error &&
-    !control.loading
-  )
-    return null;
+  if (!showSharedQueue(control)) return null;
   return (
     <View style={styles.container} testID="shared-message-queue">
       <View style={styles.row}>
@@ -43,6 +61,7 @@ export function SharedQueueView({ serverId, agentId }: { serverId: string; agent
           </Button>
         ) : null}
       </View>
+      <QueueDeliveryError control={control} />
       {control.loading ? <Text style={styles.secondary}>Loading queue...</Text> : null}
       {control.error ? (
         <View style={styles.row}>
@@ -56,7 +75,14 @@ export function SharedQueueView({ serverId, agentId }: { serverId: string; agent
       ) : null}
       <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
         {snapshot?.items.map((item, index) => (
-          <QueueRow key={item.id} item={item} index={index} control={control} />
+          <QueueRow
+            key={item.id}
+            item={item}
+            index={index}
+            control={control}
+            serverId={serverId}
+            agentId={agentId}
+          />
         ))}
         {control.pending.map((record) => (
           <PendingRow key={record.operation.operationId} record={record} control={control} />
@@ -66,7 +92,45 @@ export function SharedQueueView({ serverId, agentId }: { serverId: string; agent
   );
 }
 
+function showSharedQueue(control: MessageQueueControl): boolean {
+  if (!control.visible || (!control.supported && !control.pending.length)) return false;
+  const snapshot = control.snapshot;
+  return Boolean(
+    snapshot?.items.length ||
+    snapshot?.paused ||
+    snapshot?.deliveryError ||
+    control.pending.length ||
+    control.error ||
+    control.loading,
+  );
+}
+
+function QueueDeliveryError({ control }: { control: MessageQueueControl }) {
+  const snapshot = control.snapshot;
+  const retry = useCallback(() => {
+    if (!snapshot) return;
+    void control
+      .mutate({ kind: "pause", paused: false, expectedRevision: snapshot.revision })
+      .catch(() => {});
+  }, [control, snapshot]);
+  if (!snapshot?.deliveryError) return null;
+  return (
+    <View>
+      <Text style={styles.error} accessibilityRole="alert">
+        {snapshot.deliveryError}
+      </Text>
+      <Button size="sm" style={styles.touch} disabled={!control.canMutate} onPress={retry}>
+        Retry delivery
+      </Button>
+    </View>
+  );
+}
+
 function PendingRow({ record, control }: { record: OutboxRecord; control: MessageQueueControl }) {
+  const attachments =
+    record.operation.kind === "enqueue" || record.operation.kind === "edit"
+      ? [...record.operation.attachments, ...record.localAttachments]
+      : [];
   const [error, setError] = useState<string | null>(null);
   const keepCopy = useCallback(() => {
     setError(null);
@@ -100,9 +164,15 @@ function PendingRow({ record, control }: { record: OutboxRecord; control: Messag
       {record.dismissed ? (
         <Text style={styles.secondary}>Kept locally. This change will not be sent.</Text>
       ) : null}
-      <Text selectable style={styles.text}>
-        {"text" in record.operation ? record.operation.text : record.operation.kind}
-      </Text>
+      <View style={styles.summary}>
+        <QueueAttachmentSummary
+          count={attachments.length}
+          hasMedia={attachments.some((attachment) => attachment.kind === "image")}
+        />
+        <Text selectable style={[styles.text, styles.summaryText]}>
+          {describePendingChange(record)}
+        </Text>
+      </View>
       {record.error ? (
         <Text style={styles.error} accessibilityRole="alert">
           {record.error.message}
@@ -133,10 +203,14 @@ function PendingRow({ record, control }: { record: OutboxRecord; control: Messag
 }
 
 function QueueRow({
+  serverId,
+  agentId,
   item,
   index,
   control,
 }: {
+  serverId: string;
+  agentId: string;
   item: QueueItem;
   index: number;
   control: MessageQueueControl;
@@ -146,17 +220,21 @@ function QueueRow({
   const close = useCallback(() => setEditing(null), []);
   return (
     <View style={styles.item} testID={`queue-message-${item.id}`}>
-      <Text style={styles.text} selectable>
-        {item.text}
-      </Text>
-      {item.attachments.map((attachment) => (
-        <Text key={attachment.id} style={styles.secondary}>
-          {attachment.fileName}
+      <View style={styles.summary}>
+        <QueueAttachmentSummary
+          count={item.attachments.length}
+          hasMedia={item.attachments.some((attachment) => attachment.kind === "image")}
+        />
+        <Text style={[styles.text, styles.summaryText]} selectable>
+          {item.text}
         </Text>
-      ))}
-      {item.context?.length ? (
-        <Text style={styles.secondary}>{item.context.length} context attachment(s)</Text>
-      ) : null}
+      </View>
+      <SharedQueueAttachments
+        serverId={serverId}
+        agentId={agentId}
+        messageId={item.id}
+        presentation={item}
+      />
       {item.delivery.status === "dispatching" ? (
         <Text style={styles.secondary}>Sending...</Text>
       ) : null}
@@ -355,6 +433,8 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
   },
   row: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: theme.spacing[1] },
+  summary: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
+  summaryText: { flex: 1, minWidth: 0 },
   heading: {
     flex: 1,
     color: theme.colors.foreground,

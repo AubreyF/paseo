@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const pkg = require("./package.json");
+const { resolveBuildCommit } = require("./build-source");
 const withAndroidAsyncStorageSize = require("./plugins/with-android-async-storage-size");
 const withAndroidProfileable = require("./plugins/with-android-profileable");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
@@ -184,6 +185,7 @@ export default {
       autolinkingModuleResolution: true,
     },
     extra: {
+      vortonBuildCommit: resolveBuildCommit(path.resolve(__dirname, "../..")),
       fdroidBuild: isFdroidBuild,
       profileBuild: isProfileBuild,
       router: {},

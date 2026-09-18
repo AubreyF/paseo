@@ -1,3 +1,4 @@
+import { useToast } from "@/contexts/toast-context";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { Button } from "@/components/ui/button";
 import { ProviderReconnectControl } from "@/provider-usage/reconnect-control";
@@ -18,7 +19,7 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { settingsStyles } from "@/styles/settings";
-import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -394,6 +395,8 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
+  const supportsCredentialRemoval = useHostFeature(serverId, "providerCredentialRemoval");
+  const client = useHostRuntimeClient(serverId);
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
   const { patchConfig } = useDaemonConfig(serverId);
   const openProviderSettings = useProviderSettingsStore((state) => state.open);
@@ -402,7 +405,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const removingProviderIdRef = useRef<string | null>(null);
   const [installingProviderId, setInstallingProviderId] = useState<string | null>(null);
   const [renamingProvider, setRenamingProvider] = useState<ProviderDefinition | null>(null);
-  const [removeError, setRemoveError] = useState<string | null>(null);
+  const toast = useToast();
 
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
   const hasServer = serverId.length > 0;
@@ -447,11 +450,29 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
       if (removingProviderIdRef.current) return;
       removingProviderIdRef.current = providerId;
       setRemovingProviderId(providerId);
-      setRemoveError(null);
       try {
+        let message = t("settings.providers.remove.confirmMessage");
+        let revision: string | null = null;
+        if (vortonMode) {
+          if (!supportsCredentialRemoval)
+            throw new Error(
+              "Update this host to delete connections and their managed credentials.",
+            );
+          if (!client) throw new Error("Reconnect to the host and try again.");
+          const { plan } = await client.previewProviderRemoval(providerId);
+          revision = plan.revision;
+          if (plan.credentials === "managed")
+            message =
+              "Delete this connection and its saved credentials? Its local account data will also be permanently removed.";
+          else if (plan.credentials === "shared")
+            message = `Delete this connection? Credentials shared with ${plan.sharedWith.join(", ")} will remain for those connections.`;
+          else
+            message =
+              "Delete this connection? Credentials stored by an external CLI will remain. Sign out using that CLI to remove them.";
+        }
         const confirmed = await confirmDialog({
           title: t("settings.providers.remove.confirmTitle", { name: providerLabel }),
-          message: t("settings.providers.remove.confirmMessage"),
+          message,
           confirmLabel: t("settings.providers.remove.confirm"),
           destructive: true,
         });
@@ -459,11 +480,17 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
           return;
         }
 
-        const result = await patchConfig({ removeProviders: [providerId] });
-        if (!result) throw new Error("Reconnect to the host and try again.");
+        if (vortonMode) {
+          if (!client || !revision)
+            throw new Error("Reconnect to the host and review deletion again.");
+          await client.removeProvider(providerId, revision);
+        } else {
+          const result = await patchConfig({ removeProviders: [providerId] });
+          if (!result) throw new Error("Reconnect to the host and try again.");
+        }
       } catch (error) {
         if (vortonMode) {
-          setRemoveError(error instanceof Error ? error.message : String(error));
+          toast.error(error instanceof Error ? error.message : String(error));
         } else {
           Alert.alert(
             t("settings.providers.remove.errorTitle"),
@@ -477,7 +504,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
         setRemovingProviderId((current) => (current === providerId ? null : current));
       }
     },
-    [patchConfig, t, vortonMode],
+    [patchConfig, t, vortonMode, supportsCredentialRemoval, client, toast],
   );
 
   const handleInstall = useCallback(
@@ -510,11 +537,6 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
           <View style={[settingsStyles.card, styles.emptyCard]}>
             <Text style={styles.emptyText}>{t("settings.providers.unavailable")}</Text>
           </View>
-        ) : null}
-        {vortonMode && removeError ? (
-          <Text style={styles.errorText} accessibilityLiveRegion="polite">
-            {removeError}
-          </Text>
         ) : null}
         {hasServer && isConnected && isLoading ? (
           <View style={[settingsStyles.card, styles.emptyCard]}>

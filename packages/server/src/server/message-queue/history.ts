@@ -5,7 +5,7 @@ import type { AgentStreamEvent, AgentProvider } from "../agent/agent-sdk-types.j
  * captured prompt to its echo; repeated prompt text is never an identity. */
 export function mergeQueueHistory(
   history: AgentStreamEvent[],
-  accepted: QueueAcceptedMessage[],
+  accepted: (QueueAcceptedMessage & { restoreMissing?: boolean })[],
   provider: AgentProvider,
 ): AgentStreamEvent[] {
   const events = [...history];
@@ -29,6 +29,9 @@ export function mergeQueueHistory(
       );
       if (candidates.length === 1) index = candidates[0];
     }
+    // Rewind intent is persisted before calling the provider. If its response
+    // is lost, native history decides whether the prompt still exists.
+    if (index < 0 && submission.restoreMissing === false) continue;
     const existing = index >= 0 ? events[index] : null;
     const nativeMessageId =
       existing?.type === "timeline" && existing.item.type === "user_message"

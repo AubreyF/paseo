@@ -206,6 +206,7 @@ interface ProviderSnapshotTarget {
 export class ProviderSnapshotManager {
   private readonly snapshots = new Map<string, Map<AgentProvider, ProviderSnapshotEntry>>();
   private readonly providerLoads = new Map<string, Map<AgentProvider, ProviderLoad>>();
+  private readonly activeProviderLoads = new Map<AgentProvider, number>();
   private readonly events = new EventEmitter();
   private destroyed = false;
   private refreshTimeoutMs: number;
@@ -248,6 +249,10 @@ export class ProviderSnapshotManager {
       ...this.pluginProviders.clients(),
     } as Record<AgentProvider, AgentClient>;
     for (const client of Object.values(this.providerClients)) this.ownedClients.add(client);
+  }
+
+  isProviderRefreshing(provider: AgentProvider): boolean {
+    return (this.activeProviderLoads.get(provider) ?? 0) > 0;
   }
 
   getSnapshot(cwd?: string): ProviderSnapshotEntry[] {
@@ -972,6 +977,12 @@ export class ProviderSnapshotManager {
       promise: Promise.resolve(),
     };
     this.setProviderLoad(options.snapshotCwd, options.provider, load);
+    // Config replacement drops stale loads from the snapshot map before their
+    // processes finish. Keep them counted until credential access has stopped.
+    this.activeProviderLoads.set(
+      options.provider,
+      (this.activeProviderLoads.get(options.provider) ?? 0) + 1,
+    );
     load.promise = Promise.resolve()
       .then(() =>
         this.refreshProvider({
@@ -984,6 +995,9 @@ export class ProviderSnapshotManager {
         }),
       )
       .finally(() => {
+        const remaining = (this.activeProviderLoads.get(options.provider) ?? 1) - 1;
+        if (remaining > 0) this.activeProviderLoads.set(options.provider, remaining);
+        else this.activeProviderLoads.delete(options.provider);
         const providerLoads = this.providerLoads.get(options.snapshotCwd);
         if (providerLoads?.get(options.provider) === load) {
           providerLoads.delete(options.provider);

@@ -2103,6 +2103,7 @@ export const ptBR: TranslationResources = {
       },
     },
     about: {
+      vortonUpdates: en.settings.about.vortonUpdates,
       title: "Sobre",
       appVersion: "Versão do app",
       thisDevice: "Este dispositivo",

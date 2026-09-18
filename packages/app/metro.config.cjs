@@ -2,6 +2,7 @@ const { getDefaultConfig } = require("expo/metro-config");
 const { resolve } = require("metro-resolver");
 const fs = require("fs");
 const path = require("path");
+const { resolveBuildCommit } = require("./build-source");
 
 const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
@@ -18,6 +19,8 @@ const customWebPlatform = (process.env.PASEO_WEB_PLATFORM ?? "")
   .toLowerCase();
 
 const config = getDefaultConfig(projectRoot);
+// Expo inlines app config into dependency code; cached transforms must not retain another build's SHA.
+config.cacheVersion = `${config.cacheVersion}:vorton:${resolveBuildCommit(path.resolve(projectRoot, "../..")) ?? "unknown"}`;
 const defaultResolveRequest = config.resolver.resolveRequest ?? resolve;
 
 // Keep app exports deterministic across dev machines and CI. Metro's Watchman

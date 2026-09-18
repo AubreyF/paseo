@@ -2086,6 +2086,7 @@ export const ja: TranslationResources = {
       },
     },
     about: {
+      vortonUpdates: en.settings.about.vortonUpdates,
       title: "アプリ情報",
       appVersion: "アプリバージョン",
       thisDevice: "このデバイス",

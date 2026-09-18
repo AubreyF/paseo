@@ -94,6 +94,7 @@ jobs:
         with:
           context: .
           file: docker/base/Dockerfile
+          build-args: PASEO_BUILD_COMMIT=${{ github.sha }}
           platforms: linux/${{ matrix.architecture }}
           tags: paseo-container:check
           load: true

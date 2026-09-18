@@ -1,5 +1,6 @@
 import {
   encodeOutboxKey,
+  nextOutboxOrder,
   OutboxRecordSchema,
   validateOutboxExchange,
   type OutboxStorage,
@@ -95,8 +96,18 @@ export function createOutboxStorage(databaseName = "paseo-message-outbox"): Outb
         const current: OutboxRecord | undefined = await requestValue(store.get(encoded));
         const revision = current === undefined ? null : OutboxRecordSchema.parse(current).revision;
         if (revision !== expectedRevision) return false;
-        if (value) await requestValue(store.put(value, encoded));
-        else await requestValue(store.delete(encoded));
+        if (value) {
+          const order =
+            current?.order ??
+            (current
+              ? undefined
+              : nextOutboxOrder(
+                  (await requestValue(store.getAll())).map((record: unknown) =>
+                    OutboxRecordSchema.parse(record),
+                  ),
+                ));
+          await requestValue(store.put({ ...value, order }, encoded));
+        } else await requestValue(store.delete(encoded));
         return true;
       });
     },

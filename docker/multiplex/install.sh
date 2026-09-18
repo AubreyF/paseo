@@ -22,7 +22,11 @@ if [[ $# == 2 ]]; then
 else
   build_receipt="$(mktemp)"
   trap 'rm -f "$build_receipt"' EXIT
-  docker build --iidfile "$build_receipt" -f "$repo_root/docker/base/Dockerfile" "$repo_root"
+  build_commit=""
+  if command -v git >/dev/null && [[ -e "$repo_root/.git" ]]; then
+    build_commit="$(git -C "$repo_root" rev-parse HEAD)"
+  fi
+  docker build --build-arg "PASEO_BUILD_COMMIT=$build_commit" --iidfile "$build_receipt" -f "$repo_root/docker/base/Dockerfile" "$repo_root"
   image="$(paseo_image "$(cat "$build_receipt")")"
 fi
 # Generate inside the image so installation needs no host Node or Python.

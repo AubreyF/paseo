@@ -32,16 +32,15 @@ Keep web and desktop publication separate, even when they use the same source re
 
 Confirm the actual workstation architectures before implementation. Add Windows ARM64, Linux ARM64, and DEB/RPM distribution only when required. Keep machine inventories, credential state, endpoint addresses, and acceptance receipts outside Git under [publication hygiene](publication-hygiene.md).
 
-## Versioning decisions still open
+## Versioning
 
-- Inspect the requested [Freed-style numbering](https://www.freed.wtf/changelog). The page could not be retrieved during planning, so no claim about its scheme or compatibility has been established.
-- Use monotonically increasing updater-compatible versions and record the source commit separately. If necessary, map a preferred display format to the machine version without making update ordering ambiguous. Validate the scheme against Electron, platform package metadata, and repository version tooling.
-- Recover from a bad release by packaging known-good code under a higher version. Do not rely on automatic downgrades.
-- Decide how custom desktop versions relate to workspace versions without changing the upstream release contract accidentally.
+The selected scheme is `<upstream-base>-vorton.<counter>`, incremented for every commit. [Vorton commit versions](release.md#vorton-commit-versions) owns the workflow and synchronization rules. This replaces the earlier open question about Freed-style numbering.
+
+Desktop distribution still needs its separate app identity and private feed, explicit prerelease channel handling, and a packaged update test. Recover by packaging known-good code under a higher version; do not rely on automatic downgrades.
 
 ## To-do and acceptance
 
-- [ ] Confirm target architectures, private feed access, signing methods, and version numbering.
+- [ ] Confirm target architectures, private feed access, signing methods, and packaged version compatibility.
 - [ ] Separate app identity, local state, update feed, and platform integrations from official Paseo.
 - [ ] Ship one signed and notarized Mac build to a second workstation connected to an existing independent host.
 - [ ] Prove a real Mac update from release A to release B before adding other platforms.

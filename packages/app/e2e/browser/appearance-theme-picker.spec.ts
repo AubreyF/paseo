@@ -9,7 +9,7 @@ test("shows Pure black in the appearance picker", async ({ page }, testInfo) => 
   await expect(page.getByTestId("settings-sidebar")).toBeVisible();
   await openSettingsSection(page, "appearance");
 
-  const themeTrigger = page.getByLabel("Theme: System", { exact: true });
+  const themeTrigger = page.getByLabel("Theme: Claude", { exact: true });
   await themeTrigger.click();
   await expect(page.getByText("Pure black", { exact: true })).toBeVisible();
   await page.screenshot({

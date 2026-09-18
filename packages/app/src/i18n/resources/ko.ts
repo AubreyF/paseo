@@ -2080,6 +2080,7 @@ export const ko: TranslationResources = {
       },
     },
     about: {
+      vortonUpdates: en.settings.about.vortonUpdates,
       title: "정보",
       appVersion: "앱 버전",
       thisDevice: "이 기기",

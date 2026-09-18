@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -14,6 +14,11 @@ import {
 import { DaemonConnectionTestError } from "@/utils/test-daemon-connection";
 import { AdaptiveModalSheet, AdaptiveTextInput, type SheetHeader } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+
+import { hostedConnectionDefaults } from "@/utils/hosted-connection-defaults";
+import { isWeb } from "@/constants/platform";
+import { isElectronRuntime } from "@/desktop/host";
+import { useVortonMode } from "@/vorton-mode";
 
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 
@@ -296,6 +301,14 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
   const { probeAndUpsertDirectConnection } = useHostMutations();
   const isMobile = useIsCompactFormFactor();
 
+  const isVortonMode = useVortonMode();
+  const initialConnection = useMemo(
+    () =>
+      isVortonMode && isWeb && !isElectronRuntime()
+        ? hostedConnectionDefaults(window.location.href)
+        : undefined,
+    [isVortonMode],
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [host, setHost] = useState("");
@@ -308,15 +321,21 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
   const [inputResetKey, bumpInputResetKey] = useReducer((key: number) => key + 1, 0);
 
   const clearInput = useCallback(() => {
-    setHost("");
-    setPort("6767");
-    setUseTls(false);
+    setHost(initialConnection?.host ?? "");
+    setPort(initialConnection?.port ?? "6767");
+    setUseTls(initialConnection?.useTls ?? false);
     setPassword("");
     setIsPasswordVisible(false);
     setIsAdvancedOpen(false);
     setAdvancedUri("");
     bumpInputResetKey();
-  }, []);
+  }, [initialConnection]);
+
+  // Keep the existing sheet lifetime: its portal must finish dismissing on touch.
+  // Opening starts a fresh draft, including dismissal via backdrop or Escape.
+  useEffect(() => {
+    if (visible) clearInput();
+  }, [visible, clearInput]);
 
   const connectIcon = useMemo(
     () => <Link2 size={16} color={theme.colors.accentForeground} />,

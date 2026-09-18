@@ -2069,6 +2069,7 @@ export const ar: TranslationResources = {
       },
     },
     about: {
+      vortonUpdates: en.settings.about.vortonUpdates,
       title: "عن",
       appVersion: "نسخة التطبيق",
       thisDevice: "هذا الجهاز",

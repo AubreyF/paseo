@@ -7,6 +7,74 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
+import { TaskOwnerEvidenceStore } from "../authorization/task-owner-evidence.js";
+
+it("retains authenticated queued text and edits before delivery without replaying evidence", async () => {
+  const daemon = await createTestPaseoDaemon({ agentClients: createTestAgentClients() });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({
+      config: { provider: "codex", cwd: daemon.paseoHome },
+    });
+    const evidence = new TaskOwnerEvidenceStore(daemon.paseoHome);
+    await client.mutateMessageQueue(agent.id, {
+      kind: "pause",
+      operationId: "pause-evidence",
+      expectedRevision: 0,
+      paused: true,
+    });
+    const enqueue = {
+      kind: "enqueue" as const,
+      operationId: "owner-enqueue",
+      messageId: "owner-message",
+      text: "Draft only",
+      attachments: [],
+    };
+    expect((await client.mutateMessageQueue(agent.id, enqueue)).error).toBeNull();
+    expect((await client.mutateMessageQueue(agent.id, enqueue)).error).toBeNull();
+    const edit = {
+      kind: "edit" as const,
+      operationId: "owner-edit",
+      messageId: "owner-message",
+      expectedRevision: 0,
+      text: "Stop work",
+      attachments: [],
+    };
+    expect((await client.mutateMessageQueue(agent.id, edit)).error).toBeNull();
+    expect(
+      (
+        await client.mutateMessageQueue(agent.id, {
+          ...edit,
+          operationId: "stale-edit",
+          text: "Ship production",
+        })
+      ).error?.code,
+    ).toBe("revision_conflict");
+    expect(
+      (
+        await client.mutateMessageQueue(agent.id, {
+          kind: "delete",
+          operationId: "owner-delete",
+          messageId: "owner-message",
+          expectedRevision: 1,
+        })
+      ).error,
+    ).toBeNull();
+    const records = await evidence.list(agent.id);
+    expect(records.map((record) => [record.text, record.queueOperation?.kind])).toEqual([
+      ["", "pause"],
+      ["Draft only", "enqueue"],
+      ["Stop work", "edit"],
+      ["", "delete"],
+    ]);
+    expect(records.every((record) => record.principalId === "owner")).toBe(true);
+    expect(await evidence.list("unrelated-task")).toEqual([]);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
 
 it("send now interrupts the observed permission-blocked turn", async () => {
   const received: AgentPromptInput[] = [];
@@ -312,6 +380,20 @@ it("shares captured files and images and delivers them after the original upload
       attachmentId: notes.file.id,
     });
     if (!shared.file) throw new Error(shared.error?.message ?? "Expected shared attachment");
+    const tokenResult = await second.getMessageQueueAttachment({
+      agentId: agent.id,
+      messageId: "message",
+      attachmentId: notes.file.id,
+      download: true,
+    });
+    expect(tokenResult.file?.downloadToken).toBeTruthy();
+    const url = `http://127.0.0.1:${daemon.port}/api/files/download?token=${tokenResult.file?.downloadToken}`;
+    const response = await fetch(url);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toContain(notes.file.fileName);
+    expect(response.headers.get("content-type")).toContain(notes.file.mimeType);
+    expect(await response.text()).toBe("saved notes");
+    expect((await fetch(url)).status).toBe(403);
     const downloaded = await second.readFile(shared.file.cwd, shared.file.path);
     expect(Buffer.from(downloaded.bytes).toString()).toBe("saved notes");
     const snapshot = (await second.readMessageQueue(agent.id)).snapshot;

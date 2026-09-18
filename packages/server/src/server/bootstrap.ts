@@ -1752,6 +1752,7 @@ export async function createPaseoDaemon(
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
+            await wsServer.startMessageQueue();
             wsServer.beginAcceptingConnections();
             relayRuntime = createRelayRuntime({
               config: {

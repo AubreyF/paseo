@@ -1,4 +1,5 @@
 import { useVortonTouch, VORTON_ACTION_SLOT } from "@/vorton-touch";
+import { useVortonMode } from "@/vorton-mode";
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -7,6 +8,8 @@ import { ProjectStatusIndicator } from "@/components/sidebar/project-leading-vis
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import {
   WorkspaceMetaRow,
+  ServiceItem,
+  selectWorkspaceServiceSummary,
   type WorkspaceServiceSummary,
 } from "@/components/sidebar/workspace-meta-row";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
@@ -125,6 +128,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     settings: { workspaceTitleSource },
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
+  const vorton = useVortonMode();
+  const inlineService = vorton ? selectWorkspaceServiceSummary(workspace.scripts) : null;
   // The workspace carries label names; their colors live in its host's catalog, so the row is
   // where the two meet — the meta line is handed finished definitions.
   const labels = useWorkspaceLabelDefinitions(workspace.serverId, workspace.labels);
@@ -163,14 +168,17 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>
               {workspaceLabel}
             </Text>
-            <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
+            <View style={sidebarWorkspaceRowStyles.rowRight}>
+              {children}
+              {inlineService && <ServiceItem summary={inlineService} iconOnly />}
+            </View>
           </View>
           <WorkspaceMetaRow
             currentBranch={workspace.currentBranch}
             projectName={leadingProjectName}
             hostBadge={hostBadge ?? null}
             prHint={workspace.prHint}
-            serviceSummary={serviceSummary}
+            serviceSummary={vorton ? null : serviceSummary}
             labels={labels}
           />
         </View>

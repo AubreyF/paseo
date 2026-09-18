@@ -5,6 +5,7 @@ import type { AgentAttachment } from "@getpaseo/protocol/messages";
 export type CreateFlowLifecycleState = "active" | "abandoned" | "sent";
 
 export interface PendingCreateAttempt {
+  goal?: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput;
   draftId: string;
   serverId: string;
   workspaceId?: string;

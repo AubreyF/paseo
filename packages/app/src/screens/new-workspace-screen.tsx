@@ -747,6 +747,7 @@ function normalizeBranchDetails(
 }
 
 interface SubmitDraftInput {
+  goal?: MessagePayload["goal"];
   serverId: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftId?: string;
@@ -961,6 +962,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     initialSetup,
     workspaceId: ensuredWorkspace.id,
     workspaceDirectory: ensuredWorkspace.workspaceDirectory,
+    goal: payload.goal,
     text,
     attachments,
     provider,
@@ -1067,6 +1069,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     agentId: null,
     clientMessageId,
     text: text.trim(),
+    goal: input.goal,
     timestamp,
     ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
     ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
@@ -1076,6 +1079,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     workspaceId,
     draftId,
     text: text.trim(),
+    goal: input.goal,
     attachments,
     cwd: submission.cwd,
     provider: submission.provider,
@@ -2084,6 +2088,7 @@ export function NewWorkspaceScreen({
         setPendingAction(null);
         setErrorMessage(message);
         toast.error(message);
+        if (payload.goal) throw error;
       }
     },
     [
@@ -2329,6 +2334,7 @@ export function NewWorkspaceScreen({
               serverId={selectedServerId}
               isPaneFocused={true}
               onSubmitMessage={handleSubmitNewWorkspace}
+              onSubmitGoal={handleSubmitNewWorkspace}
               allowEmptySubmit={true}
               submitButtonAccessibilityLabel={t("newWorkspace.create")}
               submitButtonTestID="workspace-create-submit"

@@ -23,11 +23,17 @@ class StartupScenario {
   private readonly page: Page;
   private savedHosts: SavedHostInput[] = [];
   private desktopBridge = false;
+  private vortonMode = false;
   private blockedEndpointPorts = new Set<string>();
   private viewport: { width: number; height: number } | null = null;
 
   constructor(page: Page) {
     this.page = page;
+  }
+
+  withVortonMode(): this {
+    this.vortonMode = true;
+    return this;
   }
 
   withMobileViewport(): this {
@@ -106,7 +112,10 @@ class StartupScenario {
     if (!firstHost) {
       throw new Error("Expected at least one startup test host.");
     }
-    const createAgentPreferences = buildStoredCreateAgentPreferences();
+    const createAgentPreferences = {
+      ...buildStoredCreateAgentPreferences(),
+      vortonMode: this.vortonMode,
+    };
 
     await this.page.evaluate(
       ({ keys, registry: storedRegistry, createAgentPreferences: storedPreferences }) => {

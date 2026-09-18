@@ -1,3 +1,4 @@
+import { useSidebarRowDensity } from "@/components/sidebar/use-sidebar-row-density";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
@@ -37,6 +38,7 @@ export function SidebarGroupToggleRow({
   indented?: boolean;
   testID: string;
 }) {
+  const density = useSidebarRowDensity();
   const { t } = useTranslation();
   const label = t(
     expanded ? "sidebar.workspace.actions.showLess" : "sidebar.workspace.actions.showMore",
@@ -44,11 +46,13 @@ export function SidebarGroupToggleRow({
   const rowStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.row,
+      density,
+      density && !indented && styles.projectChildRow,
       indented && sidebarWorkspaceRowStyles.rowIndented,
       hovered && !pressed && styles.rowHovered,
       pressed && styles.rowPressed,
     ],
-    [indented],
+    [indented, density],
   );
 
   return (
@@ -97,6 +101,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     userSelect: "none",
   },
+  projectChildRow: { paddingLeft: theme.spacing[4] },
   rowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },

@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { toErrorMessage } from "@/utils/error-messages";
 import { AgentProfileAppearanceField } from "./agent-profile-appearance-field";
+import { ProfileAccountControl } from "./profile-account-control";
 import { generatedPresetNickname } from "../nickname";
 import { useAgentProfiles } from "../internal/use-agent-profiles";
 import type {
@@ -407,6 +408,13 @@ function OpenAgentProfileEditModal({
           size={controlSize}
           testID="agent-profile-provider-field"
           triggerTestID="agent-profile-provider-trigger"
+        />
+
+        <ProfileAccountControl
+          serverId={serverId}
+          providerId={state.provider}
+          display={state.providerDisplay}
+          onSelect={handleProviderChange}
         />
 
         {state.disclosure.showModelField ? (

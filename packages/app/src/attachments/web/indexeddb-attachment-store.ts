@@ -29,9 +29,9 @@ function ensureIndexedDb(): IDBFactory {
   return idb;
 }
 
-function openAttachmentDb(): Promise<IDBDatabase> {
+function openAttachmentDb(databaseName: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = ensureIndexedDb().open(DB_NAME, DB_VERSION);
+    const request = ensureIndexedDb().open(databaseName, DB_VERSION);
 
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -40,9 +40,7 @@ function openAttachmentDb(): Promise<IDBDatabase> {
       }
     };
 
-    request.addEventListener("success", () => {
-      resolve(request.result);
-    });
+    request.addEventListener("success", () => resolve(request.result));
 
     request.addEventListener("error", () => {
       reject(request.error ?? new Error("Failed to open attachment IndexedDB."));
@@ -56,13 +54,11 @@ function runTx<T>(
   run: (store: IDBObjectStore) => IDBRequest<T>,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, mode);
+    const transaction = db.transaction(STORE_NAME, mode, { durability: "strict" });
     const store = transaction.objectStore(STORE_NAME);
     const request = run(store);
 
-    request.addEventListener("success", () => {
-      resolve(request.result);
-    });
+    transaction.addEventListener("complete", () => resolve(request.result));
 
     request.addEventListener("error", () => {
       reject(request.error ?? new Error("IndexedDB transaction request failed."));
@@ -70,6 +66,9 @@ function runTx<T>(
 
     transaction.addEventListener("error", () => {
       reject(transaction.error ?? new Error("IndexedDB transaction failed."));
+    });
+    transaction.addEventListener("abort", () => {
+      reject(transaction.error ?? new Error("IndexedDB transaction aborted."));
     });
   });
 }
@@ -125,7 +124,7 @@ async function loadBlob(db: IDBDatabase, id: string): Promise<Blob> {
   return record.blob;
 }
 
-export function createIndexedDbAttachmentStore(): AttachmentStore {
+export function createIndexedDbAttachmentStore(databaseName = DB_NAME): AttachmentStore {
   return {
     storageType: "web-indexeddb",
 
@@ -134,7 +133,7 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
       const createdAt = Date.now();
       const { blob, mimeType } = await sourceToBlob(input);
       const fileName = input.fileName ?? null;
-      const db = await openAttachmentDb();
+      const db = await openAttachmentDb(databaseName);
 
       try {
         await runTx(db, "readwrite", (store) =>
@@ -156,7 +155,7 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
     },
 
     async encodeBase64({ attachment }): Promise<string> {
-      const db = await openAttachmentDb();
+      const db = await openAttachmentDb(databaseName);
       try {
         const blob = await loadBlob(db, attachment.storageKey);
         return await blobToBase64(blob);
@@ -166,7 +165,7 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
     },
 
     async resolvePreviewUrl({ attachment }): Promise<string> {
-      const db = await openAttachmentDb();
+      const db = await openAttachmentDb(databaseName);
       try {
         const blob = await loadBlob(db, attachment.storageKey);
         return URL.createObjectURL(blob);
@@ -180,7 +179,7 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
     },
 
     async delete({ attachment }): Promise<void> {
-      const db = await openAttachmentDb();
+      const db = await openAttachmentDb(databaseName);
       try {
         await runTx(db, "readwrite", (store) => store.delete(attachment.storageKey));
       } finally {
@@ -189,7 +188,7 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
     },
 
     async garbageCollect({ referencedIds }): Promise<void> {
-      const db = await openAttachmentDb();
+      const db = await openAttachmentDb(databaseName);
       try {
         await new Promise<void>((resolve, reject) => {
           const tx = db.transaction(STORE_NAME, "readwrite");
@@ -205,7 +204,6 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
           cursorRequest.addEventListener("success", () => {
             const cursor = cursorRequest.result;
             if (!cursor) {
-              resolve();
               return;
             }
 
@@ -219,6 +217,10 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
           tx.addEventListener("error", () => {
             reject(tx.error ?? new Error("Failed to garbage collect IndexedDB attachments."));
           });
+          tx.addEventListener("complete", () => resolve());
+          tx.addEventListener("abort", () =>
+            reject(tx.error ?? new Error("Attachment cleanup aborted.")),
+          );
         });
       } finally {
         db.close();

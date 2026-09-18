@@ -3,6 +3,29 @@ import { createLocalFileAttachmentStore } from "./local-file-attachment-store";
 import { createTestAttachmentFileSystem } from "./test-attachment-file-system";
 
 describe("local file attachment store", () => {
+  it("stores durable outbox copies in documents even when the cache is unavailable", async () => {
+    const fileSystem = {
+      ...createTestAttachmentFileSystem({ cacheDirectory: null }),
+      documentDirectory: "file:///documents/",
+    };
+    const store = createLocalFileAttachmentStore({
+      storageType: "native-file",
+      baseDirectoryName: "outbox",
+      persistent: true,
+      fileSystem,
+      resolvePreviewUrl: async (attachment) => attachment.storageKey,
+    });
+    const attachment = await store.save({
+      id: "queued",
+      mimeType: "image/png",
+      source: { kind: "bytes", bytes: new Uint8Array([1, 2, 3]) },
+    });
+    expect(attachment.storageKey).toBe("/documents/outbox/queued.png");
+    expect(fileSystem.files.get("file:///documents/outbox/queued.png")).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+  });
+
   it("writes raw byte sources directly to the managed file path", async () => {
     const fileSystem = createTestAttachmentFileSystem();
     const store = createLocalFileAttachmentStore({

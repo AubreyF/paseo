@@ -25,11 +25,11 @@ export function ProviderLoginPanel({
   );
   const canManage = permissions?.includes("daemon.manage") !== false;
   if (!supported)
-    return <Text style={styles.text}>Update this host to reconnect accounts here.</Text>;
+    return <Text style={styles.text}>Update this host to connect accounts here.</Text>;
   if (!canManage)
     return (
       <Text style={styles.text}>
-        This connection needs permission to manage the host before it can reconnect an account.
+        This connection needs permission to manage the host before it can connect an account.
       </Text>
     );
   return <LoginPanelContent serverId={serverId} providerId={providerId} name={name} />;
@@ -80,8 +80,8 @@ function LoginPanelContent({
       )}
       <LoginAction login={login} />
       <Text style={styles.muted}>
-        You can close this panel while signing in. Reopen Reconnect to resume. A code lasts up to 15
-        minutes.
+        You can close this panel while signing in. Reopen the account connection panel to resume. A
+        code lasts up to 15 minutes.
       </Text>
     </View>
   );

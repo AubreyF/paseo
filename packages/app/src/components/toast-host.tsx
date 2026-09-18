@@ -1,8 +1,11 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { isConnectionToast } from "@/components/connection-toast";
+import { useVortonMode } from "@/vorton-mode";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Animated, Easing, Platform, Text, ToastAndroid, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -104,7 +107,42 @@ export function useToastHost(): {
   return { api, toast, dismiss };
 }
 
-export function ToastViewport({
+const ConnectionSpinner = withUnistyles(LoadingSpinner, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+
+interface ToastViewportProps {
+  toast: ToastState | null;
+  onDismiss: () => void;
+  placement?: ToastViewportPlacement;
+}
+
+export function ToastViewport({ toast, onDismiss, placement }: ToastViewportProps) {
+  const vortonMode = useVortonMode();
+  const presentation = useMemo(() => {
+    if (
+      !toast ||
+      !isConnectionToast({ vortonMode, content: toast.content, testID: toast.testID })
+    ) {
+      return toast;
+    }
+    return {
+      ...toast,
+      variant: "default" as const,
+      nativeMessage: "Reconnecting host",
+      icon: <ConnectionSpinner size={14} />,
+      content: (
+        <Text style={styles.connectionMessage} numberOfLines={1}>
+          Reconnecting host
+        </Text>
+      ),
+    };
+  }, [toast, vortonMode]);
+
+  return <ToastViewportContent toast={presentation} onDismiss={onDismiss} placement={placement} />;
+}
+
+function ToastViewportContent({
   toast,
   onDismiss,
   placement = "app-shell",
@@ -347,6 +385,11 @@ const styles = StyleSheet.create((theme) => ({
   message: {
     flexShrink: 1,
     color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+  },
+  connectionMessage: {
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },

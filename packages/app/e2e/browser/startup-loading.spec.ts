@@ -1,4 +1,4 @@
-import { test } from "../support/fixtures";
+import { expect, test } from "../support/fixtures";
 import { startupScenario } from "../support/helpers/startup-dsl";
 
 test.describe("Startup loading presentation", () => {
@@ -16,4 +16,19 @@ test.describe("Startup loading presentation", () => {
     await startup.expectsNoSavedHostErrorStatus();
     await startup.expectsNoLocalServerStartupCopy();
   });
+});
+
+test("Vorton explains an unreachable saved workspace after ten seconds", async ({ page }) => {
+  await page.clock.install();
+  await startupScenario(page)
+    .withMobileViewport()
+    .withVortonMode()
+    .withSavedHost({ serverId: "srv_unreachable", label: "Dev", endpoint: "127.0.0.1:45678" })
+    .openHostWorkspace({ serverId: "srv_unreachable", workspaceId: "saved-workspace" });
+
+  await expect(page.getByTestId("startup-status")).toBeVisible();
+  await expect(page.getByTestId("startup-diagnostics")).toHaveCount(0);
+  await page.clock.fastForward(10_000);
+  await expect(page.getByTestId("startup-diagnostics")).toBeVisible();
+  await expect(page.getByText("Make sure the host is awake and Paseo is running.")).toBeVisible();
 });

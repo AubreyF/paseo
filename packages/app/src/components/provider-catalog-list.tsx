@@ -14,6 +14,9 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
+import { AddCodexAccountButton } from "@/provider-usage/add-account";
+import { useVortonMode } from "@/vorton-mode";
+import { getProviderIcon } from "@/components/provider-icons";
 
 interface ProviderCatalogListProps {
   serverId: string;
@@ -28,6 +31,7 @@ const PROVIDER_REMOTE_ICON_SIZE = 24;
 const ThemedPackagePlus = withUnistyles(PackagePlus);
 const ThemedSvgXml = withUnistyles(SvgXml);
 const ThemedSearch = withUnistyles(Search);
+const CodexIcon = withUnistyles(getProviderIcon("codex"));
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
@@ -125,10 +129,12 @@ export function ProviderCatalogList({
   installingProviderId,
   onInstall,
 }: ProviderCatalogListProps) {
+  const vortonMode = useVortonMode();
   const { t } = useTranslation();
   const { entries: catalogEntries } = useAcpProviderCatalog();
   const { entries: providerEntries } = useProvidersSnapshot(serverId);
   const [search, setSearch] = useState("");
+  const showCodex = vortonMode && "codex openai".includes(search.trim().toLowerCase());
 
   const installedIds = useMemo(
     () => new Set(providerEntries?.map((entry) => entry.provider) ?? []),
@@ -162,12 +168,23 @@ export function ProviderCatalogList({
         />
       </View>
 
-      {availableEntries.length === 0 ? (
+      {availableEntries.length === 0 && !showCodex ? (
         <View style={styles.stateBox}>
           <Text style={styles.stateText}>{t("providerCatalog.noProviders")}</Text>
         </View>
       ) : (
         <View style={styles.list}>
+          {showCodex ? (
+            <View style={styles.row} testID="catalog-provider-codex">
+              <View style={styles.iconFrame}>
+                <CodexIcon size={PROVIDER_REMOTE_ICON_SIZE} uniProps={foregroundColorMapping} />
+              </View>
+              <View style={styles.textColumn}>
+                <Text style={styles.name}>Codex</Text>
+              </View>
+              <AddCodexAccountButton serverId={serverId} catalog />
+            </View>
+          ) : null}
           {availableEntries.map((entry) => (
             <CatalogRow
               key={entry.id}

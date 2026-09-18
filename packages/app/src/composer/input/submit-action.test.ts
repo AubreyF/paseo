@@ -146,3 +146,30 @@ describe("empty composer submit button", () => {
     },
   );
 });
+
+describe("separate mobile Queue and Send controls", () => {
+  it.each([true, false])(
+    "keeps primary Send with modifiers enabled=%s, including native",
+    (enabled) => {
+      for (const isAgentRunning of [true, false]) {
+        for (const defaultActionQueues of [true, false]) {
+          expect(
+            resolveSubmitAction({
+              ...running,
+              enabled,
+              isCompact: true,
+              isAgentRunning,
+              defaultActionQueues,
+              separateQueueAction: true,
+            }),
+          ).toEqual({ action: "send", queues: false });
+        }
+      }
+    },
+  );
+  it("keeps the desktop default queue preference", () => {
+    expect(
+      resolveSubmitAction({ ...running, defaultActionQueues: true, separateQueueAction: false }),
+    ).toEqual({ action: "default", queues: true });
+  });
+});

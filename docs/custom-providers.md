@@ -261,6 +261,10 @@ You can create multiple entries that extend the same built-in provider. Each get
 
 "Profile" here means a provider alias, and it is not an **Agent profile** — that is a named bundle of provider, model, mode, thinking option and features, stored under `daemon.agentProfiles`. See [glossary.md](glossary.md) for all four senses of the word.
 
+In Vorton mode, use **Settings > your host > Providers > Add provider**, search for **Codex**, and select **Add**, or **Add Codex account** in the preset editor. Name the account, create it, then start sign-in. Codex stays in search so you can add another account. Use **Rename** or **Delete** beside an existing custom provider; built-in providers can be renamed or disabled. Each account gets a separate credential directory under the daemon's Paseo home. Back up that directory with the host configuration. The ACP provider catalog adds agent software; it does not add Codex accounts.
+
+Select the account in a preset's **Provider** field. Creating an account inside the editor selects it without saving the preset. Connect remains available in the editor, provider list, and quick preset switcher when usage is unavailable. Unavailable usage alone does not prove rejected credentials. Account creation requires a host advertising `codexAccountCreation`; sign-in uses `providerAccountLogin`. Turning Vorton off keeps accounts and presets intact.
+
 Example: two different Anthropic accounts as separate profiles:
 
 ```json

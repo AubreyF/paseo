@@ -1,3 +1,7 @@
+import { QueueAttachmentStore } from "./message-queue/attachments.js";
+import { createAgentQueueDelivery } from "./message-queue/agent-delivery.js";
+import { MessageQueueService } from "./message-queue/service.js";
+import { MessageQueueStore } from "./message-queue/store.js";
 import { ProviderLoginService } from "../services/provider-login/service.js";
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
@@ -550,6 +554,9 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonVersion: string;
   private readonly daemonRuntimeConfig: DaemonRuntimeConfig | undefined;
   private readonly agentManager: AgentManager;
+  private readonly messageQueue: MessageQueueService;
+  private readonly queueAttachments: QueueAttachmentStore;
+  private unsubscribeQueueEvents: (() => void) | null = null;
   private readonly agentStorage: AgentStorage;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
@@ -677,6 +684,11 @@ export class VoiceAssistantWebSocketServer {
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
     this.agentManager = agentManager;
+    this.queueAttachments = new QueueAttachmentStore(paseoHome);
+    this.messageQueue = new MessageQueueService(
+      new MessageQueueStore(join(paseoHome, "message-queues")),
+      this.queueAttachments,
+    );
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
@@ -757,7 +769,17 @@ export class VoiceAssistantWebSocketServer {
         if (state.providerDefinitions[providerId]?.enabled !== true) return null;
         return state.clients[providerId] ?? null;
       },
-      onConnected: () => this.providerUsageService.invalidate(),
+      onConnected: (providerId) => {
+        this.providerUsageService.invalidate();
+        void this.providerSnapshotManager
+          .refreshSettingsSnapshot({ providers: [providerId] })
+          .catch((error) => {
+            this.logger.warn(
+              { error, providerId },
+              "Could not refresh the provider catalog after sign-in",
+            );
+          });
+      },
     });
     this.providerResetService = new ProviderResetService({
       logger: this.logger,
@@ -1052,6 +1074,39 @@ export class VoiceAssistantWebSocketServer {
 
   public prepareForShutdown(): void {
     this.connectionLifecycle = "stopping";
+    this.messageQueue.close();
+    this.unsubscribeQueueEvents?.();
+    this.unsubscribeQueueEvents = null;
+  }
+
+  public async startMessageQueue(): Promise<void> {
+    this.agentManager.setMessageQueueControl(this.messageQueue);
+    const signatures = new Map<string, string>();
+    this.unsubscribeQueueEvents = this.agentManager.subscribe((event) => {
+      if (event.type !== "agent_state") return;
+      const agent = event.agent;
+      const signature = JSON.stringify([
+        agent.lifecycle,
+        agent.activeTurnId,
+        agent.pendingPermissions.size,
+        agent.config.quotaReserve,
+        agent.config.quotaPausedAt,
+        agent.goalState?.status,
+        agent.goalState?.goal?.objective,
+        agent.goalState?.goal?.status,
+      ]);
+      if (signatures.get(agent.id) === signature) return;
+      signatures.set(agent.id, signature);
+      this.messageQueue.wake(agent.id);
+    });
+    await this.messageQueue.startDelivery(
+      createAgentQueueDelivery({
+        attachments: this.queueAttachments,
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.logger,
+      }),
+    );
   }
 
   public beginAcceptingConnections(): void {
@@ -1449,6 +1504,7 @@ export class VoiceAssistantWebSocketServer {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       agentManager: this.agentManager,
+      messageQueue: this.messageQueue,
       agentStorage: this.agentStorage,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
@@ -1759,11 +1815,13 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: true,
         providerResetManagement: true,
+        codexAccountCreation: true,
         providerAccountLogin: Object.values(
           this.providerSnapshotManager.getAgentManagerProviderState().clients,
         ).some((client) => Boolean(client?.openAccountLoginSession)),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: true,
+        agentGoals: true,
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: true,
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.

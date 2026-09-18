@@ -6,13 +6,19 @@ interface DiffStatProps {
   additions: number;
   deletions: number;
   testID?: string;
+  hideZero?: boolean;
 }
 
-export function DiffStat({ additions, deletions, testID }: DiffStatProps) {
+export function DiffStat({ additions, deletions, testID, hideZero = false }: DiffStatProps) {
+  if (hideZero && additions === 0 && deletions === 0) return null;
   return (
     <View style={styles.row} testID={testID}>
-      <Text style={styles.additions}>+{formatDiffCount(additions)}</Text>
-      <Text style={styles.deletions}>-{formatDiffCount(deletions)}</Text>
+      {(!hideZero || additions !== 0) && (
+        <Text style={styles.additions}>+{formatDiffCount(additions)}</Text>
+      )}
+      {(!hideZero || deletions !== 0) && (
+        <Text style={styles.deletions}>-{formatDiffCount(deletions)}</Text>
+      )}
     </View>
   );
 }

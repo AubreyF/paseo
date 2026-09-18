@@ -1,3 +1,7 @@
+import { QueueStoreError } from "./message-queue/store.js";
+import type { MessageQueueService } from "./message-queue/service.js";
+import { setAgentGoalWithContext } from "./agent/agent-goal.js";
+import { createCodexAccount } from "../services/provider-login/create-account.js";
 import type { ProviderLoginService } from "../services/provider-login/service.js";
 import { WorkspaceTitleSuggestionError } from "./workspace-title-suggestions.js";
 import equal from "fast-deep-equal";
@@ -448,6 +452,7 @@ const nodeSessionFileSystem: SessionFileSystem = {
 type AgentMcpTransportFactory = () => Promise<unknown>;
 
 export interface SessionOptions {
+  messageQueue?: MessageQueueService;
   clientId: string;
   /** From authenticated transport admission, never client request data. */
   principalId?: string | null;
@@ -701,6 +706,8 @@ export class Session {
   private readonly pushNotifications: PushNotifications;
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
+  private readonly messageQueue: MessageQueueService | undefined;
+  private readonly queueSubscriptions = new Map<string, () => void>();
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribePluginChanges: (() => void) | null = null;
@@ -819,6 +826,7 @@ export class Session {
       daemonRuntimeConfig,
       getWebSocketRuntimeMetrics,
     } = options;
+    this.messageQueue = options.messageQueue;
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
     this.principalId = options.principalId;
@@ -2421,6 +2429,19 @@ export class Session {
         return this.agentConfigSession.handleSetAgentThinkingRequest(msg);
       case "agent.config.apply.request":
         return this.agentConfigSession.handleAgentConfigApplyRequest(msg);
+      case "provider.codex.create_account.request": {
+        const account = createCodexAccount({
+          paseoHome: this.paseoHome,
+          store: this.daemonConfigStore,
+          creationId: msg.creationId,
+          name: msg.name,
+        });
+        this.emit({
+          type: "provider.codex.create_account.response",
+          payload: { requestId: msg.requestId, ...account },
+        });
+        return undefined;
+      }
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
@@ -2724,6 +2745,16 @@ export class Session {
 
   private async dispatchMiscMessage(msg: SessionInboundMessage): Promise<void> {
     switch (msg.type) {
+      case "agent.queue.attachment.get.request":
+        return this.handleQueueAttachmentRequest(msg);
+      case "agent.queue.read.request":
+      case "agent.queue.mutate.request":
+      case "agent.queue.subscribe.request":
+        return this.handleMessageQueueRequest(msg);
+      case "agent.goal.get.request":
+      case "agent.goal.set.request":
+      case "agent.goal.clear.request":
+        return this.handleAgentGoalRequest(msg);
       case "list_commands_request":
         await this.handleListCommandsRequest(msg);
         return;
@@ -3698,6 +3729,7 @@ export class Session {
           workspaceId: resolvedIntent.intent.workspaceId,
           worktreeName,
           initialPrompt,
+          initialGoal: msg.initialGoal,
           clientMessageId,
           outputSchema,
           images,
@@ -4355,9 +4387,160 @@ export class Session {
     this.sessionLogger.info("Registered push token");
   }
 
-  /**
-   * Handle list commands request for an agent
-   */
+  private async handleQueueAttachmentRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.queue.attachment.get.request" }>,
+  ): Promise<void> {
+    try {
+      if (!this.messageQueue)
+        throw new QueueStoreError("missing", "The message queue is unavailable.");
+      if (!(await this.agentStorage.get(msg.agentId)))
+        throw new QueueStoreError("missing", "The task no longer exists.");
+      const file = await this.messageQueue.attachment(msg);
+      this.emit({
+        type: "agent.queue.attachment.get.response",
+        payload: { requestId: msg.requestId, file, error: null },
+      });
+    } catch (error) {
+      const code = error instanceof QueueStoreError ? error.code : "attachment_unavailable";
+      const message = error instanceof Error ? error.message : "The attachment could not be read.";
+      this.emit({
+        type: "agent.queue.attachment.get.response",
+        payload: { requestId: msg.requestId, file: null, error: { code, message } },
+      });
+    }
+  }
+
+  private async handleMessageQueueRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "agent.queue.read.request"
+          | "agent.queue.mutate.request"
+          | "agent.queue.subscribe.request";
+      }
+    >,
+  ): Promise<void> {
+    const responseType = {
+      "agent.queue.read.request": "agent.queue.read.response",
+      "agent.queue.mutate.request": "agent.queue.mutate.response",
+      "agent.queue.subscribe.request": "agent.queue.subscribe.response",
+    } as const;
+    try {
+      if (!this.messageQueue)
+        throw new QueueStoreError("missing", "The message queue is unavailable.");
+      const agent = await this.agentStorage.get(msg.agentId);
+      if (!agent) throw new QueueStoreError("missing", "The task no longer exists.");
+      if (this.isCleanedUp) return;
+      if (msg.type === "agent.queue.mutate.request" && agent.archivedAt) {
+        throw new QueueStoreError(
+          "delivery_conflict",
+          "Restore the task before changing its queue.",
+        );
+      }
+      if (msg.type === "agent.queue.subscribe.request") {
+        this.queueSubscriptions.get(msg.agentId)?.();
+        this.queueSubscriptions.delete(msg.agentId);
+        if (msg.subscribed) {
+          const unsubscribe = this.messageQueue.subscribe(msg.agentId, (snapshot) => {
+            this.emit({ type: "agent.queue.changed", payload: snapshot });
+          });
+          this.queueSubscriptions.set(msg.agentId, unsubscribe);
+        }
+      }
+      const snapshot =
+        msg.type === "agent.queue.mutate.request"
+          ? await this.messageQueue.mutate(msg.agentId, msg.operation)
+          : await this.messageQueue.read(msg.agentId);
+      this.emit({
+        type: responseType[msg.type],
+        payload: { agentId: msg.agentId, requestId: msg.requestId, snapshot, error: null },
+      });
+    } catch (error) {
+      const code = error instanceof QueueStoreError ? error.code : "queue_unavailable";
+      const message = error instanceof Error ? error.message : "The queue operation failed.";
+      this.emit({
+        type: responseType[msg.type],
+        payload: {
+          agentId: msg.agentId,
+          requestId: msg.requestId,
+          snapshot: null,
+          error: { code, message },
+        },
+      });
+    }
+  }
+
+  private async handleAgentGoalRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      { type: "agent.goal.get.request" | "agent.goal.set.request" | "agent.goal.clear.request" }
+    >,
+  ): Promise<void> {
+    const responseType = {
+      "agent.goal.get.request": "agent.goal.get.response",
+      "agent.goal.set.request": "agent.goal.set.response",
+      "agent.goal.clear.request": "agent.goal.clear.response",
+    } as const;
+    try {
+      const load =
+        msg.type === "agent.goal.get.request" ? ensureAgentLoaded : ensureUnarchivedAgentLoaded;
+      await load(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      let state: import("@getpaseo/protocol/agent-goals").AgentGoalState;
+      if (msg.type === "agent.goal.set.request") {
+        state = await this.setAgentGoalWithContext(msg);
+      } else if (msg.type === "agent.goal.clear.request") {
+        state = await this.agentManager.clearAgentGoal(msg.agentId);
+      } else {
+        state = await this.agentManager.readAgentGoal(msg.agentId);
+      }
+      this.emit({
+        type: responseType[msg.type],
+        payload: { agentId: msg.agentId, requestId: msg.requestId, state, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: responseType[msg.type],
+        payload: {
+          agentId: msg.agentId,
+          requestId: msg.requestId,
+          state: null,
+          error: error instanceof Error ? error.message : "Goal operation failed",
+        },
+      });
+    }
+  }
+
+  private async setAgentGoalWithContext(
+    msg: Extract<SessionInboundMessage, { type: "agent.goal.set.request" }>,
+  ): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState> {
+    const hasContext = (msg.images?.length ?? 0) > 0 || (msg.attachments?.length ?? 0) > 0;
+    return setAgentGoalWithContext({
+      manager: this.agentManager,
+      agentId: msg.agentId,
+      goal: msg.input,
+      clientMessageId: msg.clientMessageId,
+      sendContext: hasContext
+        ? async () => {
+            await sendPromptToAgent({
+              agentManager: this.agentManager,
+              agentStorage: this.agentStorage,
+              agentId: msg.agentId,
+              prompt: buildAgentPrompt(msg.input.objective ?? "", msg.images, msg.attachments),
+              messageId: msg.clientMessageId ?? uuidv4(),
+              runOptions: { intent: "goal" },
+              activeTurnBehavior: "steer",
+              logger: this.sessionLogger,
+            });
+          }
+        : undefined,
+    });
+  }
+
   private async handleListCommandsRequest(
     msg: Extract<SessionInboundMessage, { type: "list_commands_request" }>,
   ): Promise<void> {
@@ -7826,6 +8009,8 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    for (const unsubscribe of this.queueSubscriptions.values()) unsubscribe();
+    this.queueSubscriptions.clear();
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();

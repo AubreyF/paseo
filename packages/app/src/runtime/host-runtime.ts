@@ -49,6 +49,9 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { invalidateCheckoutGitQueriesForServer } from "@/git/query-keys";
 import { queryClient } from "@/data/query-client";
+import { messageOutbox, mountMessageQueueClient } from "@/message-queue/runtime";
+import { isLegacyImportPending, withLegacyQueueLane } from "@/message-queue/legacy";
+import { createAgentPreferencesService } from "@/create-agent-preferences/service";
 import {
   invalidateServerDataQueriesAfterReconnect,
   mountServerDataPushRouter,
@@ -571,18 +574,23 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       }),
     getClientId: () => getOrCreateClientId(),
     mountClientHandlers: ({ client, host }) => {
+      const unmountMessageQueue = mountMessageQueueClient(host.serverId, client);
       const unmountServerData = mountServerDataPushRouter({
         client,
         queryClient,
         serverId: host.serverId,
       });
       if (!browserAutomationCapabilities) {
-        return unmountServerData;
+        return () => {
+          unmountMessageQueue();
+          unmountServerData();
+        };
       }
       const unmountBrowserAutomation = mountBrowserAutomationDaemonClientHandler(client, {
         serverId: host.serverId,
       });
       return () => {
+        unmountMessageQueue();
         unmountBrowserAutomation();
         unmountServerData();
       };
@@ -2167,6 +2175,24 @@ export class HostRuntimeStore {
   drainQueuedAgentMessage(serverId: string, agentId: string): void {
     const drainKey = `${serverId}:${agentId}`;
     if (this.queuedAgentDrainInFlight.has(drainKey)) return;
+    this.queuedAgentDrainInFlight.add(drainKey);
+    void withLegacyQueueLane(serverId, agentId, async () => {
+      if ((await createAgentPreferencesService.load()).vortonMode) return;
+      const first = useSessionStore.getState().sessions[serverId]?.queuedMessages.get(agentId)?.[0];
+      if (!first) return;
+      if (isLegacyImportPending(await messageOutbox.list(), serverId, agentId, first.id)) return;
+      if ((await createAgentPreferencesService.load()).vortonMode) return;
+      await this.drainLegacyAgentMessage(serverId, agentId);
+    })
+      .catch((error: unknown) => {
+        console.error("[HostRuntime] Could not verify legacy queue ownership", error);
+      })
+      .finally(() => {
+        this.queuedAgentDrainInFlight.delete(drainKey);
+      });
+  }
+
+  private async drainLegacyAgentMessage(serverId: string, agentId: string): Promise<void> {
     const store = useSessionStore.getState();
     const session = store.sessions[serverId];
     const queue = session?.queuedMessages.get(agentId);
@@ -2174,9 +2200,8 @@ export class HostRuntimeStore {
     if (!client || !queue?.length || session.initializingAgents.get(agentId) === true) {
       return;
     }
-    this.queuedAgentDrainInFlight.add(drainKey);
     const next = queue[0];
-    void sendQueuedComposerMessageNow({
+    await sendQueuedComposerMessageNow({
       agentId,
       messageId: next.id,
       queue: {
@@ -2199,20 +2224,16 @@ export class HostRuntimeStore {
           submission: createMessageSubmissionWriter(serverId),
         });
       },
-    })
-      .then((result) => {
-        if (result.status === "failed") {
-          console.error("[HostRuntime] failed to drain queued agent message", {
-            serverId,
-            agentId,
-            error: result.errorMessage,
-          });
-        }
-        return result;
-      })
-      .finally(() => {
-        this.queuedAgentDrainInFlight.delete(drainKey);
-      });
+    }).then((result) => {
+      if (result.status === "failed") {
+        console.error("[HostRuntime] failed to drain queued agent message", {
+          serverId,
+          agentId,
+          error: result.errorMessage,
+        });
+      }
+      return result;
+    });
   }
 
   getSnapshot(serverId: string): HostRuntimeSnapshot | null {

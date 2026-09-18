@@ -94,11 +94,12 @@ export const StoredFormPreferencesSchema: z.ZodType<FormPreferences> = z.union([
   LegacyFormPreferencesSchema,
 ]);
 
-export const DEFAULT_FORM_PREFERENCES: FormPreferences = {};
+export const DEFAULT_FORM_PREFERENCES: FormPreferences = { vortonMode: true };
 
 export function parseFormPreferences(value: unknown): FormPreferences {
   const result = StoredFormPreferencesSchema.safeParse(value);
-  return result.success ? result.data : DEFAULT_FORM_PREFERENCES;
+  if (!result.success) return DEFAULT_FORM_PREFERENCES;
+  return { ...result.data, vortonMode: result.data.vortonMode ?? true };
 }
 
 function mergeDefinedRecord<T>(

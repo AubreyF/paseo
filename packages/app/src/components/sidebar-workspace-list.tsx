@@ -1,3 +1,4 @@
+import { useSidebarRowDensity } from "@/components/sidebar/use-sidebar-row-density";
 import { useVortonMode } from "@/vorton-mode";
 import { DiffStat } from "@/components/diff-stat";
 import { aggregateProjectTasks, type ProjectTaskSummary } from "./sidebar/project-task-summary";
@@ -805,6 +806,7 @@ function NewWorkspaceGhostRow({
   worktreeTarget: SidebarProjectHostTarget;
   onWorkspacePress?: () => void;
 }) {
+  const density = useSidebarRowDensity();
   const { t } = useTranslation();
   const handlePress = useCallback(() => {
     onWorkspacePress?.();
@@ -820,10 +822,11 @@ function NewWorkspaceGhostRow({
   const rowStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.newWorkspaceGhostRow,
+      density,
       hovered && !pressed && styles.newWorkspaceGhostRowHovered,
       pressed && styles.newWorkspaceGhostRowPressed,
     ],
-    [],
+    [density],
   );
 
   return (
@@ -860,6 +863,28 @@ function NewWorkspaceGhostRow({
   );
 }
 
+function ProjectTaskSummaryView({
+  summary,
+  projectViewKey,
+}: {
+  summary: ProjectTaskSummary;
+  projectViewKey: string;
+}) {
+  if (summary.count === 0 && summary.additions === 0 && summary.deletions === 0) return null;
+  return (
+    <View style={styles.projectTaskSummary} testID={`sidebar-project-summary-${projectViewKey}`}>
+      <DiffStat additions={summary.additions} deletions={summary.deletions} hideZero />
+      {summary.count > 0 && (
+        <View style={styles.projectTaskCountBadge}>
+          <Text style={styles.projectTaskCount} accessibilityLabel={`${summary.count} open tasks`}>
+            {summary.count}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 function ProjectHeaderRow({
   taskSummary,
   project,
@@ -883,6 +908,7 @@ function ProjectHeaderRow({
   removeProjectStatus = "idle",
   dragHandleProps,
 }: ProjectHeaderRowProps) {
+  const density = useSidebarRowDensity();
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -947,12 +973,13 @@ function ProjectHeaderRow({
   const projectRowStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
       styles.projectRow,
+      density,
       isDragging && styles.projectRowDragging,
       selected && styles.sidebarRowSelected,
       isHovered && styles.projectRowHovered,
       pressed && styles.projectRowPressed,
     ],
-    [isDragging, selected, isHovered],
+    [isDragging, selected, isHovered, density],
   );
 
   const rowChildren = (
@@ -976,20 +1003,7 @@ function ProjectHeaderRow({
         </View>
       </View>
       {taskSummary ? (
-        <View
-          style={styles.projectTaskSummary}
-          testID={`sidebar-project-summary-${project.viewKey}`}
-        >
-          <DiffStat additions={taskSummary.additions} deletions={taskSummary.deletions} />
-          <View style={styles.projectTaskCountBadge}>
-            <Text
-              style={styles.projectTaskCount}
-              accessibilityLabel={`${taskSummary.count} open tasks`}
-            >
-              {taskSummary.count}
-            </Text>
-          </View>
-        </View>
+        <ProjectTaskSummaryView summary={taskSummary} projectViewKey={project.viewKey} />
       ) : (
         <ProjectRowTrailingActions
           projectViewKey={project.viewKey}
@@ -1107,6 +1121,7 @@ function WorkspaceRowInner({
   onTogglePin,
   reserveIdleStatusIndicatorSpace = true,
 }: WorkspaceRowInnerProps) {
+  const density = useSidebarRowDensity();
   const isCompact = useIsCompactFormFactor();
   const [isPressed, setIsPressed] = useState(false);
   const vortonTouch = useVortonTouch();
@@ -1186,7 +1201,11 @@ function WorkspaceRowInner({
               aria-selected={selected}
               accessibilityRole="button"
               accessibilityState={accessibilityState}
-              style={workspaceRowStyle}
+              style={[
+                workspaceRowStyle,
+                density,
+                density && !leadingProjectName && styles.workspaceRowIndented,
+              ]}
               highlightStyle={styles.workspaceRowPressed}
               onPressIn={handleWorkspacePressIn}
               onTouchMove={interaction.handleTouchMove}
@@ -1819,7 +1838,7 @@ function ProjectBlock({
     <View
       role="group"
       accessibilityLabel={displayName}
-      style={projectChildren ? styles.projectBlockExpanded : undefined}
+      style={projectChildren && !vorton ? styles.projectBlockExpanded : undefined}
     >
       <ProjectHeaderRow
         taskSummary={showTaskSummary ? taskSummary : undefined}
@@ -2157,6 +2176,8 @@ function ProjectModeList({
 }) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
+  const compact = useIsCompactFormFactor();
+  const rowDataSet = useMemo(() => ({ vortonCompactSidebarRows: String(compact) }), [compact]);
   const creatingWorkspaceTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
@@ -2501,7 +2522,7 @@ function ProjectModeList({
   );
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} dataSet={rowDataSet}>
       {platformIsNative ? (
         <NestableScrollContainer
           {...nativeScrollGestureProps}
@@ -2556,6 +2577,7 @@ const styles = StyleSheet.create((theme) => ({
   projectBlockExpanded: {
     paddingBottom: theme.spacing[3],
   },
+  workspaceRowIndented: { paddingLeft: theme.spacing[4] },
   workspaceListContainer: {},
   // Kept in step with `workspaceRow` above. It stands in a project's list where a workspace row
   // would be, so it takes that row's geometry and both of its fills.

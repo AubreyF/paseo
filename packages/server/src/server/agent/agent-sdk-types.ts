@@ -225,6 +225,8 @@ export type AgentPromptContentBlock =
 export type AgentPromptInput = string | AgentPromptContentBlock[];
 
 export interface AgentRunOptions {
+  queuedMessage?: import("@getpaseo/protocol/message-queue").QueueItem;
+  intent?: "goal";
   outputSchema?: unknown;
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;
@@ -417,7 +419,14 @@ export interface PluginTimelineItem {
 }
 
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      intent?: "goal";
+      queue?: import("@getpaseo/protocol/message-queue").QueuePresentation;
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
@@ -432,6 +441,11 @@ export type AgentTimelineItem =
   | PluginTimelineItem;
 
 export type AgentStreamEvent =
+  | {
+      type: "goal_changed";
+      provider: AgentProvider;
+      state: import("@getpaseo/protocol/agent-goals").AgentGoalState;
+    }
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
@@ -744,11 +758,21 @@ export class QuotaConstructionCleanupError extends Error {
   }
 }
 
+export interface AgentGoals {
+  readonly state: import("@getpaseo/protocol/agent-goals").AgentGoalState;
+  read(): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState>;
+  set(
+    input: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput,
+  ): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState>;
+  clear(): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState>;
+}
+
 export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
   readonly features?: AgentFeature[];
+  readonly goals?: AgentGoals;
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
@@ -792,6 +816,7 @@ export interface AgentSession {
    * (e.g. /goal pause) reach the provider without canceling the running turn.
    */
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
+    intent?: "goal";
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null;
 }

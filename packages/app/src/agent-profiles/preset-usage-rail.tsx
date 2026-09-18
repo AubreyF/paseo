@@ -7,6 +7,9 @@ import { clampPct, formatPct, formatResetLabel } from "@/provider-usage/format";
 import { quotaReading } from "@/provider-usage/quota-reading";
 import type { ProviderUsageView } from "@/provider-usage/types";
 import { ProviderResetControl } from "@/provider-usage/reset-control";
+import { providerConnectionAction } from "@/provider-usage/connection-action";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useVortonMode } from "@/vorton-mode";
 
 export function PresetUsageRail({
   view,
@@ -23,7 +26,15 @@ export function PresetUsageRail({
   providerId: string;
   name: string;
 }) {
-  const { window, usage, statusLabel, authRecovery } = quotaReading(view, providerId, now);
+  const { window, usage, statusLabel } = quotaReading(view, providerId, now);
+  const { config } = useDaemonConfig(serverId);
+  const vortonMode = useVortonMode();
+  const connectionAction = providerConnectionAction({
+    vortonMode,
+    providerId,
+    providers: config?.providers,
+    usage,
+  });
   const critical = Boolean(window && window.remainingPct < 5);
   const fill = useMemo(
     () => [
@@ -70,23 +81,28 @@ export function PresetUsageRail({
         </Text>
       )}
       <View style={styles.resets}>
-        <ProviderResetControl
-          serverId={serverId}
-          providerId={providerId}
-          name={name}
-          critical={critical}
-          compact
-          preloaded
-        />
+        {connectionAction ? (
+          <ProviderReconnectControl
+            usage={usage}
+            serverId={serverId}
+            providerId={providerId}
+            name={name}
+            compact
+          />
+        ) : (
+          <ProviderResetControl
+            serverId={serverId}
+            providerId={providerId}
+            name={name}
+            critical={critical}
+            compact
+            preloaded
+          />
+        )}
       </View>
     </>
   );
-  return (
-    <View style={styles.rail}>
-      <ProviderReconnectControl usage={usage} serverId={serverId} name={name} />
-      {!authRecovery ? content : null}
-    </View>
-  );
+  return <View style={styles.rail}>{content}</View>;
 }
 const styles = StyleSheet.create((theme) => ({
   rail: {

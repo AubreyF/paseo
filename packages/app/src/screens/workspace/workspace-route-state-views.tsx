@@ -1,3 +1,5 @@
+import { StartupStatus } from "@/components/startup-status";
+import { useVortonMode } from "@/vorton-mode";
 import { Text, View } from "react-native";
 import { ArrowLeftToLine, RotateCw, Settings } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
@@ -100,11 +102,15 @@ function WorkspaceConnecting({ hostName }: { hostName: string }) {
 
   return (
     <View style={styles.emptyState}>
-      <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-      <View style={styles.textStack}>
-        <Text style={styles.title}>{t("workspace.route.loading")}</Text>
-        <Text style={styles.description}>{hostName}</Text>
-      </View>
+      <StartupStatus phase="workspace">
+        <>
+          <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          <View style={styles.textStack}>
+            <Text style={styles.title}>{t("workspace.route.loading")}</Text>
+            <Text style={styles.description}>{hostName}</Text>
+          </View>
+        </>
+      </StartupStatus>
     </View>
   );
 }
@@ -209,6 +215,31 @@ function WorkspaceUnreachable({
 }) {
   const { t } = useTranslation();
   const canRetry = state.connectionStatus === "offline" || state.connectionStatus === "error";
+  const vortonMode = useVortonMode();
+
+  if (vortonMode) {
+    return (
+      <View style={styles.emptyState}>
+        <StartupStatus phase={canRetry ? "unavailable" : "host"} />
+        <Text style={styles.description}>{state.hostName}</Text>
+        {state.lastError ? (
+          <Text style={styles.error} selectable>
+            {state.lastError}
+          </Text>
+        ) : null}
+        <View style={styles.actions}>
+          {canRetry ? (
+            <Button size="md" variant="default" onPress={onRetry}>
+              {t("common.actions.retry")}
+            </Button>
+          ) : null}
+          <Button size="md" variant="outline" onPress={onManageHost}>
+            {t("workspace.route.manageHost")}
+          </Button>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.emptyState}>

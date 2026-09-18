@@ -87,14 +87,16 @@ function attachmentUri(metadata: AttachmentMetadata): string {
 export function createLocalFileAttachmentStore(params: {
   storageType: Extract<AttachmentStorageType, "desktop-file" | "native-file">;
   baseDirectoryName: string;
+  persistent?: boolean;
   fileSystem: AttachmentFileSystem;
   resolvePreviewUrl: (attachment: AttachmentMetadata) => Promise<string>;
   releasePreviewUrl?: (input: { attachment: AttachmentMetadata; url: string }) => Promise<void>;
 }): AttachmentStore {
   const { fileSystem } = params;
-  const baseDirectory = fileSystem.cacheDirectory
-    ? `${fileSystem.cacheDirectory}${params.baseDirectoryName}/`
-    : null;
+  const rootDirectory = params.persistent
+    ? fileSystem.documentDirectory
+    : fileSystem.cacheDirectory;
+  const baseDirectory = rootDirectory ? `${rootDirectory}${params.baseDirectoryName}/` : null;
 
   async function resolveTarget(input: SaveAttachmentInput): Promise<{
     id: string;
@@ -105,7 +107,7 @@ export function createLocalFileAttachmentStore(params: {
     storageKey: string;
   }> {
     if (!baseDirectory) {
-      throw new Error("Attachment file-system cacheDirectory is unavailable.");
+      throw new Error("Attachment storage directory is unavailable.");
     }
 
     await ensureDirectory(fileSystem, baseDirectory);

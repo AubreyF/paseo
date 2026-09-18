@@ -6,7 +6,7 @@ September 10, 2026. Scope: sidebar navigation and workspace actions, footer over
 
 - Detect coarse pointer capability independently of viewport width. A wide iPad must not receive desktop hover interactions merely because its viewport is wide.
 - Keep workspace creation and row actions visible on touch devices. Prevent workspace hover cards and tooltip triggers from intercepting the first tap intended for an action.
-- Give semantic controls and dropdown triggers minimum 44 CSS pixel targets. Reserve space for trailing actions and increase footer slot spacing, preserving overflow icons.
+- Give semantic controls and dropdown triggers minimum 44 CSS pixel targets. Compact sidebar list rows use the desktop 32 pixel minimum to preserve list density; the sidebar toolbar retains its larger targets. Reserve space for trailing actions and increase footer slot spacing, preserving overflow icons.
 - Apply a minimum UI base font size of 16 and message font size of 17 on Vorton touch devices. Preserve larger user settings and restore saved sizes when disabled. Input text has a 16 pixel minimum.
 - Provide visible keyboard focus and retain pinch zoom. Use dynamic viewport height in browser tabs and the large viewport in standalone mode. Preserve Apple installation metadata; runtime removal did not establish a fix for the reported iPhone gap.
 - Keep informational tooltips tappable. Touch pointer exit must not immediately dismiss them. Action tooltips remain bypassed so navigation takes one tap.
@@ -18,7 +18,7 @@ September 10, 2026. Scope: sidebar navigation and workspace actions, footer over
 
 ## Mode contract
 
-Paseo is the default. The selector remains available to enable Vorton. All custom interaction and appearance rules require Vorton. Compact viewports use the full mobile controls and appearance, including desktop PWA windows with a mouse. Wide viewports retain touch enhancements when a coarse pointer is available. Use the shared compact breakpoint, never a user agent, to select mobile layout. Turning Vorton off restores standard controls and saved appearance. It does not delete credentials, profiles or workspaces, change accounts, or interrupt existing tasks.
+Follow the [mode default and persistence contract](agent-presets.md#review-boundaries). The selector remains available in both modes. All custom interaction and appearance rules require Vorton. Compact viewports use the full mobile controls and appearance, including desktop PWA windows with a mouse. Wide viewports retain touch enhancements when a coarse pointer is available. Use the shared compact breakpoint, never a user agent, to select mobile layout. Turning Vorton off restores standard controls and saved appearance. It does not delete credentials, profiles or workspaces, change accounts, or interrupt existing tasks.
 
 Agent instructions in CLAUDE.md, also reached through AGENTS.md, require this contract and publication to the real private instance for every interface request. Use [instance continuity](instance-continuity.md) for publication.
 

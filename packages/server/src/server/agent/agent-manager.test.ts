@@ -3612,6 +3612,39 @@ test.each(["hang", "reject"])(
   },
 );
 
+test("manual stop interrupts the provider even when queue pause persistence fails", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "queue-pause-write-failure",
+    agentId: "00000000-0000-4000-8000-000000000399",
+    turnId: "queue-stop-turn",
+    interrupt: async (session) => {
+      session.pushEvent({
+        type: "turn_completed",
+        provider: session.provider,
+        turnId: "queue-stop-turn",
+      });
+    },
+  });
+  fixture.manager.setMessageQueueControl({
+    pause: async () => {
+      throw new Error("Queue pause could not be persisted: disk full");
+    },
+    acceptedHistory: async () => [],
+    reconcileHistory: async () => {},
+    recordProviderMessageId: async () => {},
+  });
+  try {
+    await fixture.startForegroundRun();
+    await expect(
+      fixture.manager.cancelAgentRun(fixture.agentId, { reason: "manual" }),
+    ).rejects.toThrow("disk full");
+    expect(fixture.session.interruptCalled).toBe(true);
+    expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("idle");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("cancelAgentRun preserves running state when the provider interrupt hangs", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-timeout",

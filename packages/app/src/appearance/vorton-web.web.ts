@@ -20,6 +20,11 @@ html[data-vorton-mode="true"] :is(button, [role="button"], [role="tab"], [role="
 }
 html[data-vorton-touch="true"] [data-vorton-action-slot] { min-width: 44px; min-height: 44px; }
 html[data-vorton-touch="true"] [data-vorton-action-slot] > * { min-width: 44px; min-height: 44px; }
+/* Sidebar rows retain desktop density on compact layouts. Keep the toolbar and
+   controls outside the scrolling list at their normal touch target size. */
+html[data-vorton-touch="true"] [data-vorton-compact-sidebar-rows="true"] :is(button, [role="button"], [data-vorton-action-slot], [data-vorton-action-slot] > *) {
+  min-height: 32px !important;
+}
 `;
 export function applyVortonWeb(enabled: boolean, touch: boolean): () => void {
   const root = document.documentElement;

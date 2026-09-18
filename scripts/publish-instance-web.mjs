@@ -3,6 +3,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { compressFile } from "./compress-web-asset.mjs";
+
+const COMPRESS_EXTENSIONS = new Set([".js", ".css", ".json", ".svg", ".map"]);
 
 const [sourceArg, destinationArg] = process.argv.slice(2);
 if (!sourceArg || !destinationArg) {
@@ -33,12 +36,18 @@ async function copyAssets(directory, relative = "") {
   for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
     const rel = path.join(relative, entry.name);
     if (rel === "index.html") continue;
+    // Regenerate sidecars from the export so stale compressed bytes cannot win.
+    if (entry.name.endsWith(".br") || entry.name.endsWith(".gz")) continue;
     if (entry.isSymbolicLink()) throw new Error("Export must not contain symlinks");
     if (entry.isDirectory()) {
       await fs.mkdir(path.join(destination, rel), { recursive: true });
       await copyAssets(path.join(directory, entry.name), rel);
     } else if (entry.isFile()) {
-      await fs.copyFile(path.join(source, rel), path.join(destination, rel));
+      const target = path.join(destination, rel);
+      await fs.copyFile(path.join(source, rel), target);
+      if (COMPRESS_EXTENSIONS.has(path.extname(rel).toLowerCase())) {
+        await compressFile(target);
+      }
     }
   }
 }

@@ -72,6 +72,7 @@ export interface AgentRuntimeInfo {
 }
 
 export interface Agent {
+  goalState?: import("@getpaseo/protocol/agent-goals").AgentGoalState;
   profile?: { id: string; name: string };
   quotaPausedAt?: string;
   serverId: string;

@@ -1,3 +1,4 @@
+import { useSidebarRowDensity } from "@/components/sidebar/use-sidebar-row-density";
 import { useVortonTouch } from "@/vorton-touch";
 import { memo, useCallback, useMemo, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
@@ -224,6 +225,7 @@ function WorkspaceRowBody({
   onMarkAsRead,
   archiveShortcutKeys,
 }: WorkspaceRowBodyProps) {
+  const density = useSidebarRowDensity();
   const isCompact = useIsCompactFormFactor();
   const vortonTouch = useVortonTouch();
   const isTouchPlatform = platformIsNative || isCompact || vortonTouch;
@@ -306,7 +308,7 @@ function WorkspaceRowBody({
               aria-selected={selected}
               accessibilityRole="button"
               accessibilityState={accessibilityState}
-              style={workspaceRowStyle}
+              style={[workspaceRowStyle, density]}
               highlightStyle={styles.workspaceRowPressed}
               onPressIn={handleWorkspacePressIn}
               onTouchMove={draggable ? interaction.handleTouchMove : undefined}

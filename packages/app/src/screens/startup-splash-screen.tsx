@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { BookOpen, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StartupStatus } from "@/components/startup-status";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
 import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
@@ -385,7 +386,9 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
     return (
       <View testID="startup-splash" style={styles.container}>
         <TitlebarDragRegion />
-        <LogoShimmer />
+        <StartupStatus phase="host">
+          <LogoShimmer />
+        </StartupStatus>
       </View>
     );
   }

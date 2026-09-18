@@ -1,12 +1,57 @@
 import {
+  ForgeChangeRequestAttachmentSchema,
+  ForgeIssueAttachmentSchema,
+  TextAttachmentSchema,
+  ReviewAttachmentSchema,
+  UploadedFileAttachmentSchema,
+  AgentAttachmentSchema,
+} from "./agent-attachments.js";
+export {
+  GitHubPrAttachmentSchema,
+  ForgeChangeRequestAttachmentSchema,
+  GitHubIssueAttachmentSchema,
+  ForgeIssueAttachmentSchema,
+  ExternalResourceAttachmentMetadataSchema,
+  TextAttachmentSchema,
+  ReviewAttachmentContextLineSchema,
+  ReviewAttachmentCommentSchema,
+  ReviewAttachmentSchema,
+  UploadedFileAttachmentSchema,
+  AgentAttachmentSchema,
+} from "./agent-attachments.js";
+import {
+  QueueAttachmentGetRequestSchema,
+  QueuePresentationSchema,
+  QueueReadRequestSchema,
+  QueueMutateRequestSchema,
+  QueueSubscribeRequestSchema,
+  QueueAttachmentGetResponseSchema,
+  QueueReadResponseSchema,
+  QueueMutateResponseSchema,
+  QueueSubscribeResponseSchema,
+  QueueChangedSchema,
+} from "./message-queue.js";
+import {
+  CodexAccountCreateRequestSchema,
   ProviderLoginReadRequestSchema,
   ProviderLoginStartRequestSchema,
   ProviderLoginCancelRequestSchema,
+  CodexAccountCreateResponseSchema,
   ProviderLoginReadResponseSchema,
   ProviderLoginStartResponseSchema,
   ProviderLoginCancelResponseSchema,
 } from "./provider-login.js";
 import { z } from "zod";
+import {
+  AgentGoalSetInputSchema,
+  AgentGoalStateSchema,
+  AgentGoalGetRequestSchema,
+  AgentGoalSetRequestSchema as AgentGoalSetRequestBaseSchema,
+  AgentGoalClearRequestSchema,
+  AgentGoalGetResponseSchema,
+  AgentGoalSetResponseSchema,
+  AgentGoalClearResponseSchema,
+} from "./agent-goals.js";
 import { QuotaReservePolicySchema, QuotaReserveLaunchPolicySchema } from "./quota-reserve.js";
 import { QuotaObservationSchema } from "./quota-governor.js";
 import {
@@ -744,6 +789,8 @@ const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, unknown
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
   z.object({
     type: z.literal("user_message"),
+    intent: z.literal("goal").optional(),
+    queue: QueuePresentationSchema.optional(),
     text: z.string(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
@@ -888,6 +935,7 @@ const AgentActiveTurnPayloadSchema = z.object({
 });
 
 export const AgentSnapshotPayloadSchema = z.object({
+  goalState: AgentGoalStateSchema.optional(),
   id: z.string(),
   profile: z.object({ id: z.string(), name: z.string() }).optional(),
   quotaPausedAt: z.string().optional(),
@@ -1142,127 +1190,6 @@ export const SetVoiceModeMessageSchema = z.object({
   agentId: z.string().optional(),
   requestId: z.string().optional(),
 });
-
-// COMPAT(githubAttachmentKinds): legacy wire attachment retained when
-// forge-neutral attachments shipped in v0.2.0-beta.1. Stop emitting it after
-// 2027-01-17 once supported client and daemon floors are >= v0.2.0.
-export const GitHubPrAttachmentSchema = z.object({
-  type: z.literal("github_pr"),
-  mimeType: z.literal("application/github-pr"),
-  number: z.number().int().positive(),
-  title: z.string(),
-  url: z.string(),
-  body: z.string().nullable().optional(),
-  baseRefName: z.string().nullable().optional(),
-  headRefName: z.string().nullable().optional(),
-});
-
-export const ForgeChangeRequestAttachmentSchema = z.object({
-  type: z.literal("forge_change_request"),
-  mimeType: z.literal("application/paseo-forge-change-request"),
-  forge: z.string().optional().default("github"),
-  number: z.number().int().positive(),
-  title: z.string(),
-  url: z.string(),
-  body: z.string().nullable().optional(),
-  projectPath: z.string().optional(),
-  baseRefName: z.string().nullable().optional(),
-  headRefName: z.string().nullable().optional(),
-});
-
-// COMPAT(githubAttachmentKinds): legacy wire attachment retained when
-// forge-neutral attachments shipped in v0.2.0-beta.1. Stop emitting it after
-// 2027-01-17 once supported client and daemon floors are >= v0.2.0.
-export const GitHubIssueAttachmentSchema = z.object({
-  type: z.literal("github_issue"),
-  mimeType: z.literal("application/github-issue"),
-  number: z.number().int().positive(),
-  title: z.string(),
-  url: z.string(),
-  body: z.string().nullable().optional(),
-});
-
-export const ForgeIssueAttachmentSchema = z.object({
-  type: z.literal("forge_issue"),
-  mimeType: z.literal("application/paseo-forge-issue"),
-  forge: z.string().optional().default("github"),
-  number: z.number().int().positive(),
-  title: z.string(),
-  url: z.string(),
-  body: z.string().nullable().optional(),
-  projectPath: z.string().optional(),
-});
-
-export const ExternalResourceAttachmentMetadataSchema = z.object({
-  provider: z.string(),
-  providerLabel: z.string(),
-  resourceType: z.string(),
-  id: z.string(),
-  identifier: z.string(),
-  title: z.string(),
-  url: z.string(),
-});
-
-export const TextAttachmentSchema = z
-  .object({
-    type: z.literal("text"),
-    mimeType: z.literal("text/plain"),
-    contextKind: z.string().optional(),
-    title: z.string().nullable().optional(),
-    text: z.string(),
-    externalResource: ExternalResourceAttachmentMetadataSchema.optional(),
-  })
-  .transform(({ contextKind, ...attachment }) => ({
-    ...attachment,
-    ...(contextKind === "chat_history" ? { contextKind } : {}),
-  }));
-
-export const ReviewAttachmentContextLineSchema = z.object({
-  oldLineNumber: z.number().int().positive().nullable(),
-  newLineNumber: z.number().int().positive().nullable(),
-  type: z.enum(["add", "remove", "context"]),
-  content: z.string(),
-});
-
-export const ReviewAttachmentCommentSchema = z.object({
-  filePath: z.string(),
-  side: z.enum(["old", "new"]),
-  lineNumber: z.number().int().positive(),
-  body: z.string(),
-  context: z.object({
-    hunkHeader: z.string(),
-    targetLine: ReviewAttachmentContextLineSchema,
-    lines: z.array(ReviewAttachmentContextLineSchema),
-  }),
-});
-
-export const ReviewAttachmentSchema = z.object({
-  type: z.literal("review"),
-  mimeType: z.literal("application/paseo-review"),
-  cwd: z.string(),
-  mode: z.enum(["uncommitted", "base"]),
-  baseRef: z.string().nullable().optional(),
-  comments: z.array(ReviewAttachmentCommentSchema),
-});
-
-export const UploadedFileAttachmentSchema = z.object({
-  type: z.literal("uploaded_file"),
-  id: z.string(),
-  fileName: z.string(),
-  mimeType: z.string(),
-  size: z.number().int().nonnegative(),
-  path: z.string(),
-});
-
-export const AgentAttachmentSchema = z.discriminatedUnion("type", [
-  ForgeChangeRequestAttachmentSchema,
-  ForgeIssueAttachmentSchema,
-  GitHubPrAttachmentSchema,
-  GitHubIssueAttachmentSchema,
-  TextAttachmentSchema,
-  ReviewAttachmentSchema,
-  UploadedFileAttachmentSchema,
-]);
 
 function normalizeAgentAttachments(input: unknown): AgentAttachment[] {
   if (!Array.isArray(input)) {
@@ -1733,6 +1660,12 @@ export const CreateAgentWorktreeTargetSchema = z.discriminatedUnion("mode", [
 
 export type CreateAgentWorktreeTarget = z.infer<typeof CreateAgentWorktreeTargetSchema>;
 
+export const AgentGoalSetRequestSchema = AgentGoalSetRequestBaseSchema.extend({
+  clientMessageId: z.string().optional(),
+  images: z.array(ImageAttachmentSchema).optional(),
+  attachments: z.array(AgentAttachmentSchema).optional(),
+});
+
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
   config: AgentSessionConfigSchema,
@@ -1743,6 +1676,7 @@ export const CreateAgentRequestMessageSchema = z.object({
   callerAgentId: z.string().optional(),
   worktreeName: z.string().optional(),
   initialPrompt: z.string().optional(),
+  initialGoal: AgentGoalSetInputSchema.optional(),
   clientMessageId: z.string().optional(),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   images: z.array(ImageAttachmentSchema).optional(),
@@ -3191,6 +3125,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderResetReadRequestSchema,
   ProviderResetPrepareRequestSchema,
   ProviderResetConfirmRequestSchema,
+  CodexAccountCreateRequestSchema,
   ProviderLoginReadRequestSchema,
   ProviderLoginStartRequestSchema,
   ProviderLoginCancelRequestSchema,
@@ -3210,6 +3145,13 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
+  QueueAttachmentGetRequestSchema,
+  QueueReadRequestSchema,
+  QueueMutateRequestSchema,
+  QueueSubscribeRequestSchema,
+  AgentGoalGetRequestSchema,
+  AgentGoalSetRequestSchema,
+  AgentGoalClearRequestSchema,
   SetAgentFeatureRequestMessageSchema,
   AgentConfigApplyRequestMessageSchema,
   AgentDetachRequestMessageSchema,
@@ -3572,8 +3514,10 @@ export const ServerInfoStatusPayloadSchema = z
         providerUsageList: z.boolean().optional(),
         providerResetManagement: z.boolean().optional(),
         providerAccountLogin: z.boolean().optional(),
+        codexAccountCreation: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
+        agentGoals: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: z.boolean().optional(),
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
@@ -3619,6 +3563,7 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: z.boolean().optional(),
+        durableMessageQueue: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
@@ -6606,6 +6551,14 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
+  QueueAttachmentGetResponseSchema,
+  QueueReadResponseSchema,
+  QueueMutateResponseSchema,
+  QueueSubscribeResponseSchema,
+  QueueChangedSchema,
+  AgentGoalGetResponseSchema,
+  AgentGoalSetResponseSchema,
+  AgentGoalClearResponseSchema,
   SetAgentFeatureResponseMessageSchema,
   AgentConfigApplyResponseMessageSchema,
   AgentDetachResponseMessageSchema,
@@ -6682,6 +6635,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderDiagnosticResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
   ProviderQuotaObservationResponseMessageSchema,
+  CodexAccountCreateResponseSchema,
   ProviderLoginReadResponseSchema,
   ProviderLoginStartResponseSchema,
   ProviderLoginCancelResponseSchema,

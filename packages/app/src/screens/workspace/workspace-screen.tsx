@@ -1,3 +1,4 @@
+import { StartupStatus } from "@/components/startup-status";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
@@ -1110,7 +1111,9 @@ function renderWorkspaceContent(input: RenderWorkspaceContentInput): React.React
   if (!activeTabDescriptor && (!hasHydratedAgents || !hasLoadedTerminals)) {
     return (
       <View style={styles.emptyState}>
-        <ThemedLoadingSpinner uniProps={mutedColorMapping} />
+        <StartupStatus phase="workspace">
+          <ThemedLoadingSpinner uniProps={mutedColorMapping} />
+        </StartupStatus>
       </View>
     );
   }

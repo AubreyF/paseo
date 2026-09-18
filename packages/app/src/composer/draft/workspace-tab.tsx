@@ -152,7 +152,7 @@ function resolveLaunchProfile(
 
 async function submitDraftCreateRequest(input: {
   vortonMode: boolean;
-  attempt: { clientMessageId: string };
+  attempt: Pick<DraftCreateAttempt, "clientMessageId" | "goal">;
   text: string;
   images?: UserMessageImageAttachment[];
   attachments?: unknown;
@@ -223,6 +223,7 @@ async function submitDraftCreateRequest(input: {
     workspaceId,
     ...(text ? { initialPrompt: text } : {}),
     clientMessageId: attempt.clientMessageId,
+    ...(attempt.goal ? { initialGoal: attempt.goal } : {}),
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
   });
@@ -440,6 +441,7 @@ export function WorkspaceDraftAgentTab({
     }
     return {
       clientMessageId: pendingCreateAttempt.clientMessageId,
+      goal: pendingCreateAttempt.goal,
       text: pendingCreateAttempt.text,
       timestamp: new Date(pendingCreateAttempt.timestamp),
       ...(pendingCreateAttempt.images && pendingCreateAttempt.images.length > 0
@@ -620,6 +622,7 @@ export function WorkspaceDraftAgentTab({
         })
       : handleCreateFromInput({
           text: submission.text,
+          goal: submission.goal,
           attachments: submission.attachments,
           cwd: submission.cwd,
         });
@@ -711,6 +714,7 @@ export function WorkspaceDraftAgentTab({
           externalKeyboardShift
           isPaneFocused={isPaneFocused}
           onSubmitMessage={handleCreateFromInput}
+          onSubmitGoal={handleCreateFromInput}
           isSubmitLoading={isSubmitting}
           blurOnSubmit={true}
           value={draftInput.text}

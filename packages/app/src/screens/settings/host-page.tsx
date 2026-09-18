@@ -45,6 +45,7 @@ import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 import { loadDesktopSettings, useDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useVortonMode } from "@/vorton-mode";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import {
   getHostRuntimeStore,
@@ -1094,9 +1095,12 @@ function EnableTerminalAgentHooksCard({ serverId }: { serverId: string }) {
 
 function AppendSystemPromptCard({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
+  const vortonMode = useVortonMode();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const persistedPrompt = config?.appendSystemPrompt ?? "";
+  const showPromptPreview = vortonMode && persistedPrompt.trim().length > 0;
+  const promptHint = t("settings.host.orchestration.systemPrompt.hint");
   const [draft, setDraft] = useState(persistedPrompt);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -1149,8 +1153,12 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
             <Text style={settingsStyles.rowTitle}>
               {t("settings.host.orchestration.systemPrompt.title")}
             </Text>
-            <Text style={settingsStyles.rowHint}>
-              {t("settings.host.orchestration.systemPrompt.hint")}
+            <Text
+              style={settingsStyles.rowHint}
+              numberOfLines={showPromptPreview ? 3 : undefined}
+              ellipsizeMode="tail"
+            >
+              {showPromptPreview ? persistedPrompt : promptHint}
             </Text>
           </View>
           <Button

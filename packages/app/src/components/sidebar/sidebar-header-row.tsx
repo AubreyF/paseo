@@ -1,3 +1,4 @@
+import { useSidebarRowDensity } from "@/components/sidebar/use-sidebar-row-density";
 import { useCallback, useMemo } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -28,6 +29,7 @@ interface SidebarHeaderRowProps {
    * sit in a header group whose wrapper owns the single divider.
    */
   variant?: SidebarHeaderRowVariant;
+  borderless?: boolean;
   shortcutKeys?: ShortcutKey[][] | null;
 }
 
@@ -40,22 +42,29 @@ export function SidebarHeaderRow({
   nativeID,
   accessibilityLabel,
   variant = "header",
+  borderless = false,
   shortcutKeys = null,
 }: SidebarHeaderRowProps) {
+  const density = useSidebarRowDensity();
   const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
 
   const containerStyle = useMemo(
-    () => (variant === "compact" ? styles.containerCompact : styles.container),
-    [variant],
+    () => [
+      variant === "compact" ? styles.containerCompact : styles.container,
+      borderless && styles.borderless,
+    ],
+    [variant, borderless],
   );
 
   const buttonStyle = useCallback(
     ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.button,
       variant === "compact" && styles.buttonCompact,
+      variant === "compact" && density,
+      variant === "compact" && density && { marginBottom: 0 },
       (Boolean(hovered) || isActive) && styles.buttonHovered,
     ],
-    [isActive, variant],
+    [isActive, variant, density],
   );
 
   const renderChildren = useCallback(
@@ -124,6 +133,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     justifyContent: "center",
     userSelect: "none",
+  },
+  borderless: {
+    borderBottomWidth: 0,
   },
   button: {
     flexDirection: "row",

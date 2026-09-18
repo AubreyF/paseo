@@ -20,6 +20,7 @@ import type { PendingMessageSubmission } from "@/composer/submission/model";
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
 interface CreateAttempt {
+  goal?: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput;
   clientMessageId: string;
   text: string;
   timestamp: Date;
@@ -82,6 +83,7 @@ interface CreateRequestResult<TCreateResult> {
 }
 
 interface SubmitContext {
+  goal?: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput;
   text: string;
   attachments: ComposerAttachment[];
   cwd: string;
@@ -159,6 +161,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       createUserMessage({
         clientMessageId: machine.attempt.clientMessageId,
         text: machine.attempt.text,
+        intent: machine.attempt.goal ? "goal" : undefined,
         timestamp: machine.attempt.timestamp,
         images: machine.attempt.images,
         attachments: machine.attempt.attachments,
@@ -220,6 +223,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
             createUserMessage({
               clientMessageId: attempt.clientMessageId,
               text: attempt.text,
+              intent: attempt.goal ? "goal" : undefined,
               timestamp: attempt.timestamp,
               images: attempt.images,
               attachments: attempt.attachments,
@@ -254,7 +258,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   );
 
   const handleCreateFromInput = useCallback(
-    async ({ text, attachments, cwd }: SubmitContext) => {
+    async ({ text, attachments, cwd, goal }: SubmitContext) => {
       if (isSubmitting) {
         throw new Error(t("composer.errors.alreadyLoading"));
       }
@@ -296,6 +300,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       }
 
       const attempt: CreateAttempt = {
+        goal,
         clientMessageId: generateMessageId(),
         text: trimmedPrompt,
         timestamp: new Date(),
@@ -310,6 +315,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         agentId: null,
         clientMessageId: attempt.clientMessageId,
         text: attempt.text,
+        goal: attempt.goal,
         timestamp: attempt.timestamp.getTime(),
         ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
         ...(attempt.attachments && attempt.attachments.length > 0

@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DiagramColorScheme, MermaidRenderRequest } from "./render-model";
-import { mermaidRuntimeHtml } from "./runtime/html.gen";
 import { parseMermaidRuntimeMessage, type MermaidRuntimeRenderMessage } from "./runtime/messages";
 import { MermaidRuntimeRequestDriver } from "./runtime/request-driver";
 
@@ -24,6 +23,29 @@ export function MermaidIframeRuntime({
   onRendered,
   onRenderFailed,
 }: MermaidIframeRuntimeProps) {
+  const [runtimeHtml, setRuntimeHtml] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    // Keep the embedded renderer out of the startup bundle. The host shows source
+    // until the renderer is ready, including while this chunk is downloading.
+    void import("./runtime/html.gen").then(
+      ({ mermaidRuntimeHtml }) => {
+        if (!cancelled) setRuntimeHtml(mermaidRuntimeHtml);
+        return undefined;
+      },
+      () => {
+        if (!cancelled) setLoadFailed(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
+    if (loadFailed && request) onRenderFailed(request.revision);
+  }, [loadFailed, request, onRenderFailed]);
+
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const driverRef = useRef<MermaidRuntimeRequestDriver | null>(null);
   driverRef.current ??= new MermaidRuntimeRequestDriver();
@@ -68,6 +90,8 @@ export function MermaidIframeRuntime({
 
   // `inert` (not just tabIndex) because the Modal focus trap focuses descendants
   // programmatically; a focused iframe swallows every keystroke, including Escape.
+  if (runtimeHtml === null) return null;
+
   return (
     <iframe
       ref={iframeRef}
@@ -75,7 +99,7 @@ export function MermaidIframeRuntime({
       aria-hidden
       inert
       sandbox="allow-scripts"
-      srcDoc={mermaidRuntimeHtml}
+      srcDoc={runtimeHtml}
       tabIndex={-1}
       style={iframeStyle}
     />

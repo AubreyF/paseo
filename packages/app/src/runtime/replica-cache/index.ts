@@ -1,3 +1,4 @@
+import { AgentGoalStateSchema } from "@getpaseo/protocol/agent-goals";
 import { z } from "zod";
 import {
   AgentStatusSchema,
@@ -77,6 +78,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...TimelineItemBaseShape,
     kind: z.literal("user_message"),
+    intent: z.literal("goal").optional(),
     clientMessageId: z.string().optional(),
     messageId: z.string().optional(),
     text: z.string(),
@@ -134,6 +136,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
 ]);
 
 const AgentCapabilitiesSchema = z.strictObject({
+  supportsGoals: z.boolean().optional(),
   supportsStreaming: z.boolean(),
   supportsSessionPersistence: z.boolean(),
   supportsSessionListing: z.boolean().optional(),
@@ -184,6 +187,7 @@ const StoredProjectPlacementSchema = z.strictObject({
 });
 
 const StoredAgentSnapshotSchema = z.strictObject({
+  goalState: AgentGoalStateSchema.optional(),
   id: z.string(),
   provider: AgentProviderSchema,
   cwd: z.string(),
@@ -401,6 +405,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...base,
         kind: item.kind,
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
+        ...(item.intent ? { intent: item.intent } : {}),
         ...(item.messageId ? { messageId: item.messageId } : {}),
         text: item.text,
       };
@@ -493,6 +498,7 @@ function deserializeBuiltinTimelineItem(
         ...base,
         kind: item.kind,
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
+        ...(item.intent ? { intent: item.intent } : {}),
         ...(item.messageId ? { messageId: item.messageId } : {}),
         text: item.text,
       };
@@ -560,6 +566,10 @@ function serializeProjectPlacement(agent: Agent): StoredAgent["projectPlacement"
   return agent.projectPlacement ?? null;
 }
 
+function cachedGoalState(state: Agent["goalState"]): Agent["goalState"] {
+  return state ? { status: "loading", goal: state.goal } : undefined;
+}
+
 function serializeAgent(agent: Agent): StoredAgent {
   const snapshot = {
     id: agent.id,
@@ -581,6 +591,7 @@ function serializeAgent(agent: Agent): StoredAgent {
         }
       : {}),
     capabilities: {
+      supportsGoals: agent.capabilities.supportsGoals,
       supportsStreaming: agent.capabilities.supportsStreaming,
       supportsSessionPersistence: agent.capabilities.supportsSessionPersistence,
       ...(agent.capabilities.supportsSessionListing !== undefined
@@ -603,6 +614,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     currentModeId: agent.currentModeId,
     availableModes: [],
     pendingPermissions: [],
+    goalState: cachedGoalState(agent.goalState),
     persistence: null,
     ...(agent.lastError ? { lastError: agent.lastError } : {}),
     profile: agent.profile,

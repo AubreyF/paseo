@@ -4,6 +4,10 @@ These proposals are separate from the container installation path. Recording the
 
 Unless dated separately, research findings below are from source inspection on September 10, 2026. Unchecked items are pending work, not deployed capabilities. Recording a proposal here does not implement or deploy it.
 
+### Automatic desktop builds and updates
+
+- [ ] Ship automatic custom-branch builds and private app updates for macOS, Windows, and Linux. See the [desktop build proposal](desktop-auto-builds.md) for findings, architecture, platform scope, open versioning decisions, acceptance criteria, and the 7 to 10 engineering-day estimate. Recorded September 16, 2026; implementation is pending.
+
 ### Current implementation and acceptance work
 
 - [ ] Complete the remaining [quota reserve integration and acceptance](agent-presets.md#implementation-and-deployment-status).

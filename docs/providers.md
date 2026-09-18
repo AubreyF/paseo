@@ -37,6 +37,22 @@ Each provider definition owns its option schema and exact MCP preapproval mappin
 must fail closed for Hub unattended execution until it can approve one exact injected MCP server
 and tool identity without approving native tools.
 
+## Native goals
+
+Keep scheduling, completion, budgets, and durable goal storage in the provider. Paseo projects
+native state and forwards controls; it must not run a second continuation loop. Goal updates can
+arrive outside a foreground turn, including after a turn was canceled. Route them as agent state,
+not transcript events tied to that turn.
+
+Native goal operations currently require Codex with goals enabled. Pause prevents automatic
+continuation and preserves accounting; it does not interrupt the current turn. Attachments use
+the ordinary prompt path while the goal is paused, followed by a native read before activation.
+Do not reactivate a goal that completed or changed while its context was being delivered.
+
+Persist accepted user goal submissions with the agent record. Native goal events do not identify
+the submitter, and a paused goal may have no native user turn. Merge submissions into history by
+message identity so restart preserves the goal marker without inventing user messages for tools.
+
 ## Two Integration Patterns
 
 ### ACP (Agent Client Protocol) -- recommended

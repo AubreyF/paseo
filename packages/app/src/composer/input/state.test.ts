@@ -195,8 +195,7 @@ describe("dictation transcript behavior", () => {
         replaceText,
         attachments: [],
         cwd: "/repo",
-        autoSend: true,
-        queueRequested: true,
+        intent: "queue",
       });
       expect(queue).toHaveBeenCalledWith({
         text: "typed context spoken prompt",
@@ -219,7 +218,7 @@ describe("dictation transcript behavior", () => {
       onSubmit: (payload) => actions.push(`submit:${payload.text}`),
       attachments: [],
       cwd: "/repo",
-      autoSend: true,
+      intent: "default",
     });
 
     expect(actions).toEqual([
@@ -356,4 +355,54 @@ describe("stopRealtimeVoice", () => {
 
     expect(calls).toEqual(["cancel agent", "stop voice"]);
   });
+});
+
+describe("explicit dictation submission intent", () => {
+  it.each([true, false])(
+    "sends instead of queuing with queue default and running=%s",
+    (isAgentRunning) => {
+      const onSubmit = vi.fn();
+      const onQueue = vi.fn();
+      applyDictationTranscript("spoken message", {
+        value: "",
+        defaultSendBehavior: "queue",
+        isAgentRunning,
+        onQueue,
+        onSubmit,
+        replaceText: vi.fn(),
+        attachments: [],
+        cwd: "/repo",
+        intent: "send",
+      });
+      expect(onQueue).not.toHaveBeenCalled();
+      expect(onSubmit).toHaveBeenCalledWith({
+        text: "spoken message",
+        attachments: [],
+        cwd: "/repo",
+        forceSend: true,
+      });
+    },
+  );
+  it.each(["insert", "default"] as const)(
+    "preserves %s behavior independently of explicit Send",
+    (intent) => {
+      const onSubmit = vi.fn();
+      const onQueue = vi.fn();
+      const replaceText = vi.fn();
+      applyDictationTranscript("spoken message", {
+        value: "",
+        defaultSendBehavior: "queue",
+        isAgentRunning: true,
+        onQueue,
+        onSubmit,
+        replaceText,
+        attachments: [],
+        cwd: "/repo",
+        intent,
+      });
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(onQueue).toHaveBeenCalledTimes(intent === "default" ? 1 : 0);
+      expect(replaceText).toHaveBeenCalledWith("spoken message");
+    },
+  );
 });

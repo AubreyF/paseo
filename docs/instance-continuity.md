@@ -10,7 +10,7 @@ In Vorton mode, the app checks public `AubreyF/paseo` main every 30 minutes whil
 
 **Help me update** opens a separate draft with an update task. Select the Vorton source project, the host that owns the installation, and an agent preset, then send it. The task tells the agent to preserve local changes, help merge conflicts, validate and publish the interface, and request approval before restarting the instance. It does not run Git or start an agent until you send the draft. Review ambiguous conflicts with the agent; updating a checkout alone does not update the served application.
 
-Builds from a Git checkout record HEAD as their source base. For source snapshots, pass the original full SHA through `PASEO_BUILD_COMMIT`; `build-instance-web.mjs` carries it automatically. Uncommitted source changes are not described by that SHA. The container installer and CI pass it into the image build. A source archive without that value can still use the prepared agent task, but cannot compare commits automatically.
+Builds from a Git checkout record HEAD as their source base. For source snapshots, pass the original full SHA through `PASEO_BUILD_COMMIT`; `build-instance-web.mjs` carries it automatically and records it in the snapshot’s ignored `.build-source-commit` file. Keep that file when exporting the same snapshot again; otherwise a separate export process loses the source identity. A real Git checkout always uses its own HEAD ahead of a snapshot stamp. Uncommitted source changes are not described by that SHA. The container installer and CI pass it into the image build. A source archive without that value can still use the prepared agent task, but cannot compare commits automatically.
 
 ## Publish a web-only change
 

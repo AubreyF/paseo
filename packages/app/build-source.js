@@ -9,9 +9,18 @@ function resolveBuildCommit(root, explicitCommit = process.env.PASEO_BUILD_COMMI
     }
     return explicitCommit;
   }
-  // Exports from source snapshots have no Git metadata. Never stamp a parent repository.
-  if (!fs.existsSync(path.join(root, ".git"))) return null;
-  return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  if (fs.existsSync(path.join(root, ".git"))) {
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  }
+  // A snapshot can be exported again outside the original build process. Keep
+  // its recorded source base without accidentally reading a parent repository.
+  const stamp = path.join(root, ".build-source-commit");
+  if (!fs.existsSync(stamp)) return null;
+  const commit = fs.readFileSync(stamp, "utf8").trim();
+  if (!/^[a-f0-9]{40}$/.test(commit)) {
+    throw new Error(".build-source-commit must contain a full Git commit SHA");
+  }
+  return commit;
 }
 
 module.exports = { resolveBuildCommit };

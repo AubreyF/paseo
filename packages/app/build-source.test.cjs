@@ -37,6 +37,13 @@ test("ordinary builds record HEAD, but nested snapshots do not inherit a parent'
     const snapshot = path.join(root, "snapshot");
     fs.mkdirSync(snapshot);
     assert.equal(resolveBuildCommit(snapshot, ""), null);
+    fs.writeFileSync(path.join(snapshot, ".build-source-commit"), commit + "\n");
+    assert.equal(resolveBuildCommit(snapshot, ""), commit);
+    assert.equal(resolveBuildCommit(snapshot, "b".repeat(40)), "b".repeat(40));
+    fs.writeFileSync(path.join(root, ".build-source-commit"), "b".repeat(40));
+    assert.equal(resolveBuildCommit(root, ""), commit);
+    fs.writeFileSync(path.join(snapshot, ".build-source-commit"), "main");
+    assert.throws(() => resolveBuildCommit(snapshot, ""), /full Git commit SHA/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

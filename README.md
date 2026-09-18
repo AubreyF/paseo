@@ -18,7 +18,7 @@ For an existing task, changing profiles opens a handoff you can review and edit 
 
 - **See your available capacity.** Check account usage and reset times beside your profiles. Use existing reset credits where the provider supports them.
 - **Give Codex a goal.** Set an objective with an optional token budget. Follow progress, elapsed time and token usage from the goal bar, and pause or resume when you need to intervene.
-- **Line up the next steps.** Queue messages with files or images, then edit, reorder, pause or send them from another connected device. The host owns the queue and can keep delivering messages after you close the client. Saved queues do not guarantee uninterrupted execution of an active turn during a host restart.
+- **Line up the next steps.** Queue messages with files or images, then edit, reorder, pause or send them from another connected device. The host owns the queue and can keep delivering messages after you close the client.
 - **Manage local models with Frontier AIs.** Configure a Pi profile for a local or private OpenAI-compatible endpoint, then let a supervisor delegate work with a limit on concurrent workers.
 - **Work from your phone or tablet.** Compact profiles, visible touch controls and responsive task views keep account selection and task management within reach.
 - **Give agents room to work without handing them your whole machine.** The installer automatically builds and starts a local container for Vorton and your agents. This limits the damage an accidental destructive command can do to your host: agents can modify the container home and mounted projects, while unmounted personal files stay outside their filesystem access. Keep backups of mounted projects; the container does not protect those files from deletion. See the [security boundaries](docs/container-tailscale.md).
@@ -66,9 +66,7 @@ The custom-domain gateway runs separately from the application. It consists of t
 
 Keep updates brief. Request only the specific user or administrator action needed to complete a blocked check. DNS records are public; access to the application remains private.
 
-## Work and contribute
-
-Keep personal files, Docker's socket and other users' homes outside the container mounts. See the [security boundaries](docs/container-tailscale.md).
+## Additional resources
 
 - [Accounts and presets](docs/agent-presets.md)
 - [Development inside the container](docs/development.md)
@@ -76,5 +74,3 @@ Keep personal files, Docker's socket and other users' homes outside the containe
 - [Optional private workspace previews](docker/tailscale/README.md)
 - [Team handoff and testing](docs/host-handoff.md)
 - [Planned work](docs/roadmap.md)
-
-This is an experimental fork of [Paseo](https://github.com/getpaseo/paseo). Source capabilities and deployed acceptance are tracked separately. Keep credentials, deployment state and test receipts outside Git.

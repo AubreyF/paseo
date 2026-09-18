@@ -1025,6 +1025,7 @@ function HostPicker({
 }
 
 interface SettingsSidebarProps {
+  appVersionText: string;
   view: SettingsView;
   onSelectSection: (section: SettingsSectionSlug) => void;
   onSelectHostSection: (section: HostSectionSlug) => void;
@@ -1036,6 +1037,7 @@ interface SettingsSidebarProps {
 }
 
 function SettingsSidebar({
+  appVersionText,
   view,
   onSelectSection,
   onSelectHostSection,
@@ -1193,6 +1195,11 @@ function SettingsSidebar({
           >
             {sidebarBody}
           </ScrollView>
+          {vorton && (
+            <Text style={sidebarStyles.version} testID="settings-sidebar-version">
+              {appVersionText}
+            </Text>
+          )}
         </View>
       ) : (
         sidebarBody
@@ -1608,6 +1615,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         <BackHeader title={t("settings.title")} onBack={handleBackToWorkspace} />
         <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
           <SettingsSidebar
+            appVersionText={appVersionText}
             view={view}
             onSelectSection={handleSelectSection}
             onSelectHostSection={handleSelectHostSection}
@@ -1647,6 +1655,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
       <View style={desktopStyles.row}>
         <WindowChromeRegion corners="top-left">
           <SettingsSidebar
+            appVersionText={appVersionText}
             view={view}
             onSelectSection={handleSelectSection}
             onSelectHostSection={handleSelectHostSection}
@@ -1785,6 +1794,12 @@ const sidebarStyles = StyleSheet.create((theme) => ({
   },
   scrollBody: {
     flex: 1,
+  },
+  version: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    textAlign: "center",
+    padding: theme.spacing[3],
   },
   modeHeader: {
     flexDirection: "row",

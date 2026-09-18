@@ -846,6 +846,9 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
     await expect(submittedRow).toBeVisible();
     await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
     gate.truncateHeldTimelineAfterLast("user_message");
+    // Bootstrap starts a catch-up fetch after hydration. Keep later activity out
+    // of this prompt-only paint check, just as we suppress live timeline events.
+    gate.setServerMessageSuppressed("fetch_agent_timeline_response", true);
     gate.releaseHeldServerMessage("fetch_agent_timeline_response");
     await expect(submittedRow.getByTestId("rewind-menu-trigger")).toBeVisible();
     await recordPaintsFor(page, 80);

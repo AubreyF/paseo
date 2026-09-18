@@ -120,11 +120,22 @@ test("manual checks show lasting feedback and the version footer starts a fresh 
     "This interface is up to date with main.",
   );
   const button = page.getByTestId("vorton-check-update");
+  const instructions = page.getByTestId("vorton-update-instructions");
+  const feedbackArea = page.getByTestId("vorton-update-feedback-area");
+  const helpButton = page.getByTestId("vorton-help-update");
+  const originalArea = await feedbackArea.boundingBox();
+  const originalButton = await helpButton.boundingBox();
   await button.click();
   await expect(button).toBeDisabled();
   await expect(button).toHaveText("Checking GitHub...");
   await expect(page.getByTestId("vorton-check-success")).toHaveText("You're up to date");
   await expect(button).toBeEnabled();
+  await expect(instructions).toHaveCSS("opacity", "0");
+  expect(await feedbackArea.boundingBox()).toEqual(originalArea);
+  expect(await helpButton.boundingBox()).toEqual(originalButton);
+  await expect(page.getByTestId("vorton-check-success")).toHaveCount(0);
+  await expect(instructions).toHaveCSS("opacity", "1");
+  expect(await feedbackArea.boundingBox()).toEqual(originalArea);
   await page.getByTestId("settings-sidebar").getByText("General", { exact: true }).click();
   const before = requests;
   await page.getByTestId("settings-sidebar-version").click();

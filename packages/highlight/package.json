@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/highlight",
-  "version": "0.7.2-vorton.12",
+  "version": "0.7.2-vorton.13",
   "files": [
     "dist",
     "!dist/**/*.map",

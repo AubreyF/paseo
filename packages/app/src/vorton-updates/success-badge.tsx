@@ -65,7 +65,7 @@ export const UpdateSuccessBadge = withUnistyles(SuccessBadge, (theme) => ({
   color: theme.colors.success,
 }));
 const styles = StyleSheet.create((theme) => ({
-  badge: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2], minHeight: 44 },
+  badge: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
   icon: { width: 18, height: 18, alignItems: "center", justifyContent: "center" },
   ring: { position: "absolute", width: 18, height: 18, borderRadius: 9 },
   label: { fontSize: theme.fontSize.sm, color: theme.colors.success },

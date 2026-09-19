@@ -417,3 +417,115 @@ test("edits queued media durably and saves the exact attachment set", async ({ p
     await agent.cleanup();
   }
 });
+
+test("preserves a media edit after another device changes the message", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(180_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "queue-media-conflict-",
+    title: "Queue media conflict",
+    model: "thirty-minute-stream",
+    initialPrompt: "Keep running while the queue is tested.",
+  });
+  const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "queue-conflict" });
+  let second: Awaited<ReturnType<typeof browser.newContext>> | undefined;
+  try {
+    await client.mutateMessageQueue(agent.agentId, {
+      kind: "pause",
+      paused: true,
+      operationId: "pause",
+      expectedRevision: 0,
+    });
+    await client.mutateMessageQueue(agent.agentId, {
+      kind: "enqueue",
+      operationId: "add",
+      messageId: "conflict-edit",
+      text: "Original",
+      attachments: [],
+    });
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await page.evaluate(() => {
+      const key = "@paseo:create-agent-preferences";
+      localStorage.setItem(
+        key,
+        JSON.stringify({ ...JSON.parse(localStorage.getItem(key) ?? "{}"), vortonMode: true }),
+      );
+    });
+    await reloadPreservingPreferences(page);
+    second = await browser.newContext({
+      baseURL: new URL(page.url()).origin,
+      storageState: await page.context().storageState(),
+    });
+    const other = await second.newPage();
+    await openAgentRoute(other, agent);
+    const row = page.getByTestId("queue-message-conflict-edit");
+    const otherRow = other.getByTestId("queue-message-conflict-edit");
+    await row.getByRole("button", { name: "Edit queued message", exact: true }).click();
+    const editor = page.getByTestId(/^queue-edit-draft-/);
+    await editor
+      .getByRole("textbox", { name: "Edit queued message", exact: true })
+      .fill("My retained media edit");
+    const chooser = page.waitForEvent("filechooser");
+    await editor.getByRole("button", { name: "Add images", exact: true }).click();
+    await (
+      await chooser
+    ).setFiles({
+      name: "conflict.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    });
+    await expect(
+      editor.getByRole("button", { name: "Remove conflict.png", exact: true }),
+    ).toBeVisible();
+    await otherRow.getByRole("button", { name: "Edit queued message", exact: true }).click();
+    const otherEditor = other.getByTestId(/^queue-edit-draft-/);
+    await otherEditor
+      .getByRole("textbox", { name: "Edit queued message", exact: true })
+      .fill("Other device wins first");
+    await otherEditor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect
+      .poll(async () => (await client.readMessageQueue(agent.agentId)).snapshot?.items[0])
+      .toMatchObject({ revision: 1, text: "Other device wins first", attachments: [] });
+    await expect(editor).toContainText("The message changed on another device");
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    const queue = page.getByTestId("shared-message-queue");
+    await expect(queue).toContainText("Could not synchronize");
+    await reloadPreservingPreferences(page);
+    await queue
+      .getByRole("button", { name: "Review against current message", exact: true })
+      .click();
+    await expect(
+      editor.getByRole("textbox", { name: "Edit queued message", exact: true }),
+    ).toHaveValue("My retained media edit", { timeout: 30_000 });
+    await expect(
+      editor.getByRole("button", { name: "Remove conflict.png", exact: true }),
+    ).toBeVisible();
+    expect((await client.readMessageQueue(agent.agentId)).snapshot?.items[0].text).toBe(
+      "Other device wins first",
+    );
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect
+      .poll(async () => (await client.readMessageQueue(agent.agentId)).snapshot?.items[0])
+      .toMatchObject({
+        id: "conflict-edit",
+        revision: 2,
+        text: "My retained media edit",
+        attachments: [{ fileName: "conflict.png", kind: "image" }],
+      });
+    await expect(otherRow).toContainText("My retained media edit");
+    await expect(otherRow.getByTestId("queue-attachment-summary")).toHaveAttribute(
+      "aria-label",
+      "1 attachment",
+    );
+  } finally {
+    await second?.close();
+    await client.close();
+    await agent.cleanup();
+  }
+});

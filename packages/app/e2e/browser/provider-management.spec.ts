@@ -1,8 +1,22 @@
+import path from "node:path";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { getServerId } from "../support/helpers/server-id";
+
+// Account management must work without a provider installation. A file cannot
+// contain an executable, so this path stays unavailable on every test host.
+test.use({
+  e2eDaemonConfig: {
+    version: 1,
+    agents: {
+      providers: {
+        codex: { command: [path.join(process.execPath, "unavailable-codex")] },
+      },
+    },
+  },
+});
 
 for (const width of [1280, 402]) {
   test(`Vorton provider management at ${width}px`, async ({ page }) => {
@@ -57,9 +71,10 @@ for (const width of [1280, 402]) {
         await expect
           .poll(async () => {
             const { entries } = await client.getProvidersSnapshot();
-            return entries.find((candidate) => candidate.provider === id)?.status ?? "loading";
+            const snapshot = entries.find((candidate) => candidate.provider === id);
+            return { status: snapshot?.status, enabled: snapshot?.enabled };
           })
-          .not.toBe("loading");
+          .toEqual({ status: "unavailable", enabled: true });
         const cancelDialog = page.waitForEvent("dialog").then((dialog) => dialog.dismiss());
         await Promise.all([page.getByTestId(`provider-remove-${id}`).click(), cancelDialog]);
         await expect(page.getByTestId(`provider-rename-${id}`)).toBeVisible();

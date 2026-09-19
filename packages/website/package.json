@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/website",
-  "version": "0.7.2-vorton.23",
+  "version": "0.7.2-vorton.24",
   "private": true,
   "type": "module",
   "scripts": {

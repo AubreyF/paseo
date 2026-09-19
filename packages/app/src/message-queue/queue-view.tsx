@@ -29,7 +29,12 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import type { QueueItem } from "@getpaseo/protocol/message-queue";
 import { Button } from "@/components/ui/button";
-import { EditingTextInput } from "@/components/ui/text-input";
+import { QueueEditDraftProvider, useQueueEditDrafts } from "./edit-draft-context";
+import { reviewRejectedQueueEdit } from "./edit-draft-runtime";
+import { lazy, Suspense } from "react";
+const QueueEditEditor = lazy(() =>
+  import("./edit-editor").then((module) => ({ default: module.QueueEditEditor })),
+);
 import { type MessageQueueControl } from "./use-message-queue";
 import { canKeepRejectedChange, type OutboxRecord } from "./outbox-record";
 
@@ -58,7 +63,22 @@ function describePendingChange(record: OutboxRecord): string {
   }
 }
 
-export function SharedQueueView({
+export function SharedQueueView(props: {
+  serverId: string;
+  agentId: string;
+  control: MessageQueueControl;
+  goalErrorHandled?: boolean;
+}) {
+  return (
+    <QueueEditDraftProvider serverId={props.serverId} agentId={props.agentId}>
+      <Suspense fallback={null}>
+        <QueueViewContent {...props} />
+      </Suspense>
+    </QueueEditDraftProvider>
+  );
+}
+
+function QueueViewContent({
   serverId,
   agentId,
   control,
@@ -69,8 +89,13 @@ export function SharedQueueView({
   control: MessageQueueControl;
   goalErrorHandled?: boolean;
 }) {
+  const edits = useQueueEditDrafts();
   const snapshot = control.snapshot;
-  if (!showSharedQueue(control, goalErrorHandled)) return null;
+  if (
+    !control.visible ||
+    (!showSharedQueue(control, goalErrorHandled) && !edits.drafts.length && !edits.error)
+  )
+    return null;
   const hasMessages = hasQueueMessages(control);
   return (
     <View
@@ -80,6 +105,11 @@ export function SharedQueueView({
       {hasMessages ? <QueueHeader control={control} /> : null}
       {!(goalErrorHandled && isQueueGoalError(snapshot?.deliveryError)) ? (
         <QueueDeliveryError control={control} />
+      ) : null}
+      {edits.error ? (
+        <Text style={styles.error} accessibilityRole="alert">
+          {edits.error.message}
+        </Text>
       ) : null}
       {control.loading ? <Text style={styles.secondary}>Loading queue...</Text> : null}
       {control.error ? (
@@ -157,11 +187,13 @@ function QueueRows({
   const [preview, setPreview] = useState<{ revision: number; items: QueueItem[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const startedRevision = useRef<number | null>(null);
+  const edits = useQueueEditDrafts();
   const onDragActive = useContext(QueueDragScrollContext);
   const release = useCallback(() => onDragActive(false), [onDragActive]);
   useEffect(() => release, [release]);
   const enabled =
     control.canMutate &&
+    !edits.drafts.length &&
     !preview &&
     !!snapshot &&
     snapshot.items.length > 1 &&
@@ -203,10 +235,14 @@ function QueueRows({
     ),
     [control, serverId, agentId, enabled],
   );
-  const items =
+  const queuedItems =
     preview && preview.revision === snapshot?.revision
       ? preview.items
       : (snapshot?.items ?? EMPTY_QUEUE_ITEMS);
+  const items = [...queuedItems];
+  for (const draft of edits.drafts) {
+    if (!items.some((item) => item.id === draft.original.id)) items.push(draft.original);
+  }
   return (
     <>
       <DraggableList
@@ -403,6 +439,7 @@ function PendingRow({
           Retry synchronization
         </Button>
       ) : null}
+      <ReviewRejectedEdit record={record} control={control} />
       {canKeepRejectedChange(record) ? (
         <Button variant="ghost" size="sm" style={styles.inlineAction} onPress={keepCopy}>
           Keep local copy and continue queue
@@ -412,6 +449,47 @@ function PendingRow({
         <Button variant="ghost" size="sm" style={styles.inlineAction} onPress={removeCopy}>
           Remove local copy
         </Button>
+      ) : null}
+    </View>
+  );
+}
+
+function ReviewRejectedEdit({
+  record,
+  control,
+}: {
+  record: OutboxRecord;
+  control: MessageQueueControl;
+}) {
+  const { refresh } = useQueueEditDrafts();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const operation = record.operation;
+  const current =
+    operation.kind === "edit"
+      ? control.snapshot?.items.find((item) => item.id === operation.messageId)
+      : undefined;
+  const review = useCallback(() => {
+    setBusy(true);
+    void reviewRejectedQueueEdit(record, current)
+      .then(refresh)
+      .catch((failure: unknown) =>
+        setError(failure instanceof Error ? failure.message : "Could not recover this edit."),
+      )
+      .finally(() => setBusy(false));
+  }, [record, current, refresh]);
+  if (!record.error || operation.kind !== "edit") return null;
+  return (
+    <View>
+      <Button size="sm" variant="outline" disabled={busy} onPress={review}>
+        {current?.delivery.status === "queued"
+          ? "Review against current message"
+          : "Review saved copy"}
+      </Button>
+      {error ? (
+        <Text style={styles.error} accessibilityRole="alert">
+          {error}
+        </Text>
       ) : null}
     </View>
   );
@@ -434,9 +512,16 @@ function QueueRow({
   dragInfo: DraggableRenderItemInfo<QueueItem>;
   reorderEnabled: boolean;
 }) {
-  const [editing, setEditing] = useState<QueueItem | null>(null);
-  const edit = useCallback(() => setEditing(item), [item]);
-  const close = useCallback(() => setEditing(null), []);
+  const edits = useQueueEditDrafts();
+  const editing = edits.drafts.filter((draft) => draft.original.id === item.id);
+  const [editError, setEditError] = useState<string | null>(null);
+  const edit = useCallback(() => {
+    void edits
+      .open(item)
+      .catch((failure: unknown) =>
+        setEditError(failure instanceof Error ? failure.message : "Could not open queue edit."),
+      );
+  }, [edits, item]);
   const [details, setDetails] = useState(false);
   const toggleDetails = useCallback(() => setDetails((value) => !value), []);
   return (
@@ -448,7 +533,7 @@ function QueueRow({
       ]}
       testID={`queue-message-${item.id}`}
     >
-      {!editing ? (
+      {!editing.length ? (
         <View style={styles.summary}>
           <QueueDragHandle info={dragInfo} disabled={!reorderEnabled} />
           <QueueAttachmentSummary
@@ -473,7 +558,7 @@ function QueueRow({
           />
         </View>
       ) : null}
-      {details || (editing && item.attachments.length > 0) ? (
+      {details && !editing.length ? (
         <SharedQueueAttachments
           serverId={serverId}
           agentId={agentId}
@@ -494,14 +579,18 @@ function QueueRow({
           The host could not confirm delivery. Retrying may send this message again.
         </Text>
       ) : null}
-      {editing ? (
-        <QueueEdit
-          key={`${editing.id}:${editing.revision}`}
-          item={editing}
-          control={control}
-          close={close}
-        />
+      {editError ? (
+        <Text style={styles.error} accessibilityRole="alert">
+          {editError}
+        </Text>
       ) : null}
+      {editing.map((draft) => (
+        <QueueEditEditor
+          key={draft.id}
+          draft={draft}
+          current={control.snapshot?.items.find((entry) => entry.id === item.id)}
+        />
+      ))}
     </View>
   );
 }
@@ -640,52 +729,6 @@ function QueuePrimaryActions({
         </>
       ) : null}
     </>
-  );
-}
-
-function QueueEdit({
-  item,
-  control,
-  close,
-}: {
-  item: QueueItem;
-  control: MessageQueueControl;
-  close: () => void;
-}) {
-  const touch = useVortonTouch();
-  const size = touch ? "md" : "sm";
-  const [text, setText] = useState(item.text);
-  const save = useCallback(() => {
-    void control
-      .mutate({
-        kind: "edit",
-        messageId: item.id,
-        expectedRevision: item.revision,
-        text,
-        attachments: item.attachments,
-        context: item.context,
-      })
-      .then(close)
-      .catch(() => {});
-  }, [item, control, close, text]);
-  return (
-    <View style={styles.editor}>
-      <EditingTextInput
-        initialValue={item.text}
-        onChangeText={setText}
-        multiline
-        style={styles.input}
-        accessibilityLabel="Edit queued message"
-      />
-      <View style={styles.editorActions}>
-        <Button variant="outline" size={size} onPress={close}>
-          Cancel
-        </Button>
-        <Button variant="default" size={size} disabled={!control.canMutate} onPress={save}>
-          Save
-        </Button>
-      </View>
-    </View>
   );
 }
 

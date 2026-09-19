@@ -313,3 +313,97 @@ async function dragQueueMessage(page: Page, from: string, to: string, touch: boo
     await page.mouse.up();
   }
 }
+
+test("edits queued media durably and saves the exact attachment set", async ({ page }) => {
+  test.setTimeout(180_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "queue-media-",
+    title: "Queue media editing",
+    model: "thirty-minute-stream",
+    initialPrompt: "Keep running while editing the queue.",
+  });
+  const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "queue-media" });
+  try {
+    await client.mutateMessageQueue(agent.agentId, {
+      kind: "pause",
+      paused: true,
+      operationId: "pause",
+      expectedRevision: 0,
+    });
+    await client.mutateMessageQueue(agent.agentId, {
+      kind: "enqueue",
+      operationId: "add",
+      messageId: "media-edit",
+      text: "Original message",
+      attachments: [],
+    });
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await page.evaluate(() => {
+      const key = "@paseo:create-agent-preferences";
+      localStorage.setItem(
+        key,
+        JSON.stringify({ ...JSON.parse(localStorage.getItem(key) ?? "{}"), vortonMode: true }),
+      );
+    });
+    await reloadPreservingPreferences(page);
+    const row = page.getByTestId("queue-message-media-edit");
+    await row.getByRole("button", { name: "Edit queued message", exact: true }).click();
+    const editor = page.getByTestId(/^queue-edit-draft-/);
+    await editor
+      .getByRole("textbox", { name: "Edit queued message", exact: true })
+      .fill("Edited with media");
+    const chooser = page.waitForEvent("filechooser");
+    await editor.getByRole("button", { name: "Add images", exact: true }).click();
+    await (
+      await chooser
+    ).setFiles({
+      name: "edit-image.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    });
+    await expect(
+      editor.getByRole("button", { name: "Remove edit-image.png", exact: true }),
+    ).toBeVisible();
+    await reloadPreservingPreferences(page);
+    await expect(
+      editor.getByRole("textbox", { name: "Edit queued message", exact: true }),
+    ).toHaveValue("Edited with media", { timeout: 30_000 });
+    await expect(
+      editor.getByRole("button", { name: "Remove edit-image.png", exact: true }),
+    ).toBeVisible();
+    expect((await client.readMessageQueue(agent.agentId)).snapshot?.items[0].text).toBe(
+      "Original message",
+    );
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await expect
+      .poll(async () => (await client.readMessageQueue(agent.agentId)).snapshot?.items[0])
+      .toMatchObject({
+        id: "media-edit",
+        text: "Edited with media",
+        revision: 1,
+        attachments: [{ fileName: "edit-image.png", kind: "image" }],
+      });
+    await row.getByRole("button", { name: "Edit queued message", exact: true }).click();
+    await editor.getByRole("button", { name: "Remove edit-image.png", exact: true }).click();
+    await editor.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(
+      (await client.readMessageQueue(agent.agentId)).snapshot?.items[0].attachments,
+    ).toHaveLength(1);
+    await row.getByRole("button", { name: "Edit queued message", exact: true }).click();
+    await editor.getByRole("button", { name: "Remove edit-image.png", exact: true }).click();
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect
+      .poll(
+        async () => (await client.readMessageQueue(agent.agentId)).snapshot?.items[0].attachments,
+      )
+      .toEqual([]);
+  } finally {
+    await client.close();
+    await agent.cleanup();
+  }
+});

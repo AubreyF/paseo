@@ -272,3 +272,52 @@ it("does not report a persisted submission as failed when notification fails", a
   await expect(outbox.commit(input)).resolves.toBeUndefined();
   expect(await outbox.list()).toHaveLength(1);
 });
+
+it("discards attachment bytes only after explicit removal of a rejected local copy", async () => {
+  const cleaned: OutboxRecord[] = [];
+  const localAttachments: OutboxRecord["localAttachments"] = [
+    {
+      kind: "image",
+      metadata: {
+        id: "image",
+        storageType: "web-indexeddb",
+        storageKey: "image",
+        mimeType: "image/png",
+        createdAt: 1,
+        byteSize: 3,
+      },
+    },
+  ];
+  const outbox = new QueueOutbox(memoryStorage(), {
+    ...port,
+    upload: async () => ({
+      id: "remote",
+      kind: "image",
+      fileName: "image.png",
+      mimeType: "image/png",
+      size: 3,
+      path: "/tmp/image.png",
+    }),
+    mutate: async () => ({
+      snapshot: null,
+      error: { code: "revision_conflict", message: "Another edit won" },
+    }),
+    discarded: async (record) => {
+      cleaned.push(record);
+    },
+  });
+  const key = { serverId: "host", agentId: "agent", operationId: "op" };
+  await outbox.commit({
+    ...input,
+    operation: { ...operation, kind: "edit", expectedRevision: 0 },
+    localAttachments,
+  });
+  await expect(outbox.removeRejectedCopy(key)).rejects.toThrow("unsynchronized");
+  expect(cleaned).toEqual([]);
+  await outbox.flush("host");
+  await outbox.keepRejectedCopy(key);
+  expect(cleaned).toEqual([]);
+  await outbox.removeRejectedCopy(key);
+  expect(await outbox.list()).toEqual([]);
+  expect(cleaned[0].localAttachments).toEqual(localAttachments);
+});

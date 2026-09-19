@@ -1,4 +1,5 @@
 import { useVortonMode } from "@/vorton-mode";
+import { ComposerDockBackground } from "@/composer/dock";
 import { useMemo, type ReactNode } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { View, type StyleProp, type ViewStyle } from "react-native";
@@ -54,8 +55,9 @@ export function ScreenHeader({
   const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);
   const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
 
+  const HeaderBackground = vorton ? View : ComposerDockBackground;
   return (
-    <View style={styles.header} testID="screen-header">
+    <HeaderBackground style={styles.header} testID="screen-header">
       <View style={innerStyle}>
         <WindowChromeSafeArea
           placement="inline"
@@ -68,7 +70,7 @@ export function ScreenHeader({
           <View style={rightCombinedStyle}>{right}</View>
         </WindowChromeSafeArea>
       </View>
-    </View>
+    </HeaderBackground>
   );
 }
 

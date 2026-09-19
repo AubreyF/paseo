@@ -1,4 +1,4 @@
-const versionPattern = /^(\d+)\.(\d+)\.(\d+)(?:-(beta|vorton)\.(\d+))?$/;
+const versionPattern = /^(\d+)\.(\d+)\.(\d+)(?:-(beta|vorton)\.(\d+)(?:\.vorton\.(\d+))?)?$/;
 const stableIosBuildSlot = 999;
 const FDROID_ABI_VERSION_CODE_SUFFIXES = {
   "armeabi-v7a": 1,
@@ -13,7 +13,10 @@ function getNativeReleaseVersion(version) {
     throw new Error(`Cannot derive native release version from unsupported version: ${version}`);
   }
 
-  const [, majorText, minorText, patchText, channel, counterText] = match;
+  const [, majorText, minorText, patchText, channel, counterText, betaVortonCounter] = match;
+  if (betaVortonCounter && channel !== "beta") {
+    throw new Error(`Cannot derive native release version from unsupported version: ${version}`);
+  }
   const major = Number(majorText);
   const minor = Number(minorText);
   const patch = Number(patchText);
@@ -42,17 +45,13 @@ function getNativeReleaseVersion(version) {
   }
 
   // Vorton uses a separate native distribution. Reserve five digits per upstream base.
-  if (channel === "vorton") {
-    const counter = Number(counterText);
-    const build = versionCode * 100_000 + counter;
-    if (
-      !Number.isSafeInteger(counter) ||
-      counter < 1 ||
-      counter >= 100_000 ||
-      build > 2_100_000_000
-    ) {
-      throw new Error(`Vorton native build number is out of range: ${version}`);
-    }
+  if (channel === "vorton" || betaVortonCounter !== undefined) {
+    const build = getVortonBuildNumber(
+      version,
+      versionCode,
+      Number(betaVortonCounter ?? counterText),
+      betaNumber,
+    );
     return {
       appVersion: `${major}.${minor}.${patch}`,
       androidVersionCode: build,
@@ -65,6 +64,25 @@ function getNativeReleaseVersion(version) {
     androidVersionCode: versionCode,
     iosBuildNumber: String(iosBuildNumber),
   };
+}
+
+function getVortonBuildNumber(version, versionCode, counter, betaNumber) {
+  // Preserve published numbers before 0.9.0; newer bases reserve ordered beta slots.
+  const partitioned = versionCode >= 9_000;
+  const slot = betaNumber ?? 99;
+  if (betaNumber !== null && (!partitioned || slot < 1 || slot > 98)) {
+    throw new Error(`Vorton beta native slot must be between 1 and 98 from 0.9.0: ${version}`);
+  }
+  const build = versionCode * 100_000 + (partitioned ? slot * 1_000 : 0) + counter;
+  if (
+    !Number.isSafeInteger(counter) ||
+    counter < 1 ||
+    counter >= (partitioned ? 1_000 : 100_000) ||
+    build > 2_100_000_000
+  ) {
+    throw new Error(`Vorton native build number is out of range: ${version}`);
+  }
+  return build;
 }
 
 function getFdroidVersionCodes(version) {

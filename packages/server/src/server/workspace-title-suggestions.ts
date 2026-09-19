@@ -42,7 +42,9 @@ export class WorkspaceTitleSuggestions {
   isAvailable(): boolean {
     return (
       resolveStructuredGenerationProvidersFromEntries({
-        providerEntries: this.options.providerSnapshotManager.getSnapshot(),
+        providerEntries: this.options.providerSnapshotManager
+          .getSnapshot()
+          .records.map(({ entry }) => entry),
         daemonConfig: this.options.readDaemonConfig(),
       }).length > 0
     );

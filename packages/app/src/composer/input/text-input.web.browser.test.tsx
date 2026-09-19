@@ -102,6 +102,19 @@ describe("ComposerTextInput web IME composition", () => {
       expect(recorder.changes).toEqual(["Dictated message"]);
     },
   );
+  it("resets the composer text while preserving focus", () => {
+    const mounted = mountInput(ignoreTextChange);
+    act(() => {
+      mounted.inputRef.current?.focus();
+      typeFromIme(mounted.textarea, "line one\nline two");
+    });
+
+    act(() => mounted.inputRef.current?.reset());
+
+    expect(mounted.textarea.value).toBe("");
+    expect(mounted.inputRef.current?.getText()).toBe("");
+    expect(document.activeElement).toBe(mounted.textarea);
+  });
 
   it("keeps locally typed text when its parent rerenders with a stale value", () => {
     const recorder = createTextRecorder();

@@ -39,9 +39,10 @@ export function useMessageQueue(serverId: string, agentId: string) {
   const archived = useSessionStore(
     (state) => !!state.sessions[serverId]?.agents.get(agentId)?.archivedAt,
   );
-  const activeTurnId = useSessionStore(
-    (state) => state.sessions[serverId]?.agents.get(agentId)?.activeTurn?.turnId ?? null,
-  );
+  const activeTurnId = useSessionStore((state) => {
+    const turn = state.sessions[serverId]?.agents.get(agentId)?.turn;
+    return turn?.phase === "open" ? turn.turnId : null;
+  });
   const enabled = vorton && active && supported && connected && !!agentId;
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
   const reconnectError = useFetchQuery<string | null>({

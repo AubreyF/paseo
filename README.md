@@ -23,6 +23,16 @@ For an existing task, changing profiles opens a handoff you can review and edit 
 - **Work from your phone or tablet.** Compact profiles, visible touch controls and responsive task views keep account selection and task management within reach.
 - **Give agents room to work without handing them your whole machine.** The installer automatically builds and starts a local container for Vorton and your agents. This limits the damage an accidental destructive command can do to your host: agents can modify the container home and mounted projects, while unmounted personal files stay outside their filesystem access. Keep backups of mounted projects; the container does not protect those files from deletion. See the [security boundaries](docs/container-tailscale.md).
 
+## Plugins
+
+Add themes, workspace panels, commands, settings screens, and coding-agent providers with trusted
+TypeScript plugins. Install from npm, Git, or a local directory with `paseo plugin install <source>`.
+
+Vorton’s selected launch settings, profile instructions, reserve policy, and configured account environment take precedence over plugin launch hooks. Hooks can supply defaults and additional environment variables.
+
+Start with the [plugin quickstart](https://paseo.sh/docs/plugins). Plugins run with access to your daemon
+machine and inside connected clients; install only code you trust.
+
 ## Install
 
 Install Git and start Docker with Compose. Install Tailscale on the devices you will connect from.

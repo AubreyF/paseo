@@ -8,7 +8,8 @@ import test from "node:test";
 const script = path.resolve("scripts/vorton-version.mjs");
 test("commit versions advance once, preserve staging, and synchronize lock metadata", () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "vorton-version-"));
-  const run = (bin, args) => execFileSync(bin, args, { cwd, encoding: "utf8", stdio: "pipe" });
+  const run = (bin, args) =>
+    execFileSync(bin, args, { cwd, encoding: "utf8", stdio: "pipe", maxBuffer: 16 * 1024 * 1024 });
   const git = (...args) => run("git", args);
   const write = (file, value) =>
     writeFileSync(path.join(cwd, file), `${JSON.stringify(value, null, 2)}\n`);
@@ -27,6 +28,8 @@ test("commit versions advance once, preserve staging, and synchronize lock metad
     });
     write("packages/a/package.json", { name: "a", version: "0.7.2" });
     write("package-lock.json", {
+      // Real monorepo lockfiles exceed Node's default subprocess buffer.
+      fixturePadding: "x".repeat(1024 * 1024),
       version: "0.7.2",
       packages: { "": { version: "0.7.2" }, "packages/a": { version: "0.7.2" } },
     });
@@ -60,6 +63,30 @@ test("commit versions advance once, preserve staging, and synchronize lock metad
     write("package.json", root);
     run(process.execPath, [script]);
     assert.equal(read("package.json").version, "0.7.3-vorton.1");
+    root.version = "0.9.0-beta.2";
+    write("package.json", root);
+    run(process.execPath, [script]);
+    assert.equal(read("package.json").version, "0.9.0-beta.2.vorton.1");
+    git("add", "package.json", "packages/a/package.json", "package-lock.json");
+    git("commit", "-m", "beta base");
+    run(process.execPath, [script, "--hook"]);
+    assert.equal(read("package.json").version, "0.9.0-beta.2.vorton.2");
+    root.version = "0.9.0-beta.1";
+    write("package.json", root);
+    assert.throws(() => run(process.execPath, [script]), /cannot decrease/);
+    root.version = "0.9.0-beta.3";
+    write("package.json", root);
+    run(process.execPath, [script]);
+    assert.equal(read("package.json").version, "0.9.0-beta.3.vorton.1");
+    root.version = "0.9.0";
+    write("package.json", root);
+    run(process.execPath, [script]);
+    assert.equal(read("package.json").version, "0.9.0-vorton.1");
+    git("add", "package.json", "packages/a/package.json", "package-lock.json");
+    git("commit", "-m", "stable base");
+    root.version = "0.9.0-beta.3";
+    write("package.json", root);
+    assert.throws(() => run(process.execPath, [script]), /cannot decrease/);
     root.version = "0.7.1";
     write("package.json", root);
     assert.throws(() => run(process.execPath, [script]), /cannot decrease/);

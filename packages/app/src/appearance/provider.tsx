@@ -2,7 +2,15 @@ import { vortonAppearance } from "./vorton-appearance";
 import { useVortonTouch } from "@/vorton-touch";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { applyVortonWeb } from "./vorton-web";
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { UnistylesRuntime } from "react-native-unistyles";
 import { DEFAULT_THEME_PREFERENCE, useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import {
@@ -52,6 +60,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const { preferences } = useFormPreferences();
   const vorton = preferences.vortonMode === true;
   useEffect(() => applyVortonWeb(vorton, touch), [vorton, touch]);
+  const [hasAppliedAppearance, setHasAppliedAppearance] = useState(false);
   const options = usePluginThemeCatalog();
   const selected = useMemo(() => {
     if (settings.theme !== PLUGIN_THEME_PREFERENCE) return null;
@@ -74,6 +83,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
         touch,
       ),
     );
+    setHasAppliedAppearance(true);
   }, [
     isLoading,
     touch,
@@ -98,6 +108,10 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     [updateSettings],
   );
   const value = useMemo(() => ({ options, selected, select }), [options, selected, select]);
+
+  // The first settings load changes appearance keys. Mount screens only after applying it
+  // so startup does not destroy and recreate an already-visible workspace.
+  if (!hasAppliedAppearance) return null;
 
   return (
     <ContributedThemesContext.Provider value={value}>{children}</ContributedThemesContext.Provider>

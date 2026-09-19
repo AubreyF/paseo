@@ -25,7 +25,10 @@ function fixture() {
     .mockResolvedValue({ titles });
   const service = new WorkspaceTitleSuggestions({
     agentManager: manager,
-    providerSnapshotManager: { getSnapshot: () => [], listProviders: async () => [] },
+    providerSnapshotManager: {
+      getSnapshot: () => ({ cwd: "/tmp", records: [] }),
+      listProviders: async () => [],
+    },
     readDaemonConfig: () => ({
       metadataGeneration: { providers: [{ provider: "codex", model: "configured-model" }] },
     }),

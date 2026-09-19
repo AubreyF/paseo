@@ -266,20 +266,21 @@ export function QueueEditEditor({
           >
             Add images
           </Button>
-          <View style={styles.space} />
-          <Button size={size} variant="outline" disabled={saving || processing} onPress={cancel}>
-            Cancel
-          </Button>
-          <Button
-            size={size}
-            variant="default"
-            disabled={
-              disabled || unavailable || !draftHasContent(working) || !draftHasChanges(working)
-            }
-            onPress={save}
-          >
-            Save
-          </Button>
+          <View style={styles.saveActions}>
+            <Button size={size} variant="outline" disabled={saving || processing} onPress={cancel}>
+              Cancel
+            </Button>
+            <Button
+              size={size}
+              variant="default"
+              disabled={
+                disabled || unavailable || !draftHasContent(working) || !draftHasChanges(working)
+              }
+              onPress={save}
+            >
+              Save
+            </Button>
+          </View>
         </View>
         <AttachmentLightbox source={source} onClose={closePreview} />
       </View>
@@ -382,6 +383,6 @@ const styles = StyleSheet.create((theme) => ({
   error: { color: theme.colors.destructive, fontSize: theme.fontSize.sm },
   media: { flexDirection: "row", flexWrap: "wrap", gap: theme.spacing[2] },
   attachment: { flexDirection: "row", alignItems: "center" },
-  actions: { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
-  space: { flex: 1 },
+  actions: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: theme.spacing[2] },
+  saveActions: { flexDirection: "row", marginLeft: "auto", gap: theme.spacing[2] },
 }));

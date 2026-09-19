@@ -6,7 +6,16 @@ import { useMessageQueue } from "./use-message-queue";
 import { GoalBar } from "@/goals/goal-bar";
 import { useAgentGoal } from "@/goals/use-agent-goal";
 import { isQueueGoalError } from "./goal-error";
-import { SharedQueueView } from "./queue-view";
+import { SharedQueueView as QueueView } from "./queue-view";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function SharedQueueView(props: React.ComponentProps<typeof QueueView>) {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <QueueView {...props} />
+    </QueryClientProvider>
+  );
+}
 
 const state = vi.hoisted(() => ({
   visible: true,
@@ -180,6 +189,7 @@ beforeEach(() => {
   state.media = true;
   state.goalError = false;
   vi.clearAllMocks();
+  queryClient.clear();
   container = document.createElement("div");
   root = createRoot(container);
 });

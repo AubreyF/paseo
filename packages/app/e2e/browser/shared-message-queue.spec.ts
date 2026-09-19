@@ -133,6 +133,11 @@ test("shared queue survives reload and synchronizes a second device with Vorton 
       await expect(row.getByRole("button", { name: "Send queued message now" })).toHaveCount(0);
       await expect(row.getByRole("button", { name: "Queued message actions" })).toHaveCount(0);
       await expect(row).toContainText("queued-photo.png");
+      const save = row.getByRole("button", { name: "Save", exact: true });
+      await expect(save).toBeDisabled();
+      await input.fill("Unsaved queue edit");
+      await expect(save).toBeEnabled();
+      await expect(row.getByText("Draft saved on this device", { exact: true })).toBeVisible();
       for (const name of ["Cancel", "Save"]) {
         const button = row.getByRole("button", { name, exact: true });
         await expect(button).toHaveCSS("height", `${height}px`);
@@ -182,15 +187,20 @@ test("shared queue survives reload and synchronizes a second device with Vorton 
     for (const target of [page, other]) {
       const card = target.getByTestId("shared-message-queue");
       await card.scrollIntoViewIfNeeded();
-      const heading = await card.getByText("Message queue", { exact: true }).boundingBox();
-      const icon = await card
-        .getByTestId("message-queue-pause-resume")
-        .locator("svg")
-        .boundingBox();
-      expect(heading).not.toBeNull();
-      expect(icon).not.toBeNull();
+      const heading = card.getByText("Message queue", { exact: true });
+      const icon = card.getByTestId("message-queue-pause-resume").locator("svg");
+      await expect(heading).toBeVisible();
+      await expect(icon).toBeVisible();
+      // Streaming can move the card between browser calls; measure both in one frame.
+      const offset = await heading.evaluate(
+        (label, glyph) => {
+          if (!glyph) throw new Error("Queue control icon is missing");
+          return glyph.getBoundingClientRect().y - label.getBoundingClientRect().y;
+        },
+        await icon.elementHandle(),
+      );
       // Text glyphs sit below the line box; align icons with the visible letters.
-      expect(Math.abs(icon!.y - heading!.y - 3)).toBeLessThanOrEqual(1);
+      expect(Math.abs(offset - 3)).toBeLessThanOrEqual(1);
     }
     for (const target of [page, other]) {
       for (const variant of ["circle"]) {
@@ -313,3 +323,97 @@ async function dragQueueMessage(page: Page, from: string, to: string, touch: boo
     await page.mouse.up();
   }
 }
+
+test("edits queued media durably and saves the exact attachment set", async ({ page }) => {
+  test.setTimeout(180_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "queue-media-",
+    title: "Queue media editing",
+    model: "thirty-minute-stream",
+    initialPrompt: "Keep running while editing the queue.",
+  });
+  const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "queue-media" });
+  try {
+    await client.mutateMessageQueue(agent.agentId, {
+      kind: "pause",
+      paused: true,
+      operationId: "pause",
+      expectedRevision: 0,
+    });
+    await client.mutateMessageQueue(agent.agentId, {
+      kind: "enqueue",
+      operationId: "add",
+      messageId: "media-edit",
+      text: "Original message",
+      attachments: [],
+    });
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await page.evaluate(() => {
+      const key = "@paseo:create-agent-preferences";
+      localStorage.setItem(
+        key,
+        JSON.stringify({ ...JSON.parse(localStorage.getItem(key) ?? "{}"), vortonMode: true }),
+      );
+    });
+    await reloadPreservingPreferences(page);
+    const row = page.getByTestId("queue-message-media-edit");
+    await row.getByRole("button", { name: "Edit queued message", exact: true }).click();
+    const editor = page.getByTestId(/^queue-edit-draft-/);
+    await editor
+      .getByRole("textbox", { name: "Edit queued message", exact: true })
+      .fill("Edited with media");
+    const chooser = page.waitForEvent("filechooser");
+    await editor.getByRole("button", { name: "Add images", exact: true }).click();
+    await (
+      await chooser
+    ).setFiles({
+      name: "edit-image.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    });
+    await expect(
+      editor.getByRole("button", { name: "Remove edit-image.png", exact: true }),
+    ).toBeVisible();
+    await reloadPreservingPreferences(page);
+    await expect(
+      editor.getByRole("textbox", { name: "Edit queued message", exact: true }),
+    ).toHaveValue("Edited with media", { timeout: 30_000 });
+    await expect(
+      editor.getByRole("button", { name: "Remove edit-image.png", exact: true }),
+    ).toBeVisible();
+    expect((await client.readMessageQueue(agent.agentId)).snapshot?.items[0].text).toBe(
+      "Original message",
+    );
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await expect
+      .poll(async () => (await client.readMessageQueue(agent.agentId)).snapshot?.items[0])
+      .toMatchObject({
+        id: "media-edit",
+        text: "Edited with media",
+        revision: 1,
+        attachments: [{ fileName: "edit-image.png", kind: "image" }],
+      });
+    await row.getByRole("button", { name: "Edit queued message", exact: true }).click();
+    await editor.getByRole("button", { name: "Remove edit-image.png", exact: true }).click();
+    await editor.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(
+      (await client.readMessageQueue(agent.agentId)).snapshot?.items[0].attachments,
+    ).toHaveLength(1);
+    await row.getByRole("button", { name: "Edit queued message", exact: true }).click();
+    await editor.getByRole("button", { name: "Remove edit-image.png", exact: true }).click();
+    await editor.getByRole("button", { name: "Save", exact: true }).click();
+    await expect
+      .poll(
+        async () => (await client.readMessageQueue(agent.agentId)).snapshot?.items[0].attachments,
+      )
+      .toEqual([]);
+  } finally {
+    await client.close();
+    await agent.cleanup();
+  }
+});

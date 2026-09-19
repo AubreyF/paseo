@@ -43,10 +43,12 @@ describe("Codex goal observations", () => {
   it("retains a newer tool notification when a write response arrives late", async () => {
     let finishSet: (value: unknown) => void = () => {};
     const goals = new CodexGoals({
-      request: () =>
-        new Promise((resolve) => {
-          finishSet = resolve;
-        }),
+      request: (method) =>
+        method === "thread/goal/get"
+          ? Promise.resolve({ goal: { ...goal, status: "complete" } })
+          : new Promise((resolve) => {
+              finishSet = resolve;
+            }),
       onChange: () => {},
     });
     goals.bind("thread-1");
@@ -146,5 +148,56 @@ describe("Codex goal observations", () => {
     finishRead({ goal });
     await reading;
     expect(goals.state).toEqual({ status: "loading", goal: null });
+  });
+});
+
+it("confirms a pause when a usage notification overtakes its response", async () => {
+  let finishSet: (value: unknown) => void = () => {};
+  const calls: string[] = [];
+  const paused = { ...goal, status: "paused", timeUsedSeconds: 8 };
+  const goals = new CodexGoals({
+    request: (method) => {
+      calls.push(method);
+      if (method === "thread/goal/get") return Promise.resolve({ goal: paused });
+      return new Promise((resolve) => {
+        finishSet = resolve;
+      });
+    },
+    onChange: () => {},
+  });
+  goals.bind("thread-1");
+  const setting = goals.set({ status: "paused" });
+  await Promise.resolve();
+  goals.handleNotification("thread/goal/updated", {
+    threadId: "thread-1",
+    goal: { ...goal, timeUsedSeconds: 8 },
+  });
+  finishSet({ goal: paused });
+  await expect(setting).resolves.toMatchObject({ status: "ready", goal: paused });
+  expect(calls).toEqual(["thread/goal/set", "thread/goal/get"]);
+});
+
+it("reports an unconfirmed mutation when its follow-up read fails", async () => {
+  let finishSet: (value: unknown) => void = () => {};
+  const goals = new CodexGoals({
+    request: (method) => {
+      if (method === "thread/goal/get")
+        return Promise.reject(new Error("confirmation disconnected"));
+      return new Promise((resolve) => {
+        finishSet = resolve;
+      });
+    },
+    onChange: () => {},
+  });
+  goals.bind("thread-1");
+  const setting = goals.set({ status: "paused" });
+  await Promise.resolve();
+  goals.handleNotification("thread/goal/updated", { threadId: "thread-1", goal });
+  finishSet({ goal: { ...goal, status: "paused" } });
+  await expect(setting).rejects.toThrow("confirmation disconnected");
+  expect(goals.state).toMatchObject({
+    status: "error",
+    goal,
+    message: "confirmation disconnected",
   });
 });

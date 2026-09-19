@@ -1,3 +1,5 @@
+import { CodexGoals } from "./providers/codex/goals.js";
+import type { AgentGoal } from "@getpaseo/protocol/agent-goals";
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -11895,3 +11897,55 @@ test("provider deletion stays blocked during registration and for internal sessi
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test.each(["idle", "running", "pause failure"] as const)(
+  "manual stop handles an active goal when %s",
+  async (mode) => {
+    const fixture = await createControlledInterruptFixture({
+      name: "manual-goal-stop",
+      agentId: "00000000-0000-4000-8000-000000000498",
+      turnId: "goal-stop-turn",
+      interrupt: async (session) => {
+        session.pushEvent({
+          type: "turn_completed",
+          provider: session.provider,
+          turnId: "goal-stop-turn",
+        });
+      },
+    });
+    let goal: AgentGoal = {
+      threadId: "thread",
+      objective: "Finish",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const goals = new CodexGoals({
+      request: async (method) => {
+        if (method === "thread/goal/set") {
+          if (mode === "pause failure") throw new Error("Goal pause unavailable");
+          goal = { ...goal, status: "paused", updatedAt: 2 };
+        }
+        return { goal };
+      },
+      onChange: () => {},
+    });
+    goals.bind("thread");
+    Object.defineProperty(fixture.session, "goals", { value: goals });
+    try {
+      if (mode !== "idle") await fixture.startForegroundRun();
+      const stop = fixture.manager.cancelAgentRun(fixture.agentId, { reason: "manual" });
+      if (mode === "pause failure") await expect(stop).rejects.toThrow("Goal pause unavailable");
+      else {
+        await stop;
+        expect(goal.status).toBe("paused");
+      }
+      if (mode !== "idle") expect(fixture.session.interruptCalled).toBe(true);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);

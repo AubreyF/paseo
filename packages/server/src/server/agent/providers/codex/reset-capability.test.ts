@@ -40,3 +40,23 @@ test("unverified runtimes cannot send a redemption request", async () => {
   ).rejects.toMatchObject({ code: "unavailable" });
   expect(calls).toBe(0);
 });
+
+test("credit selection requires an advertised string creditId", () => {
+  const base = schema();
+  expect(supportsResetRedemption(base, true)).toBe(false);
+  const withCredit = (type: unknown) => ({
+    ...base,
+    definitions: {
+      Consume: {
+        required: ["idempotencyKey"],
+        properties: {
+          idempotencyKey: { type: "string" },
+          creditId: { type },
+        },
+      },
+    },
+  });
+  expect(supportsResetRedemption(withCredit("string"), true)).toBe(true);
+  expect(supportsResetRedemption(withCredit(["string", "null"]), true)).toBe(true);
+  expect(supportsResetRedemption(withCredit("number"), true)).toBe(false);
+});

@@ -1,5 +1,9 @@
+import { WorkspaceGoalBadge } from "@/goals/workspace-goal-badge";
+import { WorkspaceQueueCount } from "@/message-queue/workspace-queue-count";
+import { WorkspaceSubagentCount } from "@/subagents/workspace-count";
 import { useVortonTouch, VORTON_ACTION_SLOT } from "@/vorton-touch";
 import { useVortonMode } from "@/vorton-mode";
+import { useSidebarActionSize } from "./use-sidebar-action-size";
 import { memo, useMemo, useCallback, useState, type ReactNode } from "react";
 import { Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -129,6 +133,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
   const vorton = useVortonMode();
+  const actionSize = useSidebarActionSize();
   const inlineService = vorton ? selectWorkspaceServiceSummary(workspace.scripts) : null;
   // The workspace carries label names; their colors live in its host's catalog, so the row is
   // where the two meet — the meta line is handed finished definitions.
@@ -144,7 +149,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
 
   return (
     <View style={styles.workspaceRowContent}>
-      <View style={styles.workspaceRowMain}>
+      <View style={[styles.workspaceRowMain, vorton && styles.alignedRow]}>
         {leadingProjectName ? (
           <ProjectStatusIndicator
             iconDataUri={leadingProjectIconDataUri}
@@ -164,13 +169,33 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
           />
         )}
         <View style={styles.workspaceContentColumn}>
-          <View style={styles.workspaceTitleRow}>
+          <View style={[styles.workspaceTitleRow, vorton && styles.alignedRow]}>
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>
               {workspaceLabel}
             </Text>
-            <View style={sidebarWorkspaceRowStyles.rowRight}>
+            <View style={[sidebarWorkspaceRowStyles.rowRight, vorton && styles.alignedActions]}>
+              {vorton && inlineService ? (
+                <View style={[styles.serviceSlot, actionSize]}>
+                  <ServiceItem summary={inlineService} iconOnly />
+                </View>
+              ) : null}
               {children}
-              {inlineService && <ServiceItem summary={inlineService} iconOnly />}
+              {vorton && (
+                <>
+                  <WorkspaceQueueCount
+                    serverId={workspace.serverId}
+                    workspaceId={workspace.workspaceId}
+                  />
+                  <WorkspaceSubagentCount
+                    serverId={workspace.serverId}
+                    workspaceId={workspace.workspaceId}
+                  />
+                  <WorkspaceGoalBadge
+                    serverId={workspace.serverId}
+                    workspaceId={workspace.workspaceId}
+                  />
+                </>
+              )}
             </View>
           </View>
           <WorkspaceMetaRow
@@ -410,14 +435,16 @@ export function SidebarWorkspaceTrailingActionSlot({
   reserveWidth: boolean;
   children: ReactNode;
 }) {
+  const actionSize = useSidebarActionSize();
   return (
     <View
       dataSet={VORTON_ACTION_SLOT}
-      style={
+      style={[
         reserveWidth
           ? sidebarWorkspaceRowStyles.trailingActionSlotReserved
-          : sidebarWorkspaceRowStyles.trailingActionSlot
-      }
+          : sidebarWorkspaceRowStyles.trailingActionSlot,
+        actionSize && { minWidth: actionSize.width, minHeight: actionSize.height },
+      ]}
     >
       {children}
     </View>
@@ -457,6 +484,9 @@ export function SidebarWorkspaceTrailingActionOverlay({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  alignedRow: { alignItems: "center" },
+  alignedActions: { alignItems: "center", gap: 4 },
+  serviceSlot: { alignItems: "center", justifyContent: "center", flexShrink: 0 },
   workspaceRowContent: {
     position: "relative",
   },

@@ -16,6 +16,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   stop();
+  vi.unstubAllGlobals();
   document.head.innerHTML = "";
 });
 function legacyMetadata() {
@@ -24,6 +25,23 @@ function legacyMetadata() {
   );
 }
 describe("Vorton Home Screen metadata", () => {
+  it.each([
+    ["Mac PWA", "Macintosh", "MacIntel", 0, true, false],
+    ["Mac trackpad PWA", "Macintosh", "MacIntel", 1, true, false],
+    ["iPhone Home Screen", "iPhone", "iPhone", 5, true, true],
+    ["iPad desktop identity", "Macintosh", "MacIntel", 5, true, true],
+    ["iPhone browser tab", "iPhone", "iPhone", 5, false, false],
+    ["Android PWA", "Android", "Linux", 5, true, false],
+  ])(
+    "limits status-bar spacing to iOS Home Screen apps: %s",
+    (_name, userAgent, platform, maxTouchPoints, standalone, expected) => {
+      vi.stubGlobal("navigator", { userAgent, platform, maxTouchPoints, standalone });
+      stop = applyVortonWeb(true, maxTouchPoints > 0);
+      expect(document.documentElement.dataset.vortonIosStandalone).toBe(String(expected));
+      stop();
+      expect(document.documentElement.dataset.vortonIosStandalone).toBeUndefined();
+    },
+  );
   it("preserves baseline Paseo installation metadata", () => {
     stop = applyVortonWeb(false, true);
     expect(legacyMetadata()).toHaveLength(2);

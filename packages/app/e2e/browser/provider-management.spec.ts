@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { Locator } from "@playwright/test";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
@@ -40,6 +41,20 @@ for (const width of [1280, 402]) {
       await expect(
         page.getByTestId("host-page-providers-card").getByTestId("add-codex-account"),
       ).toHaveCount(0);
+      for (const id of ["claude", "codex", "copilot", "opencode", "pi", "omp"]) {
+        await expect(page.getByTestId(`provider-rename-${id}`)).toHaveCount(0);
+        await expect(page.getByTestId(`provider-remove-${id}`)).toHaveCount(0);
+      }
+      await expect(page.getByTestId("catalog-provider-codex")).toContainText(
+        "Add another Codex account to switch between accounts.",
+      );
+      const codexAdd = page.getByTestId("add-codex-account");
+      const otherAdd = page.locator('[data-testid^="install-provider-"]').first();
+      await expect(otherAdd).toBeVisible();
+      const codexBox = await codexAdd.boundingBox();
+      const otherBox = await otherAdd.boundingBox();
+      expect(codexBox?.width).toBe(otherBox?.width);
+      expect(codexBox?.height).toBe(otherBox?.height);
       await page.getByTestId("provider-catalog-search").fill("CoDeX");
       for (const suffix of ["one", "two"]) {
         const name = `Search account ${width} ${suffix}`;
@@ -58,6 +73,30 @@ for (const width of [1280, 402]) {
         const [id, provider] = entry;
         createdIds.push(id);
         await expect(page.getByTestId("catalog-provider-codex")).toBeVisible();
+        const controls = [
+          page.getByTestId(`provider-rename-${id}`),
+          page.getByTestId(`provider-remove-${id}`),
+          page.getByTestId(`provider-connect-${id}`),
+          page.getByRole("switch", { name: `Enable ${name}`, exact: true }),
+        ];
+        const boxes: NonNullable<Awaited<ReturnType<Locator["boundingBox"]>>>[] = [];
+        for (const control of controls) {
+          await expect(control).toBeVisible();
+          const box = await control.boundingBox();
+          if (!box) throw new Error("Missing provider control bounds");
+          boxes.push(box);
+        }
+        const gaps = boxes
+          .slice(1)
+          .map((box, index) => box.x - boxes[index].x - boxes[index].width);
+        expect(gaps[0]).toBeGreaterThan(0);
+        for (const gap of gaps) expect(gap).toBeCloseTo(gaps[0], 0);
+        for (const action of ["rename", "remove", "connect"]) {
+          await expect(page.getByTestId(`provider-${action}-${id}-outline`)).toHaveCSS(
+            "border-top-style",
+            "solid",
+          );
+        }
         await page.getByTestId(`provider-rename-${id}`).click();
         await page.getByTestId("provider-rename-dialog-input").fill(`Renamed ${name}`);
         await page.getByTestId("provider-rename-dialog-submit").click();

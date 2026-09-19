@@ -7647,7 +7647,7 @@ export class CodexAppServerAgentClient implements AgentClient {
         "Configure an explicit CODEX_HOME for this provider before managing account resets.",
       );
     }
-    const canRedeem = await probeResetRedemption(
+    const { canRedeem, canSelectCredit } = await probeResetRedemption(
       await resolveCodexLaunchPrefix(this.runtimeSettings),
       this.runtimeSettings,
     );
@@ -7656,7 +7656,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     try {
       await client.request("initialize", buildCodexAppServerInitializeParams());
       client.notify("initialized", {});
-      return new CodexResetCreditSession(client, canRedeem);
+      return new CodexResetCreditSession(client, canRedeem, canSelectCredit);
     } catch (error) {
       await client.dispose();
       throw error;

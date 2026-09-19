@@ -2169,6 +2169,8 @@ export const en = {
     },
     about: {
       vortonUpdates: {
+        confirmedCurrent: "You're up to date",
+        checkComplete: "Check complete",
         title: "Vorton updates",
         notice: "Vorton update available",
         review: "Review update",

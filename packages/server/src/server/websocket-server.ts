@@ -1729,7 +1729,8 @@ export class VoiceAssistantWebSocketServer {
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
         // COMPAT(workspaceTitleSuggestions): added in v0.7.2, remove gate after 2027-03-10.
-        workspaceTitleSuggestions: this.workspaceAutoName.titleSuggestions.isAvailable(),
+        // Advertise RPC support independently of a cold provider catalog or changing settings.
+        workspaceTitleSuggestions: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
@@ -1815,6 +1816,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: true,
         providerResetManagement: true,
+        providerResetCreditSelection: true,
         codexAccountCreation: true,
         providerCredentialRemoval: true,
         providerAccountLogin: Object.values(

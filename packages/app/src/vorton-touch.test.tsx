@@ -12,6 +12,7 @@ vi.mock("@/hooks/use-form-preferences", () => ({
 }));
 import { useVortonTouch } from "./vorton-touch";
 import { useSidebarRowDensity } from "./components/sidebar/use-sidebar-row-density";
+import { useSidebarActionSize } from "./components/sidebar/use-sidebar-action-size";
 import { applyVortonWeb } from "./appearance/vorton-web.web";
 let change: () => void;
 const remove = vi.fn();
@@ -31,16 +32,64 @@ beforeEach(() => {
   }));
 });
 describe("Vorton touch gate", () => {
-  it("keeps compact sidebar rows dense while preserving desktop and wide touch sizing", () => {
+  it("uses the same action size across desktop, compact and wide touch rows", () => {
+    const { result, rerender } = renderHook(useSidebarActionSize);
+    expect(result.current).toBeUndefined();
+    state.enabled = true;
+    state.compact = true;
+    rerender();
+    expect(result.current).toEqual({ width: 44, height: 44, minWidth: 44, minHeight: 44 });
+    state.compact = false;
+    rerender();
+    expect(result.current).toEqual({ width: 44, height: 44, minWidth: 44, minHeight: 44 });
+    state.touch = false;
+    act(() => change());
+    expect(result.current).toEqual({ width: 24, height: 24, minWidth: 24, minHeight: 24 });
+    state.enabled = false;
+    rerender();
+    expect(result.current).toBeUndefined();
+  });
+
+  it("keeps Home Screen controls below the blur without changing browser or Paseo layout", () => {
+    const userAgent = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("iPhone");
+    const root = document.createElement("div");
+    root.id = "root";
+    document.body.append(root);
+    Object.defineProperty(navigator, "standalone", { configurable: true, value: true });
+    const stop = applyVortonWeb(true, true);
+    expect(getComputedStyle(root).paddingTop).toBe("16px");
+    expect(getComputedStyle(root).boxSizing).toBe("border-box");
+    stop();
+    const off = applyVortonWeb(false, true);
+    expect(getComputedStyle(root).paddingTop).toBe("");
+    off();
+    Object.defineProperty(navigator, "standalone", { configurable: true, value: false });
+    const browser = applyVortonWeb(true, true);
+    expect(getComputedStyle(root).paddingTop).toBe("");
+    browser();
+    expect(document.documentElement.hasAttribute("data-vorton-ios-standalone")).toBe(false);
+    Reflect.deleteProperty(navigator, "standalone");
+    userAgent.mockRestore();
+    root.remove();
+  });
+  it("enlarges the row hitbox for touch and narrow windows while preserving desktop density", () => {
     state.enabled = true;
     state.compact = true;
     const { result, rerender, unmount } = renderHook(useSidebarRowDensity);
-    expect(result.current?.minHeight).toBe(32);
+    expect(result.current?.minHeight).toBe(44);
+    expect(result.current?.marginBottom).toBe(2);
     state.compact = false;
     rerender();
     expect(result.current?.minHeight).toBe(44);
     state.touch = false;
     act(() => change());
+    expect(result.current?.minHeight).toBe(32);
+    state.compact = true;
+    rerender();
+    expect(result.current?.minHeight).toBe(44);
+    expect(result.current?.marginBottom).toBe(2);
+    state.compact = false;
+    rerender();
     expect(result.current?.minHeight).toBe(32);
     state.enabled = false;
     rerender();
@@ -48,9 +97,8 @@ describe("Vorton touch gate", () => {
     unmount();
   });
 
-  it("shrinks only compact sidebar rows and their action slots", () => {
+  it("keeps row and action hitboxes at least 44 pixels in the compact sidebar", () => {
     const list = document.createElement("div");
-    list.dataset.vortonCompactSidebarRows = "true";
     const row = document.createElement("button");
     const slot = document.createElement("div");
     slot.dataset.vortonActionSlot = "true";
@@ -61,12 +109,10 @@ describe("Vorton touch gate", () => {
     const toolbar = document.createElement("button");
     document.body.append(list, toolbar);
     const stop = applyVortonWeb(true, true);
-    expect(getComputedStyle(row).minHeight).toBe("32px");
-    expect(getComputedStyle(slot).minHeight).toBe("32px");
-    expect(getComputedStyle(action).minHeight).toBe("32px");
-    expect(getComputedStyle(toolbar).minHeight).toBe("44px");
-    list.dataset.vortonCompactSidebarRows = "false";
     expect(getComputedStyle(row).minHeight).toBe("44px");
+    expect(getComputedStyle(slot).minHeight).toBe("44px");
+    expect(getComputedStyle(action).minHeight).toBe("44px");
+    expect(getComputedStyle(toolbar).minHeight).toBe("44px");
     stop();
     list.remove();
     toolbar.remove();

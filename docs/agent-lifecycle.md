@@ -50,6 +50,17 @@ older cancellation from settling a newer turn. If interruption is rejected or ti
 keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
 Accepting new work after an ambiguous interruption would create a split-brain session.
 
+### Goal continuation
+
+Codex owns automatic goal continuation. An assistant reply saying it has stopped does not
+change native goal state, and its built-in `update_goal` tool cannot pause a goal.
+Agent-scoped Paseo tools expose `pause_goal` so an agent can honor a user's stop or handoff
+request before ending its turn. Pausing leaves the current turn available to finish the
+handoff. It also releases any queue-owned pause that would otherwise resume continuation.
+
+Natural-language stopping depends on the agent calling the tool. Use the goal card's pause
+control or `/goal pause` for a direct state change, including when Paseo tools are disabled.
+
 ## Relationships
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.
@@ -150,7 +161,7 @@ Running provider-native subagents contribute `running` to the workspace owned by
 
 ## The subagents track
 
-The track is a pill at the foot of an agent's pane (`packages/app/src/subagents/track.tsx`): a count you can read at a glance, and a panel behind it — a popover on wide screens, a sheet on compact ones — holding the rows. It floats over the transcript rather than sitting in a band above the composer, so the timeline scrolls underneath it; `packages/app/src/panels/agent-tracks.tsx` owns that placement, and the pill frame is shared with the task list in `packages/app/src/composer/tracks.tsx`.
+In Paseo mode, the subagents track is a pill above the composer that opens a popover on wide screens or a sheet on compact ones. In Vorton mode, the same rows and actions live in a card at the bottom of the scrolling conversation. Plugin pills come first, followed by agents, task progress, queued messages, and goals. Plugin pills scroll with the cards. The cards share their frame and header styles through `packages/app/src/agent-stream/task-card-styles.ts`. Provider-owned child timelines use the same scrolling agents card.
 
 The rows combine two kinds of children:
 

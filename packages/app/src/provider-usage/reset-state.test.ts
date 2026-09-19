@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { ProviderResetView } from "@getpaseo/protocol/provider-reset";
-import { currentResetPreparation, resetPresentation } from "./reset-state";
+import { currentResetPreparation, resetPresentation, selectableResetCredits } from "./reset-state";
 
 const view: ProviderResetView = {
   providerId: "primary",
@@ -146,4 +146,62 @@ test("spending the last reset hides the label but keeps its dialog open", () => 
   });
   expect(result.visible).toBe(true);
   expect(result.showBadge).toBe(false);
+});
+
+test("selection defaults to the earliest expiry and excludes unavailable credits", () => {
+  const credit = {
+    title: null,
+    description: null,
+    grantedAt: 1,
+    resetType: "full",
+    status: "available",
+  };
+  const current: ProviderResetView = {
+    ...view,
+    canSelectCredit: true,
+    snapshot: {
+      status: "available",
+      accountId: "first",
+      accountLabel: null,
+      availableCount: 3,
+      credits: [
+        { ...credit, id: "unknown", expiresAt: null },
+        { ...credit, id: "later", expiresAt: 300 },
+        { ...credit, id: "expired", expiresAt: 90 },
+        { ...credit, id: "used", expiresAt: 110, status: "redeemed" },
+        { ...credit, id: "first", expiresAt: 200 },
+      ],
+    },
+  };
+  expect(selectableResetCredits(current, 100000).map((entry) => entry.id)).toEqual([
+    "first",
+    "later",
+    "unknown",
+  ]);
+  expect(selectableResetCredits({ ...current, canSelectCredit: false }, 100000)).toEqual([]);
+});
+
+test("turning Vorton off hides an open confirmation without changing its prepared operation", () => {
+  const prepared: ProviderResetView = {
+    ...view,
+    operation: {
+      operationId: "00000000-0000-4000-8000-000000000001",
+      state: "prepared",
+      outcome: null,
+      credit: {
+        id: "selected",
+        title: "Full reset",
+        description: null,
+        grantedAt: 1,
+        expiresAt: null,
+        status: "available",
+        resetType: "full",
+      },
+    },
+  };
+  const input = { connected: true, open: true, current: prepared, displayed: prepared };
+  expect(resetPresentation({ ...input, supported: true }).visible).toBe(true);
+  expect(resetPresentation({ ...input, supported: false }).visible).toBe(false);
+  expect(currentResetPreparation(prepared, prepared)?.operation?.credit?.id).toBe("selected");
+  expect(resetPresentation({ ...input, supported: true }).visible).toBe(true);
 });

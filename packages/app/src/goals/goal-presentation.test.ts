@@ -1,3 +1,4 @@
+import { isGoalContinuationEnabled, goalStatusLabel } from "./goal-presentation";
 import { describe, expect, it } from "vitest";
 import type { AgentGoalState } from "@getpaseo/protocol/agent-goals";
 import { goalElapsedAt, formatGoalElapsed, goalQueryConfirmed } from "./goal-presentation";
@@ -42,4 +43,17 @@ it("requires a confirmed read after reconnect before enabling goal mutations", (
   expect(goalQueryConfirmed(false, false, new Error("disconnected"))).toBe(false);
   expect(goalQueryConfirmed(false, false, null)).toBe(true);
   expect(goalQueryConfirmed(true, false, null)).toBe(true);
+});
+
+it("offers Pause for a queue-held goal and Resume for a manual pause", () => {
+  const paused = {
+    ...state,
+    goal: { ...state.goal!, status: "paused" as const },
+    queueContinuationHeld: true,
+  };
+  expect(goalStatusLabel(paused)).toBe("Goal waiting for queue");
+  expect(isGoalContinuationEnabled(paused)).toBe(true);
+  const manual = { ...paused, queueContinuationHeld: false };
+  expect(goalStatusLabel(manual)).toBe("Goal paused");
+  expect(isGoalContinuationEnabled(manual)).toBe(false);
 });

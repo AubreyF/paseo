@@ -1,4 +1,11 @@
-import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
+import {
+  useCallback,
+  useMemo,
+  type ComponentProps,
+  type PropsWithChildren,
+  type ReactNode,
+} from "react";
+import { useSidebarActionSize } from "./use-sidebar-action-size";
 import { useTranslation } from "react-i18next";
 import { type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -256,6 +263,15 @@ export function SidebarWorkspaceMenu({
   open,
   onOpenChange,
 }: SidebarWorkspaceMenuProps) {
+  const actionSize = useSidebarActionSize();
+  const actionStyle = useCallback(
+    (state: PressableStateCallbackType & { hovered?: boolean }) => [
+      triggerStyle(state),
+      actionSize && styles.alignedTrigger,
+      actionSize,
+    ],
+    [actionSize],
+  );
   const { t } = useTranslation();
   const workspaceTarget = useMemo<WorkspaceLabelTarget | null>(
     () =>
@@ -266,8 +282,8 @@ export function SidebarWorkspaceMenu({
   return (
     <DropdownMenu compactMode="sheet" open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
-        hitSlop={8}
-        style={triggerStyle}
+        hitSlop={actionSize ? 0 : 8}
+        style={actionStyle}
         accessibilityRole={isWeb ? undefined : "button"}
         accessibilityLabel={t("sidebar.workspace.actions.menu")}
         testID={`sidebar-workspace-kebab-${workspaceKey}`}
@@ -426,6 +442,13 @@ function triggerStyle({ hovered = false }: PressableStateCallbackType & { hovere
 }
 
 const styles = StyleSheet.create((theme) => ({
+  alignedTrigger: {
+    marginLeft: 0,
+    marginRight: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
   trigger: {
     padding: 2,
     borderRadius: 4,

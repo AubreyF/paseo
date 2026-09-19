@@ -94,6 +94,7 @@ describe("ProviderCatalogSession", () => {
     const directory = await mkdtemp(join(tmpdir(), "paseo-reset-rpc-"));
     try {
       let mutations = 0;
+      let consumedCreditId: string | undefined;
       let failRead = false;
       const reset = new ProviderResetService({
         store: new ResetCreditStore(directory),
@@ -102,6 +103,7 @@ describe("ProviderCatalogSession", () => {
         getClient: () => ({
           openResetCreditSession: async () => ({
             canRedeem: true,
+            canSelectCredit: true,
             read: async () => {
               if (failRead) throw new Error("secret-provider-payload");
               return {
@@ -109,10 +111,21 @@ describe("ProviderCatalogSession", () => {
                 accountId: "first",
                 accountLabel: null,
                 availableCount: 2,
-                credits: null,
+                credits: [
+                  {
+                    id: "selected",
+                    title: "Full reset",
+                    description: null,
+                    grantedAt: 1,
+                    expiresAt: null,
+                    status: "available",
+                    resetType: "full",
+                  },
+                ],
               };
             },
-            consume: async () => {
+            consume: async (attempt) => {
+              consumedCreditId = attempt.creditId;
               mutations += 1;
               return "reset";
             },
@@ -132,6 +145,7 @@ describe("ProviderCatalogSession", () => {
         providerId: "codex",
         accountId: "first",
         requestId: "prepare",
+        creditId: "selected",
       });
       const operation = findByType(emitted, "provider.reset.prepare.response")?.payload.view
         .operation;
@@ -149,6 +163,7 @@ describe("ProviderCatalogSession", () => {
         outcome: "reset",
       });
       expect(mutations).toBe(1);
+      expect(consumedCreditId).toBe("selected");
       failRead = true;
       await subsystem.handleProviderResetRequest({
         type: "provider.reset.read.request",

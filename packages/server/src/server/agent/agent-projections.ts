@@ -1,3 +1,4 @@
+import { projectQueueGoalState } from "../message-queue/goal-hold.js";
 import type {
   AgentListItemPayload,
   AgentSnapshotPayload,
@@ -148,7 +149,9 @@ export function toAgentPayload(
         }
       : null,
     capabilities: cloneCapabilities(agent.capabilities),
-    ...(agent.goalState ? { goalState: agent.goalState } : {}),
+    ...(agent.goalState
+      ? { goalState: projectQueueGoalState(agent.goalState, agent.queueGoalHold) }
+      : {}),
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),
     features: normalizeFeatures(agent.features),

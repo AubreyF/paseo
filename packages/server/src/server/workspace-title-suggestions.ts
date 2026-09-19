@@ -8,7 +8,6 @@ import {
 } from "./agent/agent-response-loop.js";
 import {
   resolveStructuredGenerationProviders,
-  resolveStructuredGenerationProvidersFromEntries,
   type StructuredGenerationDaemonConfig,
 } from "./agent/structured-generation-providers.js";
 
@@ -38,15 +37,6 @@ export class WorkspaceTitleSuggestions {
   private readonly pending = new Map<string, Promise<string[]>>();
 
   constructor(private readonly options: Options) {}
-
-  isAvailable(): boolean {
-    return (
-      resolveStructuredGenerationProvidersFromEntries({
-        providerEntries: this.options.providerSnapshotManager.getSnapshot(),
-        daemonConfig: this.options.readDaemonConfig(),
-      }).length > 0
-    );
-  }
 
   async suggest(input: SuggestInput): Promise<string[]> {
     const existing = this.pending.get(input.workspaceId);
@@ -85,6 +75,11 @@ export class WorkspaceTitleSuggestions {
       providerSnapshotManager,
       daemonConfig: config,
     });
+    if (providers.length === 0) {
+      throw new WorkspaceTitleSuggestionError(
+        "No metadata model is available. Choose an available model in Metadata generation, then retry.",
+      );
+    }
     const result = await generateStructuredAgentResponseWithFallback({
       manager: agentManager,
       cwd: input.cwd,

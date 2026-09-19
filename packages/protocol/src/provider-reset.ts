@@ -39,6 +39,7 @@ export const ProviderResetOperationSchema = z.object({
   operationId: z.string().uuid(),
   state: z.enum(["prepared", "pending", "completed"]),
   outcome: ProviderResetOutcomeSchema.nullable(),
+  credit: ProviderResetCreditSchema.nullable().optional(),
 });
 
 export const ProviderResetViewSchema = z.object({
@@ -46,6 +47,7 @@ export const ProviderResetViewSchema = z.object({
   fetchedAt: z.string(),
   snapshot: ProviderResetSnapshotSchema,
   canRedeem: z.boolean(),
+  canSelectCredit: z.boolean().optional(),
   operation: ProviderResetOperationSchema.nullable(),
 });
 
@@ -70,6 +72,7 @@ export const ProviderResetPrepareRequestSchema = z.object({
   ...ResetRequestFields,
   type: z.literal("provider.reset.prepare.request"),
   accountId: z.string().min(1),
+  creditId: z.string().min(1).optional(),
 });
 export const ProviderResetConfirmRequestSchema = z.object({
   ...ResetRequestFields,

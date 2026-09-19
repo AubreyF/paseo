@@ -1,4 +1,7 @@
 import Constants from "expo-constants";
+import { useCallback } from "react";
+import { useStore } from "zustand";
+import { manualUpdateCheck } from "./manual-check";
 import { useFetchQuery } from "@/data/query";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useVortonMode } from "@/vorton-mode";
@@ -12,7 +15,8 @@ const CHECK_INTERVAL = 30 * 60 * 1000;
 export function useVortonUpdate(poll = false) {
   const vorton = useVortonMode();
   const { isLoading: preferencesLoading } = useFormPreferences();
-  return useFetchQuery({
+  const feedback = useStore(manualUpdateCheck.store);
+  const query = useFetchQuery({
     dataShape: "value",
     queryKey: ["vorton-update", VORTON_BUILD_COMMIT],
     queryFn: ({ signal }) => {
@@ -26,4 +30,15 @@ export function useVortonUpdate(poll = false) {
     refetchOnReconnect: true,
     retry: false,
   });
+  const { refetch } = query;
+  const checkNow = useCallback(() => {
+    if (preferencesLoading || !vorton || !VORTON_BUILD_COMMIT) return;
+    void manualUpdateCheck.check(async () => {
+      const result = await refetch({ cancelRefetch: false });
+      if (result.error) throw result.error;
+      if (!result.data) throw new Error("Update check returned no result.");
+      return result.data;
+    });
+  }, [preferencesLoading, vorton, refetch]);
+  return { ...query, checkNow, feedback };
 }

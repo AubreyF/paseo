@@ -1,5 +1,7 @@
+import { SidebarCountBadge } from "@/components/sidebar/sidebar-count-badge";
 import { useSidebarRowDensity } from "@/components/sidebar/use-sidebar-row-density";
 import { useVortonMode } from "@/vorton-mode";
+import { useSidebarActionSize } from "./sidebar/use-sidebar-action-size";
 import { DiffStat } from "@/components/diff-stat";
 import { aggregateProjectTasks, type ProjectTaskSummary } from "./sidebar/project-task-summary";
 import { useVortonTouch, VORTON_ACTION_SLOT } from "@/vorton-touch";
@@ -437,8 +439,8 @@ function ProjectRowTrailingActions({
   const vortonTouch = useVortonTouch();
   const vorton = useVortonMode();
   const persistActions = vorton && expanded;
-  const actionsVisible =
-    persistActions || isHovered || platformIsNative || isMobileBreakpoint || vortonTouch;
+  const menuVisible = isHovered || platformIsNative || isMobileBreakpoint || vortonTouch;
+  const actionsVisible = persistActions || menuVisible;
   return (
     <View style={[styles.projectTrailingActions, vorton && styles.projectTrailingActionsVorton]}>
       {worktreeTarget ? (
@@ -452,8 +454,8 @@ function ProjectRowTrailingActions({
       ) : null}
       {onRemoveProject ? (
         <View
-          style={!actionsVisible && styles.projectKebabButtonHidden}
-          pointerEvents={actionsVisible ? "auto" : "none"}
+          style={!menuVisible && styles.projectKebabButtonHidden}
+          pointerEvents={menuVisible ? "auto" : "none"}
         >
           <ProjectKebabMenu
             projectViewKey={projectViewKey}
@@ -497,11 +499,19 @@ function ProjectKebabMenu({
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const { t } = useTranslation();
+  const actionSize = useSidebarActionSize();
+  const actionStyle = useCallback(
+    (state: PressableStateCallbackType & { hovered?: boolean }) => [
+      projectKebabStyle(state),
+      actionSize,
+    ],
+    [actionSize],
+  );
   return (
     <DropdownMenu compactMode="sheet">
       <DropdownMenuTrigger
-        hitSlop={8}
-        style={projectKebabStyle}
+        hitSlop={actionSize ? 0 : 8}
+        style={actionStyle}
         accessibilityRole="button"
         accessibilityLabel={t("sidebar.project.actions.menu")}
         testID={`sidebar-project-kebab-${projectViewKey}`}
@@ -730,14 +740,16 @@ function NewWorktreeButton({
   const { t } = useTranslation();
   const touch = useVortonTouch();
   const newWorktreeKeys = useShortcutKeys("new-worktree");
+  const actionSize = useSidebarActionSize();
 
   const pressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.projectIconActionButton,
+      actionSize,
       !visible && styles.projectIconActionButtonHidden,
       (Boolean(hovered) || pressed) && !loading && styles.projectIconActionButtonHovered,
     ],
-    [visible, loading],
+    [visible, loading, actionSize],
   );
 
   const handlePress = useCallback(
@@ -751,7 +763,7 @@ function NewWorktreeButton({
   return (
     <View
       dataSet={VORTON_ACTION_SLOT}
-      style={styles.projectTrailingControlSlot}
+      style={[styles.projectTrailingControlSlot, actionSize]}
       pointerEvents={visible ? "auto" : "none"}
     >
       <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
@@ -875,11 +887,10 @@ function ProjectTaskSummaryView({
     <View style={styles.projectTaskSummary} testID={`sidebar-project-summary-${projectViewKey}`}>
       <DiffStat additions={summary.additions} deletions={summary.deletions} hideZero />
       {summary.count > 0 && (
-        <View style={styles.projectTaskCountBadge}>
-          <Text style={styles.projectTaskCount} accessibilityLabel={`${summary.count} open tasks`}>
-            {summary.count}
-          </Text>
-        </View>
+        <SidebarCountBadge
+          label={String(summary.count)}
+          accessibilityLabel={`${summary.count} open tasks`}
+        />
       )}
     </View>
   );
@@ -2176,8 +2187,6 @@ function ProjectModeList({
 }) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
-  const compact = useIsCompactFormFactor();
-  const rowDataSet = useMemo(() => ({ vortonCompactSidebarRows: String(compact) }), [compact]);
   const creatingWorkspaceTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
@@ -2522,7 +2531,7 @@ function ProjectModeList({
   );
 
   return (
-    <View style={styles.container} dataSet={rowDataSet}>
+    <View style={styles.container}>
       {platformIsNative ? (
         <NestableScrollContainer
           {...nativeScrollGestureProps}
@@ -2708,20 +2717,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     flexShrink: 0,
   },
-  projectTaskCountBadge: {
-    backgroundColor: theme.colors.surface2,
-    borderRadius: theme.borderRadius.md,
-    minWidth: 20,
-    paddingHorizontal: theme.spacing[1],
-    alignItems: "center",
-  },
-  projectTaskCount: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
   projectTrailingActionsVorton: {
     flexDirection: "row-reverse",
     marginRight: 0,
+    gap: 4,
   },
   projectTrailingActions: {
     flexDirection: "row",

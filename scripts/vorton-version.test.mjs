@@ -67,3 +67,47 @@ test("commit versions advance once, preserve staging, and synchronize lock metad
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("merge versions advance beyond both parents and remain stable across preparation", () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "vorton-merge-version-"));
+  const run = (bin, args) => execFileSync(bin, args, { cwd, encoding: "utf8", stdio: "pipe" });
+  const git = (...args) => run("git", args);
+  const writeVersion = (version) => {
+    writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({ name: "root", version, workspaces: [] }),
+    );
+    writeFileSync(
+      path.join(cwd, "package-lock.json"),
+      JSON.stringify({ version, packages: { "": { version } } }),
+    );
+  };
+  const version = () => JSON.parse(readFileSync(path.join(cwd, "package.json"), "utf8")).version;
+  try {
+    git("init", "-b", "task");
+    git("config", "user.name", "Version test");
+    git("config", "user.email", "version@example.invalid");
+    git("config", "core.hooksPath", "/dev/null");
+    writeVersion("0.7.2-vorton.11");
+    git("add", ".");
+    git("commit", "-m", "task fixture");
+    git("checkout", "-b", "incoming");
+    writeVersion("0.7.2-vorton.23");
+    git("add", ".");
+    git("commit", "-m", "incoming fixture");
+    git("checkout", "task");
+    git("merge", "--no-ff", "--no-commit", "incoming");
+    run(process.execPath, [script]);
+    assert.equal(version(), "0.7.2-vorton.24");
+    git("add", ".");
+    run(process.execPath, [script, "--hook"]);
+    run(process.execPath, [script, "--check"]);
+    assert.equal(version(), "0.7.2-vorton.24");
+    assert.equal(
+      JSON.parse(readFileSync(path.join(cwd, "package-lock.json"), "utf8")).version,
+      version(),
+    );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

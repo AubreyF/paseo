@@ -580,7 +580,7 @@ export class ProviderCatalogSession {
             type: "provider.reset.prepare.response",
             payload: {
               requestId: msg.requestId,
-              view: await service.prepare(msg.providerId, msg.accountId),
+              view: await service.prepare(msg.providerId, msg.accountId, msg.creditId),
             },
           });
           break;

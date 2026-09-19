@@ -33,6 +33,7 @@ export function DraggableList<T>({
   gestureHostPresented,
   waitFor,
   onDragBegin: onDragBeginProp,
+  onDragRelease,
   nestable = false,
 }: DraggableListProps<T>) {
   const { theme } = useUnistyles();
@@ -79,7 +80,8 @@ export function DraggableList<T>({
 
   const handleRelease = useCallback(() => {
     setIsDragging(false);
-  }, []);
+    onDragRelease?.();
+  }, [onDragRelease]);
 
   const showRefreshControl = Boolean(onRefresh) && (!isDragging || Boolean(refreshing));
   const resolvedContainerStyle =

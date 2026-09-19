@@ -12,6 +12,7 @@ export interface AlertProps {
   icon?: ReactNode;
   children?: ReactNode;
   testID?: string;
+  tinted?: boolean;
 }
 
 const VARIANT_ICON: Record<Exclude<AlertVariant, "default">, LucideIcon> = {
@@ -28,14 +29,20 @@ export function Alert({
   icon,
   children,
   testID,
+  tinted = false,
 }: AlertProps) {
   const { theme } = useUnistyles();
   const accentColor = resolveAccentColor(variant, theme);
   const borderColor = variant === "success" ? theme.colors.border : accentColor;
 
   const containerStyle = useMemo(
-    () => [styles.container, borderColor ? { borderColor } : null],
-    [borderColor],
+    () => [
+      styles.container,
+      borderColor ? { borderColor } : null,
+      // Resolve alpha from the color value, not stylesheet CSS-variable tokens on web.
+      tinted && accentColor ? { backgroundColor: `${accentColor}14` } : null,
+    ],
+    [borderColor, tinted, accentColor],
   );
 
   const titleStyle = useMemo(

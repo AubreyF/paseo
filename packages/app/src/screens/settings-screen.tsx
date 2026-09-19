@@ -96,6 +96,7 @@ import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater"
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { VortonUpdatesSection } from "@/vorton-updates/section";
 import { resolveAppVersion } from "@/utils/app-version";
+import { useVortonUpdate } from "@/vorton-updates/use-update";
 import { useAppDiagnosticStore } from "@/diagnostics/store";
 import { settingsStyles } from "@/styles/settings";
 import { THINKING_TONE_NATIVE_PCM_BASE64 } from "@/utils/thinking-tone.native-pcm";
@@ -1050,7 +1051,11 @@ function SettingsSidebar({
   layout,
 }: SettingsSidebarProps) {
   const vorton = useVortonMode();
-  const openAbout = useCallback(() => onSelectSection("about"), [onSelectSection]);
+  const { checkNow } = useVortonUpdate();
+  const openAbout = useCallback(() => {
+    checkNow();
+    onSelectSection("about");
+  }, [onSelectSection, checkNow]);
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const hosts = useHosts();

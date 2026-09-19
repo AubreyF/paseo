@@ -15,6 +15,7 @@ import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useVortonMode } from "@/vorton-mode";
 import { buildUpdatePrompt, VORTON_REPOSITORY, type VortonUpdate } from "./check";
 import { useVortonUpdate, VORTON_BUILD_COMMIT } from "./use-update";
+import { UpdateSuccessBadge } from "./success-badge";
 
 function statusText(update: VortonUpdate | undefined, t: TFunction): string {
   if (!update) return t("settings.about.vortonUpdates.idle");
@@ -27,10 +28,8 @@ export function VortonUpdatesSection() {
   const { t } = useTranslation();
   const update = useVortonUpdate();
   const router = useRouter();
-  const { refetch } = update;
-  const check = useCallback(() => {
-    void refetch();
-  }, [refetch]);
+  const checking = update.isFetching || update.feedback.phase === "checking";
+  const showSuccess = update.feedback.phase === "success" && !update.isFetching;
   const help = useCallback(() => {
     const draftId = generateDraftId();
     useDraftStore.getState().saveDraftInput({
@@ -52,7 +51,7 @@ export function VortonUpdatesSection() {
   if (!vorton || preferencesLoading) return null;
   let message = statusText(update.data, t);
   if (!VORTON_BUILD_COMMIT) message = t("settings.about.vortonUpdates.unknown");
-  else if (update.isFetching) message = t("settings.about.vortonUpdates.checking");
+  else if (checking) message = t("settings.about.vortonUpdates.checking");
   else if (update.isError)
     message = t("settings.about.vortonUpdates.failed", { error: update.error.message });
   return (
@@ -80,11 +79,12 @@ export function VortonUpdatesSection() {
           <Button
             variant="outline"
             size="md"
-            onPress={check}
-            disabled={!VORTON_BUILD_COMMIT || update.isFetching}
+            onPress={update.checkNow}
+            loading={checking}
+            disabled={!VORTON_BUILD_COMMIT}
             testID="vorton-check-update"
           >
-            {t("settings.about.vortonUpdates.check")}
+            {t(`settings.about.vortonUpdates.${checking ? "checking" : "check"}`)}
           </Button>
           <Button variant="outline" size="md" onPress={changes}>
             {t("settings.about.vortonUpdates.changes")}
@@ -93,7 +93,26 @@ export function VortonUpdatesSection() {
             {t("settings.about.vortonUpdates.help")}
           </Button>
         </View>
-        <Text style={styles.hint}>{t("settings.about.vortonUpdates.instructions")}</Text>
+        <View style={styles.hintArea} testID="vorton-update-feedback-area">
+          {/* Keep the instructions in layout so feedback never moves the card or buttons. */}
+          <Text
+            style={[styles.hint, showSuccess && styles.hiddenHint]}
+            accessibilityElementsHidden={showSuccess}
+            importantForAccessibility={showSuccess ? "no-hide-descendants" : "auto"}
+            testID="vorton-update-instructions"
+          >
+            {t("settings.about.vortonUpdates.instructions")}
+          </Text>
+          {showSuccess && (
+            <View style={styles.feedbackOverlay} pointerEvents="none">
+              <UpdateSuccessBadge
+                label={t(
+                  `settings.about.vortonUpdates.${update.feedback.result?.status === "current" ? "confirmedCurrent" : "checkComplete"}`,
+                )}
+              />
+            </View>
+          )}
+        </View>
       </View>
     </SettingsSection>
   );
@@ -110,7 +129,23 @@ const styles = StyleSheet.create((theme) => ({
   hint: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
+  },
+  hiddenHint: {
+    opacity: 0,
+  },
+  hintArea: {
     paddingHorizontal: theme.spacing[4],
     paddingBottom: theme.spacing[4],
+  },
+  feedbackOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    paddingHorizontal: theme.spacing[4],
+    paddingBottom: theme.spacing[4],
+    justifyContent: "center",
+    alignItems: "flex-start",
   },
 }));

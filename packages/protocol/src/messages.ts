@@ -3521,6 +3521,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
         providerResetManagement: z.boolean().optional(),
+        providerResetCreditSelection: z.boolean().optional(),
         providerAccountLogin: z.boolean().optional(),
         codexAccountCreation: z.boolean().optional(),
         providerCredentialRemoval: z.boolean().optional(),

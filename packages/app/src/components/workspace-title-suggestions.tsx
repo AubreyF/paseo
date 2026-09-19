@@ -3,6 +3,7 @@ import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFetchQuery } from "@/data/query";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useHostFeature } from "@/runtime/host-features";
@@ -24,9 +25,13 @@ export function WorkspaceTitleSuggestions(props: Props) {
   const supported = useHostFeature(props.workspace.serverId, "workspaceTitleSuggestions");
   if (!supported) {
     return (
-      <Text style={styles.hint}>
-        Title suggestions require an updated host with a metadata provider configured.
-      </Text>
+      <Alert
+        variant="warning"
+        tinted
+        title="Title suggestions unavailable"
+        description="Reconnect to refresh the host's capabilities. If suggestions remain unavailable, update the host and choose an available model in Metadata generation."
+        testID="workspace-title-warning"
+      />
     );
   }
   return <AvailableSuggestions {...props} />;
@@ -87,11 +92,13 @@ function AvailableSuggestions({ workspace, onSelect, disabled }: Props) {
           </View>
         ) : null}
         {showError ? (
-          <View style={styles.status}>
-            <Text style={styles.error} accessibilityRole="alert">
-              {suggestions.error.message}
-            </Text>
-          </View>
+          <Alert
+            variant="warning"
+            tinted
+            title="Could not generate title suggestions"
+            description={suggestions.error.message}
+            testID="workspace-title-warning"
+          />
         ) : null}
         {showTitles
           ? suggestions.data?.map((title) => (
@@ -128,9 +135,8 @@ const styles = StyleSheet.create((theme) => ({
   body: { marginVertical: theme.spacing[3] },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   hint: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
-  error: { color: theme.colors.palette.red[300], fontSize: theme.fontSize.sm },
-  // Loading, errors and all three two-line titles occupy the same space.
-  slots: { height: Math.max(32, theme.fontSize.base * 2 + 4) * 3 },
+  // Reserve room for three titles, but allow long warnings to wrap at larger text sizes.
+  slots: { minHeight: Math.max(32, theme.fontSize.base * 2 + 4) * 3 },
   status: { flex: 1, alignItems: "center", justifyContent: "center", gap: theme.spacing[2] },
   suggestion: {
     justifyContent: "flex-start",

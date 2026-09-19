@@ -5971,7 +5971,7 @@ test.each(["read", "prepare", "confirm"] as const)(
         pending = client.readProviderReset("second");
         break;
       case "prepare":
-        pending = client.prepareProviderReset("second", "account-second");
+        pending = client.prepareProviderReset("second", "account-second", "credit-selected");
         break;
       case "confirm":
         pending = client.confirmProviderReset(
@@ -5985,6 +5985,7 @@ test.each(["read", "prepare", "confirm"] as const)(
     expect(sent.message.type).toBe(`provider.reset.${operation}.request`);
     expect(sent.message.providerId).toBe("second");
     if (operation !== "read") expect(sent.message.accountId).toBe("account-second");
+    if (operation === "prepare") expect(sent.message.creditId).toBe("credit-selected");
     if (operation === "confirm")
       expect(sent.message.operationId).toBe("00000000-0000-4000-8000-000000000001");
     const view = {

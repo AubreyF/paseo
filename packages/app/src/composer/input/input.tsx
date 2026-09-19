@@ -667,6 +667,7 @@ interface ComposerTextSurfaceProps {
   placeholder: string;
   accessibilityLabel: string;
   onChangeText: (text: string) => void;
+  onExternalTextChange: () => void;
   onFocus: () => void;
   onBlur: () => void;
   editable: boolean;
@@ -703,6 +704,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         dataSet={COMPOSER_INPUT_DATASET}
         initialValue={props.value}
         onChangeText={props.onChangeText}
+        onExternalTextChange={props.onExternalTextChange}
         placeholder={props.placeholder}
         accessibilityLabel={props.accessibilityLabel}
         onFocus={props.onFocus}
@@ -1293,7 +1295,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       readOnly,
       isSubmitLoading,
     });
-    const submitModifier = useSubmitModifier(showSubmitModifiers);
+    const { modifier: submitModifier, reset: resetSubmitModifier } =
+      useSubmitModifier(showSubmitModifiers);
     const isNewlineAction = submitModifier === "newline";
 
     const { height: windowHeight } = useWindowDimensions();
@@ -2041,6 +2044,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               placeholder={placeholder ?? t("composer.placeholders.fallback")}
               accessibilityLabel={t(mode.accessibilityLabelKey)}
               onChangeText={handleInputChange}
+              onExternalTextChange={resetSubmitModifier}
               onFocus={handleInputFocus}
               onBlur={handleInputBlur}
               editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}

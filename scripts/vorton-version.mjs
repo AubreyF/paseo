@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
@@ -13,7 +13,6 @@ const before = pattern.exec(previous);
 const current = pattern.exec(root.version);
 if (!before || !current) throw new Error("Expected a stable base or a Vorton version.");
 const base = current.slice(1, 4).join(".");
-const oldBase = before.slice(1, 4).join(".");
 const baseComparison = current
   .slice(1, 4)
   .map(Number)
@@ -24,7 +23,31 @@ if (
 ) {
   throw new Error("The upstream base cannot decrease. Revert code under a newer Vorton version.");
 }
-const counter = base === oldBase ? Number(before[4] ?? 0) + 1 : 1;
+// Read both parents during a merge so preparation and hook retries produce the
+// same version without lowering the incoming branch's counter.
+const mergeHeadPath = git("rev-parse", "--git-path", "MERGE_HEAD");
+const parentVersions = [before];
+if (existsSync(mergeHeadPath)) {
+  for (const head of readFileSync(mergeHeadPath, "utf8").trim().split(/\s+/)) {
+    const version = JSON.parse(git("show", `${head}:package.json`)).version;
+    const parsed = pattern.exec(version);
+    if (!parsed) throw new Error("Expected a stable base or a Vorton version in merge parent.");
+    const difference = parsed
+      .slice(1, 4)
+      .findIndex((part, i) => Number(part) !== Number(current[i + 1]));
+    if (difference !== -1 && Number(parsed[difference + 1]) > Number(current[difference + 1])) {
+      throw new Error("The upstream base cannot decrease below a merge parent.");
+    }
+    parentVersions.push(parsed);
+  }
+}
+const counter =
+  Math.max(
+    0,
+    ...parentVersions
+      .filter((parent) => parent.slice(1, 4).join(".") === base)
+      .map((parent) => Number(parent[4] ?? 0)),
+  ) + 1;
 if (!Number.isSafeInteger(counter)) throw new Error("Vorton counter exceeds safe integer range.");
 const next = `${base}-vorton.${counter}`;
 const files = [

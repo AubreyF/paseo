@@ -134,7 +134,8 @@ export function ProviderCatalogList({
   const { entries: catalogEntries } = useAcpProviderCatalog();
   const { entries: providerEntries } = useProvidersSnapshot(serverId);
   const [search, setSearch] = useState("");
-  const showCodex = vortonMode && "codex openai".includes(search.trim().toLowerCase());
+  const showCodex =
+    vortonMode && "codex openai chatgpt account".includes(search.trim().toLowerCase());
 
   const installedIds = useMemo(
     () => new Set(providerEntries?.map((entry) => entry.provider) ?? []),
@@ -180,9 +181,9 @@ export function ProviderCatalogList({
                 <CodexIcon size={PROVIDER_REMOTE_ICON_SIZE} uniProps={foregroundColorMapping} />
               </View>
               <View style={styles.textColumn}>
-                <Text style={styles.name}>Codex</Text>
+                <Text style={styles.name}>Codex (ChatGPT account)</Text>
                 <Text style={styles.description}>
-                  Add another Codex account to switch between accounts.
+                  Sign in with ChatGPT to add a separate Codex account
                 </Text>
               </View>
               <AddCodexAccountButton serverId={serverId} catalog style={styles.actionButton} />

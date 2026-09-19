@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { openAccountForm, type CreatedCodexAccount } from "./account-form";
+import {
+  openAccountForm,
+  suggestedCodexAccountName,
+  type CreatedCodexAccount,
+} from "./account-form";
 
 it("validates names and does not submit twice while creation is pending", async () => {
   let resolve: (account: CreatedCodexAccount) => void = () => {};
@@ -59,4 +63,40 @@ it("closing an editor prevents late completions from notifying an unmounted form
   finish({ providerId: "work", name: "Work" });
   await pending;
   expect(model.getState().phase).toBe("creating");
+});
+
+it("numbers enabled additional Codex accounts independently of built-ins and other providers", () => {
+  expect(suggestedCodexAccountName({})).toBe("Codex 1");
+  expect(
+    suggestedCodexAccountName({
+      codex: { enabled: true },
+      work: { extends: "codex", label: "Work", enabled: true },
+      personal: { extends: "codex", label: "Personal" },
+      retired: { extends: "codex", label: "Retired", enabled: false },
+      claude: { enabled: true },
+    }),
+  ).toBe("Codex 3");
+});
+
+it("skips names reserved by enabled or disabled Codex accounts", () => {
+  expect(
+    suggestedCodexAccountName({
+      first: { extends: "codex", label: "Codex 2" },
+      retired: { extends: "codex", label: " codex 3 ", enabled: false },
+    }),
+  ).toBe("Codex 4");
+});
+
+it("submits the suggested name without requiring an edit", async () => {
+  const model = openAccountForm("suggested", {
+    initialName: "Codex 3",
+    async create(providerId, name) {
+      return { providerId, name };
+    },
+  });
+  await model.submit();
+  expect(model.getState()).toEqual({
+    phase: "created",
+    account: { providerId: "suggested", name: "Codex 3" },
+  });
 });

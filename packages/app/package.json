@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.7.2-vorton.25",
+  "version": "0.7.2-vorton.26",
   "private": true,
   "main": "index.ts",
   "scripts": {

@@ -100,7 +100,11 @@ export class MessageQueueService {
     return { attachment, ...location };
   }
 
-  async mutate(agentId: string, operation: QueueOperation): Promise<QueueSnapshot> {
+  async mutate(
+    agentId: string,
+    operation: QueueOperation,
+    beforeCommit?: () => Promise<void>,
+  ): Promise<QueueSnapshot> {
     await this.initialize();
     const generation = this.stopGenerations.get(agentId) ?? 0;
     const pauseRequested = operation.kind === "pause" && operation.paused;
@@ -109,7 +113,7 @@ export class MessageQueueService {
     try {
       if (operation.kind === "enqueue" || operation.kind === "edit")
         await this.attachments.capture(operation.attachments);
-      snapshot = await this.store.mutate(agentId, operation);
+      snapshot = await this.store.mutate(agentId, operation, beforeCommit);
     } catch (error) {
       releaseSuspension?.();
       this.wake(agentId);

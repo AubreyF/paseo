@@ -10,6 +10,8 @@ import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
+import { TaskOwnerEvidenceStore } from "../authorization/task-owner-evidence.js";
+import { createPaseoToolCatalog } from "./tools/paseo-tools.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -60,6 +62,51 @@ import { readPaseoWorktreeMetadata } from "../../utils/worktree-metadata.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
 
 const REPO_CWD = resolvePath("/tmp/repo");
+
+it("retrieves owner evidence through a task-bound tool without exposing another task", async () => {
+  const logger = createTestLogger();
+  const root = await mkdtemp(join(tmpdir(), "task-evidence-tool-"));
+  try {
+    const store = new TaskOwnerEvidenceStore(root);
+    const source = { principalId: "owner", clientId: "device", taskId: "task-a" };
+    await store.record({ ...source, messageId: "grant", text: "Merge PR 42 after review" });
+    await store.record({ ...source, messageId: "revoke", text: "Do not merge PR 42" });
+    await store.record({
+      ...source,
+      taskId: "task-b",
+      messageId: "other",
+      text: "Private other task",
+    });
+    const { agentManager, agentStorage } = createTestDeps();
+    const options = {
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+      paseoHome: root,
+    };
+    const catalog = createPaseoToolCatalog({ ...options, callerAgentId: "task-a" });
+    const first = await catalog.executeTool("read_task_owner_evidence", {
+      limit: 1,
+      taskId: "task-b",
+    });
+    expect(first.structuredContent).toMatchObject({
+      taskId: "task-a",
+      receipts: [{ sequence: 1, text: "Merge PR 42 after review" }],
+      latestSequence: 2,
+      nextAfterSequence: 1,
+    });
+    const restored = createPaseoToolCatalog({ ...options, callerAgentId: "task-a" });
+    const second = await restored.executeTool("read_task_owner_evidence", { afterSequence: 1 });
+    expect(second.structuredContent).toMatchObject({
+      receipts: [{ sequence: 2, text: "Do not merge PR 42" }],
+      nextAfterSequence: null,
+    });
+    expect(createPaseoToolCatalog(options).tools.has("read_task_owner_evidence")).toBe(false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 const TARGET_CWD = resolvePath("/tmp/target");
 const BROWSER_WORKSPACE_ID = "wks_browser_tools";
 

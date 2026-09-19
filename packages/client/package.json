@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/client",
-  "version": "0.7.2-vorton.26",
+  "version": "0.7.2-vorton.28",
   "description": "Paseo client SDK package",
   "files": [
     "dist",
@@ -39,8 +39,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@getpaseo/protocol": "0.7.2-vorton.26",
-    "@getpaseo/relay": "0.7.2-vorton.26",
+    "@getpaseo/protocol": "0.7.2-vorton.28",
+    "@getpaseo/relay": "0.7.2-vorton.28",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -10,9 +10,17 @@ import { runResumeCommand } from "./resume.js";
 import { runDeleteCommand } from "./delete.js";
 import { runRunOnceCommand } from "./run-once.js";
 import { runUpdateCommand } from "./update.js";
+import { runQuotaCommand } from "./quota.js";
 
 export function createScheduleCommand(): Command {
   const schedule = new Command("schedule").description("Manage recurring schedules");
+
+  addJsonAndDaemonHostOptions(
+    schedule
+      .command("quota")
+      .description("Inspect authenticated quota evidence for a schedule account")
+      .requiredOption("--provider <provider>", "Configured provider account to inspect"),
+  ).action(withOutput(runQuotaCommand));
 
   addJsonAndDaemonHostOptions(
     schedule

@@ -6,6 +6,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { expect, test, type Page } from "../support/fixtures";
 import { seedMockAgentWorkspace, openAgentRoute } from "../support/helpers/mock-agent";
+import { expectAgentTabActive } from "../support/helpers/launcher";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 
 async function setMode(page: Page, vortonMode: boolean) {
@@ -37,8 +38,9 @@ test("agents, tasks, plugin pills, queue and goals share the scrolling footer", 
   const pluginId = "scrolling-cards-test";
   const previous = await client.getDaemonConfig();
   try {
+    const childIds: string[] = [];
     for (let i = 0; i < 5; i++) {
-      await agent.client.createAgent({
+      const child = await agent.client.createAgent({
         provider: "mock",
         cwd: agent.cwd,
         workspaceId: agent.workspaceId,
@@ -47,6 +49,7 @@ test("agents, tasks, plugin pills, queue and goals share the scrolling footer", 
         model: "e2e-fast-stream",
         labels: { [PARENT_AGENT_ID_LABEL]: agent.agentId },
       });
+      childIds.push(child.id);
     }
     await client.mutateMessageQueue(agent.agentId, {
       kind: "pause",
@@ -95,6 +98,7 @@ export default function contribute(client) {
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(pluginDirectory);
     await openAgentRoute(page, agent);
+    await setMode(page, true);
     const stack = page.getByTestId("agent-history-task-cards");
     const ids = [
       "subagents-card",
@@ -108,6 +112,7 @@ export default function contribute(client) {
     await expect(page.getByTestId("subagents-track-header")).toHaveCount(0);
     await expect(page.getByTestId("agent-task-list-header")).toHaveCount(0);
     await expect(stack).toContainText("stress-update-1");
+    await expect(stack).toContainText("Queued after progress");
 
     for (const width of [1400, 390]) {
       await page.setViewportSize({ width, height: 650 });
@@ -181,9 +186,10 @@ export default function contribute(client) {
     await pill.click();
     await expect(pill).toHaveCount(0);
     await stack.getByRole("button", { name: "Card child 0", exact: true }).click();
+    await expectAgentTabActive(page, childIds[0]);
     await expect(
-      page.getByTestId("agent-history-task-cards").filter({ visible: true }),
-    ).not.toContainText("Queued after progress");
+      page.getByText("Queued after progress", { exact: true }).filter({ visible: true }),
+    ).toHaveCount(0);
   } finally {
     await client.removePlugin(pluginId).catch(() => {});
     await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false });

@@ -59,6 +59,7 @@ import {
   AgentGoalClearResponseSchema,
 } from "./agent-goals.js";
 import { QuotaReservePolicySchema, QuotaReserveLaunchPolicySchema } from "./quota-reserve.js";
+import { QuotaObservationSchema } from "./quota-governor.js";
 import {
   ProviderResetReadRequestSchema,
   ProviderResetPrepareRequestSchema,
@@ -1739,6 +1740,21 @@ export const ProviderUsageListRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ProviderQuotaObservationRequestMessageSchema = z.object({
+  type: z.literal("provider.quota.get_observation.request"),
+  providerId: AgentProviderSchema,
+  requestId: z.string(),
+});
+
+export const ProviderQuotaObservationResponseMessageSchema = z.object({
+  type: z.literal("provider.quota.get_observation.response"),
+  payload: z.object({
+    requestId: z.string(),
+    providerId: AgentProviderSchema,
+    observation: QuotaObservationSchema,
+  }),
+});
+
 export const ResumeAgentRequestMessageSchema = z.object({
   type: z.literal("resume_agent_request"),
   handle: AgentPersistenceHandleSchema,
@@ -3111,6 +3127,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
   ProviderUsageListRequestMessageSchema,
+  ProviderQuotaObservationRequestMessageSchema,
   ProviderResetReadRequestSchema,
   ProviderResetPrepareRequestSchema,
   ProviderResetConfirmRequestSchema,
@@ -3417,6 +3434,13 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(workspaceTitleSuggestions): added in v0.7.2, remove gate after 2027-03-10.
         workspaceTitleSuggestions: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
+        // COMPAT(providerQuotaObservation): added in v0.7.2, remove gate after 2027-03-14.
+        providerQuotaObservation: z.boolean().optional(),
+        // COMPAT(scheduleConfigurationRevision): added in v0.7.2, remove gate after 2027-03-14.
+        scheduleConfigurationRevision: z.boolean().optional(),
+        // COMPAT(scheduleQuotaPolicy): added in v0.7.2; retain while policy-unaware hosts are supported.
+        scheduleQuotaPolicy: z.boolean().optional(),
+        estimatedHourlyQuota: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
@@ -6620,6 +6644,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
+  ProviderQuotaObservationResponseMessageSchema,
   CodexAccountCreateResponseSchema,
   ProviderPreviewRemovalResponseSchema,
   ProviderRemoveResponseSchema,

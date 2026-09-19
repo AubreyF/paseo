@@ -66,7 +66,9 @@ export default defineConfig({
   // Unbundled, the same imports go through the resolver below and land on the web files.
   optimizeDeps: {
     include: ["react/jsx-runtime"],
-    exclude: ["react-native-reanimated"],
+    // Expo also needs platform-aware resolution; the optimizer otherwise selects
+    // native JSX and requireNativeModule instead of its browser entry points.
+    exclude: ["react-native-reanimated", "expo-router", "expo-modules-core"],
   },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for
   // the package excluded above.

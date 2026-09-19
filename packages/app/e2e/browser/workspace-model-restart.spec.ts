@@ -335,6 +335,7 @@ async function seedBrowserForDaemon(page: Page, input: { serverId: string; port:
     {
       daemon: host,
       preferences: {
+        vortonMode: false,
         provider: "codex",
         providerPreferences: {
           codex: {

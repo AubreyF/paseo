@@ -133,6 +133,11 @@ test("shared queue survives reload and synchronizes a second device with Vorton 
       await expect(row.getByRole("button", { name: "Send queued message now" })).toHaveCount(0);
       await expect(row.getByRole("button", { name: "Queued message actions" })).toHaveCount(0);
       await expect(row).toContainText("queued-photo.png");
+      const save = row.getByRole("button", { name: "Save", exact: true });
+      await expect(save).toBeDisabled();
+      await input.fill("Unsaved queue edit");
+      await expect(save).toBeEnabled();
+      await expect(row.getByText("Draft saved on this device", { exact: true })).toBeVisible();
       for (const name of ["Cancel", "Save"]) {
         const button = row.getByRole("button", { name, exact: true });
         await expect(button).toHaveCSS("height", `${height}px`);
@@ -182,15 +187,20 @@ test("shared queue survives reload and synchronizes a second device with Vorton 
     for (const target of [page, other]) {
       const card = target.getByTestId("shared-message-queue");
       await card.scrollIntoViewIfNeeded();
-      const heading = await card.getByText("Message queue", { exact: true }).boundingBox();
-      const icon = await card
-        .getByTestId("message-queue-pause-resume")
-        .locator("svg")
-        .boundingBox();
-      expect(heading).not.toBeNull();
-      expect(icon).not.toBeNull();
+      const heading = card.getByText("Message queue", { exact: true });
+      const icon = card.getByTestId("message-queue-pause-resume").locator("svg");
+      await expect(heading).toBeVisible();
+      await expect(icon).toBeVisible();
+      // Streaming can move the card between browser calls; measure both in one frame.
+      const offset = await heading.evaluate(
+        (label, glyph) => {
+          if (!glyph) throw new Error("Queue control icon is missing");
+          return glyph.getBoundingClientRect().y - label.getBoundingClientRect().y;
+        },
+        await icon.elementHandle(),
+      );
       // Text glyphs sit below the line box; align icons with the visible letters.
-      expect(Math.abs(icon!.y - heading!.y - 3)).toBeLessThanOrEqual(1);
+      expect(Math.abs(offset - 3)).toBeLessThanOrEqual(1);
     }
     for (const target of [page, other]) {
       for (const variant of ["circle"]) {

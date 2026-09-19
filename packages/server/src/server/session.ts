@@ -238,6 +238,7 @@ import {
 } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import type { ProviderUsageService } from "../services/quota-fetcher/service.js";
+import type { ProviderQuotaObservationService } from "../services/quota-fetcher/governor-service.js";
 import type { ProviderResetService } from "../services/quota-fetcher/reset-service.js";
 import {
   summarizeFetchWorkspacesEntries,
@@ -266,6 +267,7 @@ import {
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { SessionAuthorization, type DaemonPermission } from "./authorization/index.js";
+import { TaskOwnerEvidenceStore } from "./authorization/task-owner-evidence.js";
 
 function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
@@ -457,6 +459,8 @@ type AgentMcpTransportFactory = () => Promise<unknown>;
 export interface SessionOptions {
   messageQueue?: MessageQueueService;
   clientId: string;
+  /** From authenticated transport admission, never client request data. */
+  principalId?: string | null;
   permissions: readonly DaemonPermission[];
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
@@ -524,6 +528,7 @@ export interface SessionOptions {
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
+  providerQuotaObservationService?: Pick<ProviderQuotaObservationService, "read">;
   providerResetService?: ProviderResetService;
   providerLoginService?: ProviderLoginService;
   hubExecutionAgents?: HubExecutionAgents;
@@ -665,6 +670,8 @@ function workspaceLabelErrorCode(error: unknown): string {
 export class Session {
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
+  private readonly ownerEvidence: TaskOwnerEvidenceStore;
+  private readonly principalId: string | null | undefined;
   private appVersion: string | null;
   private clientCapabilities: ReadonlySet<ClientCapability>;
   private readonly sessionId: string;
@@ -806,6 +813,7 @@ export class Session {
       terminalManager,
       providerSnapshotManager,
       providerUsageService,
+      providerQuotaObservationService,
       providerResetService,
       providerLoginService,
       serviceProxy,
@@ -829,6 +837,8 @@ export class Session {
     this.queueDownloadTokens = downloadTokenStore;
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
+    this.principalId = options.principalId;
+    this.ownerEvidence = new TaskOwnerEvidenceStore(paseoHome);
     this.appVersion = appVersion ?? null;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
     this.sessionId = uuidv4();
@@ -967,6 +977,7 @@ export class Session {
       },
       providerSnapshotManager,
       providerUsageService,
+      providerQuotaObservationService,
       providerResetService,
       providerLoginService,
       logger: this.sessionLogger,
@@ -2730,6 +2741,8 @@ export class Session {
         return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
       case "provider.usage.list.request":
         return this.providerCatalogSession.handleProviderUsageListRequest(msg);
+      case "provider.quota.get_observation.request":
+        return this.providerCatalogSession.handleProviderQuotaObservationRequest(msg);
       case "provider.login.read.request":
       case "provider.login.start.request":
       case "provider.login.cancel.request":
@@ -3647,10 +3660,16 @@ export class Session {
       }`,
     );
 
-    const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
-    const prompt = buildAgentPrompt(promptText, images, attachments);
-
     try {
+      await this.ownerEvidence.record({
+        taskId: agentId,
+        principalId: this.principalId,
+        clientId: this.clientId,
+        messageId: messageId ?? uuidv4(),
+        text,
+      });
+      const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
+      const prompt = buildAgentPrompt(promptText, images, attachments);
       await sendPromptToAgent({
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
@@ -3748,8 +3767,17 @@ export class Session {
         {
           kind: "session",
           config: resolvedIntent.config,
-          onCreated: ({ agentId }) => {
+          onCreated: async ({ agentId }) => {
             createdAgentId = agentId;
+            if (initialPrompt && !msg.callerAgentId) {
+              await this.ownerEvidence.record({
+                taskId: agentId,
+                principalId: this.principalId,
+                clientId: this.clientId,
+                messageId: clientMessageId ?? requestId ?? uuidv4(),
+                text: initialPrompt,
+              });
+            }
           },
           workspaceId: resolvedIntent.intent.workspaceId,
           worktreeName,
@@ -4485,7 +4513,19 @@ export class Session {
       }
       const snapshot =
         msg.type === "agent.queue.mutate.request"
-          ? await this.messageQueue.mutate(msg.agentId, msg.operation)
+          ? await this.messageQueue.mutate(msg.agentId, msg.operation, () =>
+              this.ownerEvidence.record({
+                taskId: msg.agentId,
+                principalId: this.principalId,
+                clientId: this.clientId,
+                messageId: `queue:${msg.operation.operationId}`,
+                text:
+                  msg.operation.kind === "enqueue" || msg.operation.kind === "edit"
+                    ? msg.operation.text
+                    : "",
+                queueOperation: msg.operation,
+              }),
+            )
           : await this.messageQueue.read(msg.agentId);
       this.emit({
         type: responseType[msg.type],
@@ -7773,6 +7813,13 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
+      await this.ownerEvidence.record({
+        taskId: agentId,
+        principalId: this.principalId,
+        clientId: this.clientId,
+        messageId: msg.messageId ?? msg.requestId,
+        text: msg.text,
+      });
       const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
       this.sessionLogger.trace(
         {

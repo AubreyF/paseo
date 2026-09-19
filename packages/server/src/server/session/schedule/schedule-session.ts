@@ -226,6 +226,9 @@ export class ScheduleSession {
     try {
       const schedule = await this.scheduleService.update({
         id: request.scheduleId,
+        ...(request.expectedConfigurationRevision !== undefined
+          ? { expectedConfigurationRevision: request.expectedConfigurationRevision }
+          : {}),
         ...(request.name !== undefined ? { name: request.name } : {}),
         ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
         ...(request.cadence !== undefined ? { cadence: request.cadence } : {}),

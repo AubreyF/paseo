@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -40,6 +40,7 @@ import {
   type ScheduleServiceOptions,
 } from "./service.js";
 import { ScheduleStore } from "./store.js";
+import { QuotaSchedulePreflight } from "./quota-preflight.js";
 import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
@@ -313,6 +314,92 @@ describe("ScheduleService", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  test("configuration revisions reject concurrent stale edits without lifecycle churn", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "done" }),
+    });
+    const created = await service.create({
+      prompt: "Review",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "codex", cwd: tempDir } },
+    });
+    expect(created.configurationRevision).toEqual(expect.any(String));
+    await service.tick();
+    expect((await service.inspect(created.id)).configurationRevision).toBe(
+      created.configurationRevision,
+    );
+    const edits = await Promise.allSettled([
+      service.update({
+        id: created.id,
+        expectedConfigurationRevision: created.configurationRevision,
+        name: "First",
+      }),
+      service.update({
+        id: created.id,
+        expectedConfigurationRevision: created.configurationRevision,
+        name: "Second",
+      }),
+    ]);
+    expect(edits[0].status).toBe("fulfilled");
+    expect(edits[1].status).toBe("rejected");
+    const saved = await service.inspect(created.id);
+    expect(saved.name).toBe("First");
+    expect(saved.configurationRevision).not.toBe(created.configurationRevision);
+    // Old clients retain partial-update semantics and do not erase new fields.
+    await service.update({ id: created.id, maxRuns: 10 });
+    const latest = await service.inspect(created.id);
+    expect(latest.name).toBe("First");
+    expect(latest.configurationRevision).not.toBe(saved.configurationRevision);
+    await expect(
+      service.update({ id: created.id, expectedConfigurationRevision: null, name: "Legacy" }),
+    ).rejects.toThrow("configuration changed");
+  });
+
+  test("configuration revisions migrate legacy records and fence edits after replacement", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+    const input = {
+      name: "Legacy",
+      prompt: "Review",
+      cadence: { type: "every" as const, everyMs: 60_000 },
+      target: { type: "new-agent" as const, config: { provider: "codex", cwd: tempDir } },
+    };
+    const created = await service.create(input);
+    const legacy = { ...created };
+    delete legacy.configurationRevision;
+    await writeFile(join(tempDir, "schedules", `${created.id}.json`), JSON.stringify(legacy));
+    expect((await service.inspect(created.id)).configurationRevision).toBeUndefined();
+    const migrated = await service.update({
+      id: created.id,
+      expectedConfigurationRevision: null,
+      prompt: "Migrated",
+    });
+    expect(migrated.configurationRevision).toEqual(expect.any(String));
+    const replaced = await service.createOrReplace({ ...input, prompt: "Replaced" });
+    expect(replaced.id).toBe(created.id);
+    expect(replaced.configurationRevision).not.toBe(migrated.configurationRevision);
+    await expect(
+      service.update({
+        id: created.id,
+        expectedConfigurationRevision: migrated.configurationRevision,
+        prompt: "Stale",
+      }),
+    ).rejects.toThrow("configuration changed");
+    expect((await service.inspect(created.id)).prompt).toBe("Replaced");
+  });
+
   test("ticks due schedules and records run history on disk", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,
@@ -351,6 +438,496 @@ describe("ScheduleService", () => {
     });
     expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
   });
+
+  test("protected quota deferrals preserve the occurrence and maxRuns across restart", async () => {
+    const runner = vi.fn(async () => ({ agentId: null, output: "must not run" }));
+    const createWorkspace = vi.fn(async () => {
+      throw new Error("Must not create a workspace");
+    });
+    const options = {
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner,
+      createDirectoryWorkspace: createWorkspace,
+    };
+    const service = createScheduleService(options);
+    const quotaPolicy = {
+      version: 1 as const,
+      account: { issuer: "openai", accountId: "account" },
+      requiredWindows: [{ bucketId: "codex", windowId: "primary", durationMinutes: 10080 }],
+      launchFloorPercent: 30,
+      freezeFloorPercent: 25,
+      maxObservationAgeSeconds: 120,
+      consumptionLimits: [],
+      recovery: "automatic_after_reconciliation" as const,
+    };
+    const created = await service.create({
+      name: "Preparation fixture",
+      prompt: "Factory",
+      cadence: { type: "every", everyMs: 60000 },
+      maxRuns: 1,
+      target: {
+        type: "new-agent",
+        config: { provider: "codex-secondary", cwd: tempDir, quotaPolicy },
+      },
+    });
+    await service.tick();
+    await service.tick();
+    expect(await service.inspect(created.id)).toMatchObject({
+      status: "active",
+      runs: [],
+      nextRunAt: created.nextRunAt,
+      quotaState: { state: "held", reason: "governor_unavailable" },
+    });
+    const readObservation = vi.fn(async () => ({
+      status: "available" as const,
+      account: quotaPolicy.account,
+      observedAt: now.toISOString(),
+      windows: [
+        {
+          ...quotaPolicy.requiredWindows[0]!,
+          usedPercent: 80,
+          resetsAt: null,
+          semantics: "unknown" as const,
+        },
+      ],
+      consumptionMeters: [],
+    }));
+    const quotaRunner = new QuotaSchedulePreflight({ readObservation, nowMs: () => now.getTime() });
+    const reopened = createScheduleService({ ...options, quotaRunner });
+    await reopened.start();
+    await reopened.stop();
+    await reopened.tick();
+    expect(readObservation).toHaveBeenCalledExactlyOnceWith("codex-secondary");
+    expect(await reopened.inspect(created.id)).toMatchObject({
+      status: "active",
+      runs: [],
+      nextRunAt: created.nextRunAt,
+      quotaState: { state: "held", reason: "freeze_floor" },
+    });
+    expect(runner).not.toHaveBeenCalled();
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
+  test.each(["pending", "deleted"])(
+    "does not admit a stale tick while deletion is %s",
+    async (stage) => {
+      const prepare = vi.fn(async () => ({ kind: "deferred" as const, reason: "fixture" }));
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        quotaRunner: { prepare },
+      });
+      const created = await service.create({
+        prompt: "Protected deletion race",
+        cadence: { type: "every", everyMs: 60000 },
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "codex-secondary",
+            cwd: tempDir,
+            quotaPolicy: {
+              version: 1,
+              account: { issuer: "openai", accountId: "account" },
+              requiredWindows: [{ bucketId: "codex", windowId: "primary", durationMinutes: 10080 }],
+              launchFloorPercent: 30,
+              freezeFloorPercent: 25,
+              maxObservationAgeSeconds: 120,
+              consumptionLimits: [],
+              recovery: "automatic_after_reconciliation",
+            },
+          },
+        },
+      });
+      let releaseList!: () => void;
+      let listed!: () => void;
+      const listEntered = new Promise<void>((resolve) => {
+        listed = resolve;
+      });
+      const listGate = new Promise<void>((resolve) => {
+        releaseList = resolve;
+      });
+      const originalList = ScheduleStore.prototype.list;
+      vi.spyOn(ScheduleStore.prototype, "list").mockImplementationOnce(async function () {
+        const snapshot = await originalList.call(this);
+        listed();
+        await listGate;
+        return snapshot;
+      });
+      const tick = service.tick();
+      await listEntered;
+      let releaseDelete!: () => void;
+      let deletionStarted!: () => void;
+      const deleteEntered = new Promise<void>((resolve) => {
+        deletionStarted = resolve;
+      });
+      const deleteGate = new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      });
+      const originalDelete = ScheduleStore.prototype.delete;
+      if (stage === "pending") {
+        vi.spyOn(ScheduleStore.prototype, "delete").mockImplementationOnce(
+          async function (id, guard) {
+            deletionStarted();
+            await deleteGate;
+            return originalDelete.call(this, id, guard);
+          },
+        );
+      }
+      const deletion = service.delete(created.id);
+      if (stage === "pending") await deleteEntered;
+      else await deletion;
+      const refused = expect(tick).rejects.toThrow(
+        stage === "pending" ? "deletion is pending" : "changed before admission",
+      );
+      releaseList();
+      await refused;
+      releaseDelete();
+      await deletion;
+      expect(prepare).not.toHaveBeenCalled();
+      expect(await new ScheduleStore(join(tempDir, "schedules")).get(created.id)).toBeNull();
+    },
+  );
+
+  test.each(
+    [false, true].flatMap((inherited) =>
+      [false, true].map((workflow) => ({ inherited, workflow })),
+    ),
+  )(
+    "resumes governed custody after freeze and restart (inherited=$inherited, workflow=$workflow)",
+    async ({ inherited, workflow }) => {
+      const ordinary = vi.fn(async () => ({ agentId: null, output: "ordinary" }));
+      let frozen = false;
+      let executionAttempts = 0;
+      const initialBindingId = workflow ? "11111111-1111-4111-8111-111111111111" : "reservation";
+      let bindingId = initialBindingId;
+      const binding = () => ({
+        account: { issuer: "openai", accountId: "account" },
+        ...(workflow ? { workflowId: bindingId } : { reservationId: bindingId }),
+      });
+      const bindingKey = workflow ? "workflowBinding" : "governorBinding";
+      let expireDuringPrepare = false;
+      const governed = vi.fn(
+        async (
+          _schedule: StoredSchedule,
+          _runId: string,
+        ): Promise<ScheduleExecutionResult | { state: "frozen"; reason: string }> => {
+          executionAttempts++;
+          if (executionAttempts === 2) throw new Error("Execution outcome unknown");
+          if (!frozen) {
+            frozen = true;
+            return { state: "frozen", reason: "weekly_floor" };
+          }
+          return { agentId: null, output: "governed" };
+        },
+      );
+      const service: ScheduleService = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: ordinary,
+        quotaRunner: {
+          reconcilePreparation: async () => "resume",
+          prepare: async (schedule) => {
+            if (expireDuringPrepare)
+              await service.update({ id: schedule.id, expiresAt: now.toISOString() });
+            return {
+              kind: "ready",
+              freezeBeforeDispatch: async () => {},
+              binding: binding(),
+              run: governed,
+              resumeRunId: schedule.runs.find((run) => run.status === "running")?.id,
+            };
+          },
+        },
+      });
+      const created = await service.create({
+        prompt: "Factory",
+        cadence: { type: "every", everyMs: 60000 },
+        maxRuns: 1,
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "codex-secondary",
+            cwd: tempDir,
+            quotaPolicy: {
+              version: 1,
+              account: { issuer: "openai", accountId: "account" },
+              requiredWindows: [{ bucketId: "codex", windowId: "primary", durationMinutes: 10080 }],
+              launchFloorPercent: 30,
+              freezeFloorPercent: 25,
+              maxObservationAgeSeconds: 120,
+              consumptionLimits: [],
+              recovery: "automatic_after_reconciliation",
+            },
+          },
+        },
+      });
+      await service.tick();
+      expect(governed).toHaveBeenCalledTimes(1);
+      const held = await service.inspect(created.id);
+      expect(held).toMatchObject({
+        status: "active",
+        nextRunAt: created.nextRunAt,
+        runs: [{ status: "running", quotaState: { state: "frozen", reason: "weekly_floor" } }],
+      });
+      expect(held.runs[0]?.[bindingKey]).toEqual(binding());
+      expect(held.runs[0]?.[workflow ? "governorBinding" : "workflowBinding"]).toBeUndefined();
+      const store = new ScheduleStore(join(tempDir, "schedules"));
+      await store.update(created.id, (record) => {
+        const updated = structuredClone(record);
+        for (const run of updated.runs)
+          Object.assign(run, {
+            governorBinding: { account: binding().account, reservationId: "reservation" },
+            workflowBinding: {
+              account: binding().account,
+              workflowId: "11111111-1111-4111-8111-111111111111",
+            },
+          });
+        return updated;
+      });
+      await expect(service.tick()).rejects.toThrow("Ambiguous protected execution binding");
+      expect(governed).toHaveBeenCalledTimes(1);
+      await store.update(created.id, (record) => {
+        const updated = structuredClone(record);
+        for (const run of updated.runs) {
+          delete run.governorBinding;
+          delete run.workflowBinding;
+          Object.assign(run, { [bindingKey]: binding() });
+        }
+        return updated;
+      });
+      if (inherited) {
+        // Model a persisted inherited policy: protection belongs to the run,
+        // even when the editable schedule has no explicit quota policy.
+        await new ScheduleStore(join(tempDir, "schedules")).update(created.id, (record) => {
+          if (record.target.type !== "new-agent") throw new Error("Expected new-agent target");
+          const config = { ...record.target.config };
+          delete config.quotaPolicy;
+          return { ...record, target: { ...record.target, config } };
+        });
+      }
+      await expect(service.delete(created.id)).rejects.toThrow("Reconcile");
+      await service.update({ id: created.id, expiresAt: now.toISOString() });
+      await service.tick();
+      expect(governed).toHaveBeenCalledTimes(1);
+      expect(await service.inspect(created.id)).toMatchObject({
+        status: "active",
+        quotaState: { state: "held", reason: "schedule_expired" },
+        runs: [{ status: "running" }],
+      });
+      await service.update({ id: created.id, expiresAt: null });
+      bindingId = workflow ? "22222222-2222-4222-8222-222222222222" : "wrong-reservation";
+      await expect(service.tick()).rejects.toThrow("execution binding");
+      expect(governed).toHaveBeenCalledTimes(1);
+      bindingId = initialBindingId;
+      expect((await service.inspect(created.id)).runs[0]?.[bindingKey]).toEqual(binding());
+      expireDuringPrepare = true;
+      await service.tick();
+      expect(governed).toHaveBeenCalledTimes(1);
+      expect((await service.inspect(created.id)).runs[0]).toMatchObject({
+        status: "running",
+        [bindingKey]: binding(),
+        quotaState: { state: "frozen", reason: "schedule_expired" },
+      });
+      expireDuringPrepare = false;
+      await service.update({ id: created.id, expiresAt: null });
+      await expect(
+        service.update({ id: created.id, newAgentConfig: { provider: "another-account" } }),
+      ).rejects.toThrow("Reconcile");
+      await expect(service.update({ id: created.id, prompt: "Different work" })).rejects.toThrow(
+        "Reconcile",
+      );
+      await expect(
+        service.update({ id: created.id, cadence: { type: "every", everyMs: 300000 } }),
+      ).rejects.toThrow("Reconcile");
+      await service.start();
+      await service.stop();
+      await service.tick();
+      expect(governed).toHaveBeenCalledTimes(2);
+      expect(await service.inspect(created.id)).toMatchObject({
+        status: "active",
+        runs: [
+          {
+            status: "running",
+            quotaState: { state: "reconciliation_required" },
+          },
+        ],
+      });
+      await service.tick();
+      expect(governed).toHaveBeenCalledTimes(3);
+      expect(governed.mock.calls[0][1]).toBe(governed.mock.calls[1][1]);
+      expect(ordinary).not.toHaveBeenCalled();
+      expect(await service.inspect(created.id)).toMatchObject({
+        status: "completed",
+        runs: [{ status: "succeeded", output: "governed" }],
+      });
+    },
+  );
+
+  test.each(["binding", "append"])(
+    "retains failed %s preparation across restart and transfers the reconciled attempt into its run",
+    async (failureStage) => {
+      const account = { issuer: "openai", accountId: "account" };
+      const attempts: string[] = [];
+      let outcome: "held" | "resume" = "held";
+      let invalid = true;
+      let freezes = 0;
+      let runs = 0;
+      const primary = new Error("fixture cleanup failed");
+      let service!: ScheduleService;
+      const options = {
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: async () => {
+          throw new Error("Ordinary runner forbidden");
+        },
+        quotaRunner: {
+          reconcilePreparation: async () => outcome,
+          prepare: async (candidate: StoredSchedule, scheduledFor: string) => {
+            const marker = candidate.governorPreparation;
+            if (!marker) throw new Error("Missing durable attempt");
+            expect(
+              (await new ScheduleStore(join(tempDir, "schedules")).get(candidate.id))
+                ?.governorPreparation,
+            ).toEqual(marker);
+            expect(scheduledFor).toBe(marker.scheduledFor);
+            attempts.push(marker.id);
+            if (invalid && failureStage === "append")
+              await service.update({ id: candidate.id, expiresAt: now.toISOString() });
+            return {
+              kind: "ready" as const,
+              binding: {
+                account:
+                  invalid && failureStage === "binding"
+                    ? { ...account, accountId: "wrong" }
+                    : account,
+                reservationId: "reservation",
+              },
+              freezeBeforeDispatch: async () => {
+                freezes++;
+                throw primary;
+              },
+              run: async (current: StoredSchedule, runId: string) => {
+                runs++;
+                expect(current.governorPreparation).toBeUndefined();
+                expect(current.runs.find((run) => run.id === runId)?.governorPreparationId).toBe(
+                  marker.id,
+                );
+                return { state: "frozen" as const, reason: "fixture" };
+              },
+            };
+          },
+        },
+      };
+      service = createScheduleService(options);
+      const created = await service.create({
+        name: "Preparation fixture",
+        prompt: "Factory",
+        cadence: { type: "every", everyMs: 60000 },
+        maxRuns: 1,
+        target: {
+          type: "new-agent",
+          config: {
+            provider: "codex-secondary",
+            cwd: tempDir,
+            quotaPolicy: {
+              version: 1,
+              account,
+              requiredWindows: [{ bucketId: "codex", windowId: "primary", durationMinutes: 10080 }],
+              launchFloorPercent: 30,
+              freezeFloorPercent: 25,
+              maxObservationAgeSeconds: 120,
+              consumptionLimits: [],
+              recovery: "automatic_after_reconciliation",
+            },
+          },
+        },
+      });
+      let failure: unknown;
+      try {
+        await service.tick();
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(AggregateError);
+      const errors = (failure as AggregateError).errors;
+      expect(errors[0].message).toBe(
+        failureStage === "binding"
+          ? "Prepared quota account does not match the schedule."
+          : "Schedule changed during admission.",
+      );
+      expect(errors[1]).toBe(primary);
+      const retained = (await service.inspect(created.id)).governorPreparation;
+      expect(retained?.id).toBe(attempts[0]);
+      expect({ freezes, runs }).toEqual({ freezes: 1, runs: 0 });
+      await expect(service.delete(created.id)).rejects.toThrow("Reconcile");
+      await expect(
+        service.update({ id: created.id, newAgentConfig: { provider: "other" } }),
+      ).rejects.toThrow("Reconcile");
+      // Persisted preparation protects even a future inherited-policy record.
+      await new ScheduleStore(join(tempDir, "schedules")).update(created.id, (current) => {
+        if (current.target.type !== "new-agent") throw new Error("Expected target");
+        const config = { ...current.target.config };
+        delete config.quotaPolicy;
+        return { ...current, target: { ...current.target, config } };
+      });
+      const restarted = createScheduleService(options);
+      await restarted.update({ id: created.id, expiresAt: now.toISOString() });
+      await restarted.tick();
+      expect(attempts).toEqual([retained?.id]);
+      expect(await restarted.inspect(created.id)).toMatchObject({
+        status: "active",
+        governorPreparation: retained,
+        quotaState: { reason: "preparation_reconciliation_required" },
+        runs: [],
+      });
+      await expect(restarted.delete(created.id)).rejects.toThrow("Reconcile");
+      const pendingRecord = await restarted.inspect(created.id);
+      await expect(
+        restarted.createOrReplace({
+          name: pendingRecord.name,
+          prompt: "Replacement",
+          cadence: pendingRecord.cadence,
+          target: pendingRecord.target,
+        }),
+      ).rejects.toThrow("Reconcile");
+      await expect(restarted.update({ id: created.id, prompt: "Different" })).rejects.toThrow(
+        "Reconcile",
+      );
+      await restarted.update({ id: created.id, expiresAt: null });
+      outcome = "resume";
+      invalid = false;
+      await restarted.tick();
+      expect(attempts).toEqual([retained?.id, retained?.id]);
+      expect({ freezes, runs }).toEqual({ freezes: 1, runs: 1 });
+      expect(await restarted.inspect(created.id)).toMatchObject({
+        runs: [
+          {
+            status: "running",
+            governorBinding: { account, reservationId: "reservation" },
+            governorPreparationId: retained?.id,
+          },
+        ],
+      });
+      expect((await restarted.inspect(created.id)).governorPreparation).toBeUndefined();
+    },
+  );
 
   test("pause and resume update persisted schedule state", async () => {
     const service = createScheduleService({

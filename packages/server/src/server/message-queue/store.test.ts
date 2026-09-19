@@ -9,6 +9,34 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+it("refuses queue visibility when ingress evidence cannot be retained", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-queue-ingress-"));
+  roots.push(root);
+  const store = new MessageQueueStore(root);
+  const operation = {
+    kind: "enqueue" as const,
+    operationId: "add",
+    messageId: "message",
+    text: "Draft only",
+    attachments: [],
+  };
+  await expect(
+    store.mutate("agent", operation, async () => {
+      throw new Error("evidence unavailable");
+    }),
+  ).rejects.toThrow("evidence unavailable");
+  expect((await store.read("agent")).items).toEqual([]);
+  let calls = 0;
+  await store.mutate("agent", operation, async () => {
+    calls++;
+  });
+  await new MessageQueueStore(root).mutate("agent", operation, async () => {
+    throw new Error("replay must retain original attribution");
+  });
+  expect(calls).toBe(1);
+  expect((await store.read("agent")).items).toHaveLength(1);
+});
+
 it("reconciles an uncertain attempt only from provider identity and retains its captured content", async () => {
   const root = await mkdtemp(join(tmpdir(), "paseo-queue-evidence-"));
   roots.push(root);

@@ -398,6 +398,49 @@ test("mcp create exposes the created worktree before dispatching the initial pro
   }
 });
 
+test("failed asynchronous owner evidence persistence prevents initial prompt dispatch", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-owner-evidence-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const starts: unknown[] = [];
+  const agentManager = new AgentManager({
+    clients: createTestAgentClients({
+      onStartTurn: (prompt) => {
+        starts.push(prompt);
+      },
+    }),
+    registry: storage,
+    logger,
+  });
+  try {
+    await expect(
+      createAgentCommand(
+        {
+          agentManager,
+          agentStorage: storage,
+          logger,
+          providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        },
+        {
+          kind: "session",
+          config: { provider: "codex", cwd: workdir },
+          workspaceId: "workspace-evidence",
+          initialPrompt: "Implement the approved change",
+          labels: {},
+          firstAgentContext: { attachments: [] },
+          buildSessionConfig: async (config) => ({ sessionConfig: config }),
+          onCreated: async () => {
+            await Promise.resolve();
+            throw new Error("Owner evidence persistence failed");
+          },
+        },
+      ),
+    ).rejects.toThrow("Owner evidence persistence failed");
+    expect(starts).toEqual([]);
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
 test("session create keeps the prompt title after the initial prompt settles", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "create-agent-title-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

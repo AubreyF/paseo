@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { StyleSheet } from "react-native-unistyles";
-import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { useTranslation } from "react-i18next";
 import { DiffStat } from "@/components/diff-stat";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
@@ -77,7 +77,12 @@ export function WorkspaceDiffCounter({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  compactToolbar: { width: "auto", paddingHorizontal: theme.spacing[2] },
+  compactToolbar: {
+    width: "auto",
+    minWidth: CONTROL_HEIGHTS.field,
+    minHeight: CONTROL_HEIGHTS.field,
+    paddingHorizontal: theme.spacing[2],
+  },
   toolbar: {
     height: HEADER_CONTROL_HEIGHT,
     minHeight: HEADER_CONTROL_HEIGHT,

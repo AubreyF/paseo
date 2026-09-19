@@ -1,3 +1,12 @@
+import {
+  QuotaObserverDisposedError,
+  QuotaConstructionCleanupError,
+  type QuotaAdmissionGuard,
+  type QuotaAdmissionPermit,
+  type QuotaAdmissionRequest,
+  type QuotaGovernedSessionInput,
+} from "../agent-sdk-types.js";
+import type { QuotaObservation } from "@getpaseo/protocol/quota-governor";
 import { CodexLoginSession } from "./codex/login.js";
 import {
   getAgentStreamEventTurnId,
@@ -42,6 +51,13 @@ import {
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { ProviderQuotaExhaustedError } from "../quota-error.js";
 import { CodexResetCreditError, CodexResetCreditSession } from "./codex/reset-credits.js";
+import { CodexQuotaObservationSession } from "./codex/quota-observation.js";
+import {
+  workerShellEnvironment,
+  verifyWorkerPermissionProfile,
+  verifyWorkerPhysicalWorkspace,
+  verifyWorkerRuntimeRoots,
+} from "./codex/worker-permissions.js";
 import { probeResetRedemption } from "./codex/reset-capability.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
@@ -144,6 +160,21 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
+const QUOTA_WORKER_DISABLED_FEATURES = [
+  "apps",
+  "plugins",
+  "plugin_sharing",
+  "remote_plugin",
+  "recommended_plugins",
+  "tool_suggest",
+  "browser_use",
+  "browser_use_external",
+  "browser_use_full_cdp_access",
+  "in_app_browser",
+  "computer_use",
+  "hooks",
+  "shell_snapshot",
+] as const;
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
 // CLI identity instead of showing up as Paseo in provider usage logs.
@@ -278,7 +309,7 @@ interface CodexAppServerAgentDeps {
 interface CodexModePreset {
   approvalPolicy: string;
   sandbox: string;
-  approvalsReviewer?: "auto_review";
+  approvalsReviewer?: "auto_review" | "user";
 }
 
 const MODE_PRESETS: Record<string, CodexModePreset> = {
@@ -298,6 +329,7 @@ const MODE_PRESETS: Record<string, CodexModePreset> = {
   "full-access": {
     approvalPolicy: "never",
     sandbox: "danger-full-access",
+    approvalsReviewer: "user",
   },
 };
 
@@ -3381,6 +3413,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   private connected = false;
   private connectionPromise: Promise<void> | null = null;
   private closed = false;
+  private quotaAdmissionGuard: QuotaAdmissionGuard | null = null;
+  private readonly verifiedQuotaThreads = new Set<string>();
   private collaborationModes: Array<{
     name: string;
     mode?: string | null;
@@ -3406,6 +3440,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    private readonly quotaGovernance?: Pick<
+      QuotaGovernedSessionInput,
+      "account" | "guard" | "permissionProfile" | "processCustody" | "externalChatgptAuth"
+    >,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3455,6 +3493,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.goalState.bind(this.currentThreadId);
       this.historyPending = true;
     }
+    if (quotaGovernance) this.setQuotaAdmissionGuard(quotaGovernance.guard);
   }
 
   get id(): string | null {
@@ -3498,8 +3537,15 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async establishConnection(): Promise<void> {
+    this.verifiedQuotaThreads.clear();
     const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
+    const custody = this.quotaGovernance?.processCustody;
+    const client = new CodexAppServerClient(
+      child,
+      this.logger,
+      () => this.traceContext(),
+      custody ? () => custody.settle(child) : undefined,
+    );
     if (this.closed) {
       await client.dispose();
       throw this.createClosedError();
@@ -3514,6 +3560,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     try {
       await client.request("initialize", buildCodexAppServerInitializeParams());
       client.notify("initialized", {});
+
+      if (this.quotaGovernance) await this.verifyGovernedConnection(client);
 
       await this.loadResolvedWorkspaceWrite();
       await this.loadCollaborationModes();
@@ -3559,6 +3607,93 @@ export class CodexAppServerAgentSession implements AgentSession {
     } catch (error) {
       this.logger.debug({ error }, "Failed to read resolved Codex workspace-write config");
     }
+  }
+
+  private async verifyGovernedConnection(client: CodexAppServerClient): Promise<void> {
+    const response = toObjectRecord(
+      await client.request(
+        "config/read",
+        {
+          cwd: this.config.cwd ?? null,
+          includeLayers: false,
+        },
+        10_000,
+      ),
+    );
+    const config = toObjectRecord(response?.config);
+    const features = toObjectRecord(config?.features);
+    if (
+      config?.approvals_reviewer !== "user" ||
+      ["goals", "multi_agent", "multi_agent_v2"].some((key) => features?.[key] !== false)
+    ) {
+      throw new Error("Native quota execution controls are unavailable or were overridden.");
+    }
+    if (this.quotaGovernance?.processCustody) {
+      this.verifyWorkerConfiguration(config);
+      await verifyWorkerPhysicalWorkspace(this.config.cwd);
+    }
+    if (this.quotaGovernance?.externalChatgptAuth) {
+      const tokens = await this.readExternalChatgptTokens("initial");
+      try {
+        const result = toObjectRecord(
+          await client.request(
+            "account/login/start",
+            { type: "chatgptAuthTokens", ...tokens },
+            10_000,
+          ),
+        );
+        if (result?.type !== "chatgptAuthTokens") throw new Error("Unexpected authentication mode");
+        this.quotaGovernance.externalChatgptAuth.assertCurrent();
+      } catch {
+        // Provider errors must not echo credentials into daemon logs or worker output.
+        throw new Error("Protected provider authentication failed.");
+      }
+    }
+    const observation = await new CodexQuotaObservationSession(client).read();
+    if (
+      observation.status !== "available" ||
+      observation.account.issuer !== this.quotaGovernance?.account.issuer ||
+      observation.account.accountId !== this.quotaGovernance.account.accountId
+    ) {
+      throw new Error("Native execution account does not match the reserved quota account.");
+    }
+  }
+
+  private verifyWorkerConfiguration(config: Record<string, unknown> | undefined): void {
+    const features = toObjectRecord(config?.features);
+    const servers = toObjectRecord(config?.mcp_servers);
+    if (
+      QUOTA_WORKER_DISABLED_FEATURES.some((key) => features?.[key] !== false) ||
+      config?.web_search !== "disabled" ||
+      !servers ||
+      Object.keys(servers).length !== 0
+    )
+      throw new Error("Native worker tool and environment confinement is unavailable.");
+    const profiles = toObjectRecord(config?.permissions);
+    const name = this.quotaGovernance?.permissionProfile;
+    verifyWorkerPermissionProfile(
+      name ? profiles?.[name] : undefined,
+      this.config.cwd,
+      features?.network_proxy,
+    );
+    this.verifyWorkerShellPolicy(config);
+  }
+
+  private verifyWorkerShellPolicy(config: Record<string, unknown> | undefined): void {
+    const shell = toObjectRecord(config?.shell_environment_policy);
+    const assignments = toObjectRecord(shell?.set);
+    const expected = workerShellEnvironment(this.config.cwd);
+    const notify = config?.notify;
+    if (
+      config?.allow_login_shell !== false ||
+      shell?.inherit !== "none" ||
+      shell?.experimental_use_profile === true ||
+      !assignments ||
+      Object.keys(assignments).length !== 1 ||
+      assignments.PATH !== expected.PATH ||
+      (notify != null && (!Array.isArray(notify) || notify.length !== 0))
+    )
+      throw new Error("Native worker tool and environment confinement is unavailable.");
   }
 
   private rememberResolvedSandboxPolicy(response: unknown): void {
@@ -3797,6 +3932,19 @@ export class CodexAppServerAgentSession implements AgentSession {
   private registerRequestHandlers(): void {
     if (!this.client) return;
 
+    if (this.quotaGovernance?.externalChatgptAuth) {
+      this.client.setRequestHandler("account/chatgptAuthTokens/refresh", (params) => {
+        const request = toObjectRecord(params);
+        if (
+          request?.reason !== "unauthorized" ||
+          (request.previousAccountId != null &&
+            request.previousAccountId !== this.quotaGovernance?.account.accountId)
+        )
+          throw new Error("Protected provider authentication request does not match its account.");
+        return this.readExternalChatgptTokens("unauthorized");
+      });
+    }
+
     this.client.setRequestHandler("item/commandExecution/requestApproval", (params) =>
       this.handleCommandApprovalRequest(params),
     );
@@ -3813,6 +3961,41 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.client.setRequestHandler("tool/requestUserInput", (params) =>
       this.handleToolApprovalRequest(params),
     );
+  }
+
+  private async readExternalChatgptTokens(reason: "initial" | "unauthorized") {
+    const auth = this.quotaGovernance?.externalChatgptAuth;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (!auth || this.closed) throw new Error("Authentication unavailable");
+      auth.assertCurrent();
+      const tokens = await Promise.race([
+        auth.readTokens(reason),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("Authentication timed out")), 9000);
+          timer.unref();
+        }),
+      ]);
+      auth.assertCurrent();
+      if (
+        this.closed ||
+        typeof tokens.accessToken !== "string" ||
+        tokens.accessToken.length === 0 ||
+        tokens.accessToken.length > 65536 ||
+        tokens.chatgptAccountId !== this.quotaGovernance?.account.accountId ||
+        (tokens.chatgptPlanType != null && typeof tokens.chatgptPlanType !== "string")
+      )
+        throw new Error("Authentication does not match reservation");
+      return {
+        accessToken: tokens.accessToken,
+        chatgptAccountId: tokens.chatgptAccountId,
+        chatgptPlanType: tokens.chatgptPlanType ?? null,
+      };
+    } catch {
+      throw new Error("Protected provider authentication is unavailable or changed.");
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private async loadPersistedHistory(): Promise<void> {
@@ -3895,11 +4078,56 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  private verifyGovernedThreadResponse(response: unknown, resumedThreadId?: string): void {
+    if (this.quotaGovernance && toObjectRecord(response)?.approvalsReviewer !== "user") {
+      throw new Error("Native thread reviewer is unverified for quota-governed execution.");
+    }
+    const profile = this.quotaGovernance?.permissionProfile;
+    if (
+      profile &&
+      (toObjectRecord(toObjectRecord(response)?.activePermissionProfile)?.id !== profile ||
+        toObjectRecord(response)?.approvalPolicy !== "never")
+    ) {
+      throw new Error("Native permission profile is unverified for quota-governed execution.");
+    }
+    if (this.quotaGovernance?.processCustody) {
+      verifyWorkerRuntimeRoots(toObjectRecord(response)?.runtimeWorkspaceRoots, this.config.cwd);
+    }
+    const id = resumedThreadId ?? toObjectRecord(toObjectRecord(response)?.thread)?.id;
+    if (this.quotaGovernance && typeof id === "string") this.verifiedQuotaThreads.add(id);
+  }
+
+  private applyGovernedPermissionProfile(params: Record<string, unknown>): void {
+    const profile = this.quotaGovernance?.permissionProfile;
+    if (!profile) return;
+    // Named profiles and legacy sandbox overrides are mutually exclusive.
+    // Interactive modes must not widen the coordinator's selected boundary.
+    delete params.sandbox;
+    delete params.sandboxPolicy;
+    params.permissions = profile;
+    params.approvalPolicy = "never";
+  }
+
+  private applyResumedWorkflowPolicy(params: Record<string, unknown>): void {
+    // A resumed native thread otherwise retains its old sandbox and reviewer.
+    // Reapply the task's frozen mode, never the current saved profile.
+    if (this.hasWorkflowModeOverride) {
+      const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
+      if (this.providerOptions.approval_policy === undefined)
+        params.approvalPolicy = preset.approvalPolicy;
+      if (this.providerOptions.sandbox_mode === undefined) params.sandbox = preset.sandbox;
+      applyApprovalsReviewerParam(params, preset);
+    }
+  }
+
   private async ensureThreadLoaded(
     options: { allowArchivedHistory?: boolean } = {},
   ): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
     const params: Record<string, unknown> = { threadId: this.currentThreadId };
+    this.applyResumedWorkflowPolicy(params);
+    if (this.quotaGovernance) params.approvalsReviewer = "user";
+    this.applyGovernedPermissionProfile(params);
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
@@ -3914,10 +4142,14 @@ export class CodexAppServerAgentSession implements AgentSession {
     try {
       const loaded = toObjectRecord(await this.client.request("thread/loaded/list", {}));
       const ids = Array.isArray(loaded?.data) ? loaded.data : [];
-      if (ids.includes(this.currentThreadId)) {
+      if (
+        ids.includes(this.currentThreadId) &&
+        (!this.quotaGovernance || this.verifiedQuotaThreads.has(this.currentThreadId))
+      ) {
         return;
       }
       const response = await this.client.request("thread/resume", params);
+      this.verifyGovernedThreadResponse(response, this.currentThreadId);
       this.rememberResolvedSandboxPolicy(response);
     } catch (error) {
       const threadId = this.currentThreadId;
@@ -3941,6 +4173,7 @@ export class CodexAppServerAgentSession implements AgentSession {
           }
         }
         const response = await this.client.request("thread/resume", params);
+        this.verifyGovernedThreadResponse(response, this.currentThreadId);
         this.rememberResolvedSandboxPolicy(response);
         this.logger.info({ threadId }, "Unarchived Codex thread to restore active Paseo agent");
         return;
@@ -4043,6 +4276,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       input,
     };
     const { approvalPolicy, sandboxPolicyType } = this.applyTurnWorkflowPolicy(params, preset);
+    if (this.quotaGovernance) params.approvalsReviewer = "user";
+    this.applyGovernedPermissionProfile(params);
 
     if (this.config.model) {
       params.model = this.config.model;
@@ -4092,11 +4327,11 @@ export class CodexAppServerAgentSession implements AgentSession {
   private applyTurnWorkflowPolicy(
     params: Record<string, unknown>,
     preset: CodexModePreset,
+    hasWorkflowModeOverride = this.hasWorkflowModeOverride,
   ): { approvalPolicy?: string; sandboxPolicyType?: string } {
-    const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
+    const approvalPolicy = hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
     const sandboxPolicyType =
-      this.providerOptions.sandbox_mode ??
-      (this.hasWorkflowModeOverride ? preset.sandbox : undefined);
+      this.providerOptions.sandbox_mode ?? (hasWorkflowModeOverride ? preset.sandbox : undefined);
     if (approvalPolicy && this.providerOptions.approval_policy === undefined) {
       params.approvalPolicy = approvalPolicy;
     }
@@ -4111,7 +4346,7 @@ export class CodexAppServerAgentSession implements AgentSession {
           ? this.resolvedSandboxPolicy
           : toSandboxPolicy(sandboxPolicyType, workspaceWrite);
     }
-    if (this.hasWorkflowModeOverride) {
+    if (hasWorkflowModeOverride) {
       applyApprovalsReviewerParam(params, preset);
     }
     return { approvalPolicy, sandboxPolicyType };
@@ -4236,6 +4471,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
 
       const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
+      const quotaPermit = await this.assertQuotaAdmission("start");
       const turnId = this.createTurnId();
       this.activeForegroundTurnId = turnId;
       this.activeClientMessageId = options?.clientMessageId ?? null;
@@ -4263,6 +4499,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (pendingStart.cancelRequested) {
         throw new Error("Codex turn start was interrupted before reaching Codex");
       }
+      quotaPermit?.assertValidForDispatch();
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
       return { turnId };
     } catch (error) {
@@ -4301,10 +4538,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     const input = await this.buildUserInput(prompt);
+    const quotaPermit = await this.assertQuotaAdmission("steer");
     if (!this.matchesSteerAdmission({ client, threadId, nativeTurnId, foregroundTurnId })) {
       return { status: "unavailable" };
     }
     try {
+      quotaPermit?.assertValidForDispatch();
       const response = await client.request(
         "turn/steer",
         {
@@ -4466,6 +4705,18 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async setMode(modeId: string): Promise<void | AgentProviderNotice> {
     validateCodexMode(modeId);
+    if (this.quotaAdmissionGuard && modeId === "auto-review") {
+      throw new Error("Native automatic review is unavailable for quota-governed sessions.");
+    }
+    if (this.goalsEnabled && this.client && this.currentThreadId) {
+      // Native goal continuations bypass turn/start and reuse the thread's settings.
+      // Commit the selected mode only after native subsequent-turn policy is accepted.
+      const params: Record<string, unknown> = { threadId: this.currentThreadId };
+      this.applyTurnWorkflowPolicy(params, MODE_PRESETS[modeId], true);
+      if (this.quotaGovernance) params.approvalsReviewer = "user";
+      this.applyGovernedPermissionProfile(params);
+      await this.client.request("thread/settings/update", params);
+    }
     this.currentMode = modeId;
     this.hasWorkflowModeOverride = true;
     this.config.modeId = modeId;
@@ -4723,6 +4974,98 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
+  setQuotaAdmissionGuard(guard: QuotaAdmissionGuard): void {
+    if (this.goalsEnabled)
+      throw new Error("Native autonomous goals require a quota-aware continuation boundary.");
+    if (this.autoReviewEnabled || this.currentMode === "auto-review")
+      throw new Error("Native automatic review requires a quota-aware continuation boundary.");
+    if (this.quotaAdmissionGuard && this.quotaAdmissionGuard !== guard)
+      throw new Error("Quota guard cannot be replaced on an existing session.");
+    if (this.quotaAdmissionGuard === guard) return;
+    if (this.connected || this.connectionPromise || this.client || this.closed)
+      throw new Error("Quota guard must be installed before connecting the session.");
+    this.quotaAdmissionGuard = guard;
+  }
+
+  async readQuotaObservation(): Promise<QuotaObservation> {
+    if (!this.client || !this.connected || this.closed)
+      return { status: "unavailable", reason: "read_failed" };
+    // This reader borrows the executing connection. Its disposal method is never
+    // called here; the session retains exclusive ownership of the transport.
+    return new CodexQuotaObservationSession(this.client).read();
+  }
+
+  private async assertQuotaAdmission(
+    operation: QuotaAdmissionRequest["operation"],
+  ): Promise<QuotaAdmissionPermit | undefined> {
+    if (!this.quotaAdmissionGuard) return;
+    if (this.currentMode === "auto-review") {
+      throw new Error("Native automatic review is unavailable for quota-governed sessions.");
+    }
+    const client = this.client;
+    const threadId = this.currentThreadId;
+    const nativeTurnId = this.currentTurnId;
+    const foregroundTurnId = this.activeForegroundTurnId;
+    const guard = this.quotaAdmissionGuard;
+    let expired = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const permit = await Promise.race([
+        (async () => {
+          if (this.quotaGovernance?.processCustody) {
+            if (!client) throw this.createClosedError();
+            // Loaded threads can bypass resume. Revalidate at every inference
+            // boundary, including steer and compaction, before quota admission.
+            await this.verifyGovernedConnection(client);
+          }
+          return this.readQuotaObservation();
+        })().then((observation) => {
+          if (expired) throw new Error("Quota admission timed out.");
+          if (
+            this.quotaGovernance &&
+            (observation.status !== "available" ||
+              observation.account.issuer !== this.quotaGovernance.account.issuer ||
+              observation.account.accountId !== this.quotaGovernance.account.accountId)
+          ) {
+            throw new Error("Native execution account does not match the reserved quota account.");
+          }
+          return guard({ observation, operation, threadId, nativeTurnId });
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            expired = true;
+            reject(new Error("Quota admission timed out."));
+          }, 10_000);
+        }),
+      ]);
+      return {
+        assertValidForDispatch: () => {
+          if (
+            !client ||
+            this.client !== client ||
+            this.closed ||
+            this.currentThreadId !== threadId
+          ) {
+            throw new Error("Execution connection changed during quota admission.");
+          }
+          if (this.currentMode === "auto-review") {
+            throw new Error("Native automatic review is unavailable for quota-governed sessions.");
+          }
+          if (
+            operation === "compact" &&
+            (this.currentTurnId !== nativeTurnId ||
+              this.activeForegroundTurnId !== foregroundTurnId)
+          ) {
+            throw new Error("Execution turn changed during quota admission.");
+          }
+          permit.assertValidForDispatch();
+        },
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   describePersistence(): {
     provider: typeof CODEX_PROVIDER;
     sessionId: string;
@@ -4960,8 +5303,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (!this.client || !this.currentThreadId) {
         throw new Error("Codex thread is not available");
       }
+      const quotaPermit = await this.assertQuotaAdmission("compact");
       this.pendingManualCompactionStarts += 1;
       try {
+        quotaPermit?.assertValidForDispatch();
         await this.client.request("thread/compact/start", {
           threadId: this.currentThreadId,
         });
@@ -5101,6 +5446,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
     const { params, approvalPolicy, sandbox } = this.buildThreadStartRequest(model);
     const rawResponse = await this.client.request("thread/start", params);
+    this.verifyGovernedThreadResponse(rawResponse);
     this.rememberResolvedSandboxPolicy(rawResponse);
     const response = toObjectRecord(rawResponse);
     const threadRecord = toObjectRecord(response?.thread);
@@ -5151,6 +5497,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.hasWorkflowModeOverride) {
       applyApprovalsReviewerParam(params, preset);
     }
+    if (this.quotaGovernance) params.approvalsReviewer = "user";
+    this.applyGovernedPermissionProfile(params);
     return { params, approvalPolicy, sandbox };
   }
 
@@ -5168,6 +5516,54 @@ export class CodexAppServerAgentSession implements AgentSession {
       innerConfig.mcp_servers = mcpServers;
     }
     const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
+    if (this.quotaGovernance?.processCustody) {
+      // Worker candidates and provider overrides cannot add native tools or
+      // weaken the startup boundary through per-thread configuration.
+      const allowed = new Set([
+        "model_reasoning_effort",
+        "model_reasoning_summary",
+        "model_verbosity",
+        "service_tier",
+      ]);
+      for (const key of Object.keys(configured)) if (!allowed.has(key)) delete configured[key];
+      configured.features = {
+        ...Object.fromEntries(QUOTA_WORKER_DISABLED_FEATURES.map((key) => [key, false])),
+        network_proxy: { enabled: true, credential_broker: false },
+      };
+      configured.allow_login_shell = false;
+      configured.shell_environment_policy = {
+        inherit: "none",
+        set: workerShellEnvironment(this.config.cwd),
+      };
+      configured.web_search = "disabled";
+    }
+    if (this.quotaGovernance) {
+      // Thread overrides cannot re-enable inference paths outside the coordinator.
+      configured.approvals_reviewer = "user";
+      if (this.quotaGovernance.permissionProfile) {
+        for (const key of Object.keys(configured)) {
+          if (
+            key === "permissions" ||
+            key.startsWith("permissions.") ||
+            key === "sandbox_mode" ||
+            key === "sandbox_workspace_write" ||
+            key.startsWith("sandbox_workspace_write.")
+          )
+            delete configured[key];
+        }
+        configured.default_permissions = this.quotaGovernance.permissionProfile;
+        configured.approval_policy = "never";
+      }
+      for (const feature of ["goals", "multi_agent", "multi_agent_v2"]) {
+        delete configured[`features.${feature}`];
+      }
+      configured.features = {
+        ...toObjectRecord(configured.features),
+        goals: false,
+        multi_agent: false,
+        multi_agent_v2: false,
+      };
+    }
     return Object.keys(configured).length > 0 ? configured : null;
   }
 
@@ -6920,6 +7316,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 }
 
+// Process-local custody only. Durable execution authority belongs to the coordinator.
+const quotaConstructionCustody = new Map<string, { failure?: QuotaConstructionCleanupError }>();
+
 export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -6996,12 +7395,43 @@ export class CodexAppServerAgentClient implements AgentClient {
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean; agentId?: string },
+    options?: {
+      goalsEnabled?: boolean;
+      agentId?: string;
+      quotaGoverned?: boolean;
+      workerCwd?: string;
+      processCustody?: QuotaGovernedSessionInput["processCustody"];
+    },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {
       args.push("--enable", "goals");
+    }
+    if (options?.quotaGoverned) {
+      args.push(
+        "--disable",
+        "goals",
+        "--disable",
+        "multi_agent",
+        "--disable",
+        "multi_agent_v2",
+        "-c",
+        'approvals_reviewer="user"',
+      );
+    }
+    if (options?.processCustody) {
+      for (const feature of QUOTA_WORKER_DISABLED_FEATURES) args.push("--disable", feature);
+      args.push(
+        "-c",
+        "allow_login_shell=false",
+        "-c",
+        'shell_environment_policy.inherit="none"',
+        "-c",
+        `shell_environment_policy.set={ PATH = ${JSON.stringify(workerShellEnvironment(options.workerCwd).PATH)} }`,
+        "-c",
+        'web_search="disabled"',
+      );
     }
     this.logger.trace(
       {
@@ -7012,6 +7442,11 @@ export class CodexAppServerAgentClient implements AgentClient {
       },
       "provider.codex.spawn",
     );
+    if (options?.processCustody) {
+      // The captured launcher supplies a protected environment. Runtime and
+      // task overlays must not leak coordinator credentials into this process.
+      return options.processCustody.spawn(launchPrefix.command, args);
+    }
     const child = spawnProcess(launchPrefix.command, args, {
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
@@ -7022,6 +7457,86 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
     assertChildWithPipes(child);
     return child;
+  }
+
+  async openQuotaGovernedSession(input: QuotaGovernedSessionInput): Promise<AgentSession> {
+    if (input.externalChatgptAuth && !input.processCustody) {
+      throw new Error("External provider authentication requires protected process custody.");
+    }
+    if (input.processCustody && !input.permissionProfile) {
+      throw new Error("Protected worker custody requires a named permission profile.");
+    }
+    if (
+      input.permissionProfile !== undefined &&
+      !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(input.permissionProfile)
+    ) {
+      throw new Error("Governed execution requires a named permission profile.");
+    }
+    if (this.deps.customProvider && !this.runtimeSettings?.env?.CODEX_HOME?.trim()) {
+      throw new Error("Configure an explicit CODEX_HOME before enforcing account quota.");
+    }
+    const key = JSON.stringify([input.account.issuer, input.account.accountId]);
+    const previous = quotaConstructionCustody.get(key);
+    if (previous)
+      throw previous.failure ?? new Error("Quota account construction is already in progress.");
+    const custody: { failure?: QuotaConstructionCleanupError } = {};
+    quotaConstructionCustody.set(key, custody);
+    let session: CodexAppServerAgentSession | undefined;
+    try {
+      session = new CodexAppServerAgentSession(
+        { ...input.config, provider: CODEX_PROVIDER },
+        input.resumeHandle ?? null,
+        this.logger,
+        () =>
+          this.spawnAppServer(input.launchContext?.env, {
+            quotaGoverned: true,
+            processCustody: input.processCustody,
+            workerCwd: input.config.cwd,
+            agentId: input.launchContext?.agentId,
+          }),
+        this.sessionDeps(),
+        false,
+        false,
+        false,
+        input.launchContext?.agentId,
+        "interactive",
+        {
+          account: { ...input.account },
+          guard: input.guard,
+          permissionProfile: input.permissionProfile,
+          processCustody: input.processCustody,
+          externalChatgptAuth: input.externalChatgptAuth,
+        },
+      );
+      await session.connect();
+      quotaConstructionCustody.delete(key);
+      return session;
+    } catch (error) {
+      const failedSession = session;
+      if (error instanceof QuotaConstructionCleanupError) {
+        // The launcher may own native descendants before a transport exists.
+        // Closing an unconnected session cannot establish their settlement.
+        custody.failure = new QuotaConstructionCleanupError(async () => {
+          await error.retryCleanup();
+          await failedSession?.close();
+          if (quotaConstructionCustody.get(key) === custody) quotaConstructionCustody.delete(key);
+        });
+        throw custody.failure;
+      }
+      if (failedSession) {
+        try {
+          await failedSession.close();
+        } catch {
+          custody.failure = new QuotaConstructionCleanupError(async () => {
+            await failedSession.close();
+            if (quotaConstructionCustody.get(key) === custody) quotaConstructionCustody.delete(key);
+          });
+          throw custody.failure;
+        }
+      }
+      quotaConstructionCustody.delete(key);
+      throw error;
+    }
   }
 
   async createSession(
@@ -7106,6 +7621,22 @@ export class CodexAppServerAgentClient implements AgentClient {
     } catch (error) {
       await client.dispose();
       throw error;
+    }
+  }
+
+  async openQuotaObservationSession(): Promise<CodexQuotaObservationSession> {
+    if (this.deps.customProvider && !this.runtimeSettings?.env?.CODEX_HOME?.trim()) {
+      throw new Error("Configure an explicit CODEX_HOME before enforcing account quota.");
+    }
+    const child = await this.spawnAppServer();
+    const client = new CodexAppServerClient(child, this.logger);
+    try {
+      await client.request("initialize", buildCodexAppServerInitializeParams(), 15_000);
+      client.notify("initialized", {});
+      return new CodexQuotaObservationSession(client);
+    } catch {
+      await client.dispose();
+      throw new QuotaObserverDisposedError();
     }
   }
 

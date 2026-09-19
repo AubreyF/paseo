@@ -102,6 +102,7 @@ export interface SeedDaemonClient {
   }>;
   createAgent(options: {
     provider: string;
+    profileId?: string;
     cwd: string;
     workspaceId?: string;
     title?: string;

@@ -30,6 +30,24 @@ function outboundMessage(type: SessionOutboundMessage["type"]): SessionOutboundM
 }
 
 describe("SessionAuthorization", () => {
+  test("quota observation requires provider read authority in both directions", () => {
+    for (const permission of ["workspace.write", "automation.manage", "hub.execute"] as const) {
+      const authorization = new SessionAuthorization([permission]);
+      expect(
+        authorization.allowsInbound(inboundMessage("provider.quota.get_observation.request")),
+      ).toBe(false);
+      expect(
+        authorization.allowsOutbound(outboundMessage("provider.quota.get_observation.response")),
+      ).toBe(false);
+    }
+    const reader = new SessionAuthorization(["daemon.read"]);
+    expect(reader.allowsInbound(inboundMessage("provider.quota.get_observation.request"))).toBe(
+      true,
+    );
+    expect(reader.allowsOutbound(outboundMessage("provider.quota.get_observation.response"))).toBe(
+      true,
+    );
+  });
   test("reset preparation and confirmation require management permission", () => {
     const reader = new SessionAuthorization(["daemon.read"]);
     const manager = new SessionAuthorization(["daemon.manage"]);

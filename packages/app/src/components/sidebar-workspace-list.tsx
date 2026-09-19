@@ -1153,8 +1153,9 @@ function WorkspaceRowInner({
       interaction.didLongPressRef.current = false;
       return;
     }
+    if (isDragging) return;
     onPress();
-  }, [interaction.didLongPressRef, onPress]);
+  }, [interaction.didLongPressRef, onPress, isDragging]);
   const handleWorkspacePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);

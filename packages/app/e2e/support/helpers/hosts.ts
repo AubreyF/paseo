@@ -229,7 +229,7 @@ export async function expectNoHostBadge(page: Page, target: HostBadgeTarget): Pr
 //
 // The icon takes the *foreground* variant of the identity colour, not the fill one: it is a
 // stroked glyph on a surface, so it has to clear contrast against that surface rather than
-// behind white letters. That variant is per-scheme, and the browser project runs light.
+// behind white letters. That variant is per-scheme; the host appearance fixture explicitly selects light.
 export async function expectHostBadgeTinted(
   page: Page,
   target: HostBadgeTarget & { color: IdentityColorName },

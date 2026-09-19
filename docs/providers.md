@@ -175,6 +175,91 @@ A fetcher reads the provider's credential file and never writes it. On a 401 or 
 
 Account sign-in uses a dedicated Codex app-server process with the configured provider environment. Never reuse an active agent transport: closing a sign-in panel must not stop an agent. The daemon owns pending device-code attempts so a browser disconnect or panel close does not abandon sign-in; explicit cancellation and expiry dispose only that dedicated process.
 
+### Account evidence for schedules
+
+Use `paseo schedule quota --provider <configured-account>` to inspect authenticated quota evidence. Add `--json` for the account identity, observation timestamp, reported windows and consumption meters. This command reads metadata and does not launch an agent or change schedule policy.
+
+Clients use `provider.quota.get_observation.request` after checking `server_info.features.providerQuotaObservation`. Both request and response require `daemon.read`. A configured provider name alone is not authenticated account identity. Bind schedule policy to the returned account, and revalidate that binding at execution admission.
+
+Window occupancy and token activity do not establish gross daily consumption in quota percentage points. Missing consumption meters remain unavailable. Inspection is evidence for configuration; a launch still requires fresh quota checks, execution authority and a governed dispatch permit.
+
+### Governed native process custody
+
+Governed session construction accepts a trusted process-custody binding. The
+launcher supplies the complete process environment; provider and task environment
+overlays do not enter that launch. Transport shutdown delegates to the captured
+custody binding instead of killing its supervisor. A failed startup cannot clear
+the account fence until retained cleanup succeeds.
+
+The Linux implementation requires a trusted Python executable with subreaper,
+pidfd signaling and wait support. Its packaged helper must remain outside worker
+writes. Store its journal in an owner-only physical directory outside worker
+access, on a filesystem that supports file and directory synchronization. A
+filesystem that presents different ownership to the coordinator and its clean
+child environment fails this requirement. Do not relax ownership checks to make
+such a mount work.
+
+Persist the launch directory and full execution/attempt identity before starting
+work. Missing, invalid or mismatched settlement receipts require recovery and
+must not release execution capacity. Supervisor death can leave descendants;
+absence of a live supervisor is not settlement. Automatic takeover remains
+unsupported without additional custody evidence.
+
+Captured native worker launches require a named permission profile and disable
+apps, plugins, browser/computer control, hooks and shell snapshots. Before thread
+creation, effective configuration must show no MCP servers, shell environment
+assignments, login/profile sourcing, live web search or notification commands.
+Per-thread configuration cannot restore these tools or weaken launch controls.
+The same checks run at each inference admission, including cached threads.
+
+The accepted filesystem profile has no parent, one explicit workspace root equal
+to the session cwd, root and temporary-directory denial, minimal system reads,
+workspace writes, denied `.codex` access and read-only `.git` access. Workers
+either disable networking or use the native managed proxy with an empty
+destination allowlist, no socket grants and no upstream proxy or credential
+broker. The latter preserves Node subprocess IPC within the native tool network
+namespace. Additional grants are rejected. Native thread start and
+resume must report that same single runtime workspace root.
+The workspace and its precreated `.codex` directory must resolve to their exact
+physical paths. Missing targets, files and symlinked paths fail before thread
+creation; the provider does not repair them.
+
+These checks do not establish the complete worker boundary. The trusted
+coordinator must still materialize the protected `.codex` directory before
+launch and keep native configuration and its parents outside
+worker writes. A linked worktree's external Git metadata is not granted by this
+profile; Git inspection and publication need a verified preparation layout and
+trusted custody. Bind authentication and project configuration for the attempt,
+then attach quota supervision before inference. The production schedule backend
+is not connected by this component alone.
+
+### Trusted governed schedule runtime
+
+The supervised daemon worker can load one installed `.mjs` module from
+`PASEO_GOVERNED_RUNTIME_MODULE` at startup. The module exports
+`createGovernedScheduleRuntime`. This is trusted daemon code with daemon
+authority, not a sandboxed plugin. Keep the complete installation, dependencies,
+configuration and parent directories outside worker writes. The loader checks
+the entry file's physical path, ownership and write permissions; it does not
+authenticate a package or its imports. An invalid configured module fails startup.
+There is no hot reload or schedule/RPC field for selecting the module.
+
+The factory receives the durable quota store, raw metadata reader and a narrow
+governed-client capture operation. It supplies preflight observations with the
+captured authentication binding and persisted hourly estimate, plus the existing
+schedule preparation/reconciliation/execution contract. Initialize without
+starting workers. Constructor failure must retain or settle anything it acquired.
+Provider replacement, disable/re-enable and daemon shutdown invalidate captured
+clients. Registry generation is not an authentication generation; the runtime
+must bind and verify account credentials separately.
+
+Runtime `stop()` must revoke authority synchronously before awaiting settlement.
+Rejection preserves the recovery condition while independent daemon cleanup
+continues. The daemon worker's forced-exit deadline is not settlement evidence.
+Without a configured runtime, protected schedules continue to hold without
+falling back to ordinary agent execution. Loading a runtime does not establish
+claim authority, worker isolation, review or publication acceptance.
+
 ---
 
 ## ACP Provider Checklist

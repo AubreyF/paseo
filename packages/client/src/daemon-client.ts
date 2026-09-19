@@ -1,3 +1,4 @@
+import type { QuotaGovernorPolicy } from "@getpaseo/protocol/quota-governor";
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
@@ -748,6 +749,7 @@ export interface CreateScheduleOptions {
           providerOptions?: AgentSessionConfig["providerOptions"];
           systemPrompt?: string;
           mcpServers?: AgentSessionConfig["mcpServers"];
+          quotaPolicy?: QuotaGovernorPolicy;
         };
       };
   maxRuns?: number;
@@ -760,6 +762,7 @@ export interface InspectScheduleOptions {
   requestId?: string;
 }
 export interface UpdateScheduleNewAgentConfig {
+  quotaPolicy?: QuotaGovernorPolicy | null;
   provider?: string;
   model?: string | null;
   modeId?: string | null;
@@ -770,6 +773,7 @@ export interface UpdateScheduleNewAgentConfig {
 }
 export interface UpdateScheduleOptions {
   id: string;
+  expectedConfigurationRevision?: string | null;
   name?: string | null;
   prompt?: string;
   cadence?: {
@@ -4972,6 +4976,17 @@ export class DaemonClient {
     });
   }
 
+  async readProviderQuotaObservation(providerId: string) {
+    // COMPAT(providerQuotaObservation): added in v0.7.2, remove gate after 2027-03-14.
+    if (this.lastServerInfoMessage?.features?.providerQuotaObservation !== true) {
+      throw new Error("Update the host to inspect account quota for schedules.");
+    }
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.quota.get_observation.response">({
+      message: { type: "provider.quota.get_observation.request", providerId },
+      timeout: 100_000,
+    });
+  }
+
   async startProviderLogin(providerId: string) {
     return this.sendNamespacedCorrelatedSessionRequest<"provider.login.start.response">({
       message: { type: "provider.login.start.request", providerId },
@@ -5616,6 +5631,10 @@ export class DaemonClient {
   }
 
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
+    if (options.target.type === "new-agent" && options.target.config.quotaPolicy !== undefined)
+      this.assertScheduleQuotaPolicySupport(
+        Boolean(options.target.config.quotaPolicy?.estimatedHourly),
+      );
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {
@@ -5708,12 +5727,35 @@ export class DaemonClient {
     });
   }
 
+  private assertScheduleQuotaPolicySupport(estimatedHourly = false): void {
+    // COMPAT(scheduleQuotaPolicy): added in v0.7.2; remove only when every supported host enforces policies.
+    // A policy-unaware host may strip unknown fields and launch ordinary work.
+    if (this.lastServerInfoMessage?.features?.scheduleQuotaPolicy !== true)
+      throw new Error("Update the host before changing quota-protected schedules.");
+    // COMPAT(estimatedHourlyQuota): added in v0.7.2; retain until every supported host enforces estimates.
+    if (estimatedHourly && this.lastServerInfoMessage?.features?.estimatedHourlyQuota !== true)
+      throw new Error("Update the host before using estimated hourly quota.");
+  }
+
   async scheduleUpdate(options: UpdateScheduleOptions): Promise<ScheduleUpdatePayload> {
+    if (options.newAgentConfig?.quotaPolicy !== undefined)
+      this.assertScheduleQuotaPolicySupport(
+        Boolean(options.newAgentConfig.quotaPolicy?.estimatedHourly),
+      );
+    if (
+      options.expectedConfigurationRevision !== undefined &&
+      !this.lastServerInfoMessage?.features?.scheduleConfigurationRevision
+    ) {
+      throw new Error("Update the host to save schedule edits with revision protection.");
+    }
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {
         type: "schedule/update",
         scheduleId: options.id,
+        ...(options.expectedConfigurationRevision !== undefined
+          ? { expectedConfigurationRevision: options.expectedConfigurationRevision }
+          : {}),
         ...(options.name !== undefined ? { name: options.name } : {}),
         ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
         ...(options.cadence !== undefined ? { cadence: options.cadence } : {}),

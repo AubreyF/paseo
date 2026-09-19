@@ -57,3 +57,41 @@ When a tag's condition is met, delete the shim and the tag in the same change.
 ## QA
 
 Tests don't fully cover compatibility. If you touched `packages/protocol`, say in the pull request why an older app still parses your message and why an older daemon still satisfies your app. See [qa.md](qa.md).
+
+## Schedule configuration revisions
+
+Schedule configuration edits can use `expectedConfigurationRevision` when the host advertises `scheduleConfigurationRevision`. Pass the revision returned by inspection, or explicit `null` for a legacy record without one. The daemon compares it within the serialized update and rejects a stale edit before changing the record. Reload and reconcile edits after a conflict. Omitted revisions retain older clients' partial-update behavior.
+
+Configuration revisions change when the name, prompt, cadence, target configuration, maximum runs or expiration changes. Run history, quota observations and pause/resume activity preserve them. Revisions protect configuration edits; they do not establish quota authority or reset account accounting.
+
+The schedule update CLI inspects the record before editing and supplies its revision on capable hosts, including explicit `null` for a legacy record. It reports conflicts without retrying. Older hosts retain ordinary partial updates when no revision is present; a known revision is never discarded to force a write.
+
+## Schedule quota policies
+
+A client must require `server_info.features.scheduleQuotaPolicy === true` before creating a schedule with `target.config.quotaPolicy` or updating `newAgentConfig.quotaPolicy`, including explicit removal with `null`. An older daemon may discard an unknown policy field and launch ordinary work. The client rejects these writes before transmission rather than retrying without the policy. Schedule writes that omit the policy retain their existing compatibility behavior.
+
+The capability means the daemon recognizes quota policies and fails closed when it cannot execute governed work. It does not certify available usage telemetry, account authority, a ready execution backend, or permission to remove an enforced account policy. Those remain server-side admission requirements. Protected writes use the existing nonqueued request path, so a disconnected client cannot replay them onto a different host after reconnecting.
+
+Policies with `estimatedHourly` also require `estimatedHourlyQuota`. Older
+quota-aware hosts may strip that optional field; clients must reject the write
+before transmission. The capability recognizes the policy and holds missing
+estimates. It does not certify a configured observer or execution backend.
+
+Estimated accounting uses a persisted hour of increases in the bound weekly
+allowance window, including usage outside the scheduled execution. It is not
+attributable billing. Missing history, a read gap beyond the freshness bound,
+an account or authentication change, or a quota reset requires a new continuous
+hour before admission. Native observations remain separate from these estimates.
+Confirmed execution termination can release an estimated-policy execution slot
+without a provider billing receipt; retained estimates still govern subsequent
+admission. Strict consumption policies retain their settlement requirements.
+
+## Governed run custody
+
+Before preparation, the scheduler saves an optional `governorPreparation` attempt identifier and occurrence timestamp. This record survives a crash before a run exists. A retained attempt requires trusted reconciliation before another preparation, and blocks deletion or custody-changing edits, including replacement by name. A missing driver cannot clear it. The driver must journal its exact reservation and execution custody before acquiring resources; scheduler metadata is not that authority journal.
+
+A governed run records optional `governorBinding` metadata containing its verified account and reservation identifier. Admission atomically transfers the preparation identifier into `governorPreparationId` on that run. Resumption requires the exact retained binding; a legacy run without one needs reconciliation. These fields link recovery records and do not grant execution authority.
+
+Unused prepared work must revoke dispatch immediately and freeze through trusted custody, including when persistence fails or the schedule expires. Freeze completion means durable state and verified settlement, not an interrupt acknowledgment. It preserves accounting reservations. Failed cleanup retains the preparation or bound run for recovery.
+
+Restart recovery, edit guards and deletion guards recognize unfinished governed work independently of the schedule's editable quota policy. A frozen run remains unfinished. Deletion checks run inside the schedule mutation, and admission verifies the current record before asking the driver to prepare work. Older clients may omit these optional response fields, but replacing the daemon with a policy-unaware version still requires separate installation safeguards.

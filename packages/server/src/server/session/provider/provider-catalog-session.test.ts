@@ -18,11 +18,13 @@ import {
 } from "../../agent/provider-snapshot-manager.js";
 import type { ProviderSnapshotEntry } from "../../agent/agent-sdk-types.js";
 import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
+import type { ProviderQuotaObservationService } from "../../../services/quota-fetcher/governor-service.js";
 import { expandProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 
 type SnapshotChangeHandler = (entries: ProviderSnapshotEntry[], cwd: string) => void;
 
 interface MakeOptions {
+  quota?: Pick<ProviderQuotaObservationService, "read">;
   reset?: ProviderResetService;
   visibleProviders?: Set<string>;
   supportsCustomModeIcons?: boolean;
@@ -73,6 +75,7 @@ function makeSubsystem(options: MakeOptions = {}) {
     host,
     providerSnapshotManager,
     providerUsageService: createStub<ProviderUsageService>(options.usage ?? {}),
+    providerQuotaObservationService: options.quota,
     providerResetService: options.reset,
     logger: pino({ level: "silent" }),
   });
@@ -442,5 +445,104 @@ describe("ProviderCatalogSession", () => {
     const res = findByType(emitted, "list_provider_features_response");
     expect(res?.payload.error).toBe("feature probe failed");
     expect(res?.payload.requestId).toBe("f1");
+  });
+});
+
+describe("quota observation", () => {
+  it("does not read a provider hidden from this client", async () => {
+    let reads = 0;
+    const { subsystem, emitted } = makeSubsystem({
+      quota: {
+        read: async () => {
+          reads++;
+          return { status: "unavailable", reason: "read_failed" };
+        },
+      },
+    });
+    await subsystem.handleProviderQuotaObservationRequest({
+      type: "provider.quota.get_observation.request",
+      providerId: "hidden",
+      requestId: "q",
+    });
+    expect(reads).toBe(0);
+    expect(emitted).toContainEqual({
+      type: "provider.quota.get_observation.response",
+      payload: {
+        requestId: "q",
+        providerId: "hidden",
+        observation: { status: "unavailable", reason: "unsupported" },
+      },
+    });
+  });
+  it("sanitizes unexpected fields and raw provider errors", async () => {
+    const { subsystem, emitted } = makeSubsystem({
+      quota: {
+        read: async () => ({
+          status: "unavailable",
+          reason: "read_failed",
+          secret: "fixture-secret",
+        }),
+      },
+    });
+    await subsystem.handleProviderQuotaObservationRequest({
+      type: "provider.quota.get_observation.request",
+      providerId: "codex",
+      requestId: "q",
+    });
+    expect(JSON.stringify(emitted)).not.toContain("fixture-secret");
+    expect(emitted).toContainEqual({
+      type: "provider.quota.get_observation.response",
+      payload: {
+        requestId: "q",
+        providerId: "codex",
+        observation: { status: "unavailable", reason: "read_failed" },
+      },
+    });
+    const failing = makeSubsystem({
+      quota: {
+        read: async () => {
+          throw new Error("fixture-secret");
+        },
+      },
+    });
+    await failing.subsystem.handleProviderQuotaObservationRequest({
+      type: "provider.quota.get_observation.request",
+      providerId: "codex",
+      requestId: "error",
+    });
+    expect(JSON.stringify(failing.emitted)).not.toContain("fixture-secret");
+    expect(failing.emitted).toContainEqual({
+      type: "provider.quota.get_observation.response",
+      payload: {
+        requestId: "error",
+        providerId: "codex",
+        observation: { status: "unavailable", reason: "read_failed" },
+      },
+    });
+  });
+  it("withholds evidence if provider visibility changes during the read", async () => {
+    const visible = new Set(["codex"]);
+    const { subsystem, emitted } = makeSubsystem({
+      visibleProviders: visible,
+      quota: {
+        read: async () => {
+          visible.clear();
+          return { status: "unavailable", reason: "authentication_required" };
+        },
+      },
+    });
+    await subsystem.handleProviderQuotaObservationRequest({
+      type: "provider.quota.get_observation.request",
+      providerId: "codex",
+      requestId: "q",
+    });
+    expect(emitted).toContainEqual({
+      type: "provider.quota.get_observation.response",
+      payload: {
+        requestId: "q",
+        providerId: "codex",
+        observation: { status: "unavailable", reason: "unsupported" },
+      },
+    });
   });
 });

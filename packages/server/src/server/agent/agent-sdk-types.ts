@@ -1,3 +1,4 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { ProviderLoginSession } from "../../services/provider-login/session.js";
 import type {
   AgentProviderNotice,
@@ -627,6 +628,8 @@ export interface ImportedProviderSession {
 
 export interface AgentSessionConfig {
   provider: AgentProvider;
+  /** Trusted controller registration only. Ordinary launch/resume must refuse. */
+  controllerExecutionId?: string;
   profileId?: string;
   quotaReservePolicy?: QuotaReserveLaunchPolicy;
   profileLaunch?: AgentProfileLaunch;
@@ -691,6 +694,78 @@ export interface AgentPermissionResult {
   followUpPrompt?: AgentPromptInput;
 }
 
+export interface QuotaAdmissionRequest {
+  observation: import("@getpaseo/protocol/quota-governor").QuotaObservation;
+  operation: "start" | "steer" | "compact";
+  threadId: string | null;
+  nativeTurnId: string | null;
+}
+
+export interface QuotaAdmissionPermit {
+  /** Synchronously reject expired or revoked execution/policy/authentication authority. */
+  assertValidForDispatch(): void;
+}
+
+/**
+ * Runtime-only coordinator boundary. A denial must throw, without awaiting
+ * interruption of the admitting session: its pending start is waiting on this hook.
+ */
+export type QuotaAdmissionGuard = (request: QuotaAdmissionRequest) => Promise<QuotaAdmissionPermit>;
+
+/** Trusted runtime input, never accepted from a worker tool or persisted as a callback. */
+export interface QuotaGovernedSessionInput {
+  /** Host-local retained placement, supplied only by the trusted controller. */
+  placement?: {
+    hostId: string;
+    projectId: string;
+    projectRoot: string;
+    projectKey: string;
+    workspaceId: string;
+  };
+  /** Trusted controller callbacks, never accepted from public agent config. */
+  inspection?: {
+    executionId: string;
+    title: string;
+    stop(): Promise<void>;
+    assertSettled(): Promise<void>;
+  };
+  config: AgentSessionConfig;
+  account: import("@getpaseo/protocol/quota-governor").QuotaAccount;
+  guard: QuotaAdmissionGuard;
+  /** Coordinator-selected native profile. The coordinator must verify its filesystem and tool policy. */
+  permissionProfile?: string;
+  /** Trusted host callback only. Tokens travel over provider stdin, never worker configuration. */
+  externalChatgptAuth?: {
+    assertCurrent(): void;
+    readTokens(reason: "initial" | "unauthorized"): Promise<{
+      accessToken: string;
+      chatgptAccountId: string;
+      chatgptPlanType?: string | null;
+    }>;
+  };
+  /** Trusted launcher owns its environment and settlement of every descendant. */
+  processCustody?: {
+    spawn(command: string, args: string[]): Promise<ChildProcessWithoutNullStreams>;
+    settle(child: ChildProcessWithoutNullStreams): Promise<void>;
+  };
+  launchContext?: AgentLaunchContext;
+  resumeHandle?: AgentPersistenceHandle;
+}
+
+export interface CapturedQuotaExecutionClient {
+  openSession(input: QuotaGovernedSessionInput): Promise<AgentSession>;
+  /** Call inside the execution authority guard, including immediately before dispatch. */
+  assertCurrent(): void;
+}
+
+/** Retains trusted cleanup custody when native construction cannot prove disposal. */
+export class QuotaConstructionCleanupError extends Error {
+  constructor(readonly retryCleanup: () => Promise<void>) {
+    super("Quota session construction cleanup is unresolved; account construction is fenced.");
+    this.name = "QuotaConstructionCleanupError";
+  }
+}
+
 export interface AgentGoals {
   readonly state: import("@getpaseo/protocol/agent-goals").AgentGoalState;
   read(): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState>;
@@ -721,6 +796,10 @@ export interface AgentSession {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
+  /** Read quota through this execution's own authenticated provider connection. */
+  readQuotaObservation?(): Promise<import("@getpaseo/protocol/quota-governor").QuotaObservation>;
+  /** Trusted coordinator hook; sticky for this session and absent from worker RPC inputs. */
+  setQuotaAdmissionGuard?(guard: QuotaAdmissionGuard): void;
   /**
    * Resolve once every foreground turn that predates this call can no longer run or become active.
    * Calling while already idle is a successful no-op. Reject only when foreground ownership is
@@ -779,6 +858,18 @@ export interface ResolveAgentDefaultModeInput {
   signal?: AbortSignal;
 }
 
+export interface ProviderQuotaObservationSession {
+  read(): Promise<import("@getpaseo/protocol/quota-governor").QuotaObservation>;
+  dispose(): Promise<void>;
+}
+
+/** Providers may report this only after confirming disposal of a failed observer. */
+export class QuotaObserverDisposedError extends Error {
+  constructor() {
+    super("Quota observer initialization failed after confirmed disposal.");
+  }
+}
+
 export interface ProviderResetCreditSession {
   readonly canRedeem: boolean;
   readonly canSelectCredit?: boolean;
@@ -835,6 +926,10 @@ export interface AgentClient {
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /** Account management only. Never attach this operation to the agent tool catalog. */
   openResetCreditSession?(): Promise<ProviderResetCreditSession>;
+  /** Read-only account telemetry. This connection must never start inference. */
+  openQuotaObservationSession?(): Promise<ProviderQuotaObservationSession>;
+  /** Construct protection before native connection. Unsupported providers must not fall back. */
+  openQuotaGovernedSession?(input: QuotaGovernedSessionInput): Promise<AgentSession>;
   openAccountLoginSession?(): Promise<ProviderLoginSession>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().

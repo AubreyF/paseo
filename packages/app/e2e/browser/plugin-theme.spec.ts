@@ -64,7 +64,7 @@ test("applies a contributed theme and falls back when its plugin is gone", async
     await openSettingsSection(page, "appearance");
 
     const sectionTitle = page.getByText("Theme", { exact: true }).first();
-    await page.getByLabel("Theme: System", { exact: true }).click();
+    await page.getByLabel("Theme: Claude", { exact: true }).click();
     const mochaItem = page.getByText("Catppuccin Mocha", { exact: true });
     await expect(mochaItem).toBeVisible({ timeout: 30_000 });
     await page.screenshot({
@@ -98,7 +98,7 @@ test("applies a contributed theme and falls back when its plugin is gone", async
 
     await test.step("removing the plugin falls back to the default theme", async () => {
       await client.removePlugin(PLUGIN_ID);
-      await expect(page.getByLabel("Theme: System", { exact: true })).toBeVisible({
+      await expect(page.getByLabel("Theme: Claude", { exact: true })).toBeVisible({
         timeout: 30_000,
       });
       await expect(sectionTitle).not.toHaveCSS("color", MOCHA_MUTED_FOREGROUND);

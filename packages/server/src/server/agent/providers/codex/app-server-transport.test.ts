@@ -8,6 +8,23 @@ import {
 import { CodexAppServerClient } from "./app-server-transport.js";
 
 describe("Codex app-server transport", () => {
+  test("governed disposal retains custody until descendant settlement succeeds", async () => {
+    const child = createCodexAppServerChildProcess();
+    const kill = vi.spyOn(child, "kill");
+    const settle = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("descendant settlement unconfirmed"))
+      .mockResolvedValueOnce(undefined);
+    const client = new CodexAppServerClient(child, createTestLogger(), undefined, settle);
+    await expect(client.dispose()).rejects.toThrow("descendant settlement unconfirmed");
+    expect(kill).not.toHaveBeenCalled();
+    await expect(client.dispose()).resolves.toBeUndefined();
+    expect(settle).toHaveBeenCalledTimes(2);
+    expect(kill).not.toHaveBeenCalled();
+    child.stdout.end();
+    child.stderr.end();
+  });
+
   test("ignores non-JSON stdout lines without dropping pending requests", async () => {
     const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());

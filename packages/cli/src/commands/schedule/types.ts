@@ -45,6 +45,7 @@ export interface ScheduleRunRecord {
 }
 
 export interface ScheduleRecord {
+  configurationRevision?: string;
   id: string;
   name: string | null;
   prompt: string;
@@ -142,6 +143,7 @@ export interface UpdateScheduleNewAgentConfig {
 }
 
 export interface UpdateScheduleInput {
+  expectedConfigurationRevision?: string | null;
   id: string;
   name?: string | null;
   prompt?: string;
@@ -158,6 +160,7 @@ export interface ScheduleUpdatePayload {
 }
 
 export interface ScheduleDaemonClient {
+  getLastServerInfoMessage(): { features?: { scheduleConfigurationRevision?: boolean } } | null;
   scheduleCreate(input: CreateScheduleInput): Promise<ScheduleCreatePayload>;
   scheduleList(): Promise<ScheduleListPayload>;
   scheduleInspect(input: { id: string }): Promise<ScheduleInspectPayload>;

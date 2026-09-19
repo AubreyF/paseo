@@ -226,7 +226,9 @@ test("Paseo mode shows the baseline dialog and never requests suggestions", () =
 test("older hosts explain availability and retain ordinary rename", () => {
   state.supported = false;
   render();
-  expect(host.textContent).toContain("updated host");
+  expect(host.textContent).toContain(
+    "Reconnect to refresh the host's capabilities. If suggestions remain unavailable, update the host and choose an available model in Metadata generation.",
+  );
   expect(state.suggest).not.toHaveBeenCalled();
   expect(input().value).toBe("Original title");
 });

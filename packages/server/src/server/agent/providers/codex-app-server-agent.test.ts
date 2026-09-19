@@ -1,15 +1,24 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterAll, describe, expect, test, vi } from "vitest";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { type Dirent, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
+// Match the validator's native async canonicalization, including Windows paths.
+const preparedWorkerRoot = await realpath(
+  await mkdtemp(path.join(tmpdir(), "governed-workspace-")),
+);
+mkdirSync(path.join(preparedWorkerRoot, ".codex"));
+afterAll(() => rmSync(preparedWorkerRoot, { recursive: true, force: true }));
+
 import type {
   AgentLaunchContext,
+  QuotaAdmissionRequest,
+  QuotaAdmissionPermit,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -83,6 +92,9 @@ describe("Codex executable discovery", () => {
 });
 
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
+import { QuotaConstructionCleanupError } from "../agent-sdk-types.js";
+import { LinuxQuotaProcessCustody } from "../quota-reserve/linux-custody.js";
+import { randomUUID } from "node:crypto";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
@@ -171,6 +183,160 @@ function createSession(
   return session;
 }
 
+test.each([
+  ["start", "denied"],
+  ["steer", "denied"],
+  ["compact", "denied"],
+  ["start", "revoked"],
+  ["steer", "revoked"],
+  ["compact", "revoked"],
+  ["start", "interrupted"],
+  ["compact", "turn-changed"],
+] as const)(
+  "native quota admission blocks %s when %s using the executing connection's account",
+  async (operation, outcome) => {
+    const session = createSession();
+    session.activeForegroundTurnId = null;
+    session.connected = false;
+    const requests: string[] = [];
+    const client: CodexClientLike = {
+      request: vi.fn(async (method) => {
+        requests.push(method);
+        if (method === "thread/loaded/list") return { data: ["test-thread"] };
+        if (method === "thread/read")
+          return { thread: { id: "test-thread", turns: [], status: { type: "idle" } } };
+        if (method === "account/read") return { account: { type: "chatgpt" } };
+        if (method === "account/rateLimits/read")
+          return {
+            accountId: "executing-account",
+            rateLimitsByLimitId: {
+              codex: {
+                limitId: "codex",
+                primary: { usedPercent: 80, windowDurationMins: 10080, resetsAt: null },
+                secondary: null,
+              },
+            },
+          };
+        if (method === "account/usage/read") return {};
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+    let interruption: Promise<void> | undefined;
+    const guard = vi.fn(async (request: QuotaAdmissionRequest) => {
+      expect(request.operation).toBe(operation);
+      expect(request.threadId).toBe("test-thread");
+      expect(request.observation).toMatchObject({
+        status: "available",
+        account: { issuer: "openai", accountId: "executing-account" },
+      });
+      if (outcome === "interrupted") interruption = session.interrupt();
+      if (outcome === "turn-changed") {
+        castInternals<{ currentTurnId: string }>(session).currentTurnId = "replacement-turn";
+        return { assertValidForDispatch() {} };
+      }
+      if (outcome === "revoked") {
+        return {
+          assertValidForDispatch() {
+            throw new Error("Quota admission held");
+          },
+        };
+      }
+      throw new Error("Quota admission held");
+    });
+    session.setQuotaAdmissionGuard?.(guard);
+    session.client = client;
+    session.connected = true;
+    if (operation === "start") {
+      await expect(session.startTurn("implement")).rejects.toThrow("Quota admission held");
+    } else if (operation === "steer") {
+      session.activeForegroundTurnId = "test-turn";
+      castInternals<{ currentTurnId: string }>(session).currentTurnId = "native-turn";
+      await expect(
+        session.steerActiveTurn?.("implement", { expectedTurnId: "test-turn" }),
+      ).rejects.toThrow("Quota admission held");
+    } else {
+      const handler = session.tryHandleOutOfBand?.("/compact");
+      if (!handler) throw new Error("Compaction handler missing");
+      await handler.run({ emit: () => {} });
+    }
+    await interruption;
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(requests).not.toContain("turn/start");
+    expect(requests).not.toContain("turn/steer");
+    expect(requests).not.toContain("thread/compact/start");
+    expect(() =>
+      session.setQuotaAdmissionGuard?.(async () => ({ assertValidForDispatch() {} })),
+    ).toThrow("cannot be replaced");
+  },
+);
+
+test("quota guard refuses autonomous native goals whose continuations bypass managed admission", () => {
+  const session = createSession({}, { goalsEnabled: true });
+  expect(() =>
+    session.setQuotaAdmissionGuard?.(async () => ({ assertValidForDispatch() {} })),
+  ).toThrow("continuation boundary");
+});
+
+test("a guarded session cannot enable native automatic review after construction", async () => {
+  const session = createSession();
+  session.connected = false;
+  session.setQuotaAdmissionGuard?.(async () => ({ assertValidForDispatch() {} }));
+  await expect(session.setMode("auto-review")).rejects.toThrow("unavailable for quota-governed");
+  expect(await session.getCurrentMode()).toBe("auto");
+});
+
+test.each(["telemetry", "guard"] as const)(
+  "a stalled quota %s read releases a pending interruption and cannot dispatch late",
+  async (phase) => {
+    vi.useFakeTimers();
+    try {
+      const session = createSession();
+      session.connected = false;
+      session.activeForegroundTurnId = null;
+      let entered!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let releaseObservation!: (value: QuotaAdmissionRequest["observation"]) => void;
+      const observation = new Promise<QuotaAdmissionRequest["observation"]>((resolve) => {
+        releaseObservation = resolve;
+      });
+      let releasePermit!: (value: QuotaAdmissionPermit) => void;
+      const permit = new Promise<QuotaAdmissionPermit>((resolve) => {
+        releasePermit = resolve;
+      });
+      const guard = vi.fn(async () => {
+        entered();
+        return permit;
+      });
+      session.setQuotaAdmissionGuard?.(guard);
+      const request = vi.fn(async () => ({ data: ["test-thread"] }));
+      session.client = { request };
+      session.connected = true;
+      vi.spyOn(session, "readQuotaObservation").mockImplementation(async () => {
+        if (phase === "telemetry") entered();
+        return observation;
+      });
+      if (phase === "guard") releaseObservation({ status: "unavailable", reason: "read_failed" });
+      const start = expect(session.startTurn("implement")).rejects.toThrow(
+        "Quota admission timed out",
+      );
+      await waiting;
+      const interruption = session.interrupt();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await start;
+      await interruption;
+      releaseObservation({ status: "unavailable", reason: "read_failed" });
+      releasePermit({ assertValidForDispatch() {} });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(guard).toHaveBeenCalledTimes(phase === "guard" ? 1 : 0);
+      expect(request).not.toHaveBeenCalledWith("turn/start", expect.anything(), expect.anything());
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
 function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAppServerAgentClient {
   const provider = new CodexAppServerAgentClient(createTestLogger());
   const internals = castInternals<{
@@ -183,6 +349,982 @@ function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAp
   internals.spawnAppServer = async () => appServer.child;
   return provider;
 }
+
+function createGovernedAppServer(
+  accountId = "reserved-account",
+  controls = true,
+  reviewer: string | null = "user",
+  loaded = false,
+  permissionProfile?: string,
+  approvalPolicy = "never",
+  workerControls = false,
+  configPatch: Record<string, unknown> = {},
+  runtimeWorkspaceRoots: unknown = workerControls
+    ? [preparedWorkerRoot]
+    : ["/tmp/codex-question-test"],
+  handlers: Record<string, (params: unknown) => unknown> = {},
+): FakeCodexAppServer {
+  return createFakeCodexAppServer({
+    "thread/start": () => ({
+      thread: { id: "thread-1" },
+      approvalsReviewer: reviewer,
+      activePermissionProfile: permissionProfile ? { id: permissionProfile } : null,
+      approvalPolicy,
+      runtimeWorkspaceRoots,
+    }),
+    "thread/resume": () => ({
+      approvalsReviewer: reviewer,
+      activePermissionProfile: permissionProfile ? { id: permissionProfile } : null,
+      approvalPolicy,
+      runtimeWorkspaceRoots,
+    }),
+    "thread/loaded/list": () => ({ data: loaded ? ["thread-1"] : [] }),
+    "config/read": () => ({
+      config: controls
+        ? {
+            approvals_reviewer: "user",
+            features: { goals: false, multi_agent: false, multi_agent_v2: false },
+            ...(workerControls
+              ? {
+                  features: Object.fromEntries(
+                    [
+                      "goals",
+                      "multi_agent",
+                      "multi_agent_v2",
+                      "apps",
+                      "plugins",
+                      "plugin_sharing",
+                      "remote_plugin",
+                      "recommended_plugins",
+                      "tool_suggest",
+                      "browser_use",
+                      "browser_use_external",
+                      "browser_use_full_cdp_access",
+                      "in_app_browser",
+                      "computer_use",
+                      "hooks",
+                      "shell_snapshot",
+                    ].map((key) => [key, false]),
+                  ),
+                  mcp_servers: {},
+                  allow_login_shell: false,
+                  shell_environment_policy: {
+                    inherit: "none",
+                    set: {
+                      PATH: `${path.join(preparedWorkerRoot, ".git/factory-tools/bin")}${path.delimiter}/usr/bin${path.delimiter}/bin`,
+                    },
+                  },
+                  web_search: "disabled",
+                  permissions: { factory: workerPermissionProfile() },
+                }
+              : {}),
+            ...configPatch,
+          }
+        : {},
+    }),
+    "account/read": () => ({ account: { type: "chatgpt" } }),
+    "account/rateLimits/read": () => ({
+      accountId,
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          primary: {
+            usedPercent: 30,
+            windowDurationMins: 10080,
+            resetsAt: null,
+          },
+          secondary: null,
+        },
+      },
+    }),
+    "account/usage/read": () => ({}),
+    ...handlers,
+  });
+}
+
+test("protected host authentication logs in through stdin and refreshes only the bound account", async () => {
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    false,
+    "factory",
+    "never",
+    true,
+    {},
+    [preparedWorkerRoot],
+    {
+      "account/login/start": () => ({ type: "chatgptAuthTokens" }),
+    },
+  );
+  const provider = createProviderWithFakeAppServer(appServer);
+  const readTokens = vi.fn(async () => ({
+    accessToken: "synthetic-access-secret",
+    chatgptAccountId: "reserved-account",
+    chatgptPlanType: "pro",
+    refreshToken: "must-not-forward",
+  }));
+  let revoked = false;
+  const session = await provider.openQuotaGovernedSession({
+    config: createConfig({ cwd: preparedWorkerRoot }),
+    account: { issuer: "openai", accountId: "reserved-account" },
+    permissionProfile: "factory",
+    processCustody: {
+      spawn: async () => appServer.child,
+      settle: async () => {
+        appServer.child.stdout.end();
+        appServer.child.stderr.end();
+      },
+    },
+    guard: async () => {
+      throw new Error("No inference in authentication test");
+    },
+    externalChatgptAuth: {
+      readTokens,
+      assertCurrent() {
+        if (revoked) throw new Error("revoked");
+      },
+    },
+  });
+  const login = appServer.requests().find((request) => request.method === "account/login/start");
+  expect(login?.params).toEqual({
+    type: "chatgptAuthTokens",
+    accessToken: "synthetic-access-secret",
+    chatgptAccountId: "reserved-account",
+    chatgptPlanType: "pro",
+  });
+  const refresh = async (id: number, previousAccountId: string) => {
+    const response = appServer.nextResponse();
+    appServer.child.stdout.write(
+      JSON.stringify({
+        id,
+        method: "account/chatgptAuthTokens/refresh",
+        params: { reason: "unauthorized", previousAccountId },
+      }) + "\n",
+    );
+    return JSON.parse(await response);
+  };
+  expect((await refresh(8001, "reserved-account")).result.accessToken).toBe(
+    "synthetic-access-secret",
+  );
+  expect(readTokens).toHaveBeenLastCalledWith("unauthorized");
+  expect((await refresh(8002, "other-account")).error.message).toContain("does not match");
+  expect(readTokens).toHaveBeenCalledTimes(2);
+  revoked = true;
+  expect((await refresh(8003, "reserved-account")).error.message).toContain(
+    "unavailable or changed",
+  );
+  expect(readTokens).toHaveBeenCalledTimes(2);
+  expect(appServer.requests().filter((request) => request.method === "turn/start")).toHaveLength(0);
+  revoked = false;
+  let entered!: () => void;
+  let release!: (value: Awaited<ReturnType<typeof readTokens>>) => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  readTokens.mockImplementationOnce(() => {
+    entered();
+    return new Promise((resolve) => {
+      release = resolve;
+    });
+  });
+  appServer.child.stdout.write(
+    JSON.stringify({
+      id: 8004,
+      method: "account/chatgptAuthTokens/refresh",
+      params: { reason: "unauthorized", previousAccountId: "reserved-account" },
+    }) + "\n",
+  );
+  await waiting;
+  await session.close();
+  release({
+    accessToken: "late-token",
+    chatgptAccountId: "reserved-account",
+    chatgptPlanType: "pro",
+    refreshToken: "never-forward",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(appServer.requests().some((request) => request.id === 8004)).toBe(false);
+});
+
+test("a stalled host authentication read settles construction and cannot send a late token", async () => {
+  vi.useFakeTimers();
+  let release!: (value: { accessToken: string; chatgptAccountId: string }) => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const token = new Promise<{ accessToken: string; chatgptAccountId: string }>((resolve) => {
+    release = resolve;
+  });
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    false,
+    "factory",
+    "never",
+    true,
+  );
+  const provider = createProviderWithFakeAppServer(appServer);
+  const settle = vi.fn(async () => {
+    appServer.child.stdout.end();
+    appServer.child.stderr.end();
+  });
+  try {
+    const pending = expect(
+      provider.openQuotaGovernedSession({
+        config: createConfig({ cwd: preparedWorkerRoot }),
+        account: { issuer: "openai", accountId: "reserved-account" },
+        permissionProfile: "factory",
+        processCustody: { spawn: async () => appServer.child, settle },
+        guard: async () => {
+          throw new Error("No inference");
+        },
+        externalChatgptAuth: {
+          assertCurrent() {},
+          readTokens() {
+            entered();
+            return token;
+          },
+        },
+      }),
+    ).rejects.toThrow("Protected provider authentication is unavailable or changed.");
+    await waiting;
+    await vi.advanceTimersByTimeAsync(9000);
+    await pending;
+    expect(settle).toHaveBeenCalledOnce();
+    release({ accessToken: "late-synthetic-secret", chatgptAccountId: "reserved-account" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(appServer.requests().some((request) => request.method === "account/login/start")).toBe(
+      false,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test.each(["wrong-account", "revoked-during-read", "secret-error"])(
+  "protected authentication rejects %s before login and settles construction",
+  async (failure) => {
+    const appServer = createGovernedAppServer(
+      "reserved-account",
+      true,
+      "user",
+      false,
+      "factory",
+      "never",
+      true,
+    );
+    const provider = createProviderWithFakeAppServer(appServer);
+    const settle = vi.fn(async () => {
+      appServer.child.stdout.end();
+      appServer.child.stderr.end();
+    });
+    let revoked = false;
+    await expect(
+      provider.openQuotaGovernedSession({
+        config: createConfig({ cwd: preparedWorkerRoot }),
+        account: { issuer: "openai", accountId: "reserved-account" },
+        permissionProfile: "factory",
+        processCustody: { spawn: async () => appServer.child, settle },
+        guard: async () => {
+          throw new Error("No inference");
+        },
+        externalChatgptAuth: {
+          assertCurrent() {
+            if (revoked) throw new Error("synthetic-secret");
+          },
+          async readTokens() {
+            if (failure === "secret-error") throw new Error("synthetic-secret");
+            revoked = failure === "revoked-during-read";
+            return { accessToken: "synthetic-secret", chatgptAccountId: "other-account" };
+          },
+        },
+      }),
+    ).rejects.toThrow("Protected provider authentication is unavailable or changed.");
+    expect(appServer.requests().some((request) => request.method === "account/login/start")).toBe(
+      false,
+    );
+    expect(settle).toHaveBeenCalledOnce();
+  },
+);
+
+test.skipIf(process.platform !== "linux")(
+  "failed launcher handshake retains the account fence until receipt reconciliation",
+  async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "quota-startup-failure-"));
+    const custody = await LinuxQuotaProcessCustody.create({
+      journalRoot: root,
+      executable: process.execPath,
+      pythonExecutable: "/bin/false",
+      cwd: root,
+      env: {},
+      identity: {
+        executionId: randomUUID(),
+        authenticationGeneration: "fixture-auth",
+        attemptId: "fixture",
+        ownershipGeneration: 1,
+      },
+    });
+    const provider = new CodexAppServerAgentClient(createTestLogger(), {
+      command: { mode: "replace", argv: [process.execPath] },
+    });
+    const input = {
+      config: createConfig(),
+      account: { issuer: "openai", accountId: "failed-launcher-fixture" },
+      guard: async () => {
+        throw new Error("No inference");
+      },
+      processCustody: custody,
+      permissionProfile: "factory",
+    };
+    try {
+      const error = await provider
+        .openQuotaGovernedSession(input)
+        .catch((failure: unknown) => failure);
+      expect(error).toBeInstanceOf(QuotaConstructionCleanupError);
+      await expect(provider.openQuotaGovernedSession(input)).rejects.toBe(error);
+      await expect((error as QuotaConstructionCleanupError).retryCleanup()).rejects.toThrow();
+      // /bin/false has exited without launching anything. A controlled receipt
+      // fixture exercises the same recovery boundary used by a restarted reader.
+      writeFileSync(
+        path.join(custody.directory, "receipt.json"),
+        JSON.stringify({
+          identity: custody.identity,
+          settled: true,
+          reason: "startup_failure",
+        }),
+        { mode: 0o600 },
+      );
+      await (error as QuotaConstructionCleanupError).retryCleanup();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("governed construction captures launcher custody for transport disposal", async () => {
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    false,
+    "factory",
+    "never",
+    true,
+  );
+  const provider = new CodexAppServerAgentClient(createTestLogger(), {
+    command: { mode: "replace", argv: [process.execPath] },
+    env: { GITHUB_TOKEN: "synthetic-host-secret" },
+  });
+  const spawn = vi.fn(async () => appServer.child);
+  const settle = vi.fn(async (child: ChildProcessWithoutNullStreams) => {
+    expect(child).toBe(appServer.child);
+    child.stdout.end();
+    child.stderr.end();
+  });
+  const kill = vi.spyOn(appServer.child, "kill");
+  const session = await provider.openQuotaGovernedSession({
+    config: createConfig({
+      mcpServers: { escape: { type: "stdio", command: "synthetic-tool" } },
+      cwd: preparedWorkerRoot,
+    }),
+    account: { issuer: "openai", accountId: "reserved-account" },
+    guard: async () => {
+      throw new Error("No inference in custody fixture");
+    },
+    processCustody: { spawn, settle },
+    permissionProfile: "factory",
+    launchContext: { env: { GITHUB_TOKEN: "synthetic-task-secret" } },
+  });
+  await expect(session.startTurn("fixture")).rejects.toThrow("No inference in custody fixture");
+  await session.close();
+  expect(spawn).toHaveBeenCalledExactlyOnceWith(
+    process.execPath,
+    expect.arrayContaining([
+      "app-server",
+      "--disable",
+      "goals",
+      "--disable",
+      "multi_agent",
+      "--disable",
+      "multi_agent_v2",
+      "-c",
+      'approvals_reviewer="user"',
+      'web_search="disabled"',
+      'shell_environment_policy.inherit="none"',
+      `shell_environment_policy.set={ PATH = ${JSON.stringify(path.join(preparedWorkerRoot, ".git/factory-tools/bin") + path.delimiter + "/usr/bin" + path.delimiter + "/bin")} }`,
+      "allow_login_shell=false",
+      "apps",
+      "plugins",
+      "hooks",
+      "browser_use",
+      "computer_use",
+    ]),
+  );
+  expect(settle).toHaveBeenCalledOnce();
+  expect(kill).not.toHaveBeenCalled();
+  const thread = appServer.requests().find(({ method }) => method === "thread/start");
+  expect(thread?.params).not.toHaveProperty("config.mcp_servers");
+  expect(thread?.params).toMatchObject({
+    config: {
+      features: {
+        hooks: false,
+        apps: false,
+        plugins: false,
+        network_proxy: { enabled: true, credential_broker: false },
+      },
+      shell_environment_policy: {
+        inherit: "none",
+        set: {
+          PATH: `${path.join(preparedWorkerRoot, ".git/factory-tools/bin")}${path.delimiter}/usr/bin${path.delimiter}/bin`,
+        },
+      },
+    },
+  });
+  expect(appServer.requests().some(({ method }) => method === "turn/start")).toBe(false);
+  appServer.assertNoErrors();
+});
+
+function workerPermissionProfile() {
+  return {
+    extends: null,
+    workspace_roots: { [preparedWorkerRoot]: true },
+    filesystem: {
+      ":root": "deny",
+      ":minimal": "read",
+      ":tmpdir": "deny",
+      ":slash_tmp": "deny",
+      ":workspace_roots": { ".": "write", ".codex": "deny", ".git": "read" },
+    },
+    network: { enabled: false },
+  };
+}
+
+test("worker refuses an unprepared workspace before creating a thread", async () => {
+  const unprepared = path.join(preparedWorkerRoot, "unprepared");
+  mkdirSync(unprepared);
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    false,
+    "factory",
+    "never",
+    true,
+    {
+      permissions: {
+        factory: { ...workerPermissionProfile(), workspace_roots: { [unprepared]: true } },
+      },
+    },
+  );
+  const provider = createProviderWithFakeAppServer(appServer);
+  const settle = vi.fn(async () => {
+    appServer.child.kill();
+  });
+  await expect(
+    provider.openQuotaGovernedSession({
+      config: createConfig({ cwd: unprepared }),
+      account: { issuer: "openai", accountId: "reserved-account" },
+      guard: async () => {
+        throw new Error("No inference");
+      },
+      permissionProfile: "factory",
+      processCustody: { spawn: async () => appServer.child, settle },
+    }),
+  ).rejects.toThrow();
+  expect(settle).toHaveBeenCalledOnce();
+  expect(
+    appServer.requests().some(({ method }) => method === "thread/start" || method === "turn/start"),
+  ).toBe(false);
+  appServer.assertNoErrors();
+});
+
+test.each([
+  undefined,
+  { ...workerPermissionProfile(), extends: ":workspace" },
+  {
+    ...workerPermissionProfile(),
+    workspace_roots: { [preparedWorkerRoot]: true, "/outside": true },
+  },
+  { ...workerPermissionProfile(), workspace_roots: { "/other": true } },
+  { ...workerPermissionProfile(), filesystem: { ":root": "write" } },
+  {
+    ...workerPermissionProfile(),
+    filesystem: { ...workerPermissionProfile().filesystem, "/outside": "read" },
+  },
+  {
+    ...workerPermissionProfile(),
+    filesystem: {
+      ...workerPermissionProfile().filesystem,
+      ":workspace_roots": { ".": "write", ".codex": "write", ".git": "read" },
+    },
+  },
+  { ...workerPermissionProfile(), unknown_grant: true },
+  { ...workerPermissionProfile(), network: { enabled: true } },
+  {
+    ...workerPermissionProfile(),
+    network: { enabled: false, unix_sockets: { "/outside": "allow" } },
+  },
+])("worker rejects unverified filesystem grants before creating a thread: %j", async (profile) => {
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    false,
+    "factory",
+    "never",
+    true,
+    {
+      permissions: { factory: profile },
+    },
+  );
+  const provider = createProviderWithFakeAppServer(appServer);
+  await expect(
+    provider.openQuotaGovernedSession({
+      config: createConfig(),
+      account: { issuer: "openai", accountId: "reserved-account" },
+      guard: async () => {
+        throw new Error("No inference");
+      },
+      permissionProfile: "factory",
+      processCustody: {
+        spawn: async () => appServer.child,
+        settle: async () => {
+          appServer.child.kill();
+        },
+      },
+    }),
+  ).rejects.toThrow("filesystem confinement");
+  expect(
+    appServer.requests().some(({ method }) => method === "thread/start" || method === "turn/start"),
+  ).toBe(false);
+  appServer.assertNoErrors();
+});
+
+test.each([false, true])(
+  "worker rejects widened runtime roots before inference (resume=%s)",
+  async (resume) => {
+    const appServer = createGovernedAppServer(
+      "reserved-account",
+      true,
+      "user",
+      true,
+      "factory",
+      "never",
+      true,
+      {},
+      [preparedWorkerRoot, "/outside"],
+    );
+    const provider = createProviderWithFakeAppServer(appServer);
+    const guard = vi.fn(async () => ({ assertValidForDispatch() {} }));
+    let session: AgentSession | undefined;
+    try {
+      await expect(
+        (async () => {
+          session = await provider.openQuotaGovernedSession({
+            config: createConfig({ cwd: preparedWorkerRoot }),
+            account: { issuer: "openai", accountId: "reserved-account" },
+            guard,
+            permissionProfile: "factory",
+            resumeHandle: resume ? { provider: "codex", sessionId: "thread-1" } : undefined,
+            processCustody: {
+              spawn: async () => appServer.child,
+              settle: async () => {
+                appServer.child.kill();
+              },
+            },
+          });
+          await session.startTurn("fixture");
+        })(),
+      ).rejects.toThrow("runtime workspace roots");
+      expect(guard).not.toHaveBeenCalled();
+      expect(appServer.requests().some(({ method }) => method === "turn/start")).toBe(false);
+    } finally {
+      await session?.close();
+      appServer.assertNoErrors();
+    }
+  },
+);
+
+test("worker checks changed effective policy on a cached thread before admission", async () => {
+  const patch: Record<string, unknown> = {};
+  const appServer = createGovernedAppServer(
+    "reserved-account",
+    true,
+    "user",
+    true,
+    "factory",
+    "never",
+    true,
+    patch,
+  );
+  const provider = createProviderWithFakeAppServer(appServer);
+  const guard = vi.fn(async () => {
+    throw new Error("No inference in fixture");
+  });
+  const session = await provider.openQuotaGovernedSession({
+    config: createConfig({ cwd: preparedWorkerRoot }),
+    account: { issuer: "openai", accountId: "reserved-account" },
+    guard,
+    permissionProfile: "factory",
+    processCustody: {
+      spawn: async () => appServer.child,
+      settle: async () => {
+        appServer.child.kill();
+      },
+    },
+  });
+  try {
+    await expect(session.startTurn("fixture")).rejects.toThrow("No inference in fixture");
+    patch.permissions = { factory: { ...workerPermissionProfile(), extends: ":workspace" } };
+    await expect(session.startTurn("fixture again")).rejects.toThrow("filesystem confinement");
+    expect(guard).toHaveBeenCalledOnce();
+    expect(appServer.requests().some(({ method }) => method === "turn/start")).toBe(false);
+  } finally {
+    await session.close();
+    appServer.assertNoErrors();
+  }
+});
+
+test.each([
+  { mcp_servers: { outside: { command: "untrusted-fixture" } } },
+  { allow_login_shell: true },
+  { shell_environment_policy: { inherit: "all" } },
+  { shell_environment_policy: { inherit: "none" } },
+  { shell_environment_policy: { inherit: "none", set: { PATH: "/untrusted/bin" } } },
+  { shell_environment_policy: { inherit: "none", set: { GITHUB_TOKEN: "synthetic" } } },
+  { shell_environment_policy: { inherit: "none", experimental_use_profile: true } },
+  { web_search: "live" },
+  { notify: ["untrusted-fixture"] },
+  { notify: "malformed-fixture" },
+])(
+  "protected worker rejects unsafe effective configuration before thread creation: %j",
+  async (configPatch) => {
+    const appServer = createGovernedAppServer(
+      "reserved-account",
+      true,
+      "user",
+      false,
+      "factory",
+      "never",
+      true,
+      configPatch,
+    );
+    const provider = createProviderWithFakeAppServer(appServer);
+    const settle = vi.fn(async () => {
+      appServer.child.kill();
+    });
+    await expect(
+      provider.openQuotaGovernedSession({
+        config: createConfig({ cwd: preparedWorkerRoot }),
+        account: { issuer: "openai", accountId: "reserved-account" },
+        guard: async () => {
+          throw new Error("No inference");
+        },
+        permissionProfile: "factory",
+        processCustody: { spawn: async () => appServer.child, settle },
+      }),
+    ).rejects.toThrow("worker tool and environment confinement");
+    expect(
+      appServer
+        .requests()
+        .some(({ method }) => method === "thread/start" || method === "turn/start"),
+    ).toBe(false);
+    expect(settle).toHaveBeenCalledOnce();
+    appServer.assertNoErrors();
+  },
+);
+
+test.each([false, true])(
+  "governed permission profile survives native workflow overrides (resume=%s)",
+  async (resume) => {
+    const appServer = createGovernedAppServer("reserved-account", true, "user", true, "factory");
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.openQuotaGovernedSession({
+      config: createConfig({
+        modeId: "full-access",
+        providerOptions: { sandbox_mode: "danger-full-access" },
+      }),
+      account: { issuer: "openai", accountId: "reserved-account" },
+      guard: async () => ({ assertValidForDispatch() {} }),
+      permissionProfile: "factory",
+      resumeHandle: resume ? { provider: "codex", sessionId: "thread-1" } : undefined,
+    });
+    try {
+      await session.startTurn("implement");
+      const requests = appServer
+        .requests()
+        .filter(
+          ({ method }) =>
+            method === (resume ? "thread/resume" : "thread/start") || method === "turn/start",
+        );
+      expect(requests).toHaveLength(2);
+      for (const request of requests) {
+        expect(request.params).toMatchObject({
+          permissions: "factory",
+          approvalPolicy: "never",
+          approvalsReviewer: "user",
+        });
+        expect(request.params).not.toHaveProperty("sandbox");
+        expect(request.params).not.toHaveProperty("sandboxPolicy");
+        expect(request.params).not.toHaveProperty("config.sandbox_mode");
+        expect(request.params).toHaveProperty("config.default_permissions", "factory");
+      }
+    } finally {
+      await session.close();
+      appServer.assertNoErrors();
+    }
+  },
+);
+
+test.each([
+  [false, undefined, "never"],
+  [false, "other", "never"],
+  [false, "factory", "on-request"],
+  [true, undefined, "never"],
+  [true, "other", "never"],
+  [true, "factory", "on-request"],
+] as const)(
+  "governed permission profile rejects unverified native policy (resume=%s profile=%s approval=%s)",
+  async (resume, profile, approval) => {
+    const appServer = createGovernedAppServer(
+      "reserved-account",
+      true,
+      "user",
+      true,
+      profile,
+      approval,
+    );
+    const provider = createProviderWithFakeAppServer(appServer);
+    const guard = vi.fn(async () => ({ assertValidForDispatch() {} }));
+    let session: AgentSession | undefined;
+    try {
+      await expect(
+        (async () => {
+          session = await provider.openQuotaGovernedSession({
+            config: createConfig(),
+            account: { issuer: "openai", accountId: "reserved-account" },
+            guard,
+            permissionProfile: "factory",
+            resumeHandle: resume ? { provider: "codex", sessionId: "thread-1" } : undefined,
+          });
+          await session.startTurn("implement");
+        })(),
+      ).rejects.toThrow("permission profile is unverified");
+      expect(guard).not.toHaveBeenCalled();
+      expect(appServer.requests().map(({ method }) => method)).not.toContain("turn/start");
+    } finally {
+      await session?.close();
+      appServer.assertNoErrors();
+    }
+  },
+);
+
+test.each([
+  [false, "auto_review", false],
+  [true, "auto_review", false],
+  [true, null, false],
+  [true, "auto_review", true],
+] as const)(
+  "governed threads require a verified user reviewer (resume=%s, reviewer=%s, loaded=%s)",
+  async (resume, reviewer, loaded) => {
+    const appServer = createGovernedAppServer("reserved-account", true, reviewer, loaded);
+    const provider = createProviderWithFakeAppServer(appServer);
+    const guard = vi.fn(async () => ({ assertValidForDispatch() {} }));
+    let session: AgentSession | undefined;
+    const exercise = async () => {
+      session = await provider.openQuotaGovernedSession({
+        config: createConfig({ modeId: "full-access" }),
+        account: { issuer: "openai", accountId: "reserved-account" },
+        guard,
+        resumeHandle: resume ? { provider: "codex", sessionId: "thread-1" } : undefined,
+      });
+      await session.startTurn("implement");
+    };
+    try {
+      await expect(exercise()).rejects.toThrow("thread reviewer is unverified");
+      expect(guard).not.toHaveBeenCalled();
+      expect(appServer.requests().map((request) => request.method)).not.toContain("turn/start");
+    } finally {
+      await session?.close();
+      appServer.assertNoErrors();
+    }
+  },
+);
+
+test("governed reconnect rejects an account change before restoring the saved thread", async () => {
+  const first = createGovernedAppServer();
+  const second = createGovernedAppServer("other-account");
+  const provider = createProviderWithFakeAppServer(first);
+  const guard = vi.fn(async () => {
+    throw new Error("Reserved quota held");
+  });
+  const session = await provider.openQuotaGovernedSession({
+    config: createConfig(),
+    account: { issuer: "openai", accountId: "reserved-account" },
+    guard,
+  });
+  try {
+    await expect(session.startTurn("implement")).rejects.toThrow("Reserved quota held");
+    first.disconnect();
+    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+      provider,
+    ).spawnAppServer = async () => second.child;
+    await expect(session.startTurn("resume")).rejects.toThrow("does not match");
+    expect(second.requests().map((request) => request.method)).not.toContain("thread/resume");
+    expect(guard).toHaveBeenCalledOnce();
+  } finally {
+    await session.close();
+    first.assertNoErrors();
+    second.assertNoErrors();
+  }
+});
+
+test("failed governed cleanup retains custody and fences another client until cleanup succeeds", async () => {
+  const first = createGovernedAppServer("other-account");
+  const second = createGovernedAppServer();
+  const provider = createProviderWithFakeAppServer(first);
+  const otherProvider = createProviderWithFakeAppServer(second);
+  const input = {
+    config: createConfig(),
+    account: { issuer: "openai", accountId: "reserved-account" },
+    guard: async () => ({ assertValidForDispatch() {} }),
+  };
+  const dispose = vi
+    .spyOn(CodexAppServerClient.prototype, "dispose")
+    .mockRejectedValue(new Error("Disposal unavailable"));
+  let failure: QuotaConstructionCleanupError | undefined;
+  let session: AgentSession | undefined;
+  try {
+    try {
+      await provider.openQuotaGovernedSession(input);
+    } catch (error) {
+      if (!(error instanceof QuotaConstructionCleanupError)) throw error;
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(QuotaConstructionCleanupError);
+    await expect(otherProvider.openQuotaGovernedSession(input)).rejects.toBe(failure);
+    expect(second.requests()).toEqual([]);
+    dispose.mockRestore();
+    await failure!.retryCleanup();
+    session = await otherProvider.openQuotaGovernedSession(input);
+    expect(session.provider).toBe("codex");
+  } finally {
+    dispose.mockRestore();
+    await failure?.retryCleanup();
+    await session?.close();
+    first.assertNoErrors();
+    second.assertNoErrors();
+  }
+});
+
+test("a configured account alias retains governed construction and execution telemetry", async () => {
+  const appServer = createGovernedAppServer();
+  const nativeProvider = createProviderWithFakeAppServer(appServer);
+  const open = CodexAppServerAgentClient.prototype.openQuotaGovernedSession;
+  const spy = vi
+    .spyOn(CodexAppServerAgentClient.prototype, "openQuotaGovernedSession")
+    .mockImplementation((input) => open.call(nativeProvider, input));
+  let session: AgentSession | undefined;
+  try {
+    const registry = buildProviderRegistry(createTestLogger(), {
+      providerOverrides: {
+        "worker-account": {
+          extends: "codex",
+          label: "Worker account",
+          env: { CODEX_HOME: "/tmp/unused-fixture-home" },
+        },
+      },
+    });
+    const client = registry["worker-account"].createClient(createTestLogger());
+    const guard = vi.fn(async () => {
+      throw new Error("Reserved quota held");
+    });
+    session = await client.openQuotaGovernedSession!({
+      config: createConfig({ provider: "worker-account" }),
+      account: { issuer: "openai", accountId: "reserved-account" },
+      guard,
+    });
+    expect(session.provider).toBe("worker-account");
+    await expect(session.readQuotaObservation!()).resolves.toMatchObject({
+      status: "available",
+      account: { issuer: "openai", accountId: "reserved-account" },
+    });
+    await expect(session.startTurn("implement")).rejects.toThrow("Reserved quota held");
+    expect(session.describePersistence()).toMatchObject({ provider: "worker-account" });
+    expect(guard).toHaveBeenCalledOnce();
+  } finally {
+    await session?.close();
+    spy.mockRestore();
+    appServer.assertNoErrors();
+  }
+});
+
+test.each([false, true])(
+  "governed construction verifies controls and account before execution (resume=%s)",
+  async (resume) => {
+    const appServer = createGovernedAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    const guard = vi.fn(async () => {
+      throw new Error("Reserved quota held");
+    });
+    const session = await provider.openQuotaGovernedSession({
+      config: createConfig(),
+      account: { issuer: "openai", accountId: "reserved-account" },
+      guard,
+      resumeHandle: resume ? { provider: "codex", sessionId: "thread-1" } : undefined,
+    });
+    try {
+      await expect(session.startTurn("implement")).rejects.toThrow("Reserved quota held");
+      const methods = appServer.requests().map((request) => request.method);
+      expect(methods.indexOf("config/read")).toBeLessThan(methods.indexOf("account/read"));
+      expect(methods.indexOf("account/read")).toBeLessThan(
+        methods.indexOf(resume ? "thread/resume" : "thread/start"),
+      );
+      expect(methods).not.toContain("turn/start");
+      expect(guard).toHaveBeenCalledOnce();
+      const threadRequest = appServer
+        .requests()
+        .find((request) => request.method === (resume ? "thread/resume" : "thread/start"));
+      expect(threadRequest).toMatchObject({
+        params: {
+          config: {
+            approvals_reviewer: "user",
+            features: { goals: false, multi_agent: false, multi_agent_v2: false },
+          },
+        },
+      });
+    } finally {
+      await session.close();
+      appServer.assertNoErrors();
+    }
+  },
+);
+
+test.each(["controls", "account"] as const)(
+  "governed restoration refuses an unverified %s before restoring a thread",
+  async (failure) => {
+    const appServer = createGovernedAppServer(
+      failure === "account" ? "other-account" : "reserved-account",
+      failure !== "controls",
+    );
+    const kill = vi.spyOn(appServer.child, "kill");
+    const provider = createProviderWithFakeAppServer(appServer);
+    await expect(
+      provider.openQuotaGovernedSession({
+        config: createConfig(),
+        account: { issuer: "openai", accountId: "reserved-account" },
+        guard: async () => ({ assertValidForDispatch() {} }),
+        resumeHandle: { provider: "codex", sessionId: "thread-1" },
+      }),
+    ).rejects.toThrow(failure === "controls" ? "controls are unavailable" : "does not match");
+    expect(appServer.requests().map((request) => request.method)).not.toContain("thread/resume");
+    expect(kill).toHaveBeenCalled();
+    appServer.assertNoErrors();
+  },
+);
 
 async function startPublicSteeringSession(
   appServer: FakeCodexAppServer,
@@ -691,6 +1833,65 @@ process.stdin.on("data", (chunk) => {
 }
 
 describe("Codex app-server provider", () => {
+  test("switching a loaded automatic-review task to Full access clears the reviewer next turn", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: ["thread-1"] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ modeId: "auto-review" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      await session.connect();
+      await session.getRuntimeInfo();
+      expect(await appServer.waitForRequest("thread/start")).toMatchObject({
+        sandbox: "workspace-write",
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
+      });
+      await session.setMode("full-access");
+      await session.startTurn("read status only");
+      expect(await appServer.waitForTurnStart()).toMatchObject({
+        sandboxPolicy: { type: "dangerFullAccess" },
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("resumes Full access with its sandbox and clears an inherited automatic reviewer", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ modeId: "full-access" }),
+      { sessionId: "retained-thread" },
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      await session.connect();
+      expect(await appServer.waitForRequest("thread/resume")).toMatchObject({
+        threadId: "retained-thread",
+        sandbox: "danger-full-access",
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+      });
+      await session.startTurn("read status only");
+      expect(await appServer.waitForTurnStart()).toMatchObject({
+        sandboxPolicy: { type: "dangerFullAccess" },
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("getAvailableModes includes auto-review when the Codex version supports it", async () => {
     const session = createSession({}, { autoReviewEnabled: true });
 
@@ -742,6 +1943,69 @@ describe("Codex app-server provider", () => {
       sandbox: "workspace-write",
       approvalsReviewer: "auto_review",
     });
+  });
+
+  test("updates native thread permissions for autonomous goal continuations without interrupting", async () => {
+    const session = createSession({ modeId: "auto-review" }, { goalsEnabled: true });
+    const request = vi.fn(async () => ({}));
+    session.client = { request };
+
+    await expect(session.setMode("full-access")).resolves.toEqual({
+      type: "warning",
+      message: "Permission mode applies next turn",
+    });
+
+    expect(request.mock.calls).toEqual([
+      [
+        "thread/settings/update",
+        {
+          threadId: "test-thread",
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "dangerFullAccess" },
+          approvalsReviewer: "user",
+        },
+      ],
+    ]);
+    expect(session.activeForegroundTurnId).toBe("test-turn");
+    expect(await session.getCurrentMode()).toBe("full-access");
+  });
+
+  test("does not acknowledge a goal task mode when native thread settings reject it", async () => {
+    const session = createSession({ modeId: "auto-review" }, { goalsEnabled: true });
+    session.client = {
+      request: vi.fn(async () => {
+        throw new Error("settings rejected");
+      }),
+    };
+
+    await expect(session.setMode("full-access")).rejects.toThrow("settings rejected");
+    expect(await session.getCurrentMode()).toBe("auto-review");
+    expect(session.activeForegroundTurnId).toBe("test-turn");
+  });
+
+  test("preserves provider policy overrides when updating autonomous goal permissions", async () => {
+    const session = createSession(
+      {
+        modeId: undefined,
+        providerOptions: { approval_policy: "on-request", sandbox_mode: "read-only" },
+      },
+      { goalsEnabled: true },
+    );
+    const request = vi.fn(async () => ({}));
+    session.client = { request };
+
+    await session.setMode("full-access");
+
+    expect(request.mock.calls).toEqual([
+      [
+        "thread/settings/update",
+        {
+          threadId: "test-thread",
+          sandboxPolicy: { type: "readOnly" },
+          approvalsReviewer: "user",
+        },
+      ],
+    ]);
   });
 
   test("setMode and setThinkingOption return a next-turn notice while a turn is active", async () => {
@@ -4831,7 +6095,14 @@ describe("Codex app-server provider", () => {
     expect(session.currentThreadId).toBe("archived-thread-id");
     expect(requests).toEqual([
       { method: "thread/loaded/list", params: {} },
-      { method: "thread/resume", params: { threadId: "archived-thread-id" } },
+      {
+        method: "thread/resume",
+        params: {
+          threadId: "archived-thread-id",
+          approvalPolicy: "on-request",
+          sandbox: "workspace-write",
+        },
+      },
     ]);
   });
 

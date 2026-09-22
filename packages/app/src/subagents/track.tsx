@@ -136,7 +136,8 @@ export function SubagentsTrack({
         <View style={[taskCardStyles.header, styles.cardHeader]}>
           <Button
             variant="ghost"
-            size="md"
+            size="sm"
+            hitSlop={6}
             style={styles.collapseHeader}
             textStyle={styles.collapseHeaderText}
             trailing={headerTrailing}
@@ -447,7 +448,7 @@ function SubagentActionButton({
 
 const styles = StyleSheet.create((theme) => ({
   card: { paddingVertical: theme.spacing[2], paddingLeft: theme.spacing[2] },
-  cardHeader: { alignItems: "center", justifyContent: "space-between" },
+  cardHeader: { alignItems: "center" },
   cardRows: {
     marginLeft: { xs: theme.spacing[1], md: theme.spacing[2] },
     marginBottom: { xs: 0, md: theme.spacing[2] },
@@ -459,7 +460,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   collapseHeader: {
-    flexShrink: 1,
+    flex: 1,
     minWidth: 0,
     justifyContent: "flex-start",
     paddingHorizontal: theme.spacing[2],

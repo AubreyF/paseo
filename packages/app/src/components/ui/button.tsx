@@ -130,6 +130,20 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: theme.colors.destructive,
       borderColor: theme.colors.destructive,
     },
+    hoveredNeutral: {
+      backgroundColor: theme.colors.interactionHighlight,
+    },
+    hoveredPrimary: {
+      backgroundColor: theme.colors.accentBright,
+      borderColor: theme.colors.accentBright,
+    },
+    hoveredSecondary: {
+      backgroundColor: theme.colors.surface4,
+      borderColor: theme.colors.surface4,
+    },
+    hoveredDestructive: {
+      borderColor: theme.colors.destructiveForeground,
+    },
     pressed: {
       opacity: 0.85,
     },
@@ -209,7 +223,11 @@ export function Button({
   } else {
     sizeStyle = styles.md;
   }
-  const isGhostHovered = hovered && variant === "ghost";
+  const isGhostHovered = hovered && !isDisabled && variant === "ghost";
+  let hoverStyle: ViewStyle = styles.hoveredNeutral;
+  if (variant === "default") hoverStyle = styles.hoveredPrimary;
+  else if (variant === "secondary") hoverStyle = styles.hoveredSecondary;
+  else if (variant === "destructive") hoverStyle = styles.hoveredDestructive;
 
   const handleHoverIn = useCallback(() => setHovered(true), []);
   const handleHoverOut = useCallback(() => setHovered(false), []);
@@ -219,11 +237,12 @@ export function Button({
       styles.base,
       sizeStyle,
       variantStyle,
+      hovered && !isDisabled ? hoverStyle : null,
       pressed ? styles.pressed : null,
       isDisabled ? styles.disabled : null,
       style,
     ],
-    [sizeStyle, variantStyle, isDisabled, style],
+    [sizeStyle, variantStyle, isDisabled, style, hovered, hoverStyle],
   );
 
   const resolvedTextStyle = useMemo(

@@ -12,7 +12,7 @@ export async function runAppearanceFontSizeRegression(page) {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Appearance", exact: true }).click();
 
-  await page.getByLabel("Theme: System", { exact: true }).click();
+  await page.getByLabel("Theme: Claude", { exact: true }).click();
   await page.getByText("Pure black", { exact: true }).click();
 
   const interfaceSizeInput = page.getByRole("textbox", { name: "Interface font size" });

@@ -1,9 +1,11 @@
 import { expect, test } from "../support/fixtures";
 import {
+  closeModelPicker,
   openModelPicker,
   seedAgentProfiles,
   seedModelProvider,
 } from "../support/helpers/agent-profiles";
+import { setVortonMode } from "../support/helpers/app";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { installProviderUsageFixture } from "../support/helpers/provider-usage";
@@ -35,7 +37,7 @@ const SECONDARY = {
   ],
 };
 
-test("model selector shows usage for each configured account and its profiles", async ({
+test("account usage stays in Vorton presets while Paseo retains its model picker", async ({
   page,
 }, testInfo) => {
   const primaryProvider = await seedModelProvider(PRIMARY);
@@ -57,7 +59,7 @@ test("model selector shows usage for each configured account and its profiles", 
   });
   const usageFixture = await installProviderUsageFixture(page, [
     {
-      fetchedAt: "2026-09-03T00:00:00.000Z",
+      fetchedAt: new Date().toISOString(),
       providers: [
         {
           providerId: PRIMARY.id,
@@ -89,18 +91,27 @@ test("model selector shows usage for each configured account and its profiles", 
     await clickNewChat(page);
     await expectComposerVisible(page);
     await openModelPicker(page);
-    await usageFixture.waitForRequestCount(1);
-
-    await expect(page.getByTestId(`model-provider-${PRIMARY.id}`)).toContainText(
-      /84% left · resets \d+h/,
-    );
-    await expect(page.getByTestId(`model-provider-${SECONDARY.id}`)).toContainText("17% left");
     const primaryProfile = page.getByTestId("model-profile-row-agent_profile_primary_usage");
     const secondaryProfile = page.getByTestId("model-profile-row-agent_profile_secondary_usage");
     await expect(primaryProfile.getByText(PRIMARY.label, { exact: true })).toHaveCount(1);
     await expect(secondaryProfile.getByText(SECONDARY.label, { exact: true })).toHaveCount(1);
-    await expect(primaryProfile).toContainText(/84% · \d+h/);
-    await expect(secondaryProfile).toContainText("17%");
+    await expect(page.getByTestId(`model-provider-${PRIMARY.id}`)).not.toContainText("84%");
+    await expect(page.getByTestId(`model-provider-${SECONDARY.id}`)).not.toContainText("17%");
+    expect(usageFixture.requestCount()).toBe(0);
+    await closeModelPicker(page);
+
+    await setVortonMode(page, true);
+    await page.getByTestId("agent-preset-selector").filter({ visible: true }).first().click();
+    await usageFixture.waitForRequestCount(1);
+    const primaryPreset = page.getByTestId("preset-row-agent_profile_primary_usage");
+    const secondaryPreset = page.getByTestId("preset-row-agent_profile_secondary_usage");
+    await expect(primaryPreset).toContainText("84% left");
+    await expect(primaryPreset).toContainText(/resets in \d+h/);
+    await expect(secondaryPreset).toContainText("17% left");
+    await expect(primaryPreset.getByRole("progressbar", { name: "Usage remaining" })).toBeVisible();
+    await expect(
+      secondaryPreset.getByRole("progressbar", { name: "Usage remaining" }),
+    ).toBeVisible();
 
     await testInfo.attach("provider-usage-model-selector", {
       body: await page.screenshot(),

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const git = (...args) =>
   execFileSync("git", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }).trim();
@@ -15,18 +15,37 @@ const before = pattern.exec(previous);
 const current = pattern.exec(root.version);
 if (!before || !current)
   throw new Error("Expected a stable or beta base, optionally with a Vorton counter.");
-const base = current.slice(1, 4).join(".") + (current[4] ? `-beta.${current[4]}` : "");
-const oldBase = before.slice(1, 4).join(".") + (before[4] ? `-beta.${before[4]}` : "");
-const currentParts = [
-  ...current.slice(1, 4).map(Number),
-  current[4] ? Number(current[4]) : Infinity,
-];
-const previousParts = [...before.slice(1, 4).map(Number), before[4] ? Number(before[4]) : Infinity];
-const difference = currentParts.findIndex((n, i) => n !== previousParts[i]);
-if (difference !== -1 && currentParts[difference] < previousParts[difference]) {
-  throw new Error("The upstream base cannot decrease. Revert code under a newer Vorton version.");
+function upstreamBase(parts) {
+  return parts.slice(1, 4).join(".") + (parts[4] ? `-beta.${parts[4]}` : "");
 }
-const counter = base === oldBase ? Number(before[5] ?? before[6] ?? 0) + 1 : 1;
+function compareBase(left, right) {
+  const a = [...left.slice(1, 4).map(Number), left[4] ? Number(left[4]) : Infinity];
+  const b = [...right.slice(1, 4).map(Number), right[4] ? Number(right[4]) : Infinity];
+  const difference = a.findIndex((value, index) => value !== b[index]);
+  return difference === -1 ? 0 : Math.sign(a[difference] - b[difference]);
+}
+const base = upstreamBase(current);
+const parentVersions = [before];
+// Read both parents so preparation and hook retries preserve the incoming counter.
+const mergeHeadPath = git("rev-parse", "--git-path", "MERGE_HEAD");
+if (existsSync(mergeHeadPath)) {
+  for (const head of readFileSync(mergeHeadPath, "utf8").trim().split(/\s+/)) {
+    const version = JSON.parse(git("show", `${head}:package.json`)).version;
+    const parsed = pattern.exec(version);
+    if (!parsed) throw new Error("Expected a stable or beta base in merge parent.");
+    parentVersions.push(parsed);
+  }
+}
+if (parentVersions.some((parent) => compareBase(current, parent) < 0)) {
+  throw new Error("The upstream base cannot decrease below a parent.");
+}
+const counter =
+  Math.max(
+    0,
+    ...parentVersions
+      .filter((parent) => upstreamBase(parent) === base)
+      .map((parent) => Number(parent[5] ?? parent[6] ?? 0)),
+  ) + 1;
 if (!Number.isSafeInteger(counter)) throw new Error("Vorton counter exceeds safe integer range.");
 const next = `${base}${current[4] ? "." : "-"}vorton.${counter}`;
 const files = [

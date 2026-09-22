@@ -72,4 +72,52 @@ describe("useScheduleFormModel", () => {
       selectedProjectOptionId: PROJECT_A_ID,
     });
   });
+  it("retains the opened revision with draft fields across background record refreshes", () => {
+    const snapshot: ScheduleFormSnapshot = {
+      ...createSnapshot([]),
+      mode: "edit",
+      schedule: {
+        id: "schedule",
+        name: "Original",
+        prompt: "Original prompt",
+        configurationRevision: "opened-revision",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: { type: "new-agent", config: { provider: "codex-secondary", cwd: "/repo" } },
+        status: "active",
+        createdAt: "2026-09-14T00:00:00Z",
+        updatedAt: "2026-09-14T00:00:00Z",
+        nextRunAt: null,
+        lastRunAt: null,
+        pausedAt: null,
+        maxRuns: null,
+        expiresAt: null,
+      },
+    };
+    const { result, rerender, unmount } = renderHook(
+      ({ current }) => useScheduleFormModel(current),
+      {
+        initialProps: { current: snapshot },
+      },
+    );
+    act(() => result.current.setPrompt("Owner draft"));
+    const refreshed: ScheduleFormSnapshot = {
+      ...snapshot,
+      schedule: {
+        ...snapshot.schedule!,
+        configurationRevision: "newer-revision",
+        prompt: "Other editor",
+      },
+    };
+    rerender({ current: refreshed });
+    expect(result.current.getState()).toMatchObject({
+      initialConfigurationRevision: "opened-revision",
+      prompt: "Owner draft",
+    });
+    unmount();
+    const reopened = renderHook(() => useScheduleFormModel(refreshed));
+    expect(reopened.result.current.getState()).toMatchObject({
+      initialConfigurationRevision: "newer-revision",
+      prompt: "Other editor",
+    });
+  });
 });

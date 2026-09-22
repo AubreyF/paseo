@@ -14,7 +14,9 @@ interface UseImageAttachmentPickerResult {
   pickImages: () => Promise<PickedImageAttachmentInput[] | null>;
 }
 
-export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
+export function useImageAttachmentPicker(
+  onError?: (message: string) => void,
+): UseImageAttachmentPickerResult {
   const { t } = useTranslation();
   const [mediaPermission, requestMediaPermission] = ImagePicker.useMediaLibraryPermissions();
   const isPickingRef = useRef(false);
@@ -32,15 +34,17 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
     }
 
     if (!currentPermission?.granted) {
-      Alert.alert(
-        t("imageAttachmentPicker.permissionTitle"),
-        t("imageAttachmentPicker.permissionMessage"),
-      );
+      if (onError) onError(t("imageAttachmentPicker.permissionMessage"));
+      else
+        Alert.alert(
+          t("imageAttachmentPicker.permissionTitle"),
+          t("imageAttachmentPicker.permissionMessage"),
+        );
       return false;
     }
 
     return true;
-  }, [mediaPermission, requestMediaPermission, t]);
+  }, [mediaPermission, requestMediaPermission, t, onError]);
 
   const pickImages = useCallback(async () => {
     if (isPickingRef.current) {
@@ -81,12 +85,17 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
       return await normalizePickedImageAssets(result.assets);
     } catch (error) {
       console.error("[ImageAttachmentPicker] Failed to pick image:", error);
-      Alert.alert(t("imageAttachmentPicker.errorTitle"), t("imageAttachmentPicker.failedToSelect"));
+      if (onError) onError(t("imageAttachmentPicker.failedToSelect"));
+      else
+        Alert.alert(
+          t("imageAttachmentPicker.errorTitle"),
+          t("imageAttachmentPicker.failedToSelect"),
+        );
       return null;
     } finally {
       isPickingRef.current = false;
     }
-  }, [ensurePermission, t]);
+  }, [ensurePermission, t, onError]);
 
   return { pickImages };
 }

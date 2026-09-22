@@ -398,7 +398,11 @@ export class MessageQueueStore {
     });
   }
 
-  mutate(agentId: string, input: QueueOperation): Promise<QueueSnapshot> {
+  mutate(
+    agentId: string,
+    input: QueueOperation,
+    beforeCommit?: () => Promise<void>,
+  ): Promise<QueueSnapshot> {
     const operation = OperationSchema.parse(input);
     if (JSON.stringify(operation).length > 1_000_000)
       throw new QueueStoreError("full", "The queued message exceeds the content limit.");
@@ -423,6 +427,9 @@ export class MessageQueueStore {
         fingerprint,
         revision: record.snapshot.revision,
       });
+      // Retain authenticated ingress evidence after validation but before this
+      // operation can become visible to delivery. Replays keep original evidence.
+      await beforeCommit?.();
       await this.commit(record);
       return record.snapshot;
     });

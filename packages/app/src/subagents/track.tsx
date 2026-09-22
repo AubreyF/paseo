@@ -1,3 +1,7 @@
+import { CountBadge } from "@/components/ui/count-badge";
+import { Button } from "@/components/ui/button";
+import { taskCardStyles } from "@/agent-stream/task-card-styles";
+import { useVortonTouch } from "@/vorton-touch";
 import { useCallback, useMemo, type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -30,6 +34,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 });
 
 export interface SubagentsTrackProps {
+  inline?: boolean;
   serverId: string;
   rows: SubagentRow[];
   onOpenSubagent: (id: string) => void;
@@ -56,6 +61,7 @@ function buildRowPresentation(row: SubagentRow, serverId: string): WorkspaceTabP
 }
 
 export function SubagentsTrack({
+  inline = false,
   serverId,
   rows,
   onOpenSubagent,
@@ -66,6 +72,7 @@ export function SubagentsTrack({
   onDetachSubagent,
 }: SubagentsTrackProps): ReactElement | null {
   const { t } = useTranslation();
+  const touch = useVortonTouch();
 
   const isArchivingFinished = archiveFinishedStatus.kind === "archiving";
   const isArchiveFinishedFailed = archiveFinishedStatus.kind === "failed";
@@ -77,6 +84,48 @@ export function SubagentsTrack({
   const finishedCount = countFinishedSubagents(rows);
   const showArchiveFinished = finishedCount > 0 || isArchivingFinished || isArchiveFinishedFailed;
 
+  const rowsContent = rows.map((row, index) => (
+    <View
+      key={`${row.kind}:${row.id}`}
+      style={inline && index > 0 ? taskCardStyles.separator : undefined}
+    >
+      <SubagentsTrackRow
+        inline={inline}
+        row={row}
+        serverId={serverId}
+        onOpenSubagent={onOpenSubagent}
+        onOpenProviderSubagent={onOpenProviderSubagent}
+        onArchiveSubagent={onArchiveSubagent}
+        onDetachSubagent={onDetachSubagent}
+      />
+    </View>
+  ));
+  const archiveAction =
+    showArchiveFinished && onArchiveFinished ? (
+      <ArchiveFinishedRow
+        inline={inline}
+        status={archiveFinishedStatus}
+        disabled={isArchivingFinished}
+        onPress={onArchiveFinished}
+      />
+    ) : null;
+  if (inline) {
+    return (
+      <View style={taskCardStyles.container} testID="subagents-card">
+        <View style={[taskCardStyles.header, touch && taskCardStyles.touchHeader]}>
+          <Text style={taskCardStyles.heading}>{t("subagents.title")}</Text>
+          <CountBadge
+            label={String(rows.length)}
+            accessibilityLabel={pill.accessibilityLabel}
+            testID="subagents-card-count"
+          />
+          <View style={styles.headerSpacer} />
+          {archiveAction}
+        </View>
+        <View>{rowsContent}</View>
+      </View>
+    );
+  }
   return (
     <ComposerTrackPill
       testID="subagents-track-header"
@@ -84,26 +133,10 @@ export function SubagentsTrack({
       accessibilityLabel={pill.accessibilityLabel}
       panelTitle={t("subagents.title")}
     >
-      {showArchiveFinished && onArchiveFinished ? (
-        <ComposerTrackActions divided={rows.length > 0}>
-          <ArchiveFinishedRow
-            status={archiveFinishedStatus}
-            disabled={isArchivingFinished}
-            onPress={onArchiveFinished}
-          />
-        </ComposerTrackActions>
+      {archiveAction ? (
+        <ComposerTrackActions divided={rows.length > 0}>{archiveAction}</ComposerTrackActions>
       ) : null}
-      {rows.map((row) => (
-        <SubagentsTrackRow
-          key={row.id}
-          row={row}
-          serverId={serverId}
-          onOpenSubagent={onOpenSubagent}
-          onOpenProviderSubagent={onOpenProviderSubagent}
-          onArchiveSubagent={onArchiveSubagent}
-          onDetachSubagent={onDetachSubagent}
-        />
-      ))}
+      {rowsContent}
     </ComposerTrackPill>
   );
 }
@@ -112,16 +145,19 @@ export function SubagentsTrack({
  * Bulk archive, as a row above the list rather than an icon next to the count. The pill has no
  * header to hang an icon off, and a destructive-ish action reads better with its name attached.
  */
-function ArchiveFinishedRow({
+export function ArchiveFinishedRow({
+  inline,
   status,
   disabled,
   onPress,
 }: {
+  inline?: boolean;
   status: ArchiveFinishedStatus;
   disabled: boolean;
   onPress: () => void;
 }): ReactElement {
   const { t } = useTranslation();
+  const touch = useVortonTouch();
 
   const renderRow = useCallback(
     ({ active }: { active: boolean }) => (
@@ -130,7 +166,7 @@ function ArchiveFinishedRow({
           size={ROW_ICON_SIZE}
           uniProps={active ? foregroundColorMapping : foregroundMutedColorMapping}
         />
-        <Text style={styles.rowLabel} numberOfLines={1}>
+        <Text style={[styles.rowLabel, inline && taskCardStyles.rowText]} numberOfLines={1}>
           {t("subagents.archiveFinishedAction")}
         </Text>
         {status.kind === "archiving" ? (
@@ -148,12 +184,37 @@ function ArchiveFinishedRow({
         ) : null}
       </>
     ),
-    [status, t],
+    [inline, status, t],
   );
+
+  let actionLabel = "Archive finished";
+  if (status.kind === "archiving")
+    actionLabel = `Archiving ${status.completedCount}/${status.totalCount}`;
+  if (status.kind === "failed") actionLabel = "Retry archive";
+  if (inline) {
+    return (
+      <Button
+        variant="outline"
+        size={touch ? "md" : "xs"}
+        style={styles.archiveHeaderAction}
+        textStyle={styles.archiveHeaderText}
+        onPress={onPress}
+        disabled={disabled}
+        loading={status.kind === "archiving"}
+        testID="subagents-track-archive-finished"
+        accessibilityLabel={
+          status.kind === "failed" ? "Retry archiving finished" : "Archive finished"
+        }
+      >
+        {actionLabel}
+      </Button>
+    );
+  }
 
   return (
     <ComposerTrackRow
       accessibilityLabel={t("subagents.archiveFinishedAction")}
+      inline={inline}
       testID="subagents-track-archive-finished"
       disabled={disabled}
       // Progress and the retry count land on this row, so the panel is where the result of
@@ -167,6 +228,7 @@ function ArchiveFinishedRow({
 }
 
 interface SubagentsTrackRowProps {
+  inline?: boolean;
   serverId: string;
   row: SubagentRow;
   onOpenSubagent: (id: string) => void;
@@ -175,7 +237,8 @@ interface SubagentsTrackRowProps {
   onDetachSubagent?: (id: string) => void;
 }
 
-function SubagentsTrackRow({
+export function SubagentsTrackRow({
+  inline,
   serverId,
   row,
   onOpenSubagent,
@@ -201,13 +264,13 @@ function SubagentsTrackRow({
   const handleDetachPress = useCallback(() => {
     onDetachSubagent?.(row.id);
   }, [onDetachSubagent, row.id]);
-  const actionsAlwaysVisible = isNative || isCompact;
+  const actionsAlwaysVisible = inline || isNative || isCompact;
 
   const renderRow = useCallback(
     ({ active }: { active: boolean }) => (
       <>
         <WorkspaceTabIcon presentation={presentation} backdrop={active ? "surface2" : "surface1"} />
-        <Text style={styles.rowLabel} numberOfLines={1}>
+        <Text style={[styles.rowLabel, inline && taskCardStyles.rowText]} numberOfLines={1}>
           {displayLabel}
         </Text>
         {presentation.subtitle ? (
@@ -217,6 +280,7 @@ function SubagentsTrackRow({
         ) : null}
         {row.kind === "paseo" ? (
           <SubagentRowActions
+            inline={inline}
             rowId={row.id}
             displayLabel={displayLabel}
             visible={actionsAlwaysVisible || active}
@@ -227,6 +291,7 @@ function SubagentsTrackRow({
       </>
     ),
     [
+      inline,
       actionsAlwaysVisible,
       displayLabel,
       handleArchivePress,
@@ -241,6 +306,7 @@ function SubagentsTrackRow({
   return (
     <ComposerTrackRow
       accessibilityLabel={displayLabel}
+      inline={inline}
       testID={`subagents-track-row-${row.id}`}
       onPress={handlePress}
     >
@@ -250,12 +316,14 @@ function SubagentsTrackRow({
 }
 
 function SubagentRowActions({
+  inline,
   rowId,
   displayLabel,
   visible,
   onDetachPress,
   onArchivePress,
 }: {
+  inline?: boolean;
   rowId: string;
   displayLabel: string;
   visible: boolean;
@@ -273,6 +341,7 @@ function SubagentRowActions({
           accessibilityLabel={t("subagents.detachAction", { label: displayLabel })}
           testID={`subagents-track-detach-${rowId}`}
           tooltipLabel={t("subagents.detachTooltip")}
+          inline={inline}
           icon="detach"
           visible={visible}
           onPress={onDetachPress}
@@ -282,6 +351,7 @@ function SubagentRowActions({
         accessibilityLabel={t("subagents.archiveAction", { label: displayLabel })}
         testID={`subagents-track-archive-${rowId}`}
         tooltipLabel={t("subagents.archiveTooltip")}
+        inline={inline}
         icon="archive"
         visible={visible}
         onPress={onArchivePress}
@@ -292,15 +362,20 @@ function SubagentRowActions({
 
 type SubagentActionIcon = "archive" | "detach";
 
-function renderSubagentActionIcon(icon: SubagentActionIcon, isActive: boolean): ReactElement {
+function renderSubagentActionIcon(
+  icon: SubagentActionIcon,
+  isActive: boolean,
+  size: number,
+): ReactElement {
   const uniProps = isActive ? foregroundColorMapping : foregroundMutedColorMapping;
   if (icon === "detach") {
-    return <ThemedUnlink size={ROW_ICON_SIZE} uniProps={uniProps} />;
+    return <ThemedUnlink size={size} uniProps={uniProps} />;
   }
-  return <ThemedArchive size={ROW_ICON_SIZE} uniProps={uniProps} />;
+  return <ThemedArchive size={size} uniProps={uniProps} />;
 }
 
 function SubagentActionButton({
+  inline,
   accessibilityLabel,
   testID,
   tooltipLabel,
@@ -311,10 +386,12 @@ function SubagentActionButton({
   accessibilityLabel: string;
   testID: string;
   tooltipLabel: string;
+  inline?: boolean;
   icon: SubagentActionIcon;
   visible: boolean;
   onPress: () => void;
 }): ReactElement {
+  const touch = useVortonTouch();
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild disabled={!visible}>
@@ -323,10 +400,16 @@ function SubagentActionButton({
           accessibilityLabel={accessibilityLabel}
           testID={testID}
           onPress={onPress}
-          style={styles.actionButton}
-          hitSlop={8}
+          style={[
+            styles.actionButton,
+            inline && taskCardStyles.iconAction,
+            touch && taskCardStyles.touchAction,
+          ]}
+          hitSlop={inline ? undefined : 8}
         >
-          {({ hovered, pressed }) => renderSubagentActionIcon(icon, hovered || pressed)}
+          {({ hovered, pressed }) =>
+            renderSubagentActionIcon(icon, hovered || pressed, inline ? 16 : ROW_ICON_SIZE)
+          }
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
@@ -337,6 +420,9 @@ function SubagentActionButton({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  archiveHeaderAction: { marginTop: { xs: 0, md: -theme.spacing[2] } },
+  archiveHeaderText: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted },
+  headerSpacer: { flex: 1, minWidth: 0 },
   // `flexBasis: "auto"` rather than `flex: 1`: a zero-basis label contributes nothing to the row's
   // intrinsic width, so the panel measures itself at its floor and truncates every label at once.
   rowLabel: {
@@ -368,6 +454,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     opacity: 0,
   },
+  touchAction: { minWidth: 44, minHeight: 44 },
   actionButton: {
     padding: theme.spacing[1],
     alignItems: "center",

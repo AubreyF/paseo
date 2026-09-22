@@ -26,6 +26,7 @@ export interface QueueOutboxPort {
   changed(snapshot: QueueSnapshot, serverId: string): void;
   localChanged?(serverId: string, flush: boolean): void;
   acknowledged?(record: OutboxRecord): Promise<void>;
+  discarded?(record: OutboxRecord): Promise<void>;
 }
 
 export class QueueOutbox {
@@ -120,10 +121,11 @@ export class QueueOutbox {
 
   async removeRejectedCopy(key: OutboxKey): Promise<void> {
     const record = await this.storage.read(key);
-    if (!record?.dismissed || record.localAttachments.length)
+    if (!record?.dismissed)
       throw new Error("This operation still owns an unsynchronized message or attachment.");
     if (!(await this.storage.exchange(key, record.revision, null)))
       throw new Error("The local copy changed. Review it again.");
+    await this.port.discarded?.(record);
     this.notifyLocalChange(key.serverId, false);
   }
 

@@ -25,7 +25,13 @@ function TaskStatusIcon({ isCompleted, isRunning }: { isCompleted: boolean; isRu
   return <ThemedCircle size={16} uniProps={extraMutedIcon} />;
 }
 
-export const TaskListRow = memo(function TaskListRow({ task }: { task: TodoEntry }) {
+export const TaskListRow = memo(function TaskListRow({
+  task,
+  compact = false,
+}: {
+  task: TodoEntry;
+  compact?: boolean;
+}) {
   const isCompleted = task.completed || task.status === "completed";
   const isRunning = !isCompleted && task.status === "in_progress";
   const text = isRunning && task.activeForm ? task.activeForm : task.text;
@@ -35,7 +41,12 @@ export const TaskListRow = memo(function TaskListRow({ task }: { task: TodoEntry
       <TaskStatusIcon isCompleted={isCompleted} isRunning={isRunning} />
       <Text
         numberOfLines={1}
-        style={[styles.text, isRunning && styles.runningText, isCompleted && styles.completedText]}
+        style={[
+          styles.text,
+          compact && styles.compactText,
+          isRunning && styles.runningText,
+          isCompleted && styles.completedText,
+        ]}
       >
         {text}
       </Text>
@@ -60,6 +71,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
   },
+  compactText: { fontSize: theme.fontSize.sm },
   runningText: {
     color: theme.colors.foreground,
   },

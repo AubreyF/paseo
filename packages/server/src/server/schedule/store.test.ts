@@ -82,7 +82,8 @@ describe("ScheduleStore", () => {
     await store.update(created.id, () => updated);
 
     const reloaded = await new ScheduleStore(tempDir).get(created.id);
-    expect(reloaded).toEqual(updated);
+    expect(reloaded).toEqual({ ...updated, configurationRevision: expect.any(String) });
+    expect(reloaded?.configurationRevision).not.toBe(created.configurationRevision);
   });
 
   test("deletes schedules from disk", async () => {

@@ -50,6 +50,7 @@ export class CodexResetCreditSession {
   constructor(
     private readonly transport: AccountTransport,
     readonly canRedeem = false,
+    readonly canSelectCredit = false,
   ) {}
 
   async read(): Promise<ProviderResetSnapshot> {
@@ -114,6 +115,9 @@ export class CodexResetCreditSession {
       );
     }
     const attempt = ProviderResetAttemptSchema.parse(input);
+    if (attempt.creditId && !this.canSelectCredit) {
+      throw new CodexResetCreditError("unavailable", "This provider cannot select a reset credit.");
+    }
     // The caller persists the logical attempt. A retry retains its key even
     // when a lost successful response has left the current credit count at zero.
     const snapshot = await this.read();

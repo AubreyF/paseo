@@ -360,7 +360,6 @@ function PresetPermissions({
     (modeId: string) => modeControl?.onSelectMode(modeId),
     [modeControl],
   );
-  if (vortonMode) return null;
   return (
     <SelectField
       label="Permissions"

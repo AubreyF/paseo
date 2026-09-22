@@ -240,6 +240,37 @@ test.describe("Add Project command-center flow", () => {
     await expectProjectHasNoWorkspaces(projectId);
   });
 
+  test("a typed directory stays clickable before suggestions finish", async ({
+    page,
+    projectPickerFixture,
+  }) => {
+    await gotoAppShell(page);
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
+
+    // Hold the search debounce, leaving the real daemon available for project addition.
+    await page.clock.install();
+    await page.clock.pauseAt(new Date());
+    await addProjectFlowInput(page).fill(projectPickerFixture.projectPath);
+    await expect(page.getByTestId("add-project-flow-loading")).toBeVisible();
+    const option = page.getByTestId(
+      `add-project-flow-path-${encodeURIComponent(projectPickerFixture.projectPath)}`,
+    );
+    await expect(option).toBeVisible();
+    await option.click();
+    await page.clock.resume();
+
+    const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
+    projectPickerFixture.rememberProjectId(projectId);
+    await expectNewWorkspaceForAddedProject(page, {
+      serverId: getServerId(),
+      projectId,
+      projectName: projectPickerFixture.projectName,
+      projectPath: projectPickerFixture.projectPath,
+    });
+    await expectProjectHasNoWorkspaces(projectId);
+  });
+
   test("a complete repository URL remains selectable without a GitHub search result", async ({
     page,
   }) => {

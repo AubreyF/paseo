@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import { afterEach, expect, test } from "vitest";
-import type { ProviderResetAttempt, ProviderResetOutcome } from "@getpaseo/protocol/provider-reset";
+import type {
+  ProviderResetAttempt,
+  ProviderResetOutcome,
+  ProviderResetSnapshot,
+} from "@getpaseo/protocol/provider-reset";
 import { ResetCreditStore } from "./reset-store.js";
 import { ProviderResetService } from "./reset-service.js";
 
@@ -18,6 +22,8 @@ async function setup() {
   const directory = await mkdtemp(join(tmpdir(), "paseo-reset-service-"));
   directories.push(directory);
   const state = {
+    credits: [] as NonNullable<Extract<ProviderResetSnapshot, { status: "available" }>["credits"]>,
+    canSelectCredit: true,
     accountId: "first",
     count: 2,
     canRedeem: true,
@@ -44,6 +50,7 @@ async function setup() {
         ? {
             openResetCreditSession: async () => ({
               canRedeem: state.canRedeem,
+              canSelectCredit: state.canSelectCredit,
               read: async () => {
                 if (state.failRead) throw new Error("offline");
                 return {
@@ -51,7 +58,7 @@ async function setup() {
                   accountId: state.accountId,
                   accountLabel: null,
                   availableCount: state.count,
-                  credits: null,
+                  credits: state.credits,
                 };
               },
               consume: async (attempt) => {
@@ -243,4 +250,78 @@ test("retrying a saved reset repairs recovery without spending another credit", 
   expect(retried.refreshError).toBeNull();
   expect(consumes).toBe(1);
   expect(recoveryAttempts).toBe(2);
+});
+
+test("confirmation consumes exactly the reviewed credit and refuses a stale selection", async () => {
+  const { service, state, attempts } = await setup();
+  state.credits = ["first-credit", "second-credit"].map((id) => ({
+    id,
+    title: "Full reset",
+    description: null,
+    grantedAt: 1,
+    expiresAt: null,
+    status: "available",
+    resetType: "full",
+  }));
+  const first = await service.prepare("primary", "first", "first-credit");
+  const second = await service.prepare("primary", "first", "second-credit");
+  expect(second.operation?.credit?.id).toBe("second-credit");
+  await expect(
+    service.confirm("primary", "first", first.operation!.operationId),
+  ).rejects.toMatchObject({ code: "stale_operation" });
+  state.credits[1]!.status = "expired";
+  await expect(
+    service.confirm("primary", "first", second.operation!.operationId),
+  ).rejects.toMatchObject({ code: "no_credit" });
+  expect(attempts).toHaveLength(0);
+  state.credits[1]!.status = "available";
+  await service.confirm("primary", "first", second.operation!.operationId);
+  expect(attempts.map((attempt) => attempt.creditId)).toEqual(["second-credit"]);
+});
+
+test("an uncertain selected-credit reset keeps its identity even after the credit disappears", async () => {
+  const { service, state, attempts, setConsume } = await setup();
+  state.credits = [
+    {
+      id: "selected",
+      title: "Full reset",
+      description: null,
+      grantedAt: 1,
+      expiresAt: null,
+      status: "available",
+      resetType: "full",
+    },
+  ];
+  const prepared = await service.prepare("primary", "first", "selected");
+  setConsume(async () => {
+    throw new Error("Response lost");
+  });
+  await expect(
+    service.confirm("primary", "first", prepared.operation!.operationId),
+  ).rejects.toThrow("Response lost");
+  state.credits = [];
+  state.count = 0;
+  const retry = await service.prepare("primary", "first", "different-credit");
+  expect(retry.operation).toMatchObject({
+    operationId: prepared.operation!.operationId,
+    credit: { id: "selected" },
+  });
+  setConsume(async () => "alreadyRedeemed");
+  await service.confirm("primary", "first", retry.operation!.operationId);
+  expect(attempts.map(({ creditId, idempotencyKey }) => ({ creditId, idempotencyKey }))).toEqual([
+    { creditId: "selected", idempotencyKey: prepared.operation!.operationId },
+    { creditId: "selected", idempotencyKey: prepared.operation!.operationId },
+  ]);
+});
+
+test("a provider without selection support never receives a requested credit", async () => {
+  const { service, state, attempts } = await setup();
+  state.canSelectCredit = false;
+  await expect(service.prepare("primary", "first", "selected")).rejects.toMatchObject({
+    code: "unavailable",
+  });
+  const prepared = await service.prepare("primary", "first");
+  expect(prepared.operation?.credit).toBeNull();
+  await service.confirm("primary", "first", prepared.operation!.operationId);
+  expect(attempts[0]?.creditId).toBeUndefined();
 });

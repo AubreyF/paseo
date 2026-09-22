@@ -1,104 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { IDBFactory } from "fake-indexeddb";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIndexedDbAttachmentStore } from "./indexeddb-attachment-store";
 
-type Listener = () => void;
-
-class FakeRequest {
-  result!: unknown;
-  error: Error | null = null;
-  private listeners = new Map<string, Listener[]>();
-
-  addEventListener(event: string, listener: Listener): void {
-    this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
-  }
-
-  emit(event: string): void {
-    for (const listener of this.listeners.get(event) ?? []) {
-      listener();
-    }
-  }
-}
-
-class FakeObjectStore {
-  constructor(private readonly onPut: (record: unknown) => void) {}
-
-  put(record: unknown): FakeRequest {
-    this.onPut(record);
-    const request = new FakeRequest();
-    queueMicrotask(() => request.emit("success"));
-    return request;
-  }
-}
-
-class FakeTransaction {
-  error: Error | null = null;
-
-  constructor(private readonly store: FakeObjectStore) {}
-
-  objectStore(): FakeObjectStore {
-    return this.store;
-  }
-
-  addEventListener(): void {}
-}
-
-class FakeDatabase {
-  readonly objectStoreNames = {
-    contains: () => true,
-  };
-
-  constructor(private readonly store: FakeObjectStore) {}
-
-  createObjectStore(): void {}
-
-  transaction(): FakeTransaction {
-    return new FakeTransaction(this.store);
-  }
-
-  close(): void {}
-}
-
 describe("indexeddb attachment store", () => {
-  let storedRecord: unknown;
+  beforeEach(() => vi.stubGlobal("indexedDB", new IDBFactory()));
+  afterEach(() => vi.unstubAllGlobals());
 
-  beforeEach(() => {
-    storedRecord = null;
-    Object.defineProperty(globalThis, "indexedDB", {
-      configurable: true,
-      value: {
-        open: () => {
-          const store = new FakeObjectStore((record) => {
-            storedRecord = record;
-          });
-          const request = new FakeRequest();
-          request.result = new FakeDatabase(store);
-          queueMicrotask(() => request.emit("success"));
-          return request;
-        },
-      } as unknown as IDBFactory,
-    });
-  });
-
-  afterEach(() => {
-    Reflect.deleteProperty(globalThis, "indexedDB");
-  });
-
-  it("stores raw byte sources as a Blob", async () => {
+  it("stores raw byte sources as a Blob after the transaction commits", async () => {
     const store = createIndexedDbAttachmentStore();
     const bytes = new Uint8Array([0, 1, 2, 3]);
-
     const attachment = await store.save({
       id: "att_bytes",
       mimeType: "image/png",
       fileName: "image.png",
       source: { kind: "bytes", bytes },
-    });
-
-    expect(storedRecord).toEqual({
-      id: "att_bytes",
-      blob: new Blob([bytes], { type: "image/png" }),
-      createdAt: expect.any(Number),
-      fileName: "image.png",
     });
     expect(attachment).toMatchObject({
       id: "att_bytes",
@@ -108,5 +23,15 @@ describe("indexeddb attachment store", () => {
       fileName: "image.png",
       byteSize: 4,
     });
+    // Reopen through a new store to verify the committed bytes.
+    const reopened = createIndexedDbAttachmentStore();
+    const url = await reopened.resolvePreviewUrl({ attachment });
+    try {
+      const blob = await (await fetch(url)).blob();
+      expect(blob.type).toBe("image/png");
+      expect(new Uint8Array(await blob.arrayBuffer())).toEqual(bytes);
+    } finally {
+      await reopened.releasePreviewUrl?.({ attachment, url });
+    }
   });
 });

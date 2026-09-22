@@ -181,8 +181,11 @@ export function ProviderCatalogList({
               </View>
               <View style={styles.textColumn}>
                 <Text style={styles.name}>Codex</Text>
+                <Text style={styles.description}>
+                  Add another Codex account to switch between accounts.
+                </Text>
               </View>
-              <AddCodexAccountButton serverId={serverId} catalog />
+              <AddCodexAccountButton serverId={serverId} catalog style={styles.actionButton} />
             </View>
           ) : null}
           {availableEntries.map((entry) => (

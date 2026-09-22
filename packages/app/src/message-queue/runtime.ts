@@ -108,6 +108,13 @@ export const messageOutbox = new QueueOutbox(createOutboxStorage(), {
   mutate: (serverId, agentId, operation) =>
     requireQueueClient(serverId).mutateMessageQueue(agentId, operation),
   changed: (snapshot, serverId) => applyQueueSnapshot(serverId, snapshot),
+  async discarded(record) {
+    await Promise.allSettled(
+      record.localAttachments.map(({ metadata }) =>
+        queueAttachmentStore.delete({ attachment: metadata }),
+      ),
+    );
+  },
   async acknowledged(record) {
     const operation = record.operation;
     if (

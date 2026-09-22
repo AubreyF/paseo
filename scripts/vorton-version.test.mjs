@@ -94,3 +94,54 @@ test("commit versions advance once, preserve staging, and synchronize lock metad
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+for (const versions of [
+  ["0.7.2-vorton.11", "0.7.2-vorton.23", "0.7.2-vorton.24"],
+  ["0.9.0-beta.2.vorton.1", "0.9.0-beta.2.vorton.23", "0.9.0-beta.2.vorton.24"],
+  ["0.9.0-beta.2.vorton.1", "0.7.2-vorton.29", "0.9.0-beta.2.vorton.2"],
+]) {
+  test(`merge versions advance beyond both parents: ${versions.join(", ")}`, () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "vorton-merge-version-"));
+    const run = (bin, args) => execFileSync(bin, args, { cwd, encoding: "utf8", stdio: "pipe" });
+    const git = (...args) => run("git", args);
+    const writeVersion = (version) => {
+      writeFileSync(
+        path.join(cwd, "package.json"),
+        JSON.stringify({ name: "root", version, workspaces: [] }),
+      );
+      writeFileSync(
+        path.join(cwd, "package-lock.json"),
+        JSON.stringify({ version, packages: { "": { version } } }),
+      );
+    };
+    const version = () => JSON.parse(readFileSync(path.join(cwd, "package.json"), "utf8")).version;
+    try {
+      git("init", "-b", "task");
+      git("config", "user.name", "Version test");
+      git("config", "user.email", "version@example.invalid");
+      git("config", "core.hooksPath", "/dev/null");
+      writeVersion(versions[0]);
+      git("add", ".");
+      git("commit", "-m", "task fixture");
+      git("checkout", "-b", "incoming");
+      writeVersion(versions[1]);
+      git("add", ".");
+      git("commit", "-m", "incoming fixture");
+      git("checkout", "task");
+      git("merge", "--no-ff", "--no-commit", "incoming");
+      writeVersion(versions[0]);
+      run(process.execPath, [script]);
+      assert.equal(version(), versions[2]);
+      git("add", ".");
+      run(process.execPath, [script, "--hook"]);
+      run(process.execPath, [script, "--check"]);
+      assert.equal(version(), versions[2]);
+      assert.equal(
+        JSON.parse(readFileSync(path.join(cwd, "package-lock.json"), "utf8")).version,
+        version(),
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+}

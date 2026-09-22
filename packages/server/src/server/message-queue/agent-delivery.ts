@@ -28,7 +28,7 @@ export function createAgentQueueDelivery(
     },
     needsCompletion: (agentId) => agentManager.getAgent(agentId)?.queueGoalHold !== undefined,
     abandonGoal: (agentId) => agentManager.releaseQueueGoalHold(agentId),
-    async complete(agentId, queueIsEmpty) {
+    async complete(agentId, queueIsEmpty, canContinueGoal) {
       const record = await agentStorage.get(agentId);
       if (!record || record.archivedAt || !record.queueGoalHold) return;
       if (record.queueGoalHold.phase !== "held")
@@ -37,9 +37,9 @@ export function createAgentQueueDelivery(
         );
       const agent = await ensureUnarchivedAgentLoaded(agentId, options);
       if (agent.session?.goals)
-        await agentManager.resumeGoalAfterQueuedMessages(agentId, queueIsEmpty);
+        await agentManager.resumeGoalAfterQueuedMessages(agentId, queueIsEmpty, canContinueGoal);
     },
-    async prepare(agentId, item, canStart) {
+    async prepare(agentId, item, canStart, canHoldGoal = canStart) {
       const record = await agentStorage.get(agentId);
       if (!record || record.archivedAt) return false;
       const agent = await ensureUnarchivedAgentLoaded(agentId, options);
@@ -50,7 +50,7 @@ export function createAgentQueueDelivery(
           "A goal change could not be confirmed. Review and set the task goal before continuing.",
         );
       if (agent.session?.goals) {
-        await agentManager.pauseGoalForQueuedMessages(agentId, canStart);
+        await agentManager.pauseGoalForQueuedMessages(agentId, canHoldGoal);
       }
       await agentManager.prepareQuotaReserveAdmission(agentId);
       return !!item.sendNow || (agent.lifecycle === "idle" && agent.pendingPermissions.size === 0);

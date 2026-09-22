@@ -4,13 +4,13 @@ Launch presets extend the existing `daemon.agentProfiles` collection. There is n
 
 For the experimental fork's host migration, pending work and destination acceptance checks, read [the host handoff](host-handoff.md).
 
-Wide Vorton composers show the full profile name. Mobile and composers narrower than 640 CSS pixels show its nickname. Permissions are edited in the profile, not in a separate Vorton composer control.
+Wide Vorton composers show the full profile name. Mobile and composers narrower than 640 CSS pixels show its nickname. The composer permission control shows the task's selected mode. The profile inspector shows saved profile permissions; editing them does not change an existing task or draft. Reselect a profile to apply it to a draft, or change the task permission control explicitly. Changes during a running turn apply on the next turn.
 
 ## Configuration and compatibility
 
 A profile can include `instructions`, `workerProfileId`, and `maxWorkers` in addition to its existing provider, model, reasoning and feature values. Worker profiles require an explicit model and cannot reference another worker. Names and model IDs remain user configuration.
 
-New hosts advertise `agentProfileLaunch`. A launch request carries `profileId`; the server resolves the current profile and freezes its instructions and worker configuration into the stored session. Later profile edits affect new tasks, not resumed tasks. The Vorton client applies the profile permission mode to drafts and sends it explicitly on handoff launches. Profiles without a mode use the provider default. Classic mode remains available.
+New hosts advertise `agentProfileLaunch`. A launch request carries `profileId`; the server resolves the current profile and freezes its instructions and worker configuration into the stored session. Later profile edits affect new tasks, not resumed tasks. The profile supplies the permission mode when the launch has no explicit task override. The Vorton client applies the profile permission mode to drafts and sends it explicitly on handoff launches. Profiles without a mode use the provider default. Native resumption reapplies the frozen task mode. Governed Factory workers retain their coordinator-selected confinement independently of supervisor permissions. Classic mode remains available.
 
 New editors send `expectedAgentProfiles` for stale-write detection. The server preserves omitted instruction and worker fields from older editors. Empty strings explicitly clear instructions and worker references. An older host does not expose these launch-only controls.
 
@@ -38,7 +38,7 @@ The active Vorton composer preloads preset catalogs, usage, and reset credits be
 
 With Vorton Mode enabled on supported hosts, preset rows and provider Usage cards show the number of reset credits reported for that account. Unknown availability is not zero. Credit details include the account identity, grant date, expiry when reported, and last refresh time. The reported total remains authoritative when the provider supplies only a partial list of credits.
 
-Opening the badge only reads account details. Review reset prepares an account-bound operation; Confirm reset explicitly submits it. The daemon verifies the configured account again before submission. Read access alone cannot prepare or redeem a reset, and agent tools do not expose redemption.
+Opening the badge only reads account details. Where the provider supports credit selection, the earliest-expiring available credit is selected initially. Review reset opens a separate confirmation showing only the credit bound to the operation. Use 1 reset credit submits that exact credit; an unavailable selection requires another review. Providers without selection support show “Provider chooses the credit.” The daemon verifies the configured account again before submission. Read access alone cannot prepare or redeem a reset, and agent tools do not expose redemption.
 
 Reset management uses separate account-scoped RPCs so older hosts and clients can continue using existing usage messages. The daemon checks the configured CLI's actual reset and idempotency support before enabling redemption. It does not guess support from a version number or use an unrelated desktop account.
 

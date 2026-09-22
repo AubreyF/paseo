@@ -181,6 +181,7 @@ export class CodexAppServerClient {
     private readonly child: ChildProcessWithoutNullStreams,
     private readonly logger: Logger,
     private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
+    private readonly settleOwnedProcess?: () => Promise<void>,
   ) {
     this.rl = readline.createInterface({ input: child.stdout });
     this.rl.on("line", (line) => {
@@ -265,6 +266,12 @@ export class CodexAppServerClient {
       this.child.stdin.end();
     } catch {
       // ignore
+    }
+    if (this.settleOwnedProcess) {
+      // Killing the supervisor would destroy its opportunity to prove descendant
+      // settlement. A failed receipt remains retryable through the same custody.
+      await this.settleOwnedProcess();
+      return;
     }
     const result = await terminateWithTreeKill(this.child, {
       gracefulTimeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
@@ -365,7 +372,9 @@ export class CodexAppServerClient {
         } catch (error) {
           this.writeJsonRpcResponse({
             id: request.id,
-            error: { message: error instanceof Error ? error.message : String(error) },
+            error: {
+              message: error instanceof Error ? error.message : String(error),
+            },
           });
         }
         return;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Text, View } from "react-native";
+import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useQueryClient } from "@tanstack/react-query";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
@@ -23,8 +23,9 @@ const header = { title: "Add Codex account" };
 
 export function AddCodexAccountButton({
   catalog = false,
+  style,
   ...props
-}: AddAccountProps & { catalog?: boolean }) {
+}: AddAccountProps & { catalog?: boolean; style?: StyleProp<ViewStyle> }) {
   const vortonMode = useVortonMode();
   const [open, setOpen] = useState(false);
   const show = useCallback(() => setOpen(true), []);
@@ -32,7 +33,13 @@ export function AddCodexAccountButton({
   if (!vortonMode) return null;
   return (
     <>
-      <Button variant={catalog ? "default" : "outline"} onPress={show} testID="add-codex-account">
+      <Button
+        variant={catalog ? "default" : "outline"}
+        size={catalog ? "sm" : "md"}
+        style={style}
+        onPress={show}
+        testID="add-codex-account"
+      >
         {catalog ? "Add" : "Add Codex account"}
       </Button>
       {open ? <AccountSheet key={props.serverId} {...props} onClose={close} /> : null}

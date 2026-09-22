@@ -16,10 +16,11 @@ for (const vortonMode of [false, true]) {
   test(`real startup and both connection forms with Vorton ${vortonMode ? "on" : "off"}`, async ({
     page,
   }) => {
-    // Run normal startup. Only deny transport access so a developer's local
-    // daemon cannot become an accidental authenticated fixture.
-    await page.routeWebSocket("**/*", (socket) =>
-      socket.close({ code: 1008, reason: "Authentication required" }),
+    // Deny daemon transport while keeping Metro's development sockets alive;
+    // closing those sockets reloads the page when a lazy bundle registers.
+    await page.routeWebSocket(
+      (url) => url.pathname === "/ws",
+      (socket) => socket.close({ code: 1008, reason: "Authentication required" }),
     );
     await page.addInitScript((enabled) => {
       localStorage.setItem(
@@ -63,8 +64,9 @@ for (const vortonMode of [false, true]) {
 }
 
 test("a saved offline host retains its project screen", async ({ page }) => {
-  await page.routeWebSocket("**/*", (socket) =>
-    socket.close({ code: 1008, reason: "Offline test host" }),
+  await page.routeWebSocket(
+    (url) => url.pathname === "/ws",
+    (socket) => socket.close({ code: 1008, reason: "Offline test host" }),
   );
   await page.addInitScript(() => {
     localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify({ vortonMode: true }));

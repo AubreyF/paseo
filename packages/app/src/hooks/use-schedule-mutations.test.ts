@@ -1,13 +1,16 @@
 import { QueryClient } from "@tanstack/react-query";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AggregatedSchedule,
   FetchAggregatedSchedulesResult,
   FetchAggregatedSchedulesState,
 } from "@/schedules/aggregated-schedules";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
-import { updateAggregatedSchedulesData } from "./use-schedule-mutations";
+import {
+  updateAggregatedSchedulesData,
+  updateScheduleConfiguration,
+} from "./use-schedule-mutations";
 
 function schedule(overrides: Partial<AggregatedSchedule> = {}): AggregatedSchedule {
   const base: ScheduleSummary = {
@@ -86,6 +89,62 @@ describe("schedule mutation cache updates", () => {
       status: "loaded",
       data: [schedule({ status: "paused" })],
       hostErrors: [],
+    });
+  });
+});
+
+describe("schedule form revision writes", () => {
+  it("preserves the draft revision and propagates conflicts without retry", async () => {
+    const client = {
+      getLastServerInfoMessage: () => null,
+      scheduleUpdate: vi.fn(async () => ({
+        requestId: "request",
+        schedule: null,
+        error: "Reload stale draft",
+      })),
+    };
+    await expect(
+      updateScheduleConfiguration(client, {
+        id: "schedule",
+        expectedConfigurationRevision: "opened",
+        name: "Draft",
+      }),
+    ).rejects.toThrow("Reload stale draft");
+    expect(client.scheduleUpdate).toHaveBeenCalledExactlyOnceWith({
+      id: "schedule",
+      expectedConfigurationRevision: "opened",
+      name: "Draft",
+    });
+  });
+
+  it("guards a legacy record with explicit null when the host supports revisions", async () => {
+    const client = {
+      getLastServerInfoMessage: () => ({ features: { scheduleConfigurationRevision: true } }),
+      scheduleUpdate: vi.fn(async () => ({ requestId: "request", schedule: null, error: null })),
+    };
+    await updateScheduleConfiguration(client, {
+      id: "schedule",
+      expectedConfigurationRevision: null,
+    });
+    expect(client.scheduleUpdate).toHaveBeenCalledExactlyOnceWith({
+      id: "schedule",
+      expectedConfigurationRevision: null,
+    });
+  });
+
+  it("omits only the absent revision on a legacy host", async () => {
+    const client = {
+      getLastServerInfoMessage: () => null,
+      scheduleUpdate: vi.fn(async () => ({ requestId: "request", schedule: null, error: null })),
+    };
+    await updateScheduleConfiguration(client, {
+      id: "schedule",
+      expectedConfigurationRevision: null,
+      name: "Draft",
+    });
+    expect(client.scheduleUpdate).toHaveBeenCalledExactlyOnceWith({
+      id: "schedule",
+      name: "Draft",
     });
   });
 });

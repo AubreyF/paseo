@@ -4,8 +4,17 @@ import { MessageQueueStore } from "./store.js";
 
 export interface QueueDeliveryPort {
   history?(agentId: string): Promise<AgentStreamEvent[]>;
-  prepare(agentId: string, item: QueueItem, canStart: () => boolean): Promise<boolean>;
-  complete?(agentId: string, queueIsEmpty: () => Promise<boolean>): Promise<void>;
+  prepare(
+    agentId: string,
+    item: QueueItem,
+    canStart: () => boolean,
+    canHoldGoal?: () => boolean,
+  ): Promise<boolean>;
+  complete?(
+    agentId: string,
+    queueAllowsGoal: () => Promise<boolean>,
+    canContinueGoal?: () => boolean,
+  ): Promise<void>;
   needsCompletion?(agentId: string): boolean;
   abandonGoal?(agentId: string): Promise<void>;
   load(item: QueueItem): Promise<AgentPromptInput>;
@@ -27,6 +36,38 @@ export class QueueDeliveryWorker {
   private readonly halted = new Set<string>();
   private readonly immediate = new Map<string, Promise<void>>();
   private closed = false;
+  private readonly suspensions = new Map<string, number>();
+  private readonly admissionVersions = new Map<string, number>();
+  private readonly stopVersions = new Map<string, number>();
+
+  private unavailable(agentId: string): boolean {
+    return this.closed || this.halted.has(agentId) || this.suspensions.has(agentId);
+  }
+
+  private admissionGuard(agentId: string): () => boolean {
+    const version = this.admissionVersions.get(agentId) ?? 0;
+    return () =>
+      !this.unavailable(agentId) && version === (this.admissionVersions.get(agentId) ?? 0);
+  }
+
+  private goalGuard(agentId: string): () => boolean {
+    const version = this.stopVersions.get(agentId) ?? 0;
+    return () =>
+      !this.closed &&
+      !this.halted.has(agentId) &&
+      version === (this.stopVersions.get(agentId) ?? 0);
+  }
+
+  // Queue edits cancel an admission without surrendering the user's goal intent.
+  suspend(agentId: string): () => void {
+    this.admissionVersions.set(agentId, (this.admissionVersions.get(agentId) ?? 0) + 1);
+    this.suspensions.set(agentId, (this.suspensions.get(agentId) ?? 0) + 1);
+    return () => {
+      const remaining = (this.suspensions.get(agentId) ?? 1) - 1;
+      if (remaining) this.suspensions.set(agentId, remaining);
+      else this.suspensions.delete(agentId);
+    };
+  }
 
   constructor(
     private readonly store: MessageQueueStore,
@@ -34,7 +75,7 @@ export class QueueDeliveryWorker {
   ) {}
 
   wake(agentId: string): Promise<void> {
-    if (this.closed || this.halted.has(agentId)) return Promise.resolve();
+    if (this.unavailable(agentId)) return Promise.resolve();
     this.requested.add(agentId);
     const current = this.running.get(agentId);
     if (current) return current;
@@ -69,6 +110,8 @@ export class QueueDeliveryWorker {
   halt(agentId: string): boolean {
     const newlyHalted = !this.halted.has(agentId);
     this.halted.add(agentId);
+    this.stopVersions.set(agentId, (this.stopVersions.get(agentId) ?? 0) + 1);
+    this.admissionVersions.set(agentId, (this.admissionVersions.get(agentId) ?? 0) + 1);
     return newlyHalted;
   }
 
@@ -76,14 +119,15 @@ export class QueueDeliveryWorker {
     const existing = this.immediate.get(agentId);
     if (existing) return existing;
     const run = (async () => {
-      if (this.closed || this.halted.has(agentId)) return;
+      const canStart = this.admissionGuard(agentId);
+      if (!canStart()) return;
       const snapshot = await this.store.read(agentId);
       const head = snapshot.items[0];
       if (!head?.sendNow || head.delivery.status !== "queued") return;
       const item = await this.store.claim(agentId);
       if (!item) return;
       this.port.changed(await this.store.read(agentId));
-      await this.deliver(agentId, item);
+      await this.deliver(agentId, item, canStart);
     })()
       .catch((error: unknown) => this.reportFailure(error, agentId))
       .finally(() => {
@@ -107,11 +151,11 @@ export class QueueDeliveryWorker {
     do {
       this.requested.delete(agentId);
       await this.drain(agentId);
-    } while (!this.closed && !this.halted.has(agentId) && this.requested.has(agentId));
+    } while (!this.unavailable(agentId) && this.requested.has(agentId));
   }
 
   private async drain(agentId: string): Promise<void> {
-    while (!this.closed && !this.halted.has(agentId)) {
+    while (!this.unavailable(agentId)) {
       const snapshot = await this.store.read(agentId);
       const head = snapshot.items[0];
       if (head?.delivery.status === "uncertain" && this.port.history) {
@@ -123,66 +167,75 @@ export class QueueDeliveryWorker {
         this.port.changed(reconciled.snapshot);
         continue;
       }
-      if (!head) {
-        if (!snapshot.paused) {
-          await this.port.complete?.(agentId, async () => {
-            if (this.closed || this.halted.has(agentId)) return false;
+      if (!head || (snapshot.paused && !head.sendNow)) {
+        const canContinueGoal = this.goalGuard(agentId);
+        await this.port.complete?.(
+          agentId,
+          async () => {
+            if (this.unavailable(agentId) || !canContinueGoal()) return false;
             const current = await this.store.read(agentId);
             return (
-              !this.closed &&
-              !this.halted.has(agentId) &&
-              !current.paused &&
-              current.items.length === 0
+              !this.unavailable(agentId) &&
+              canContinueGoal() &&
+              (current.items.length === 0 ||
+                (current.paused &&
+                  !current.items.some(
+                    (item) =>
+                      item.sendNow ||
+                      item.delivery.status === "dispatching" ||
+                      item.delivery.status === "uncertain",
+                  )))
             );
-          });
-          await this.clearFailure(agentId);
-        }
+          },
+          canContinueGoal,
+        );
+        await this.clearFailure(agentId);
         return;
       }
-      if ((snapshot.paused && !head.sendNow) || head.delivery.status !== "queued") return;
+      if (head.delivery.status !== "queued") return;
+      const canStart = this.admissionGuard(agentId);
       if (
         !head.sendNow &&
-        !(await this.port.prepare(agentId, head, () => !this.closed && !this.halted.has(agentId)))
+        !(await this.port.prepare(agentId, head, canStart, this.goalGuard(agentId)))
       )
         return;
       await this.clearFailure(agentId);
       const item = await this.store.claim(agentId);
       if (!item || item.delivery.status !== "dispatching") return;
       this.port.changed(await this.store.read(agentId));
-      if (this.closed || this.halted.has(agentId)) {
+      if (!canStart()) {
         this.port.changed(await this.store.release(agentId, item));
         return;
       }
-      if (!(await this.deliver(agentId, item))) return;
+      if (!(await this.deliver(agentId, item, canStart))) return;
     }
   }
 
-  private async deliver(agentId: string, item: QueueItem): Promise<boolean> {
+  private async deliver(
+    agentId: string,
+    item: QueueItem,
+    canStart: () => boolean,
+  ): Promise<boolean> {
     if (item.delivery.status !== "dispatching")
       throw new Error("Delivery requires a persisted claim");
     const attemptId = item.delivery.attemptId;
     let stream: AsyncGenerator<AgentStreamEvent> | null;
     try {
-      if (this.closed || this.halted.has(agentId)) {
+      if (!canStart()) {
         this.port.changed(await this.store.release(agentId, item));
         return false;
       }
       if (
         item.sendNow &&
-        !(await this.port.prepare(agentId, item, () => !this.closed && !this.halted.has(agentId)))
+        !(await this.port.prepare(agentId, item, canStart, this.goalGuard(agentId)))
       )
         throw new Error("The task is not ready to accept the selected message.");
       const prompt = await this.port.load(item);
-      if (this.closed || this.halted.has(agentId)) {
+      if (!canStart()) {
         this.port.changed(await this.store.release(agentId, item));
         return false;
       }
-      stream = await this.port.start(
-        agentId,
-        item,
-        prompt,
-        () => !this.closed && !this.halted.has(agentId),
-      );
+      stream = await this.port.start(agentId, item, prompt, canStart);
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Message admission failed.";
       this.port.changed(

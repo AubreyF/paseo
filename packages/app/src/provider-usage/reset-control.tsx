@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { Text, View, type GestureResponderEvent } from "react-native";
+import { useCallback, useMemo, useReducer, useRef, useState } from "react";
+import { Text, type GestureResponderEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useQueryClient } from "@tanstack/react-query";
 import { useVortonMode } from "@/vorton-mode";
@@ -11,8 +11,10 @@ import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { CompactAccountButton } from "./compact-account-button";
 import { providerUsageQueryKey } from "./use-provider-usage";
-import { currentResetPreparation, resetCountLabel, resetPresentation } from "./reset-state";
+import { currentResetPreparation, resetPresentation, selectableResetCredits } from "./reset-state";
 import { providerResetQueryOptions } from "./reset-query";
+import { initialResetFlow, resetFlowReducer } from "./reset-flow";
+import { ResetDialogContent } from "./reset-dialog";
 import { prepareResetForView, reconcileResetResult, resetResultNotice } from "./reset-result";
 
 function useResetControl({
@@ -26,18 +28,19 @@ function useResetControl({
   name: string;
   preloaded?: boolean;
 }) {
-  const client = useHostRuntimeClient(serverId ?? "");
-  const connected = useHostRuntimeIsConnected(serverId ?? "");
+  const hostId = serverId ?? "";
+  const client = useHostRuntimeClient(hostId);
+  const connected = useHostRuntimeIsConnected(hostId);
   const vortonMode = useVortonMode();
   const hostSupported = useSessionStore(
-    (state) =>
-      state.sessions[serverId ?? ""]?.serverInfo?.features?.providerResetManagement === true,
+    (state) => state.sessions[hostId]?.serverInfo?.features?.providerResetManagement === true,
+  );
+  const selectionSupported = useSessionStore(
+    (state) => state.sessions[hostId]?.serverInfo?.features?.providerResetCreditSelection === true,
   );
   const cache = useQueryClient();
   const supported = vortonMode && hostSupported;
-  const clientGeneration = useSessionStore(
-    (state) => state.sessions[serverId ?? ""]?.clientGeneration,
-  );
+  const clientGeneration = useSessionStore((state) => state.sessions[hostId]?.clientGeneration);
   const queryOptions = useMemo(
     () =>
       providerResetQueryOptions({
@@ -51,49 +54,70 @@ function useResetControl({
   );
   const key = queryOptions.queryKey;
   const [open, setOpen] = useState(false);
-  const [preparation, setPrepared] = useState<ProviderResetView | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [flow, dispatch] = useReducer(resetFlowReducer, initialResetFlow);
+  const { busy } = flow;
   const busyRef = useRef(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const query = useFetchQuery(queryOptions);
-  const prepared = currentResetPreparation(preparation, query.data);
+  const prepared = currentResetPreparation(flow.preparation, query.data);
   const view = prepared ?? query.data;
   const snapshot = view?.snapshot;
   const available = snapshot?.status === "available" ? snapshot : null;
-  const header = useMemo(() => ({ title: `Reset credits: ${name}` }), [name]);
+  const credits = selectableResetCredits(query.data);
+  const selection = flow.selection?.accountId === available?.accountId ? flow.selection : null;
+  const selectedCreditId = selection?.creditId ?? credits[0]?.id;
+  const selectedExists =
+    selectedCreditId === undefined || credits.some((credit) => credit.id === selectedCreditId);
+  // A changed account must never retain a confirmation for the previous identity.
+  const displayedFlow = flow.preparation && !prepared ? initialResetFlow : flow;
+  let title = `Reset credits: ${name}`;
+  if (displayedFlow.stage === "review") title = busy ? "Applying reset…" : "Use this reset?";
+  if (displayedFlow.stage === "result") title = "Reset result";
+  const header = useMemo(() => ({ title }), [title]);
   const close = useCallback(() => {
     if (!busyRef.current) {
       setOpen(false);
-      setPrepared(null);
-      setNotice(null);
+      dispatch({ type: "clear" });
     }
   }, []);
   const refresh = useCallback(() => {
     if (busyRef.current) return;
-    setPrepared(null);
-    setNotice(null);
+    dispatch({ type: "clear" });
     void query.refetch();
   }, [query]);
+  const back = useCallback(() => {
+    if (!busyRef.current) dispatch({ type: "back" });
+  }, []);
+  const select = useCallback(
+    (creditId: string) => {
+      if (!busyRef.current && available)
+        dispatch({ type: "select", accountId: available.accountId, creditId });
+    },
+    [available],
+  );
   const act = useCallback(async () => {
     const viewed = query.data;
-    if (busyRef.current || !client || !available || !connected || !viewed) return;
+    if (busyRef.current || !client || !available || !connected || !viewed || !selectionSupported)
+      return;
+    if (!prepared && !selectedExists) return;
     busyRef.current = true;
-    setBusy(true);
-    setNotice(null);
+    dispatch({ type: "start" });
     try {
       if (!prepared?.operation) {
         const result = await prepareResetForView(
           viewed,
           () => cache.getQueryData<ProviderResetView>(key),
-          () => client.prepareProviderReset(providerId, available.accountId),
+          () => client.prepareProviderReset(providerId, available.accountId, selectedCreditId),
         );
-        setPrepared(result);
         if (!result) {
-          setNotice(
-            "Account details changed during review. Refresh and review the current account before confirming.",
-          );
+          dispatch({
+            type: "failure",
+            uncertain: false,
+            notice:
+              "Account details changed during review. Refresh and review the current account before confirming.",
+          });
           return;
         }
+        dispatch({ type: "prepared", view: result });
         cache.setQueryData(key, result);
       } else {
         const result = await client.confirmProviderReset(
@@ -101,36 +125,47 @@ function useResetControl({
           available.accountId,
           prepared.operation.operationId,
         );
-        // Keep the confirmed key available if reconciliation needs another attempt.
-        if (!result.refreshError) setPrepared(null);
-        setNotice(resetResultNotice(result));
+        dispatch({ type: "result", result, notice: resetResultNotice(result) });
         if (result.view && cache.getQueryData(key) === viewed) cache.setQueryData(key, result.view);
-        setNotice(
-          await reconcileResetResult(result, [
-            () =>
-              cache.invalidateQueries(
-                { queryKey: ["providerReset", serverId] },
-                { throwOnError: true },
-              ),
-            () =>
-              cache.invalidateQueries(
-                { queryKey: providerUsageQueryKey(serverId) },
-                { throwOnError: true },
-              ),
-          ]),
-        );
+        const notice = await reconcileResetResult(result, [
+          () =>
+            cache.invalidateQueries(
+              { queryKey: ["providerReset", serverId] },
+              { throwOnError: true },
+            ),
+          () =>
+            cache.invalidateQueries(
+              { queryKey: providerUsageQueryKey(serverId) },
+              { throwOnError: true },
+            ),
+        ]);
+        dispatch({ type: "result", result, notice });
       }
-    } catch {
-      // Keep the prepared account/key after an uncertain confirmation. Retrying
-      // is a second explicit action and never allocates a replacement key.
-      setNotice(
-        "The operation could not be verified. Refresh account details or explicitly retry this same confirmation. No task has resumed.",
-      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The request failed.";
+      const uncertain = Boolean(prepared?.operation);
+      const recovery = uncertain
+        ? " Retry this same reset to verify its result, or go back to review account details."
+        : " Refresh account details and review again.";
+      dispatch({ type: "failure", notice: message + recovery, uncertain });
     } finally {
       busyRef.current = false;
-      setBusy(false);
+      dispatch({ type: "settled" });
     }
-  }, [available, cache, client, connected, key, prepared, providerId, serverId, query.data]);
+  }, [
+    available,
+    cache,
+    client,
+    connected,
+    key,
+    prepared,
+    providerId,
+    serverId,
+    query.data,
+    selectionSupported,
+    selectedCreditId,
+    selectedExists,
+  ]);
   const press = useCallback(() => {
     void act();
   }, [act]);
@@ -152,40 +187,13 @@ function useResetControl({
     connected,
     busy,
     prepared,
-    notice,
+    flow: displayedFlow,
+    selectedCreditId,
+    selectedExists,
+    selectionSupported,
+    back,
+    select,
   };
-}
-
-function CreditDetails({
-  available,
-}: {
-  available: Extract<ProviderResetView["snapshot"], { status: "available" }> | null;
-}) {
-  return (
-    <>
-      {available?.credits?.map((credit) => (
-        <View key={credit.id} style={styles.credit}>
-          <Text style={styles.text}>
-            {credit.title ?? "Reset credit"} · {credit.status}
-          </Text>
-          {credit.description ? <Text style={styles.text}>{credit.description}</Text> : null}
-          <Text style={styles.text}>
-            Granted {new Date(credit.grantedAt * 1000).toLocaleString()}
-          </Text>
-          <Text style={styles.text}>
-            {credit.expiresAt === null
-              ? "Expiry not reported"
-              : `Expires ${new Date(credit.expiresAt * 1000).toLocaleString()}`}
-          </Text>
-        </View>
-      ))}
-      {available && (!available.credits || available.credits.length < available.availableCount) ? (
-        <Text style={styles.text}>
-          The provider has not supplied details for every available credit.
-        </Text>
-      ) : null}
-    </>
-  );
 }
 
 export function ProviderResetControl(props: {
@@ -199,7 +207,6 @@ export function ProviderResetControl(props: {
   const {
     query,
     view,
-    available,
     header,
     close,
     refresh,
@@ -208,16 +215,20 @@ export function ProviderResetControl(props: {
     supported,
     open,
     connected,
-    busy,
     prepared,
-    notice,
+    flow,
+    selectedCreditId,
+    selectedExists,
+    selectionSupported,
+    back,
+    select,
   } = useResetControl(props);
   const { name, providerId } = props;
   const criticalTextStyle = useMemo(
     () => (props.critical ? styles.critical : undefined),
     [props.critical],
   );
-  const { visible, showBadge, badge, pending, enabled } = resetPresentation({
+  const { visible, showBadge, badge, enabled } = resetPresentation({
     supported,
     connected,
     open,
@@ -252,62 +263,21 @@ export function ProviderResetControl(props: {
           desktopMaxWidth={560}
           testID="provider-reset-dialog"
         >
-          <View style={styles.body}>
-            <Text style={styles.text}>
-              {available?.accountLabel ?? "Account label unavailable"}
-            </Text>
-            {available ? <Text style={styles.text}>Account: {available.accountId}</Text> : null}
-            <Text style={styles.text}>
-              {available
-                ? `${resetCountLabel(available.availableCount)} available`
-                : "Reset availability is unknown."}
-            </Text>
-            <Text style={styles.text}>
-              Uses an existing credit for this account. No purchase, account switch or automatic
-              task restart.
-            </Text>
-            {pending ? (
-              <Text style={styles.text}>
-                An earlier attempt is unresolved. Confirmation will reuse its saved operation key.
-              </Text>
-            ) : null}
-            <CreditDetails available={available} />
-            {view ? (
-              <Text style={styles.text}>Updated {new Date(view.fetchedAt).toLocaleString()}</Text>
-            ) : null}
-            {!view?.canRedeem ? (
-              <Text style={styles.text}>
-                This provider has not verified reset redemption support.
-              </Text>
-            ) : null}
-            {prepared ? (
-              <Text style={styles.text}>
-                Confirm use of one reset credit for the account shown above. The provider decides
-                eligibility.
-              </Text>
-            ) : null}
-            {query.isError ? (
-              <Text style={styles.text}>
-                Could not refresh account details. Displayed data may be stale.
-              </Text>
-            ) : null}
-            {notice ? (
-              <Text style={styles.text} accessibilityRole="alert">
-                {notice}
-              </Text>
-            ) : null}
-            <View style={styles.actions}>
-              <Button variant="ghost" onPress={close} disabled={busy}>
-                Close
-              </Button>
-              <Button variant="ghost" onPress={refresh} disabled={busy || !connected}>
-                Refresh
-              </Button>
-              <Button onPress={press} disabled={busy || !enabled} testID="provider-reset-action">
-                {prepared ? "Confirm reset" : "Review reset"}
-              </Button>
-            </View>
-          </View>
+          <ResetDialogContent
+            name={name}
+            view={view}
+            flow={flow}
+            selectedCreditId={selectedCreditId}
+            selectionSupported={selectionSupported}
+            enabled={enabled && selectionSupported && (Boolean(prepared) || selectedExists)}
+            connected={connected}
+            readFailed={query.isError}
+            onSelect={select}
+            onBack={back}
+            onClose={close}
+            onRefresh={refresh}
+            onAct={press}
+          />
         </AdaptiveModalSheet>
       ) : null}
     </>
@@ -316,13 +286,5 @@ export function ProviderResetControl(props: {
 
 const styles = StyleSheet.create((theme) => ({
   critical: { color: theme.colors.destructive },
-  body: { padding: theme.spacing[4], gap: theme.spacing[3] },
   text: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.base },
-  credit: { gap: theme.spacing[1], paddingVertical: theme.spacing[2] },
-  actions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "flex-end",
-    gap: theme.spacing[2],
-  },
 }));

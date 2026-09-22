@@ -42,6 +42,7 @@ async function seedCodexDefaultPermissionPreferences(page: Page, cwd: string): P
         localStorage.setItem(
           preferencesKey,
           JSON.stringify({
+            vortonMode: false,
             provider: "codex",
             providerPreferences: {
               codex: {

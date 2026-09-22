@@ -47,6 +47,11 @@ export class CodexGoals {
     // A read started during a write can observe the previous native state. It
     // must not overtake the write and make its successful response look stale.
     await this.mutationTail;
+    return this.readCurrent();
+  }
+
+  // Called inside mutations too, so it must not wait on mutationTail.
+  private async readCurrent(): Promise<AgentGoalState> {
     const threadId = this.threadId;
     if (!threadId) {
       this.accept(null);
@@ -108,8 +113,8 @@ export class CodexGoals {
       if (!threadId || this.threadId !== threadId) {
         throw new Error("The goal's native session is no longer available");
       }
-      // Invalidate reads started before this mutation. A native notification
-      // arriving during it is newer than the mutation's eventual response.
+      // Invalidate reads started before this mutation. Overlapping native
+      // notifications need a post-write read to establish the final state.
       const revision = ++this.revision;
       try {
         const raw = await this.options.request(method, { threadId, ...input });
@@ -121,6 +126,12 @@ export class CodexGoals {
           z.object({ cleared: z.boolean() }).parse(raw);
         }
         if (this.revision === revision) this.accept(goal);
+        else if (this.threadId === threadId) {
+          // Usage notifications can report the pre-write status while a native
+          // pause succeeds. Confirm after the write instead of guessing which
+          // overlapping notification or response represents the final state.
+          await this.readCurrent();
+        }
         return this.current;
       } catch (error) {
         if (this.revision === revision) {

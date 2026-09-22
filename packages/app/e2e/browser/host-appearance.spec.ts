@@ -55,6 +55,10 @@ const test = base.extend<{ twoHostSidebar: TwoHostSidebar }>({
         port: secondaryHost.port,
       });
 
+      // Badge color assertions exercise the light palette independently of the app default.
+      await page.addInitScript(() => {
+        localStorage.setItem("@paseo:app-settings", JSON.stringify({ theme: "light" }));
+      });
       await gotoAppShell(page);
       await addConnectedHostAndReload(page, {
         serverId: secondaryHost.serverId,

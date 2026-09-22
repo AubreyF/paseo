@@ -28,6 +28,8 @@ export const AgentGoalStateSchema = z.discriminatedUnion("status", [
     status: z.literal("ready"),
     goal: AgentGoalSchema.nullable(),
     observedAt: z.string(),
+    // Native continuation is paused while the durable queue drains, then resumes.
+    queueContinuationHeld: z.boolean().optional(),
   }),
   z.object({
     status: z.literal("error"),

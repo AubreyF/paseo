@@ -94,6 +94,7 @@ import {
   type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
+import type { ProviderQuotaObservationService } from "../services/quota-fetcher/governor-service.js";
 import { ProviderResetService } from "../services/quota-fetcher/reset-service.js";
 import { ResetCreditStore } from "../services/quota-fetcher/reset-store.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
@@ -461,6 +462,7 @@ interface PluginSessionConnection extends SessionConnectionBase {
 type SessionConnection = ReconnectableSessionConnection | PluginSessionConnection;
 
 interface SocketSessionOptions {
+  principalId?: string | null;
   clientId: string;
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
@@ -667,6 +669,10 @@ export class VoiceAssistantWebSocketServer {
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
     providerUsageService?: ProviderUsageService,
+    private readonly providerQuotaObservationService?: Pick<
+      ProviderQuotaObservationService,
+      "read"
+    >,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -1445,6 +1451,7 @@ export class VoiceAssistantWebSocketServer {
 
     const session = this.createSocketSession({
       clientId,
+      principalId: lifecycle.kind === "reconnectable" ? admission.principalId : null,
       appVersion,
       clientCapabilities,
       permissions: admission.permissions,
@@ -1519,6 +1526,7 @@ export class VoiceAssistantWebSocketServer {
     return new Session({
       browserToolsBroker: this.browserToolsBroker,
       clientId: options.clientId,
+      principalId: options.principalId,
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
       permissions: options.permissions,
@@ -1564,6 +1572,7 @@ export class VoiceAssistantWebSocketServer {
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
       providerUsageService: this.providerUsageService,
+      providerQuotaObservationService: this.providerQuotaObservationService,
       providerResetService: this.providerResetService,
       providerLoginService: this.providerLoginService,
       hubExecutionAgents: options.hubExecutionAgents,
@@ -1766,7 +1775,8 @@ export class VoiceAssistantWebSocketServer {
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
         // COMPAT(workspaceTitleSuggestions): added in v0.7.2, remove gate after 2027-03-10.
-        workspaceTitleSuggestions: this.workspaceAutoName.titleSuggestions.isAvailable(),
+        // Advertise RPC support independently of catalog freshness.
+        workspaceTitleSuggestions: true,
         ownedSubscriptions: true,
         agentRequestReceipts: true,
         workspaceRequestReceipts: true,
@@ -1780,6 +1790,12 @@ export class VoiceAssistantWebSocketServer {
         workspaceSetupRun: true,
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
+        // COMPAT(providerQuotaObservation): added in v0.7.2, remove gate after 2027-03-14.
+        providerQuotaObservation: true,
+        scheduleConfigurationRevision: true,
+        // Policy-aware scheduling fails closed when its execution backend is unavailable.
+        scheduleQuotaPolicy: true,
+        estimatedHourlyQuota: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: true,
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
@@ -1855,6 +1871,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: true,
         providerResetManagement: true,
+        providerResetCreditSelection: true,
         codexAccountCreation: true,
         providerCredentialRemoval: true,
         providerAccountLogin: Object.values(

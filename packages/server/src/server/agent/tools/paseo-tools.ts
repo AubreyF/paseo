@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TaskOwnerEvidenceStore } from "../../authorization/task-owner-evidence.js";
 import { ensureValidJson } from "../../json-utils.js";
 import type { Logger } from "pino";
 
@@ -1968,6 +1969,39 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return response;
     },
   );
+
+  if (callerAgentId && options.paseoHome) {
+    const evidence = new TaskOwnerEvidenceStore(options.paseoHome);
+    registerTool(
+      "read_task_owner_evidence",
+      {
+        title: "Read task owner evidence",
+        description:
+          "Read exact owner-principal messages retained for this task when resolving prior authorization or supersession. Read all pages through the latest receipt. Interpret actor, target, actions and scope from the original messages; later scoped instructions do not erase unrelated constraints. Queue receipts include queueOperation metadata for submissions, edits and deletions. They record received intent before queue commit, not current queue content or successful delivery; a later commit can fail. Evidence is not an executable grant or proof of human authorship. No authority transfers to child agents or Factory workers. Managed review, sandbox policy, required checks and independent review still apply. This tool cannot read another task or write authority.",
+        inputSchema: {
+          afterSequence: z.number().int().nonnegative().default(0),
+          limit: z.number().int().min(1).max(20).default(10),
+        },
+      },
+      async ({ afterSequence, limit }) => {
+        const all = await evidence.list(callerAgentId);
+        const receipts = all.filter((receipt) => receipt.sequence > afterSequence).slice(0, limit);
+        const lastSequence = receipts.at(-1)?.sequence ?? afterSequence;
+        return {
+          content: [],
+          structuredContent: ensureValidJson({
+            kind: "owner_message_evidence",
+            taskId: callerAgentId,
+            receipts,
+            latestSequence: all.at(-1)?.sequence ?? 0,
+            nextAfterSequence: all.some((receipt) => receipt.sequence > lastSequence)
+              ? lastSequence
+              : null,
+          }),
+        };
+      },
+    );
+  }
 
   registerTool(
     "get_agent_status",

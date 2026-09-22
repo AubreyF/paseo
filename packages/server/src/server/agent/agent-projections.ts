@@ -1,3 +1,4 @@
+import { projectQueueGoalState } from "../message-queue/goal-hold.js";
 import type {
   AgentListItemPayload,
   AgentSnapshotPayload,
@@ -152,7 +153,9 @@ export function toAgentPayload(
         }
       : null,
     capabilities: cloneCapabilities(agent.capabilities),
-    ...(agent.goalState ? { goalState: agent.goalState } : {}),
+    ...(agent.goalState
+      ? { goalState: projectQueueGoalState(agent.goalState, agent.queueGoalHold) }
+      : {}),
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),
     features: normalizeFeatures(agent.features),
@@ -345,6 +348,8 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
     serializable.systemPrompt = config.systemPrompt;
   }
   if (config.profileLaunch) serializable.profileLaunch = config.profileLaunch;
+  if (config.controllerExecutionId)
+    serializable.controllerExecutionId = config.controllerExecutionId;
   if (config.quotaPausedAt) serializable.quotaPausedAt = config.quotaPausedAt;
   if (config.quotaResetAt) serializable.quotaResetAt = config.quotaResetAt;
   if (config.quotaReserve) serializable.quotaReserve = config.quotaReserve;

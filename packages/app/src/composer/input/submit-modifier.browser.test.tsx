@@ -6,7 +6,7 @@ import { useSubmitModifier } from "./submit-modifier.web";
 let root: Root;
 let container: HTMLDivElement;
 function Modifier({ enabled }: { enabled: boolean }) {
-  return <output>{useSubmitModifier(enabled)}</output>;
+  return <output>{useSubmitModifier(enabled).modifier}</output>;
 }
 function mount(enabled = true) {
   container = document.createElement("div");
@@ -42,6 +42,32 @@ describe("composer held modifiers", () => {
     expect(container.textContent).toBe("none");
     key("keydown", { key: "Shift", shiftKey: true });
     act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(container.textContent).toBe("none");
+  });
+  it.each(["insertFromPaste", "insertReplacementText", "insertFromDictation", ""])(
+    "clears a missed hotkey release on external input %s",
+    (inputType) => {
+      mount();
+      key("keydown", { key: "Meta", metaKey: true });
+      act(() => document.dispatchEvent(new InputEvent("input", { inputType, bubbles: true })));
+      expect(container.textContent).toBe("none");
+    },
+  );
+  it("preserves a genuinely held Shift during ordinary typing", () => {
+    mount();
+    key("keydown", { key: "Shift", shiftKey: true });
+    act(() =>
+      document.dispatchEvent(new InputEvent("input", { inputType: "insertText", bubbles: true })),
+    );
+    expect(container.textContent).toBe("newline");
+  });
+  it("reconciles missed modifier release when focus returns or the pointer moves", () => {
+    mount();
+    key("keydown", { key: "Meta", metaKey: true });
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(container.textContent).toBe("none");
+    key("keydown", { key: "Meta", metaKey: true });
+    act(() => document.dispatchEvent(new PointerEvent("pointermove", { metaKey: false })));
     expect(container.textContent).toBe("none");
   });
   it("keeps Paseo unchanged and clears held state when Vorton is disabled", () => {

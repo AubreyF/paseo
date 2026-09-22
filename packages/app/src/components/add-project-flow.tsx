@@ -422,6 +422,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         includeFiles: false,
         limit: 30,
       });
+      if (payload.error) throw new Error(payload.error);
       return {
         query: debouncedQuery,
         paths:
@@ -486,7 +487,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         }
         const reason = getOpenProjectFailureReason(result);
         const message =
-          reason === "directory_not_found" ? "Directory not found" : "Unable to add project";
+          result.error ??
+          (reason === "directory_not_found" ? "Directory not found" : "Unable to add project");
         setState((current) =>
           setPageStatus(current, sourceKind, { isSubmitting: false, error: message }),
         );
@@ -936,9 +938,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                 Loading...
               </Text>
             ) : null}
-            {!isSubmitting &&
-            (!loading || page.kind === "github-search") &&
-            (!queryError || page.kind === "github-search")
+            {/* Typed paths and matching recommendations do not depend on directory search. */}
+            {!isSubmitting
               ? rows.map((option, index) => (
                   <FlowRow key={option.id} option={option} active={index === activeIndex} />
                 ))

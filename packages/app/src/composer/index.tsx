@@ -1,6 +1,5 @@
 import { KeyboardTranslateView } from "@/keyboard/shift";
 import { commitComposerQueue } from "@/message-queue/commit-composer";
-import { SharedQueueView } from "@/message-queue/queue-view";
 import { LegacyQueueImport } from "@/message-queue/legacy-import";
 import { runLegacyQueueAction } from "@/message-queue/runtime";
 import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
@@ -955,6 +954,7 @@ function GithubPickerOption({
 }
 
 interface ComposerProps {
+  taskCardsInHistory?: boolean;
   agentId: string;
   serverId: string;
   workspaceId?: string | null;
@@ -1260,6 +1260,7 @@ const ComposerContent = memo(ComposerContentImpl);
 
 // oxlint-disable-next-line complexity
 function ComposerContentImpl({
+  taskCardsInHistory = false,
   agentId,
   serverId,
   workspaceId,
@@ -2564,13 +2565,12 @@ function ComposerContentImpl({
           <View style={styles.inputAreaContent}>
             {!mobileComposer.enabled ? queueList : null}
             {sendErrorNode}
-            {formPreferences.vortonMode ? (
-              <SharedQueueView serverId={serverId} agentId={agentId} />
-            ) : null}
-            {formPreferences.vortonMode ? (
+            {formPreferences.vortonMode && !taskCardsInHistory ? (
               <LegacyQueueImport serverId={serverId} agentId={agentId} cwd={cwd} />
             ) : null}
-            <GoalBar control={goalControl} onExpand={openGoalDetails} />
+            {!taskCardsInHistory ? (
+              <GoalBar control={goalControl} onExpand={openGoalDetails} />
+            ) : null}
             {goalDetailsOpen && goalControl.supported ? (
               <GoalDetails
                 control={goalControl}

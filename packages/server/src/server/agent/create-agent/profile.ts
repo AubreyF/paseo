@@ -56,6 +56,7 @@ function resolveProfileConfiguration(
   return {
     ...base,
     provider: profile.provider,
+    modeId: config.modeId ?? (profile.modeId?.trim() || undefined),
     model: profile.model?.trim() || config.model,
     thinkingOptionId: profile.thinkingOptionId?.trim() || undefined,
     featureValues: profile.featureValues ?? {},

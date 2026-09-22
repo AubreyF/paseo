@@ -20,7 +20,7 @@ export function profileDetails(profile: AgentProfile, entry?: ProviderSnapshotEn
   });
   return [
     {
-      title: "Permissions",
+      title: "Saved profile permissions",
       text: `${permissions}${profile.modeId?.trim() ? "" : " (provider default)"}\n${description}`,
     },
     { title: "Nickname", text: presetNickname(profile) },

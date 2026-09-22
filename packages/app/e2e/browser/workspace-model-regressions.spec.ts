@@ -218,6 +218,7 @@ test.describe("Workspace model regressions", () => {
         localStorage.setItem(
           "@paseo:create-agent-preferences",
           JSON.stringify({
+            vortonMode: false,
             provider: "mock",
             providerPreferences: {
               mock: { mode: "load-test" },

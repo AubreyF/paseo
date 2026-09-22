@@ -54,6 +54,10 @@ complete`), keyed off the opened snapshot's serverId. Waiting for data is a
    (host → project → model → thinking/mode), so fields cannot pop in from
    cache timing.
 
+### Schedule edit revisions
+
+The schedule form captures its configuration revision when opened, alongside the draft fields. Background record refreshes must not advance that revision. Both agent-target cadence edits and new-agent configuration edits submit it; a conflict leaves the draft open for review. Closing and reopening loads the latest record. This integrity check applies in both modes without changing the form layout.
+
 ## Form kit
 
 - Compose `Field` / `SelectField` / `FormTextInput` / `SegmentedControl` /

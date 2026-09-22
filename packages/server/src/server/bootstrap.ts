@@ -151,6 +151,11 @@ import {
 } from "./workspace-registry.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
+import { QuotaSchedulePreflight } from "./schedule/quota-preflight.js";
+import { ProviderQuotaObservationService } from "../services/quota-fetcher/governor-service.js";
+import type { CreateGovernedScheduleRuntime } from "./schedule/governed-runtime.js";
+import { createGovernedPlacementValidator } from "./schedule/governed-placement.js";
+import { QuotaGovernorStore } from "./agent/quota-reserve/governor-store.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
@@ -476,6 +481,7 @@ export interface PaseoDaemon {
 }
 
 export interface PaseoDaemonDependencies {
+  createGovernedScheduleRuntime?: CreateGovernedScheduleRuntime;
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
@@ -1347,7 +1353,33 @@ export async function createPaseoDaemon(
       },
     );
   };
+  const governorObservations = new ProviderQuotaObservationService({
+    getClient: (provider) => agentManager.getQuotaObservationClient(provider),
+  });
+  const governedRuntime = await dependencies.createGovernedScheduleRuntime?.({
+    hostId: serverId,
+    paseoHome: config.paseoHome,
+    store: new QuotaGovernorStore(path.join(config.paseoHome, "quota-governor")),
+    readObservation: (provider) => governorObservations.read(provider),
+    captureClient: (provider) =>
+      agentManager.captureGovernedExecutionClient(
+        provider,
+        createGovernedPlacementValidator({
+          hostId: serverId,
+          projects: projectRegistry,
+          workspaces: workspaceRegistry,
+        }),
+      ),
+  });
+  const quotaPreflight = new QuotaSchedulePreflight({
+    readObservation: (provider) =>
+      governedRuntime
+        ? governedRuntime.readObservation(provider)
+        : governorObservations.read(provider),
+    execution: governedRuntime,
+  });
   const scheduleService = new ScheduleService({
+    quotaRunner: quotaPreflight,
     paseoHome: config.paseoHome,
     logger,
     agentManager,
@@ -1737,6 +1769,7 @@ export async function createPaseoDaemon(
               orchestrationSkills,
               workspaceLabelService,
               providerUsageService,
+              governorObservations,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
@@ -1785,6 +1818,21 @@ export async function createPaseoDaemon(
       scriptHealthMonitor.start();
     } catch (error) {
       unsubscribePluginProviders();
+      quotaPreflight.stop();
+      wsServer?.prepareForShutdown();
+      agentManager.prepareForShutdown();
+      await scheduleService.stop().catch(() => undefined);
+      const governedFailures: unknown[] = [];
+      try {
+        await governedRuntime?.stop();
+      } catch (failure) {
+        governedFailures.push(failure);
+        logger.error(
+          { err: failure },
+          "Governed runtime settlement remains unresolved during startup cleanup",
+        );
+      }
+      await governorObservations.stop();
       await quotaReservePolling.stop();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
@@ -1793,19 +1841,40 @@ export async function createPaseoDaemon(
         httpServer.closeAllConnections();
         await new Promise<void>((resolve) => httpServer.close(() => resolve()));
       }
+      if (governedFailures.length)
+        // AggregateError accepts cause in argument three; the lint rule checks argument two.
+        // eslint-disable-next-line preserve-caught-error
+        throw new AggregateError(
+          [error, ...governedFailures],
+          "Daemon startup and governed cleanup failed.",
+          { cause: error },
+        );
       throw error;
     }
   };
 
   const stop = async () => {
+    quotaPreflight.stop();
+    // Close ingress before waiting for metadata processes or other teardown.
+    wsServer?.prepareForShutdown();
+    agentManager.prepareForShutdown();
+    await scheduleService.stop().catch(() => undefined);
+    const governedFailures: unknown[] = [];
+    try {
+      await governedRuntime?.stop();
+    } catch (failure) {
+      governedFailures.push(failure);
+      logger.error(
+        { err: failure },
+        "Governed runtime settlement remains unresolved during shutdown",
+      );
+    }
+    await governorObservations.stop();
     await pluginRuntime.stopAllPlugins();
     unsubscribePluginProviders();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
-    wsServer?.prepareForShutdown();
-    agentManager.prepareForShutdown();
     await quotaReservePolling.stop();
     await closeAllAgents(logger, agentManager);
     await agentManager.flushForShutdown().catch(() => undefined);
@@ -1814,7 +1883,6 @@ export async function createPaseoDaemon(
     await agentProviderRuntime.shutdown();
     terminalManager.killAll();
     await speechService.stop();
-    await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
     if (wsServer) {
       await wsServer.close();
@@ -1835,6 +1903,8 @@ export async function createPaseoDaemon(
     if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
       unlinkSync(listenTarget.path);
     }
+    if (governedFailures.length)
+      throw new AggregateError(governedFailures, "Governed runtime shutdown requires recovery.");
   };
 
   return {

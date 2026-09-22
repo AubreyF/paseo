@@ -18,6 +18,30 @@ class ProviderSnapshots {
 }
 
 describe("resolveStructuredGenerationProviders", () => {
+  test("automatic selection discovers Luna when older preferred models are absent", async () => {
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "work-codex",
+        status: READY,
+        enabled: true,
+        models: [
+          {
+            provider: "work-codex",
+            id: "gpt-5.6-luna",
+            label: "Luna",
+            thinkingOptions: [{ id: "low", label: "Low" }],
+          },
+        ],
+      },
+    ]);
+    expect(
+      await resolveStructuredGenerationProviders({
+        cwd: "/tmp/repo",
+        providerSnapshotManager: snapshots,
+      }),
+    ).toEqual([{ provider: "work-codex", model: "gpt-5.6-luna", thinkingOptionId: "low" }]);
+  });
+
   test("tries the configured model before dynamically discovered fallbacks", async () => {
     const snapshots = new ProviderSnapshots([
       {

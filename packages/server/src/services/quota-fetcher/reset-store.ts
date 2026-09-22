@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  ProviderResetCreditSchema,
   ProviderResetAttemptSchema,
   ProviderResetOutcomeSchema,
   type ProviderResetAttempt,
@@ -14,6 +15,7 @@ const OperationFields = {
   ...ProviderResetAttemptSchema.shape,
   providerId: z.string().min(1),
   createdAt: z.string(),
+  credit: ProviderResetCreditSchema.optional(),
 };
 const OperationSchema = z.discriminatedUnion("state", [
   z.object({ ...OperationFields, state: z.literal("prepared") }),
@@ -29,6 +31,7 @@ interface PrepareReset {
   accountId: string;
   providerId: string;
   creditId?: string;
+  credit?: z.infer<typeof ProviderResetCreditSchema>;
 }
 interface ConfirmReset {
   accountId: string;
@@ -56,7 +59,8 @@ export class ResetCreditStore {
       const existing = await this.read(input.accountId);
       // A second device or alias must join the unresolved operation. It cannot
       // allocate another key just because the first device lost its response.
-      if (existing && existing.state !== "completed") return existing;
+      if (existing?.state === "pending") return existing;
+      if (existing?.state === "prepared" && existing.creditId === input.creditId) return existing;
       const operation = OperationSchema.parse({
         ...input,
         idempotencyKey: randomUUID(),

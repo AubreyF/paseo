@@ -46,6 +46,8 @@ export const TEST_MOCK_PROVIDER_PREFERENCES = {
 
 export function buildCreateAgentPreferences() {
   return {
+    // Baseline app tests exercise Paseo; fork-specific tests opt into Vorton.
+    vortonMode: false,
     provider: "mock",
     providerPreferences: TEST_MOCK_PROVIDER_PREFERENCES,
   } satisfies FormPreferences;

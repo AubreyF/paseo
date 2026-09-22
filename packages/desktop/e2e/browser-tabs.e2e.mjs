@@ -379,12 +379,30 @@ async function clickGuestElement(page, client, browserId, selector) {
   });
   const elementRect = JSON.parse(evaluated.resultJson);
   assert(elementRect, `Guest element ${selector} was unavailable`);
-  await page.locator(`[data-paseo-browser-id="${browserId}"]`).click({
-    position: {
-      x: elementRect.x + elementRect.width / 2,
-      y: elementRect.y + elementRect.height / 2,
-    },
-  });
+  const webviewRect = await page.evaluate((id) => {
+    const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+    if (!(webview instanceof HTMLElement)) return null;
+    const rect = webview.getBoundingClientRect();
+    return { x: rect.x, y: rect.y };
+  }, browserId);
+  assert(webviewRect, `Browser webview ${browserId} was unavailable`);
+  const point = {
+    x: webviewRect.x + elementRect.x + elementRect.width / 2,
+    y: webviewRect.y + elementRect.y + elementRect.height / 2,
+  };
+  const hostBeforeClick = await page.evaluate(({ x, y }) => {
+    const hit = document.elementFromPoint(x, y);
+    return {
+      hitTag: hit?.tagName,
+      hitId: hit?.id,
+      hitTestId: hit?.getAttribute("data-testid"),
+      hitBrowserId: hit?.getAttribute("data-paseo-browser-id"),
+      documentFocused: document.hasFocus(),
+      devicePixelRatio: window.devicePixelRatio,
+    };
+  }, point);
+  await page.mouse.click(point.x, point.y);
+  return { point, elementRect, webviewRect, hostBeforeClick };
 }
 
 async function selectDeviceSize(page, label) {
@@ -615,11 +633,27 @@ async function runRegression({
     { width: firstGuest.width, height: firstGuest.height },
   );
 
-  await clickGuestElement(page, client, browserId, "#typing-target");
-  assert(
-    await waitForGuestActiveElement(client, browserId, "typing-target"),
-    "Physical browser click did not focus the guest input",
-  );
+  const clickEvidence = await clickGuestElement(page, client, browserId, "#typing-target");
+  const guestFocused = await waitForGuestActiveElement(client, browserId, "typing-target");
+  if (!guestFocused) {
+    // Preserve the failed physical interaction before teardown removes the guest.
+    try {
+      const guestState = await callBrowserTool(client, "browser_evaluate", {
+        browserId,
+        function:
+          "() => ({ activeId: document.activeElement?.id, activeTag: document.activeElement?.tagName, documentFocused: document.hasFocus(), readyState: document.readyState, width: innerWidth, height: innerHeight, devicePixelRatio })",
+      });
+      writeJson(path.join(artifactDir, "guest-focus-failure.json"), {
+        browserId,
+        ...clickEvidence,
+        guestState: JSON.parse(guestState.resultJson),
+      });
+      await page.screenshot({ path: path.join(artifactDir, "guest-focus-failure.png") });
+    } catch (error) {
+      console.warn(`Guest focus diagnostics failed: ${String(error).slice(0, 500)}`);
+    }
+  }
+  assert(guestFocused, "Physical browser click did not focus the guest input");
   const focusedGuest = await page.evaluate(
     (id) => window.paseoDesktop?.browser?.focus?.(id),
     browserId,

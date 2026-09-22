@@ -1,6 +1,6 @@
+import { CompactAccountButton } from "@/provider-usage/compact-account-button";
 import { useToast } from "@/contexts/toast-context";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
-import { Button } from "@/components/ui/button";
 import { ProviderReconnectControl } from "@/provider-usage/reconnect-control";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import type { ProviderUsage } from "@/provider-usage/types";
@@ -271,7 +271,28 @@ function ProviderRow({
               ) : null}
             </View>
           </View>
-          <View style={styles.trailingControls}>
+          <View style={[styles.trailingControls, vortonMode && styles.vortonTrailingControls]}>
+            {vortonMode && entry.source === "custom" ? (
+              <>
+                <CompactAccountButton
+                  onPress={handleRename}
+                  disabled={isRemoving}
+                  testID={`provider-rename-${def.id}`}
+                >
+                  Rename
+                </CompactAccountButton>
+                {canRemove ? (
+                  <CompactAccountButton
+                    onPress={handleRemove}
+                    disabled={isRemoving}
+                    loading={isRemoving}
+                    testID={`provider-remove-${def.id}`}
+                  >
+                    Delete
+                  </CompactAccountButton>
+                ) : null}
+              </>
+            ) : null}
             <ProviderReconnectControl
               serverId={serverId}
               providerId={def.id}
@@ -284,29 +305,7 @@ function ProviderRow({
               disabled={isToggling || isRemoving}
               accessibilityLabel={t("settings.providers.enableProvider", { name: def.label })}
             />
-            {vortonMode ? (
-              <View style={styles.trailingControls}>
-                <Button
-                  variant="ghost"
-                  onPress={handleRename}
-                  disabled={isRemoving}
-                  testID={`provider-rename-${def.id}`}
-                >
-                  Rename
-                </Button>
-                {canRemove ? (
-                  <Button
-                    variant="ghost"
-                    onPress={handleRemove}
-                    disabled={isRemoving}
-                    loading={isRemoving}
-                    testID={`provider-remove-${def.id}`}
-                  >
-                    Delete
-                  </Button>
-                ) : null}
-              </View>
-            ) : (
+            {!vortonMode ? (
               <View style={styles.menuSlot}>
                 {canRemove ? (
                   <ProviderActionsMenu
@@ -321,7 +320,7 @@ function ProviderRow({
                   />
                 ) : null}
               </View>
-            )}
+            ) : null}
           </View>
         </>
       )}
@@ -670,6 +669,9 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+  },
+  vortonTrailingControls: {
+    gap: theme.spacing[2],
   },
   menuButton: {
     width: 32,

@@ -1,7 +1,9 @@
 import { mergeQueueHistory } from "../message-queue/history.js";
 import {
   pauseGoalForQueue,
+  projectQueueGoalState,
   resumeGoalAfterQueue,
+  setGoalWithQueueOwnership,
   type QueueGoalHold,
   type QueueGoalPort,
 } from "../message-queue/goal-hold.js";
@@ -16,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { countRunningWorkers } from "./worker-activity.js";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
+import { controllerSessionView } from "./controller-session.js";
 import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
@@ -50,6 +53,7 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
+  type CapturedQuotaExecutionClient,
   type AgentCreateSessionOptions,
   type AgentResumeSessionOptions,
   type AgentFeature,
@@ -209,6 +213,8 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     config.systemPrompt = record.config.systemPrompt;
   }
   if (record.config.profileLaunch) config.profileLaunch = record.config.profileLaunch;
+  if (record.config.controllerExecutionId)
+    config.controllerExecutionId = record.config.controllerExecutionId;
   if (record.config.quotaPausedAt) config.quotaPausedAt = record.config.quotaPausedAt;
   if (record.config.quotaResetAt) config.quotaResetAt = record.config.quotaResetAt;
   if (record.config.quotaReserve) config.quotaReserve = record.config.quotaReserve;
@@ -1094,6 +1100,14 @@ export class AgentManager {
   }
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly clients = new Map<AgentProvider, AgentClient>();
+  private readonly governedClientGenerations = new Map<AgentProvider, number>();
+  private readonly controllerSessions = new Map<
+    string,
+    {
+      stop(): Promise<void>;
+      assertSettled(): Promise<void>;
+    }
+  >();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
@@ -1182,6 +1196,10 @@ export class AgentManager {
   }
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
+    this.governedClientGenerations.set(
+      provider,
+      (this.governedClientGenerations.get(provider) ?? 0) + 1,
+    );
     this.clients.set(provider, client);
   }
 
@@ -1190,6 +1208,18 @@ export class AgentManager {
     clients: ProviderClientMap;
     retiredProviders?: readonly AgentProvider[];
   }): void {
+    const providers = new Set([...this.clients.keys(), ...Object.keys(input.clients)]);
+    for (const provider of providers) {
+      if (
+        this.clients.get(provider) !== input.clients[provider] ||
+        this.providerEnabled.get(provider) !== input.providerDefinitions[provider]?.enabled
+      ) {
+        this.governedClientGenerations.set(
+          provider,
+          (this.governedClientGenerations.get(provider) ?? 0) + 1,
+        );
+      }
+    }
     this.providerEnabled.clear();
     this.providerDefinitions.clear();
     for (const [provider, definition] of Object.entries(input.providerDefinitions)) {
@@ -1221,6 +1251,103 @@ export class AgentManager {
 
   getRegisteredProviderIds(): AgentProvider[] {
     return Array.from(this.clients.keys());
+  }
+
+  getQuotaObservationClient(
+    provider: AgentProvider,
+  ): Pick<AgentClient, "openQuotaObservationSession"> | null {
+    if (this.providerEnabled.get(provider) === false) return null;
+    return this.clients.get(provider) ?? null;
+  }
+
+  captureGovernedExecutionClient(
+    provider: AgentProvider,
+    validatePlacement?: (
+      input: Parameters<CapturedQuotaExecutionClient["openSession"]>[0],
+    ) => Promise<void>,
+  ): CapturedQuotaExecutionClient {
+    const client = this.clients.get(provider);
+    const open = client?.openQuotaGovernedSession;
+    if (
+      !this.acceptingAgentRegistrations ||
+      this.providerEnabled.get(provider) === false ||
+      !client ||
+      !open
+    ) {
+      throw new Error("Governed provider execution is unavailable.");
+    }
+    const generation = this.governedClientGenerations.get(provider);
+    const assertCurrent = () => {
+      if (
+        !this.acceptingAgentRegistrations ||
+        this.providerEnabled.get(provider) === false ||
+        this.clients.get(provider) !== client ||
+        this.governedClientGenerations.get(provider) !== generation
+      ) {
+        throw new Error("Captured governed provider changed; reconciliation is required.");
+      }
+    };
+    return {
+      assertCurrent,
+      openSession: (input) => {
+        assertCurrent();
+        return (async () => {
+          // Capture scalar placement before awaiting registry reads. Provider startup
+          // must not race a controller mutating the caller's placement object.
+          input = {
+            ...input,
+            config: { ...input.config },
+            placement: input.placement && { ...input.placement },
+          };
+          const checkPlacement = async () => {
+            if (input.placement) {
+              if (!input.inspection || !validatePlacement)
+                throw new Error(
+                  "Governed workspace placement requires host validation and inspection.",
+                );
+              await validatePlacement(input);
+            }
+            assertCurrent();
+          };
+          await checkPlacement();
+          if (!input.inspection) return open.call(client, input);
+          const inspection = input.inspection;
+          const id = validateAgentId(inspection.executionId, "governed execution inspection");
+          if (this.agents.has(id) || this.controllerSessions.has(id))
+            throw new Error("Governed execution inspection identity already exists.");
+          return open.call(client, input).then(async (session) => {
+            try {
+              await checkPlacement();
+              this.controllerSessions.set(id, inspection);
+              await this.registerSession(
+                controllerSessionView(session, inspection),
+                {
+                  ...input.config,
+                  controllerExecutionId: id,
+                  title: inspection.title,
+                },
+                id,
+                { initialTitle: inspection.title, workspaceId: input.placement?.workspaceId },
+              );
+              await checkPlacement();
+              const close = session.close.bind(session);
+              session.close = async () => {
+                await close();
+                await inspection.assertSettled();
+                await this.closeAgent(id);
+              };
+              return session;
+            } catch (error) {
+              await session.close();
+              await inspection.assertSettled();
+              if (this.agents.has(id)) await this.closeAgent(id);
+              else this.controllerSessions.delete(id);
+              throw error;
+            }
+          });
+        })();
+      },
+    };
   }
 
   setMessageQueueControl(
@@ -1754,13 +1881,10 @@ export class AgentManager {
     return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
   }
 
-  private async createAgentInternal(
+  private async applyCreatePluginDefaults(
     config: AgentSessionConfig,
-    agentId: string | undefined,
     options: CreateAgentOptions,
-  ): Promise<ManagedAgent> {
-    this.assertAcceptingAgentRegistrations();
-    const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+  ): Promise<{ config: AgentSessionConfig; options: CreateAgentOptions }> {
     if (this.pluginLifecycle && !config.internal) {
       const request = await this.pluginLifecycle.before("agent.create", {
         config: structuredClone(config),
@@ -1795,6 +1919,23 @@ export class AgentManager {
         },
       };
     }
+    return { config, options };
+  }
+
+  private async createAgentInternal(
+    config: AgentSessionConfig,
+    agentId: string | undefined,
+    options: CreateAgentOptions,
+  ): Promise<ManagedAgent> {
+    this.assertAcceptingAgentRegistrations();
+    const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+    ({ config, options } = await this.applyCreatePluginDefaults(config, options));
+    if (
+      this.controllerSessions.has(resolvedAgentId) ||
+      this.agents.get(resolvedAgentId)?.config.controllerExecutionId ||
+      (await this.registry?.get(resolvedAgentId))?.config?.controllerExecutionId
+    )
+      throw new Error("Controller-managed execution must be created through its controller.");
     await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       config,
@@ -1878,6 +2019,36 @@ export class AgentManager {
     );
   }
 
+  private async assertOrdinaryResume(
+    handle: AgentPersistenceHandle,
+    agentId: string,
+    configs: Array<Partial<AgentSessionConfig> | undefined>,
+  ): Promise<void> {
+    const stored = await this.registry?.get(agentId);
+    const identities = new Set([handle.sessionId, handle.nativeHandle].filter(Boolean));
+    const siblings = (
+      await Promise.all(
+        [...identities].map((id) => this.registry?.listByProviderSession(handle.provider, id!)),
+      )
+    ).flat();
+    const liveMatch = [...this.agents.values()].some((agent) => {
+      if (!agent.config.controllerExecutionId || agent.provider !== handle.provider) return false;
+      const persistence = agent.session?.describePersistence() ?? agent.persistence;
+      return (
+        agent.id === agentId ||
+        identities.has(persistence?.sessionId) ||
+        identities.has(persistence?.nativeHandle)
+      );
+    });
+    if (
+      configs.some((config) => config?.controllerExecutionId) ||
+      stored?.config?.controllerExecutionId ||
+      liveMatch ||
+      siblings.some((record) => record?.config?.controllerExecutionId)
+    )
+      throw new Error("Controller-managed execution must resume through its controller.");
+  }
+
   private async resumeAgentFromPersistenceInternal(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -1899,6 +2070,7 @@ export class AgentManager {
       "resumeAgentFromPersistence",
     );
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    await this.assertOrdinaryResume(handle, resolvedAgentId, [metadata, overrides]);
     const mergedConfig = {
       ...metadata,
       ...overrides,
@@ -1975,6 +2147,12 @@ export class AgentManager {
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
+    const records = await this.registry?.listByProviderSession(
+      input.provider,
+      input.providerHandleId,
+    );
+    if (records?.some((record) => record.config?.controllerExecutionId))
+      throw new Error("Controller-managed execution cannot be imported as an ordinary agent.");
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
     this.requireEnabledProvider(input.provider);
 
@@ -2243,6 +2421,7 @@ export class AgentManager {
 
   private async closeAgentRuntime(agentId: string): Promise<void> {
     const agent = this.requireAgent(agentId);
+    await this.assertControllerSettled(agent);
     this.logger.trace(
       {
         agentId,
@@ -2281,6 +2460,7 @@ export class AgentManager {
     if (persistError !== undefined) {
       throw persistError;
     }
+    this.controllerSessions.delete(agentId);
   }
 
   private cancelRunningProviderSubagents(parentAgentId: string): void {
@@ -2307,6 +2487,7 @@ export class AgentManager {
     requestedArchivedAt?: string,
   ): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
+    await this.assertControllerSettled(agent);
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
     }
@@ -2488,7 +2669,7 @@ export class AgentManager {
     if (!agent.session.goals) throw new Error("This provider does not support goals");
     const state = await agent.session.goals.read();
     await this.drainSessionEvents(agentId);
-    return state;
+    return projectQueueGoalState(state, agent.queueGoalHold);
   }
 
   async setAgentGoal(
@@ -2496,10 +2677,13 @@ export class AgentManager {
     input: import("@getpaseo/protocol/agent-goals").AgentGoalSetInput,
     options?: { clientMessageId?: string; recordSubmission?: boolean },
   ): Promise<import("@getpaseo/protocol/agent-goals").AgentGoalState> {
-    return this.withQueueGoalMutation(agentId, async () => {
-      await this.persistQueueGoalHold(agentId, undefined);
-      return this.setAgentGoalUnlocked(agentId, input, options);
-    });
+    return this.withQueueGoalMutation(agentId, () =>
+      setGoalWithQueueOwnership(
+        input,
+        this.queueGoalPort(agentId, async () => false),
+        (next) => this.setAgentGoalUnlocked(agentId, next, options),
+      ),
+    );
   }
 
   private async setAgentGoalUnlocked(
@@ -2570,6 +2754,7 @@ export class AgentManager {
     if (agent) agent.queueGoalHold = hold ? structuredClone(hold) : undefined;
     try {
       await this.registry?.updateQueueGoalHold(agentId, hold);
+      if (agent) this.emitState(agent, { persist: false });
     } catch (error) {
       if (agent) agent.queueGoalHold = previous;
       throw error;
@@ -2594,6 +2779,7 @@ export class AgentManager {
       read: () => this.readAgentGoal(agentId),
       set: (status) => this.setAgentGoalUnlocked(agentId, { status }, { recordSubmission: false }),
       mayResume,
+      prepareResume: () => this.prepareQuotaReserveAdmission(agentId),
       mayRemainActive,
       canPause,
     };
@@ -2608,6 +2794,7 @@ export class AgentManager {
   async resumeGoalAfterQueuedMessages(
     agentId: string,
     queueIsEmpty: () => Promise<boolean>,
+    canContinueGoal: () => boolean = () => true,
   ): Promise<void> {
     await this.withQueueGoalMutation(agentId, () =>
       resumeGoalAfterQueue(
@@ -2616,14 +2803,15 @@ export class AgentManager {
           async () => {
             const agent = this.requireAgent(agentId);
             return (
+              canContinueGoal() &&
               agent.lifecycle === "idle" &&
               !this.hasInFlightRun(agentId) &&
               agent.pendingPermissions.size === 0 &&
               (await queueIsEmpty())
             );
           },
-          undefined,
-          queueIsEmpty,
+          canContinueGoal,
+          async () => canContinueGoal() && (await queueIsEmpty()),
         ),
       ),
     );
@@ -2717,6 +2905,7 @@ export class AgentManager {
   private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
+      await this.assertControllerSettled(liveAgent);
       liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
       this.touchUpdatedAt(liveAgent);
       await this.persistSnapshot(liveAgent);
@@ -3744,12 +3933,21 @@ export class AgentManager {
     agentId: string,
     options?: { reason: "manual" },
   ): Promise<AgentRunCancellationResult> {
+    const controlled = this.agents.get(agentId);
+    if (controlled?.config.controllerExecutionId) {
+      const controls = this.controllerSessions.get(agentId);
+      if (!controls) throw new Error("Controller execution requires recovery before stopping.");
+      await controls.stop();
+      await controls.assertSettled();
+      return { status: "settled" };
+    }
     if (options?.reason === "manual") {
       try {
         await this.messageQueueControl?.pause(agentId);
+        await this.pauseGoalForManualStop(agentId);
       } catch (error) {
-        // The worker is halted synchronously before pause persistence. A full
-        // disk must not prevent the user's stop from reaching the provider.
+        // Queue persistence and goal confirmation failures must not prevent
+        // the user's stop from reaching the current provider turn.
         if (this.hasInFlightRun(agentId)) {
           await this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
         }
@@ -3762,6 +3960,23 @@ export class AgentManager {
       if (!hadRun) return { status: "not_running" };
     }
     return this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
+  }
+
+  private async pauseGoalForManualStop(agentId: string): Promise<void> {
+    if (!this.requireSessionAgent(agentId).session.goals) return;
+    await this.withQueueGoalMutation(agentId, async () => {
+      const current = await this.readAgentGoal(agentId);
+      if (current.status !== "ready")
+        throw new Error("The goal state could not be confirmed while stopping the task.");
+      if (current.goal?.status !== "active") return;
+      const paused = await this.setAgentGoalUnlocked(
+        agentId,
+        { status: "paused" },
+        { recordSubmission: false },
+      );
+      if (paused.status !== "ready" || paused.goal?.status !== "paused")
+        throw new Error("The goal pause could not be confirmed while stopping the task.");
+    });
   }
 
   private async stopQuotaReserveManually(agentId: string): Promise<boolean> {
@@ -3925,13 +4140,14 @@ export class AgentManager {
     }
     const providerMessageId = submittedRow?.providerMessageId ?? messageId;
 
-    if (mode !== "files") await this.messageQueueControl?.pause(agentId);
-    if (this.hasInFlightRun(agentId)) {
-      await this.cancelAgentRunBefore(agentId, "rewind");
-    }
-
-    const lock = this.runs.createPendingRun(agentId);
+    // Reserve an idle agent before queue persistence yields to new prompts.
+    let lock = this.hasInFlightRun(agentId) ? undefined : this.runs.createPendingRun(agentId);
     try {
+      if (mode !== "files") await this.messageQueueControl?.pause(agentId);
+      if (!lock) {
+        await this.cancelAgentRunBefore(agentId, "rewind");
+        lock = this.runs.createPendingRun(agentId);
+      }
       this.logger.info(
         { agentId, provider: agent.provider, messageId, mode },
         "agent.rewind.start",
@@ -3985,7 +4201,7 @@ export class AgentManager {
       );
       throw error;
     } finally {
-      this.runs.settleForegroundRun(agentId, lock.token);
+      if (lock) this.runs.settleForegroundRun(agentId, lock.token);
     }
   }
 
@@ -4956,7 +5172,7 @@ export class AgentManager {
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
     if (
       eventTurnId &&
-      isTurnTerminalEvent(event) &&
+      (isTurnTerminalEvent(event) || event.type === "turn_started") &&
       this.runs.hasFinalizedTurn(agent, eventTurnId)
     ) {
       return false;
@@ -6022,6 +6238,8 @@ export class AgentManager {
     agentId: string,
     env?: Record<string, string>,
   ): Promise<PreparedSessionConfig> {
+    if (config.controllerExecutionId)
+      throw new Error("Controller-managed execution requires trusted registration.");
     const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
     const paseoToolPolicy = this.paseoToolsEnabled
       ? this.resolvePaseoToolPolicy(storedConfig.provider)
@@ -6202,10 +6420,19 @@ export class AgentManager {
 
   private requireSessionAgent(id: string): ActiveManagedAgent {
     const agent = this.requireAgent(id);
+    if (agent.config.controllerExecutionId)
+      throw new Error("Controller-managed execution must be controlled through its controller.");
     if (agent.session === null) {
       throw new Error(`Agent '${agent.id}' has no managed session`);
     }
     return agent;
+  }
+
+  private async assertControllerSettled(agent: LiveManagedAgent): Promise<void> {
+    if (!agent.config.controllerExecutionId || agent.session === null) return;
+    const controls = this.controllerSessions.get(agent.id);
+    if (!controls) throw new Error("Controller execution requires custody reconciliation.");
+    await controls.assertSettled();
   }
 
   private requirePublicAgent(id: string): LiveManagedAgent {

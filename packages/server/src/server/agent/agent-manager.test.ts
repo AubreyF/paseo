@@ -1,3 +1,5 @@
+import { CodexGoals } from "./providers/codex/goals.js";
+import type { AgentGoal } from "@getpaseo/protocol/agent-goals";
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -1783,11 +1785,17 @@ test.each(["held", "stopped"] as const)(
 test("reserve polling reconciles an unloaded supervisor and stops its loaded worker", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "paseo-reserve-unloaded-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class DelayedStartSession extends SteeringTestSession {
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      this.startPrompts.push(prompt);
+      return { turnId: `active-turn-${++this.startCount}` };
+    }
+  }
   const client = new (class extends TestAgentClient {
     readonly sessions: SteeringTestSession[] = [];
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       this.createdConfigs.push(config);
-      const session = new SteeringTestSession(config);
+      const session = new DelayedStartSession(config);
       this.sessions.push(session);
       return session;
     }
@@ -1861,16 +1869,26 @@ test("reserve polling reconciles an unloaded supervisor and stops its loaded wor
       workspaceId: undefined,
       labels: { [PARENT_AGENT_ID_LABEL]: rootId },
     });
+    const turnStarted = deferred<void>();
     const drain = (async () => {
       for await (const _event of manager.streamAgent(child.id, "bounded work")) {
-        /* Drain. */
+        if (_event.type === "turn_started") turnStarted.resolve();
       }
     })();
-    await vi.waitFor(() => expect(client.sessions[0]?.startCount).toBe(1));
+    await turnStarted.promise;
     remainingPct = 10;
     await polling.poll();
     await drain;
     expect(client.sessions[0]?.interruptCount).toBe(1);
+    // A delayed provider start must not resurrect the turn that Stop already settled.
+    client.sessions[0]!.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "active-turn-1",
+    });
+    await manager.flush();
+    expect(manager.getAgent(child.id)?.lifecycle).toBe("idle");
+    expect(manager.hasInFlightRun(child.id)).toBe(false);
     expect(manager.getAgent(rootId)).toBeNull();
     const reloaded = new AgentStorage(join(workdir, "agents"), logger);
     expect((await reloaded.get(rootId))?.config?.quotaReserve?.state).toMatchObject({
@@ -1881,6 +1899,7 @@ test("reserve polling reconciles an unloaded supervisor and stops its loaded wor
     remainingPct = 90;
     await polling.poll();
     expect(() => manager.assertQuotaNotPaused(child.id)).toThrow("Redline");
+    expect(client.sessions[0]?.interruptCount).toBe(1);
   } finally {
     await polling.stop();
     await manager.flush();
@@ -12355,3 +12374,54 @@ test("Vorton launch settings and account environment override plugin transformat
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+test.each(["idle", "running", "pause failure"] as const)(
+  "manual stop handles an active goal when %s",
+  async (mode) => {
+    const fixture = await createControlledInterruptFixture({
+      name: "manual-goal-stop",
+      agentId: "00000000-0000-4000-8000-000000000498",
+      turnId: "goal-stop-turn",
+      interrupt: async (session) => {
+        session.pushEvent({
+          type: "turn_completed",
+          provider: session.provider,
+          turnId: "goal-stop-turn",
+        });
+      },
+    });
+    let goal: AgentGoal = {
+      threadId: "thread",
+      objective: "Finish",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const goals = new CodexGoals({
+      request: async (method) => {
+        if (method === "thread/goal/set") {
+          if (mode === "pause failure") throw new Error("Goal pause unavailable");
+          goal = { ...goal, status: "paused", updatedAt: 2 };
+        }
+        return { goal };
+      },
+      onChange: () => {},
+    });
+    goals.bind("thread");
+    Object.defineProperty(fixture.session, "goals", { value: goals });
+    try {
+      if (mode !== "idle") await fixture.startForegroundRun();
+      const stop = fixture.manager.cancelAgentRun(fixture.agentId, { reason: "manual" });
+      if (mode === "pause failure") await expect(stop).rejects.toThrow("Goal pause unavailable");
+      else {
+        await stop;
+        expect(goal.status).toBe("paused");
+      }
+      if (mode !== "idle") expect(fixture.session.interruptCalled).toBe(true);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);

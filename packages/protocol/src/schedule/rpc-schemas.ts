@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { QuotaGovernorPolicySchema } from "../quota-governor.js";
 import {
   ScheduleCadenceSchema,
   ScheduleRunSchema,
@@ -78,6 +79,7 @@ export const ScheduleRunOnceRequestSchema = z.object({
 });
 
 const ScheduleUpdateNewAgentConfigSchema = z.object({
+  quotaPolicy: QuotaGovernorPolicySchema.nullable().optional(),
   provider: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).nullable().optional(),
   modeId: z.string().trim().min(1).nullable().optional(),
@@ -88,6 +90,7 @@ const ScheduleUpdateNewAgentConfigSchema = z.object({
 });
 
 export const ScheduleUpdateRequestSchema = z.object({
+  expectedConfigurationRevision: z.string().min(1).nullable().optional(),
   type: z.literal("schedule/update"),
   requestId: z.string(),
   scheduleId: z.string(),

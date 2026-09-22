@@ -1,3 +1,4 @@
+import { useVortonMode } from "@/vorton-mode";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -35,8 +36,8 @@ const EMPTY_PERMISSIONS = new Map<string, PendingPermission>();
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 const NOOP_SUBAGENT = () => undefined;
 
-function resolveChildTrackClearance(childCount: number, isCompact: boolean) {
-  if (childCount === 0) return { tail: 0, controls: 0 };
+function resolveChildTrackClearance(childCount: number, isCompact: boolean, inline = false) {
+  if (inline || childCount === 0) return { tail: 0, controls: 0 };
   return {
     tail: resolveComposerTrackTailClearance(isCompact),
     controls: resolveComposerTrackControlClearance(isCompact),
@@ -64,6 +65,10 @@ function ProviderSubagentChildTrack({
       />
     </ComposerTrackBar>
   );
+}
+
+function historyProgressKey(epoch: string | null | undefined, firstSeq: number | null) {
+  return epoch && firstSeq !== null ? `${epoch}:${firstSeq}` : null;
 }
 
 function formatProviderLabel(provider: string): string {
@@ -136,12 +141,28 @@ function ProviderSubagentPanel() {
     parentAgentId: target.parentAgentId,
     providerParentSubagentId: target.subagentId,
   });
-  const childTrackClearance = resolveChildTrackClearance(childRows.length, isCompact);
+  const vortonMode = useVortonMode();
+  const childTrackClearance = resolveChildTrackClearance(childRows.length, isCompact, vortonMode);
   const openProviderChild = useCallback(
     (parentAgentId: string, subagentId: string) => {
       openTab({ kind: "provider_subagent", parentAgentId, subagentId });
     },
     [openTab],
+  );
+
+  const childCard = useMemo(
+    () =>
+      vortonMode ? (
+        <SubagentsTrack
+          inline
+          serverId={serverId}
+          rows={childRows}
+          onOpenSubagent={NOOP_SUBAGENT}
+          onOpenProviderSubagent={openProviderChild}
+          onArchiveSubagent={NOOP_SUBAGENT}
+        />
+      ) : undefined,
+    [vortonMode, serverId, childRows, openProviderChild],
   );
 
   useEffect(() => {
@@ -198,8 +219,7 @@ function ProviderSubagentPanel() {
     timeline,
   ]);
   const firstTimelineSeq = timeline?.cursor?.startSeq ?? null;
-  const progressKey =
-    timeline?.epoch && firstTimelineSeq !== null ? `${timeline.epoch}:${firstTimelineSeq}` : null;
+  const progressKey = historyProgressKey(timeline?.epoch, firstTimelineSeq);
   const subtitle = descriptor?.subtitle?.trim();
 
   const streamContext = useMemo<AgentScreenAgent>(
@@ -265,15 +285,18 @@ function ProviderSubagentPanel() {
         isAuthoritativeHistoryReady
         onOpenWorkspaceFile={openFileInWorkspace}
         readOnly
+        trailingCards={childCard}
         historyPagination={historyPagination}
         bottomOverlayTailClearance={childTrackClearance.tail}
         bottomOverlayControlClearance={childTrackClearance.controls}
       />
-      <ProviderSubagentChildTrack
-        serverId={serverId}
-        rows={childRows}
-        onOpenProviderSubagent={openProviderChild}
-      />
+      {!vortonMode ? (
+        <ProviderSubagentChildTrack
+          serverId={serverId}
+          rows={childRows}
+          onOpenProviderSubagent={openProviderChild}
+        />
+      ) : null}
     </View>
   );
 }

@@ -134,6 +134,7 @@ test.each(["reset", "noCredit", "nothingToReset", "alreadyRedeemed"])(
         dispose: async () => {},
       },
       true,
+      true,
     );
     expect(
       await session.consume({

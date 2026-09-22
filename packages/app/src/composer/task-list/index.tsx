@@ -1,5 +1,7 @@
+import { useVortonTouch } from "@/vorton-touch";
+import { taskCardStyles } from "@/agent-stream/task-card-styles";
 import { memo, useMemo } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
@@ -8,11 +10,13 @@ import type { TodoEntry } from "@/types/stream";
 
 export const AgentTaskList = memo(function AgentTaskList({
   tasks,
+  inline = false,
 }: {
+  inline?: boolean;
   tasks: TodoEntry[] | undefined;
 }) {
   if (!tasks?.length) return null;
-  return <TaskListCard tasks={tasks} />;
+  return inline ? <TaskProgressCard tasks={tasks} /> : <TaskListCard tasks={tasks} />;
 });
 
 const TaskListCard = memo(function TaskListCard({ tasks }: { tasks: TodoEntry[] }) {
@@ -53,3 +57,29 @@ const styles = StyleSheet.create(() => ({
     minWidth: 0,
   },
 }));
+
+/** Progress scrolls with the conversation, immediately before queued messages and goals. */
+function TaskProgressCard({ tasks }: { tasks: TodoEntry[] }) {
+  const { t } = useTranslation();
+  const touch = useVortonTouch();
+  const completed = tasks.filter((task) => task.completed || task.status === "completed").length;
+  return (
+    <View style={taskCardStyles.container} testID="agent-task-progress-card">
+      <View style={[taskCardStyles.header, touch && taskCardStyles.touchHeader]}>
+        <Text style={taskCardStyles.heading}>
+          {t("message.todo.tasksProgress", { completed, total: tasks.length })}
+        </Text>
+      </View>
+      <View>
+        {tasks.map((task, index) => (
+          <View
+            key={task.id ?? `${index}:${task.text}`}
+            style={[taskCardStyles.item, index > 0 && taskCardStyles.separator]}
+          >
+            <TaskListRow compact task={task} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}

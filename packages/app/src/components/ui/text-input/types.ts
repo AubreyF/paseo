@@ -18,6 +18,8 @@ export interface EditingTextInputProps extends Omit<
 > {
   initialValue?: string;
   onChangeText?: (text: string) => void;
+  /** External dictation/autofill changed the DOM without a normal typing event. */
+  onExternalTextChange?: () => void;
   onPasteImages?: (files: readonly NativePastedFile[]) => void;
   onPasteError?: (message: string) => void;
   variant?: "default" | "bottom-sheet";

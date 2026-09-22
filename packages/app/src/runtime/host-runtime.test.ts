@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppStateStatus } from "react-native";
 import { bindHostRuntimeAppState } from "@/navigation/host-runtime-bootstrap";
+import { indexedDB as fakeIndexedDB } from "fake-indexeddb";
+import { CREATE_AGENT_PREFERENCES_STORAGE_KEY } from "@/create-agent-preferences/storage";
 import type {
   DaemonClient,
   ConnectionState,
@@ -1643,6 +1645,22 @@ describe("HostRuntimeStore", () => {
       store.syncHosts([]);
     },
   );
+  beforeEach(() => {
+    // Legacy drains belong to Paseo mode and consult persisted browser state.
+    const values = new Map([
+      [CREATE_AGENT_PREFERENCES_STORAGE_KEY, JSON.stringify({ vortonMode: false })],
+    ]);
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+        removeItem: (key: string) => values.delete(key),
+      },
+    });
+    vi.stubGlobal("indexedDB", fakeIndexedDB);
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it("revokes push notifications before removing a host", async () => {
     const host = makeHost({ connections: [makeHost().connections[0]!] });

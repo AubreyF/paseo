@@ -1,5 +1,6 @@
 export type SubmitModifier = "none" | "alternate" | "newline";
 
-export function useSubmitModifier(_enabled: boolean): SubmitModifier {
-  return "none";
+const reset = () => {};
+export function useSubmitModifier(_enabled: boolean) {
+  return { modifier: "none" as SubmitModifier, reset };
 }

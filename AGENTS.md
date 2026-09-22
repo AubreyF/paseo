@@ -22,6 +22,7 @@ Vorton extends Paseo with multi-account agent workflows. This npm monorepo runs 
 - Never restart the main daemon on port `6767` without explicit permission. It owns running agents. A timeout is not a reason to restart it.
 - Use the container installer for new installations. Run agents and provider tools inside it; do not install a host daemon, require host Tailscale or mount Docker's socket. Host Docker administration belongs to the operator.
 - Keep credentials, deployment details, account inventories, backups and acceptance receipts outside Git.
+- Primary web publication requires clean, committed integration source and the guarded build/publish scripts in [instance continuity](docs/instance-continuity.md). Task worktrees produce previews. Never publish raw exports or reuse another build directory; integrate the currently deployed source before rebuilding a stale candidate.
 - Preserve wire compatibility: new fields are optional, existing fields are not removed or narrowed, and wire schemas stay pure. Gate new features on their advertised capability; tag compatibility shims as required by the compatibility doc.
 
 ## Check your work

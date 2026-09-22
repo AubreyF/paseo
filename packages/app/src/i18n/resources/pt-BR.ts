@@ -1074,6 +1074,7 @@ export const ptBR: TranslationResources = {
   sidebar: {
     display: {
       trigger: "Preferências de exibição",
+      viewPreferences: "Preferências de exibição",
       heading: "Exibição",
       grouping: {
         label: "Agrupamento",
@@ -1087,6 +1088,7 @@ export const ptBR: TranslationResources = {
         branch: "Nome da branch",
       },
       show: {
+        activityBadges: "Indicadores de atividade",
         label: "Mostrar",
         branch: "Branch",
         project: "Projeto",

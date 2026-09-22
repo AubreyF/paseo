@@ -196,7 +196,7 @@ export function SidebarHelpMenu({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  hiddenTrigger: { position: "absolute", width: 0, height: 0, overflow: "hidden", opacity: 0 },
+  hiddenTrigger: { position: "absolute", width: 28, height: 28, opacity: 0, pointerEvents: "none" },
   trigger: {
     width: 28,
     height: 28,

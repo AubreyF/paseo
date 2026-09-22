@@ -1,3 +1,4 @@
+import { useVortonMode } from "@/vorton-mode";
 import {
   useCallback,
   useMemo,
@@ -11,6 +12,7 @@ import { View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Captions,
+  Hash,
   Circle,
   CircleCheck,
   CircleDashed,
@@ -105,6 +107,7 @@ const ROW_ITEM_ICONS: Record<SidebarRowItem, OptionIcon> = {
   changeRequest: withUnistyles(GitPullRequest),
   services: withUnistyles(Globe),
   labels: withUnistyles(Tag),
+  activityBadges: withUnistyles(Hash),
 };
 
 // These mark how much of the row an option spends, not what CI is, so they are the shapes each
@@ -141,6 +144,7 @@ const ROW_ITEM_LABEL_KEYS: Record<SidebarRowItem, string> = {
   changeRequest: "sidebar.display.show.changeRequest",
   services: "sidebar.display.show.services",
   labels: "sidebar.display.show.labels",
+  activityBadges: "sidebar.display.show.activityBadges",
 };
 
 const CHECKS_DISPLAY_LABEL_KEYS: Record<SidebarChecksDisplay, string> = {
@@ -161,9 +165,20 @@ const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
  * shape is deliberate — every option of every decision on one surface is what this menu used to
  * be, and it grew a row for each host on top of that.
  */
-export function SidebarDisplayPreferencesMenu(): ReactElement {
+export function SidebarDisplayPreferencesMenu({
+  hiddenTrigger = false,
+  controlledOpen,
+  onOpenChange,
+}: {
+  hiddenTrigger?: boolean;
+  controlledOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+} = {}): ReactElement {
   const { t } = useTranslation();
   const preferences = useSidebarDisplayPreferences();
+  const vorton = useVortonMode();
+  const triggerLabel = t(vorton ? "sidebar.display.viewPreferences" : "sidebar.display.trigger");
+  const heading = t(vorton ? "sidebar.display.viewPreferences" : "sidebar.display.heading");
   const hosts = useHosts();
   // `allProjects`, never `projects`: the model's `projects` is already filtered, so a picker fed
   // from it would lose the row that undoes the filter as soon as the filter narrowed to one.
@@ -285,11 +300,12 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
 
   return (
     <>
-      <MenuRoot compactMode="sheet">
+      <MenuRoot compactMode="sheet" open={controlledOpen} onOpenChange={onOpenChange}>
         <MenuTrigger
-          style={triggerStyle}
+          style={hiddenTrigger ? styles.hiddenTrigger : triggerStyle}
+          disabled={hiddenTrigger}
           accessibilityRole={isWeb ? undefined : "button"}
-          accessibilityLabel={t("sidebar.display.trigger")}
+          accessibilityLabel={triggerLabel}
           testID="sidebar-display-preferences-menu"
         >
           <ThemedSettings2 size={14} uniProps={mutedIconMapping} />
@@ -298,7 +314,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           align="end"
           width={MENU_WIDTH}
           pages={pages}
-          sheetTitle={t("sidebar.display.heading")}
+          sheetTitle={heading}
           testID="sidebar-display-preferences-content"
         >
           <MenuSubTrigger
@@ -550,9 +566,11 @@ function OptionList<Value extends string>({
  */
 function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
   const { t } = useTranslation();
+  const vorton = useVortonMode();
+  const rowItems = SIDEBAR_ROW_ITEMS.filter((item) => vorton || item !== "activityBadges");
   return (
     <>
-      {SIDEBAR_ROW_ITEMS.map((item) => (
+      {rowItems.map((item) => (
         <OptionItem
           key={item}
           value={item}
@@ -754,6 +772,7 @@ function HostFilterItem({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  hiddenTrigger: { position: "absolute", width: 28, height: 28, opacity: 0, pointerEvents: "none" },
   trigger: {
     width: 28,
     height: 28,

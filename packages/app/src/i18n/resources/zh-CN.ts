@@ -1041,6 +1041,7 @@ export const zhCN: TranslationResources = {
   sidebar: {
     display: {
       trigger: "显示偏好",
+      viewPreferences: "显示偏好",
       heading: "显示",
       grouping: {
         label: "分组",
@@ -1054,6 +1055,7 @@ export const zhCN: TranslationResources = {
         branch: "分支名称",
       },
       show: {
+        activityBadges: "活动徽章",
         label: "显示",
         branch: "分支",
         project: "项目",

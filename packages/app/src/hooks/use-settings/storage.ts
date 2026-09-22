@@ -171,6 +171,7 @@ const SidebarRowItemsSchema = z
     changeRequest: z.boolean().catch(DEFAULT_SIDEBAR_ROW_ITEMS.changeRequest),
     services: z.boolean().optional().catch(undefined),
     labels: z.boolean().catch(DEFAULT_SIDEBAR_ROW_ITEMS.labels),
+    activityBadges: z.boolean().catch(DEFAULT_SIDEBAR_ROW_ITEMS.activityBadges),
     // COMPAT(sidebarRowItemsChecks): migrated in v0.3.0, remove after 2027-08-05.
     checks: z.boolean().optional().catch(undefined),
     // COMPAT(sidebarRowItemsScripts): migrated in v0.3.0, remove after 2027-08-05.

@@ -1049,6 +1049,7 @@ export const ar: TranslationResources = {
   sidebar: {
     display: {
       trigger: "تفضيلات العرض",
+      viewPreferences: "تفضيلات العرض",
       heading: "العرض",
       grouping: {
         label: "التجميع",
@@ -1062,6 +1063,7 @@ export const ar: TranslationResources = {
         branch: "اسم الفرع",
       },
       show: {
+        activityBadges: "شارات النشاط",
         label: "إظهار",
         branch: "الفرع",
         project: "المشروع",

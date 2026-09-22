@@ -1058,6 +1058,7 @@ export const en = {
   sidebar: {
     display: {
       trigger: "Display preferences",
+      viewPreferences: "View preferences",
       heading: "Display",
       grouping: {
         label: "Grouping",
@@ -1072,6 +1073,7 @@ export const en = {
       },
       show: {
         label: "Show",
+        activityBadges: "Activity badges",
         branch: "Branch",
         project: "Project",
         host: "Host",

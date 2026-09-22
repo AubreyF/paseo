@@ -752,7 +752,10 @@ export class Session {
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
   private readonly messageQueue: MessageQueueService | undefined;
   private readonly queueDownloadTokens: DownloadTokenStore;
-  private readonly queueSubscriptions = new Map<string, () => void>();
+  private readonly queueSubscriptions = new Map<
+    string,
+    { agentId: string; owner: OwnedSubscription; unsubscribe: () => void }
+  >();
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribePluginChanges: (() => void) | null = null;
@@ -5120,6 +5123,30 @@ export class Session {
     }
   }
 
+  private async updateQueueSubscription(agentId: string, subscribed: boolean): Promise<void> {
+    const source = this.delivery.currentSource;
+    for (const subscription of this.queueSubscriptions.values()) {
+      if (subscription.agentId === agentId && subscription.owner.source === source) {
+        await subscription.owner.release();
+      }
+    }
+    if (!subscribed || !this.messageQueue) return;
+    // Keep the boolean queue API while tying its lifetime and delivery to the requesting socket.
+    const owner = this.delivery.begin(
+      "message-queue",
+      undefined,
+      (id) => {
+        this.queueSubscriptions.get(id)?.unsubscribe();
+        this.queueSubscriptions.delete(id);
+      },
+      `message-queue:${agentId}`,
+    );
+    const unsubscribe = this.messageQueue.subscribe(agentId, (snapshot) => {
+      owner.emit({ type: "agent.queue.changed", payload: snapshot });
+    });
+    this.queueSubscriptions.set(owner.id, { agentId, owner, unsubscribe });
+  }
+
   private async handleMessageQueueRequest(
     msg: Extract<
       SessionInboundMessage,
@@ -5149,14 +5176,7 @@ export class Session {
         );
       }
       if (msg.type === "agent.queue.subscribe.request") {
-        this.queueSubscriptions.get(msg.agentId)?.();
-        this.queueSubscriptions.delete(msg.agentId);
-        if (msg.subscribed) {
-          const unsubscribe = this.messageQueue.subscribe(msg.agentId, (snapshot) => {
-            this.emit({ type: "agent.queue.changed", payload: snapshot });
-          });
-          this.queueSubscriptions.set(msg.agentId, unsubscribe);
-        }
+        await this.updateQueueSubscription(msg.agentId, msg.subscribed);
       }
       const snapshot =
         msg.type === "agent.queue.mutate.request"
@@ -8773,8 +8793,6 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
-    for (const unsubscribe of this.queueSubscriptions.values()) unsubscribe();
-    this.queueSubscriptions.clear();
     await this.delivery.close();
 
     if (this.unsubscribeAgentEvents) {

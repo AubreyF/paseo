@@ -46,6 +46,14 @@ for (const width of [1280, 402]) {
         .toMatchObject({ status: "error", error: expect.stringContaining("not signed in") });
       await page.setViewportSize({ width, height: 1000 });
       await gotoAppShell(page);
+      await page.evaluate(() => {
+        const key = "@paseo:create-agent-preferences";
+        const preferences = JSON.parse(localStorage.getItem(key) ?? "{}");
+        localStorage.setItem(key, JSON.stringify({ ...preferences, vortonMode: true }));
+        const nonce = localStorage.getItem("@paseo:e2e-seed-nonce");
+        if (!nonce) throw new Error("Missing test seed nonce");
+        localStorage.setItem("@paseo:e2e-disable-default-seed-once", nonce);
+      });
       await page.goto(`/settings/hosts/${getServerId()}/providers`);
       await page.getByRole("button", { name: "Claude provider details", exact: true }).click();
       const instructions = page.getByTestId("claude-sign-in-instructions");

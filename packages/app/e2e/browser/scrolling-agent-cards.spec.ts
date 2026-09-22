@@ -1,3 +1,4 @@
+import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -83,7 +84,7 @@ test("agents, tasks, plugin pills, queue and goals share the scrolling footer", 
     await mockGoalObservation(page, agent.agentId, goalState);
     await writeFile(
       path.join(pluginDirectory, "paseo-plugin.json"),
-      JSON.stringify({ id: pluginId }),
+      JSON.stringify({ id: pluginId, requirements: pluginRequirements }),
     );
     await writeFile(
       path.join(pluginDirectory, "index.client.tsx"),

@@ -186,70 +186,80 @@ it("sends the selected paused message once and rejects an outdated expected turn
   }
 }, 60_000);
 
-it("synchronizes two devices, rejects stale edits, and retains messages after both disconnect", async () => {
-  const daemon = await createTestPaseoDaemon();
-  const options = { url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" };
-  const first = new DaemonClient(options);
-  const second = new DaemonClient(options);
-  const reloaded = new DaemonClient(options);
-  try {
-    await first.connect();
-    await second.connect();
-    const agent = await first.createAgent({ config: { provider: "codex", cwd: daemon.paseoHome } });
-    await first.mutateMessageQueue(agent.id, {
-      kind: "pause",
-      operationId: "pause",
-      paused: true,
-      expectedRevision: 0,
-    });
-    const observed: QueueSnapshot[] = [];
-    second.subscribe((event) => {
-      if (event.type === "agent.queue.changed") observed.push(event.payload);
-    });
-    expect(
-      (await second.subscribeMessageQueue({ agentId: agent.id, subscribed: true })).error,
-    ).toBeNull();
-    const added = await first.mutateMessageQueue(agent.id, {
-      kind: "enqueue",
-      operationId: "enqueue",
-      messageId: "message",
-      text: "Continue after this turn",
-      attachments: [],
-    });
-    expect(added.error).toBeNull();
-    await expect.poll(() => observed.length).toBe(1);
-    expect(observed[0]).toEqual(added.snapshot);
-    const edited = await second.mutateMessageQueue(agent.id, {
-      kind: "edit",
-      operationId: "edit",
-      messageId: "message",
-      expectedRevision: 0,
-      text: "Updated on the second device",
-      attachments: [],
-    });
-    expect(edited.error).toBeNull();
-    const conflict = await first.mutateMessageQueue(agent.id, {
-      kind: "edit",
-      operationId: "stale-edit",
-      messageId: "message",
-      expectedRevision: 0,
-      text: "stale",
-      attachments: [],
-    });
-    expect(conflict.error?.code).toBe("revision_conflict");
-    await first.close();
-    await second.close();
-    await reloaded.connect();
-    const snapshot = await reloaded.readMessageQueue(agent.id);
-    expect(snapshot.error).toBeNull();
-    expect(snapshot.snapshot?.items).toMatchObject([
-      { id: "message", text: "Updated on the second device" },
-    ]);
-  } finally {
-    await Promise.all([first.close(), second.close(), reloaded.close()]);
-    await daemon.close();
-  }
-}, 60_000);
+it.each([false, true])(
+  "synchronizes two devices and retains queues (owned subscriptions: %s)",
+  async (owned) => {
+    const daemon = await createTestPaseoDaemon();
+    const options = {
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.9.0-beta.2",
+      capabilities: { owned_subscriptions: owned },
+    };
+    const first = new DaemonClient(options);
+    const second = new DaemonClient(options);
+    const reloaded = new DaemonClient(options);
+    try {
+      await first.connect();
+      await second.connect();
+      const agent = await first.createAgent({
+        config: { provider: "codex", cwd: daemon.paseoHome },
+      });
+      await first.mutateMessageQueue(agent.id, {
+        kind: "pause",
+        operationId: "pause",
+        paused: true,
+        expectedRevision: 0,
+      });
+      const observed: QueueSnapshot[] = [];
+      second.subscribe((event) => {
+        if (event.type === "agent.queue.changed") observed.push(event.payload);
+      });
+      expect(
+        (await second.subscribeMessageQueue({ agentId: agent.id, subscribed: true })).error,
+      ).toBeNull();
+      const added = await first.mutateMessageQueue(agent.id, {
+        kind: "enqueue",
+        operationId: "enqueue",
+        messageId: "message",
+        text: "Continue after this turn",
+        attachments: [],
+      });
+      expect(added.error).toBeNull();
+      await expect.poll(() => observed.length).toBe(1);
+      expect(observed[0]).toMatchObject(added.snapshot!);
+      const edited = await second.mutateMessageQueue(agent.id, {
+        kind: "edit",
+        operationId: "edit",
+        messageId: "message",
+        expectedRevision: 0,
+        text: "Updated on the second device",
+        attachments: [],
+      });
+      expect(edited.error).toBeNull();
+      const conflict = await first.mutateMessageQueue(agent.id, {
+        kind: "edit",
+        operationId: "stale-edit",
+        messageId: "message",
+        expectedRevision: 0,
+        text: "stale",
+        attachments: [],
+      });
+      expect(conflict.error?.code).toBe("revision_conflict");
+      await first.close();
+      await second.close();
+      await reloaded.connect();
+      const snapshot = await reloaded.readMessageQueue(agent.id);
+      expect(snapshot.error).toBeNull();
+      expect(snapshot.snapshot?.items).toMatchObject([
+        { id: "message", text: "Updated on the second device" },
+      ]);
+    } finally {
+      await Promise.all([first.close(), second.close(), reloaded.close()]);
+      await daemon.close();
+    }
+  },
+  60_000,
+);
 
 it("restores accepted prompts and their attachment references after a daemon restart", async () => {
   const root = await mkdtemp(join(tmpdir(), "paseo-queue-history-"));
@@ -334,7 +344,11 @@ it("shares captured files and images and delivers them after the original upload
   const daemon = await createTestPaseoDaemon({
     agentClients: createTestAgentClients({ onStartTurn: (prompt) => received.push(prompt) }),
   });
-  const options = { url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" };
+  const options = {
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.9.0-beta.2",
+    capabilities: { owned_subscriptions: true },
+  };
   const first = new DaemonClient(options);
   const second = new DaemonClient(options);
   try {
@@ -508,7 +522,11 @@ it("continues ordered delivery after the originating client closes", async () =>
     return session;
   };
   const daemon = await createTestPaseoDaemon({ agentClients: clients });
-  const options = { url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.7.2" };
+  const options = {
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.9.0-beta.2",
+    capabilities: { owned_subscriptions: true },
+  };
   const first = new DaemonClient(options);
   const reloaded = new DaemonClient(options);
   try {

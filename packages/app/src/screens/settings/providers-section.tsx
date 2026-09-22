@@ -1,3 +1,5 @@
+import { useFetchQuery } from "@/data/query";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { CompactAccountButton } from "@/provider-usage/compact-account-button";
 import { useToast } from "@/contexts/toast-context";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
@@ -397,6 +399,22 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const supportsCredentialRemoval = useHostFeature(serverId, "providerCredentialRemoval");
   const client = useHostRuntimeClient(serverId);
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
+  const panelActive = useRetainedPanelActive();
+  const claudeEnabled =
+    entries?.some((entry) => entry.provider === "claude" && entry.enabled) ?? false;
+  const monitorClaude = vortonMode && panelActive && isConnected && claudeEnabled;
+  useFetchQuery({
+    dataShape: "value",
+    queryKey: ["claude-authentication-monitor", serverId],
+    enabled: monitorClaude,
+    queryFn: async () => {
+      await refresh(["claude"]);
+      return null;
+    },
+    staleTimeMs: 60_000,
+    refetchInterval: 60_000,
+    retry: false,
+  });
   const { patchConfig } = useDaemonConfig(serverId);
   const openProviderSettings = useProviderSettingsStore((state) => state.open);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);

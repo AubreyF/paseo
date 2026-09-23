@@ -2235,7 +2235,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     zIndex: 1,
   },
   touchTextInput: { paddingRight: 56, minHeight: 44 },
-  mobileDictationSlot: { top: 15 },
+  mobileDictationSlot: { top: COMPOSER_CORNER_INSET - 1 },
   buttonRow: {
     flexShrink: 0,
     flexDirection: "row",

@@ -7,7 +7,32 @@
     <meta name="theme-color" content="#181B1A" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Paseo" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+      data-paseo-status-bar-style="black-translucent"
+    />
+    <script>
+      // Apply the saved mode before the app loads so Home Screen launch uses an opaque status bar.
+      (() => {
+        const appleHandheld =
+          /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+          (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        if (!appleHandheld) return;
+        let enabled = true;
+        try {
+          const preferences = JSON.parse(
+            localStorage.getItem("@paseo:create-agent-preferences") || "null",
+          );
+          enabled = preferences?.vortonMode !== false;
+        } catch {
+          // Unreadable preferences use the same Vorton default as the app.
+        }
+        if (enabled)
+          document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]').content =
+            "black";
+      })();
+    </script>
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"

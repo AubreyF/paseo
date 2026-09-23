@@ -36,6 +36,13 @@ export function applyVortonWeb(enabled: boolean, touch: boolean): () => void {
       navigator.standalone === true &&
       isAppleHandheldPlatform(navigator),
   );
+  const statusBar = document.querySelector<HTMLMetaElement>(
+    'meta[name="apple-mobile-web-app-status-bar-style"]',
+  );
+  const originalStatusBar = statusBar?.dataset.paseoStatusBarStyle ?? statusBar?.content;
+  if (statusBar && originalStatusBar) {
+    statusBar.content = enabled && isAppleHandheldPlatform(navigator) ? "black" : originalStatusBar;
+  }
   const style = document.createElement("style");
   style.dataset.vortonStyles = "true";
   style.textContent = CSS;
@@ -43,6 +50,7 @@ export function applyVortonWeb(enabled: boolean, touch: boolean): () => void {
   const stopObserving = enabled ? observeWebViewport() : () => {};
   return () => {
     stopObserving();
+    if (statusBar && originalStatusBar) statusBar.content = originalStatusBar;
     style.remove();
     delete root.dataset.vortonMode;
     delete root.dataset.vortonTouch;

@@ -8,6 +8,8 @@ Connect your Codex accounts once and run tasks under different accounts simultan
 
 Save named profiles that combine an account, model, reasoning level, permissions and instructions. Switch from a fast everyday profile to a deeper reasoning profile, or choose a different account for your next task, directly from the composer. Set a default for new tasks and use short profile nicknames on smaller screens.
 
+The account picker groups saved profiles under each account in compact, equal-height rows, with a larger selection check on the left. Desktop uses a split pane; mobile slides into the selected account’s details with a back button to return to connections. The mobile list scrolls with the sheet. **Use profile** stays at the bottom of the details pane. Search stays beside **Manage profiles**, which opens the account’s **Profiles** tab in provider settings. Profile permissions apply to new chats. Existing chats keep their permissions and show a warning with a recreate action when the saved profile differs.
+
 <img width="600" alt="Animated demo of Vorton account switching and profiles" src="https://github.com/user-attachments/assets/ae3f9872-f3d6-4efa-8f23-a032aa3133de" />
 
 _Account switching and profiles in action._

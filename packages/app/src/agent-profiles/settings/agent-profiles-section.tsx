@@ -29,12 +29,23 @@ interface EditTarget {
   profile?: AgentProfile;
 }
 
-export function AgentProfilesSection({ serverId }: { serverId: string }): ReactElement {
+export function AgentProfilesSection({
+  serverId,
+  provider,
+}: {
+  serverId: string;
+  provider?: string;
+}): ReactElement {
   const vorton = useVortonMode();
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { profiles, isSupported, saveProfiles } = useAgentProfiles(serverId);
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
+  const visibleProfiles = useMemo(
+    () => (profiles ?? []).filter((profile) => !provider || profile.provider === provider),
+    [profiles, provider],
+  );
+  const seed = useMemo(() => (provider ? { provider } : undefined), [provider]);
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
 
   const handleAddOpen = useCallback(() => setEditTarget({ mode: "create" }), []);
@@ -83,14 +94,15 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
       if (!profiles) {
         return;
       }
-      const index = profiles.findIndex((entry) => entry.id === id);
+      const index = visibleProfiles.findIndex((entry) => entry.id === id);
       const target = index + offset;
-      if (index < 0 || target < 0 || target >= profiles.length) {
+      if (index < 0 || target < 0 || target >= visibleProfiles.length) {
         return;
       }
       const next = [...profiles];
-      const [item] = next.splice(index, 1);
-      next.splice(target, 0, item);
+      const sourceIndex = profiles.findIndex((entry) => entry.id === id);
+      const targetIndex = profiles.findIndex((entry) => entry.id === visibleProfiles[target].id);
+      [next[sourceIndex], next[targetIndex]] = [next[targetIndex], next[sourceIndex]];
       try {
         await saveProfiles(next);
       } catch (error) {
@@ -100,7 +112,7 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
         );
       }
     },
-    [profiles, saveProfiles, t],
+    [profiles, visibleProfiles, saveProfiles, t],
   );
 
   const handleMoveUp = useCallback((id: string) => void reorder(id, -1), [reorder]);
@@ -227,14 +239,14 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
           </>
         ) : null}
         <View style={settingsStyles.card} testID="agent-profiles-card">
-          {profiles && profiles.length > 0 ? (
-            profiles.map((profile, index) => (
+          {visibleProfiles.length > 0 ? (
+            visibleProfiles.map((profile, index) => (
               <AgentProfileRow
                 key={profile.id}
                 profile={profile}
                 entries={entries}
                 isFirst={index === 0}
-                isLast={index === profiles.length - 1}
+                isLast={index === visibleProfiles.length - 1}
                 onEdit={handleEditOpen}
                 onRemove={handleRemove}
                 onMoveUp={handleMoveUp}
@@ -256,6 +268,7 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
 
       <AgentProfileEditModal
         serverId={serverId}
+        seed={seed}
         visible={editTarget !== null}
         mode={editTarget?.mode ?? "create"}
         {...(editTarget?.profile ? { profile: editTarget.profile } : {})}

@@ -20,3 +20,14 @@ describe("workspace-draft-agent-config", () => {
     });
   });
 });
+
+it("lets the daemon resolve profile permissions instead of sending a stale draft override", () => {
+  expect(
+    buildWorkspaceDraftAgentConfig({
+      provider: "codex",
+      profileId: "p",
+      cwd: "/repo",
+      modeId: "full-access",
+    }),
+  ).toEqual({ provider: "codex", profileId: "p", cwd: "/repo" });
+});

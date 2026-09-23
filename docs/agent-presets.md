@@ -4,7 +4,7 @@ Launch presets extend the existing `daemon.agentProfiles` collection. There is n
 
 For the experimental fork's host migration, pending work and destination acceptance checks, read [the host handoff](host-handoff.md).
 
-Wide Vorton composers show the full profile name. Mobile and composers narrower than 640 CSS pixels show its nickname. The composer permission control shows the task's selected mode. The profile inspector shows saved profile permissions; editing them does not change an existing task or draft. Reselect a profile to apply it to a draft, or change the task permission control explicitly. Changes during a running turn apply on the next turn.
+Wide Vorton composers show the full profile name. Mobile and composers narrower than 640 CSS pixels show its nickname. Vorton has no separate task permission control or command-menu permission override. The profile inspector shows saved profile permissions. Existing chats retain their permissions after profile edits; a warning appears when the saved profile differs, with an optional Recreate chat action that opens the handoff review. Recreation creates a new chat with the selected profile’s permissions and preserves the original chat. Stop the current turn and active workers before recreating. Standard Paseo retains its task permission controls.
 
 ## Configuration and compatibility
 
@@ -24,7 +24,7 @@ This is lifecycle coordination, not a new security sandbox. Pi has no native sel
 
 The Codex adapter maps structured `usageLimitExceeded` errors to a provider-neutral `quota_exhausted` event. Transport errors do not imply exhausted quota. The manager persists `quotaPausedAt`, blocks subsequent turns and worker creation, cancels active managed teammates, and suppresses completion-triggered wakeups. A confirmed account reset clears earlier quota-exhaustion locks for that provider so you can send the next message in the same thread. It does not send a prompt or clear a reserve stop. Interrupted edits are not rolled back.
 
-Selecting a preset for an existing task opens an editable handoff review and creates a separate successor only after confirmation. It initially copies at most 30 recent text messages and 50,000 characters without making an inference request to the old account. Active managed workers block the handoff. It preserves the selected permission mode and rejects incompatible modes. Attachments, tool outputs, and provider-private state are not copied automatically. The original task remains available for review. Model or reasoning changes made through Classic controls mark the original preset label as modified.
+Selecting a preset for an existing task opens an editable handoff review and creates a separate successor only after confirmation. It initially copies at most 30 recent text messages and 50,000 characters without making an inference request to the old account. Active managed workers block the handoff. It uses the selected profile’s permission mode for the new task. Attachments, tool outputs, and provider-private state are not copied automatically. The original task remains available for review. Model or reasoning changes made through Classic controls mark the original preset label as modified.
 
 Quota suggestions use fresh reported capacity on a different provider instance. Unknown, stale, and exhausted quotas do not qualify. This is advisory, not account pooling or automatic failover. One account may have multiple aliases; users should avoid treating those as separate allowances.
 
@@ -48,7 +48,7 @@ Results distinguish applied, already redeemed, no credit, and nothing to reset. 
 
 ## Review boundaries
 
-Vorton Mode defaults on when no mode preference is saved. An explicit Paseo or Vorton choice is saved per device and survives updates. The Vorton group above General and the sidebar's Paseo/Vorton selector control the same preference. Enabling it exposes named launch presets, usage rails, reset controls, and supervisor configuration. Disabling it restores standard composer controls without deleting accounts or presets or stopping running tasks. Manage profiles lives inside the preset picker.
+Vorton Mode defaults on when no mode preference is saved. An explicit Paseo or Vorton choice is saved per device and survives updates. The Vorton group above General and the sidebar's Paseo/Vorton selector control the same preference. Enabling it exposes named launch presets, usage rails, reset controls, and supervisor configuration. Disabling it restores standard composer controls without deleting accounts or presets or stopping running tasks. Manage profiles lives beside search inside the preset picker and opens the selected provider’s Profiles tab. Vorton groups profiles by configured provider account, shows usage once per account, and presents saved intelligence choices in a desktop split pane or a sliding mobile detail page with a back button to return to connections. Profile names remain visible to distinguish configurations with the same reasoning level. Profiles remain separate saved records; selection still applies the complete profile. Standard Paseo retains profile management in Agents settings.
 
 Check [implementation and deployment status](#implementation-and-deployment-status) before relying on the reserve policy below.
 

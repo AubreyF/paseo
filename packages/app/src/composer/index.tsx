@@ -1,3 +1,4 @@
+import { ProfilePermissionWarning } from "@/agent-profiles/permission-warning";
 import { commitComposerQueue } from "@/message-queue/commit-composer";
 import { LegacyQueueImport } from "@/message-queue/legacy-import";
 import { runLegacyQueueAction } from "@/message-queue/runtime";
@@ -2459,6 +2460,9 @@ function ComposerContentImpl({
           <View style={styles.inputAreaContent}>
             {!mobileComposer.enabled ? queueList : null}
             {sendErrorNode}
+            {formPreferences.vortonMode && !agentControls && agentId ? (
+              <ProfilePermissionWarning serverId={serverId} agentId={agentId} />
+            ) : null}
             {formPreferences.vortonMode && !taskCardsInHistory ? (
               <LegacyQueueImport serverId={serverId} agentId={agentId} cwd={cwd} />
             ) : null}

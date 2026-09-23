@@ -43,8 +43,8 @@ describe("explicit preset handoff", () => {
     expect(request.config).toMatchObject({
       profileId: "other",
       provider: "codex-two",
-      modeId: "full-access",
     });
+    expect(request.config).not.toHaveProperty("modeId");
     expect(request.labels).toEqual({ "paseo:continued-from": "source" });
     expect(request.initialPrompt).toContain("First step completed");
     expect(request.initialPrompt).not.toContain("secret tool result");

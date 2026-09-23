@@ -577,11 +577,13 @@ export function WorkspaceDraftAgentTab({
         selectedId: draftSelectedThinkingId,
         select: draftSetThinkingOption,
       },
-      modes: {
-        options: draftModeOptions,
-        selectedId: draftSelectedMode,
-        select: draftSetMode,
-      },
+      modes: vortonMode
+        ? undefined
+        : {
+            options: draftModeOptions,
+            selectedId: draftSelectedMode,
+            select: draftSetMode,
+          },
       features: {
         list: draftFeatures,
         set: draftOnSetFeature,

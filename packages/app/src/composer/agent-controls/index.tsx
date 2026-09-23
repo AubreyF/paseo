@@ -1,3 +1,4 @@
+import { useVortonMode } from "@/vorton-mode";
 import { defaultProfile } from "@/agent-profiles/internal/default-profile";
 import {
   memo,
@@ -201,8 +202,11 @@ function findOptionLabel(
   return selected?.label ?? fallback;
 }
 
-function toCommandCenterModes(modeControl: AgentModeControlValue | null) {
-  if (!modeControl) return undefined;
+function toCommandCenterModes(
+  modeControl: AgentModeControlValue | null,
+  vortonMode: boolean | undefined,
+) {
+  if (vortonMode || !modeControl) return undefined;
   return {
     options: modeControl.modeOptions,
     selectedId: modeControl.selectedModeId,
@@ -283,10 +287,11 @@ function useEditAgentProfilesNavigation(
   serverId: string | null,
   isSupported: boolean,
 ): (() => void) | undefined {
+  const vortonMode = useVortonMode();
   const handleEdit = useCallback(() => {
     if (!serverId) return;
-    router.push(buildSettingsHostSectionRoute(serverId, "agents"));
-  }, [serverId]);
+    router.push(buildSettingsHostSectionRoute(serverId, vortonMode ? "providers" : "agents"));
+  }, [serverId, vortonMode]);
   return serverId && isSupported ? handleEdit : undefined;
 }
 
@@ -1576,7 +1581,7 @@ export const AgentControls = memo(function AgentControls({
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const toast = useToast();
   const modeControl = useLiveAgentModeControl(serverId, agentId);
-  const commandCenterModes = toCommandCenterModes(modeControl);
+  const commandCenterModes = toCommandCenterModes(modeControl, preferences.vortonMode);
   const modeProviderDefinitions = getModeProviderDefinitions(modeControl);
 
   const {
@@ -1825,7 +1830,6 @@ export const AgentControls = memo(function AgentControls({
           selectedProfileName={selectedProfileName}
           quotaPausedAt={quotaPausedAt}
           currentProvider={agent.provider}
-          modeControl={modeControl}
           onEdit={handleEditAgentProfiles}
           disabled={!client}
         />
@@ -1975,7 +1979,6 @@ export function DraftAgentControls({
           serverId={modelSelectorServerId}
           profiles={presetPicker}
           selectedProfileId={selectedProfileId}
-          modeControl={modeControl}
           onEdit={handleEditAgentProfiles}
           disabled={disabled}
         />

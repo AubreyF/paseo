@@ -34,6 +34,8 @@ Vorton extends Paseo with multi-account agent workflows. This npm monorepo runs 
 
 ## Finish the task
 
+- In this repository, a request to "push" means integrate the requested changes into `main` and push `main` to `origin`, unless the user explicitly names another destination. Do not publish a feature branch instead. Preserve unrelated work and use a normal fast-forward push; never force-push `main`.
+
 - Update the README in the same change when shipped user-facing behavior changes. Follow the [writing rules](docs/writing.md); preserve the author's animation and other demos.
 - Report what changed, validation results and remaining limitations. Link the README update or explain why the change does not affect it.
 - Follow the user's requested delivery stage. A request for a preview stops before committing or publishing.

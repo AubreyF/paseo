@@ -2,10 +2,10 @@ import { CountBadge } from "@/components/ui/count-badge";
 import { Button } from "@/components/ui/button";
 import { taskCardStyles } from "@/agent-stream/task-card-styles";
 import { useVortonTouch } from "@/vorton-touch";
-import { useCallback, useMemo, type ReactElement } from "react";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { Archive, Unlink } from "lucide-react-native";
+import { Archive, ChevronDown, ChevronRight, Unlink } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ComposerTrackActions, ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
@@ -27,6 +27,8 @@ import {
 
 const ThemedArchive = withUnistyles(Archive);
 const ThemedUnlink = withUnistyles(Unlink);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedChevronRight = withUnistyles(ChevronRight);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -72,7 +74,27 @@ export function SubagentsTrack({
   onDetachSubagent,
 }: SubagentsTrackProps): ReactElement | null {
   const { t } = useTranslation();
-  const touch = useVortonTouch();
+  const [expanded, setExpanded] = useState(true);
+  const toggleExpanded = useCallback(() => setExpanded((value) => !value), []);
+
+  const pill = buildSubagentPillPresentation(t, rows);
+  const headerTrailing = useMemo(
+    () => (
+      <>
+        <CountBadge
+          label={String(rows.length)}
+          accessibilityLabel={pill.accessibilityLabel}
+          testID="subagents-card-count"
+        />
+        {expanded ? (
+          <ThemedChevronDown size={16} uniProps={foregroundMutedColorMapping} />
+        ) : (
+          <ThemedChevronRight size={16} uniProps={foregroundMutedColorMapping} />
+        )}
+      </>
+    ),
+    [rows.length, pill.accessibilityLabel, expanded],
+  );
 
   const isArchivingFinished = archiveFinishedStatus.kind === "archiving";
   const isArchiveFinishedFailed = archiveFinishedStatus.kind === "failed";
@@ -80,7 +102,6 @@ export function SubagentsTrack({
     return null;
   }
 
-  const pill = buildSubagentPillPresentation(t, rows);
   const finishedCount = countFinishedSubagents(rows);
   const showArchiveFinished = finishedCount > 0 || isArchivingFinished || isArchiveFinishedFailed;
 
@@ -111,18 +132,25 @@ export function SubagentsTrack({
     ) : null;
   if (inline) {
     return (
-      <View style={taskCardStyles.container} testID="subagents-card">
-        <View style={[taskCardStyles.header, touch && taskCardStyles.touchHeader]}>
-          <Text style={taskCardStyles.heading}>{t("subagents.title")}</Text>
-          <CountBadge
-            label={String(rows.length)}
-            accessibilityLabel={pill.accessibilityLabel}
-            testID="subagents-card-count"
-          />
-          <View style={styles.headerSpacer} />
+      <View style={[taskCardStyles.container, styles.card]} testID="subagents-card">
+        <View style={[taskCardStyles.header, styles.cardHeader]}>
+          <Button
+            variant="ghost"
+            size="sm"
+            hitSlop={6}
+            style={styles.collapseHeader}
+            textStyle={styles.collapseHeaderText}
+            trailing={headerTrailing}
+            accessibilityLabel={t("subagents.title")}
+            aria-expanded={expanded}
+            testID="subagents-card-toggle"
+            onPress={toggleExpanded}
+          >
+            {t("subagents.title")}
+          </Button>
           {archiveAction}
         </View>
-        <View>{rowsContent}</View>
+        {expanded ? <View style={styles.cardRows}>{rowsContent}</View> : null}
       </View>
     );
   }
@@ -196,7 +224,6 @@ export function ArchiveFinishedRow({
       <Button
         variant="outline"
         size={touch ? "md" : "xs"}
-        style={styles.archiveHeaderAction}
         textStyle={styles.archiveHeaderText}
         onPress={onPress}
         disabled={disabled}
@@ -420,9 +447,24 @@ function SubagentActionButton({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  archiveHeaderAction: { marginTop: { xs: 0, md: -theme.spacing[2] } },
+  card: { paddingVertical: theme.spacing[2], paddingLeft: theme.spacing[2] },
+  cardHeader: { alignItems: "center" },
+  cardRows: {
+    marginLeft: { xs: theme.spacing[1], md: theme.spacing[2] },
+    marginBottom: { xs: 0, md: theme.spacing[2] },
+  },
   archiveHeaderText: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted },
-  headerSpacer: { flex: 1, minWidth: 0 },
+  collapseHeaderText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+  },
+  collapseHeader: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: "flex-start",
+    paddingHorizontal: theme.spacing[2],
+  },
   // `flexBasis: "auto"` rather than `flex: 1`: a zero-basis label contributes nothing to the row's
   // intrinsic width, so the panel measures itself at its floor and truncates every label at once.
   rowLabel: {

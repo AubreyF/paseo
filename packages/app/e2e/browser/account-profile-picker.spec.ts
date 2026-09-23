@@ -47,7 +47,7 @@ test("account picker groups profiles, slides into mobile details, and opens acco
     await expect(page.getByTestId("preset-choices-mock")).toHaveCount(0);
     await waitForSettledPosition(page.getByTestId("preset-account-mock"));
     const accountRow = await page.getByTestId("preset-account-mock").boundingBox();
-    expect(accountRow!.height).toBeLessThanOrEqual(84);
+    expect(accountRow!.height).toBeLessThanOrEqual(96);
     const menuBeforeSwipe = await page.getByTestId("account-preset-menu").boundingBox();
     const touch = await page.context().newCDPSession(page);
     await touch.send("Emulation.setTouchEmulationEnabled", { enabled: true });

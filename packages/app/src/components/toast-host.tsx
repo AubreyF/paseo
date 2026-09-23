@@ -14,7 +14,7 @@ import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import {
   HEADER_INNER_HEIGHT,
   HEADER_INNER_HEIGHT_MOBILE,
-  HEADER_TOP_PADDING_MOBILE,
+  getHeaderTopPadding,
 } from "@/constants/layout";
 
 export type ToastVariant = "default" | "info" | "success" | "warning" | "error";
@@ -152,6 +152,7 @@ function ToastViewportContent({
   placement?: ToastViewportPlacement;
 }) {
   const { theme } = useUnistyles();
+  const vortonMode = useVortonMode();
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
   const opacity = useRef(new Animated.Value(0)).current;
@@ -259,7 +260,7 @@ function ToastViewportContent({
   }, [clearTimer, opacity, scheduleDismiss, toast, translateY]);
 
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
-  const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
+  const headerTopPadding = getHeaderTopPadding({ compact: isMobile, vorton: vortonMode });
   const topOffset =
     placement === "app-shell"
       ? insets.top + headerTopPadding + headerHeight + theme.spacing[2]

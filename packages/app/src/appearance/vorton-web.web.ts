@@ -9,11 +9,9 @@ const CSS = `
 @media (display-mode: standalone) {
   html[data-vorton-mode="true"], html[data-vorton-mode="true"] body { height: 100vh; }
 }
-/* iOS Home Screen's status-bar blur extends below the reported safe area.
-   Keep controls clear without changing installation metadata or viewport height. */
+/* Header and panel shells own safe-area spacing. Do not add a second top inset here. */
 html[data-vorton-mode="true"][data-vorton-ios-standalone="true"] #root {
   box-sizing: border-box;
-  padding-top: 16px;
   background-color: var(--colors-surface-sidebar);
 }
 html[data-vorton-touch="true"] :is(button, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [role="option"], [role="combobox"], [role="switch"]):not([data-vorton-compact-mode]) {

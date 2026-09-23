@@ -50,14 +50,14 @@ describe("Vorton touch gate", () => {
     expect(result.current).toBeUndefined();
   });
 
-  it("keeps Home Screen controls below the blur without changing browser or Paseo layout", () => {
+  it("leaves Home Screen top spacing to the safe-area shells", () => {
     const userAgent = vi.spyOn(navigator, "userAgent", "get").mockReturnValue("iPhone");
     const root = document.createElement("div");
     root.id = "root";
     document.body.append(root);
     Object.defineProperty(navigator, "standalone", { configurable: true, value: true });
     const stop = applyVortonWeb(true, true);
-    expect(getComputedStyle(root).paddingTop).toBe("16px");
+    expect(getComputedStyle(root).paddingTop).toBe("");
     expect(getComputedStyle(root).boxSizing).toBe("border-box");
     stop();
     const off = applyVortonWeb(false, true);

@@ -441,7 +441,7 @@ const overlayStyles = StyleSheet.create((theme) => ({
     right: COMPOSER_CORNER_INSET + 1,
   },
   touchActions: { position: "static" },
-  mobileEdit: { top: 16 },
+  mobileEdit: { top: COMPOSER_CORNER_INSET },
   touchCenter: { alignSelf: "stretch", paddingHorizontal: 56, paddingTop: 8, paddingBottom: 8 },
   // The full-width background extends 9px above and 16px below the field.
   // Offset its contents by half that difference to center in the visible green area.

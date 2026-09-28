@@ -6,6 +6,10 @@ Vorton extends [Paseo](https://github.com/getpaseo/paseo) with multiple Codex ac
 
 Connect your Codex accounts once and run tasks under different accounts simultaneously. Choose the account for each task without repeatedly signing out and back in. Keep work moving across accounts while seeing which account each profile uses and when its usage limits reset.
 
+For Claude Code, [sign in inside the container](docs/docker.md#accounts-and-tools). The authentication-monitoring update checks the CLI sign-in status before reporting readiness and requires a daemon update on existing installations.
+
+See the [account connector roadmap](docs/roadmap.md#account-connectors) for account naming behavior and the planned Claude account connector.
+
 Save named profiles that combine an account, model, reasoning level, permissions and instructions. Switch from a fast everyday profile to a deeper reasoning profile, or choose a different account for your next task, directly from the composer. Set a default for new tasks and use short profile nicknames on smaller screens.
 
 <img width="600" alt="Animated demo of Vorton account switching and profiles" src="https://github.com/user-attachments/assets/ae3f9872-f3d6-4efa-8f23-a032aa3133de" />
@@ -44,7 +48,7 @@ Your task is to get the user to a working web interface.
 2. Confirm the container is running, then open the installation’s HTTPS address and verify that the web interface loads. A running container alone does not establish success. If access fails, diagnose and fix it before handing over.
 3. As soon as access works, give the user the clickable HTTPS address and tell them where to find their login password. Keep the handoff short.
 
-Provider authentication happens afterward in the web interface. Do not ask the user to authenticate Codex, Claude, or other providers through the container CLI during installation. Do not delay the browser handoff for provider setup, presets, or optional configuration.
+Provider authentication happens afterward through the provider settings, which explain any required container CLI sign-in. Do not ask the user to authenticate Codex, Claude, or other providers during installation. Do not delay the browser handoff for provider setup, presets, or optional configuration.
 
 Keep progress messages brief. If verification requires access only the user has, request that specific check and state what remains unverified.
 

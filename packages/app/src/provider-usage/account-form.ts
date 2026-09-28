@@ -1,8 +1,11 @@
+import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
+
 export interface CreatedCodexAccount {
   providerId: string;
   name: string;
 }
 interface AccountFormPorts {
+  initialName?: string;
   create(creationId: string, name: string): Promise<CreatedCodexAccount>;
   created?(account: CreatedCodexAccount): void;
 }
@@ -11,8 +14,22 @@ type AccountFormState =
   | { phase: "creating"; name: string; error: null }
   | { phase: "created"; account: CreatedCodexAccount };
 
+export function suggestedCodexAccountName(providers: MutableDaemonConfig["providers"]): string {
+  const accounts = Object.entries(providers).filter(
+    ([id, provider]) => id !== "codex" && provider.extends === "codex",
+  );
+  const active = accounts.filter(([, provider]) => provider.enabled !== false);
+  const names = new Set<string>();
+  for (const [, provider] of accounts) {
+    if (typeof provider.label === "string") names.add(provider.label.trim().toLowerCase());
+  }
+  let number = active.length + 1;
+  while (names.has(`codex ${number}`)) number += 1;
+  return `Codex ${number}`;
+}
+
 export function openAccountForm(creationId: string, ports: AccountFormPorts) {
-  let state: AccountFormState = { phase: "editing", name: "", error: null };
+  let state: AccountFormState = { phase: "editing", name: ports.initialName ?? "", error: null };
   let closed = false;
   const listeners = new Set<() => void>();
   function publish(next: AccountFormState) {

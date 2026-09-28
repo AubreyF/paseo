@@ -27,6 +27,10 @@ for (const width of [1280, 402]) {
     });
     const createdIds: string[] = [];
     try {
+      for (const name of ["Existing work", "Existing personal"]) {
+        const account = await client.createCodexAccount(crypto.randomUUID(), name);
+        createdIds.push(account.providerId);
+      }
       await page.setViewportSize({ width, height: 1000 });
       await gotoAppShell(page);
       await page.evaluate(() => {
@@ -46,7 +50,7 @@ for (const width of [1280, 402]) {
         await expect(page.getByTestId(`provider-remove-${id}`)).toHaveCount(0);
       }
       await expect(page.getByTestId("catalog-provider-codex")).toContainText(
-        "Add another Codex account to switch between accounts.",
+        "Codex (ChatGPT account)",
       );
       const codexAdd = page.getByTestId("add-codex-account");
       const otherAdd = page.locator('[data-testid^="install-provider-"]').first();
@@ -62,6 +66,7 @@ for (const width of [1280, 402]) {
           .getByTestId("catalog-provider-codex")
           .getByRole("button", { name: "Add", exact: true })
           .click();
+        await expect(page.getByTestId("codex-account-name")).toHaveValue("Codex 3");
         await page.getByTestId("codex-account-name").fill(name);
         await page.getByTestId("codex-account-create").click();
         await expect(page.getByTestId("provider-login-panel")).toBeVisible();
@@ -126,6 +131,9 @@ for (const width of [1280, 402]) {
         const key = "@paseo:create-agent-preferences";
         const preferences = JSON.parse(localStorage.getItem(key) ?? "{}");
         localStorage.setItem(key, JSON.stringify({ ...preferences, vortonMode: false }));
+        const seedNonce = localStorage.getItem("@paseo:e2e-seed-nonce");
+        if (!seedNonce) throw new Error("Missing test seed nonce");
+        localStorage.setItem("@paseo:e2e-disable-default-seed-once", seedNonce);
       });
       await page.reload();
       await expect(page.getByTestId("host-page-providers-card")).toBeVisible();

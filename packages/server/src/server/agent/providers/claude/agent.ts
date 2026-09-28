@@ -1,3 +1,4 @@
+import { requireClaudeAuthentication } from "./authentication.js";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -1637,13 +1638,20 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(signal?: AbortSignal): Promise<boolean> {
     const launch = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: "claude",
     });
     const availability = await checkProviderLaunchAvailable(launch);
-    return availability.available;
+    if (!availability.available) return false;
+    await requireClaudeAuthentication({
+      executable: availability.resolvedPath ?? launch.command,
+      args: launch.args,
+      runtimeSettings: this.runtimeSettings,
+      signal,
+    });
+    return true;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {

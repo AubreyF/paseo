@@ -7,6 +7,7 @@ import type { AgentProfile } from "@getpaseo/protocol/messages";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { Button } from "@/components/ui/button";
 import { ComboboxItem, SearchInput } from "@/components/ui/combobox";
+import { PiModelCatalog } from "./pi-model-catalog";
 import { ProfileDetailsView } from "./profile-details-view";
 import { intelligenceLabel, type AccountPresets } from "./account-presets";
 import type { AgentProfilePickerRow } from "./internal/use-agent-profile-picker";
@@ -168,11 +169,7 @@ function AccountButton({
     [group, selectedId, onInspect],
   );
   const usage = useMemo(
-    () => (
-      <View style={styles.usage}>
-        {group.rows[0].localEndpoint ? null : renderRail(group.rows[0])}
-      </View>
-    ),
+    () => <View style={styles.usage}>{renderRail(group.rows[0])}</View>,
     [group, renderRail],
   );
   return (
@@ -231,6 +228,9 @@ function AccountChoices({
           </View>
           <Text style={styles.summary}>{inspected.summary}</Text>
           {inspected.localEndpoint ? props.renderRail(inspected) : null}
+          {account.provider === "pi" ? (
+            <PiModelCatalog entry={entry} profileModel={definition?.model} />
+          ) : null}
           {definition ? (
             <ProfileDetailsView serverId={props.serverId} profile={definition} compact />
           ) : null}

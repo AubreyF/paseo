@@ -2117,6 +2117,9 @@ describe("PiRpcAgentClient", () => {
         id: "google/gemini-2.5-flash-lite",
         name: "google/gemini-2.5-flash-lite",
         reasoning: true,
+        contextWindow: 32768,
+        maxTokens: 4096,
+        input: ["text", "image"],
       },
     ];
 
@@ -2127,6 +2130,12 @@ describe("PiRpcAgentClient", () => {
           id: "openrouter/google/gemini-2.5-flash-lite",
           label: "gemini-2.5-flash-lite",
           defaultThinkingOptionId: "medium",
+          contextWindowMaxTokens: 32768,
+          metadata: {
+            maxOutputTokens: 4096,
+            inputModalities: ["text", "image"],
+            reasoning: true,
+          },
         },
       ],
       modes: [],

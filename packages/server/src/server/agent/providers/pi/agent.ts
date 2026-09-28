@@ -1202,9 +1202,13 @@ function mapPiModel(model: PiModel, provider: AgentProvider): AgentModelDefiniti
     id: `${model.provider}/${model.id}`,
     label: `${model.provider}/${model.name ?? model.id}`,
     description: `${model.provider}/${model.id}`,
+    contextWindowMaxTokens: model.contextWindow,
     metadata: {
       provider: model.provider,
       modelId: model.id,
+      maxOutputTokens: model.maxTokens,
+      inputModalities: model.input,
+      reasoning: model.reasoning,
     },
     thinkingOptions: model.reasoning ? PI_THINKING_OPTIONS.map(mapThinkingOption) : undefined,
     defaultThinkingOptionId: model.reasoning ? DEFAULT_PI_THINKING_LEVEL : undefined,

@@ -28,6 +28,10 @@ Selecting a preset for an existing task opens an editable handoff review and cre
 
 Quota suggestions use fresh reported capacity on a different provider instance. Unknown, stale, and exhausted quotas do not qualify. This is advisory, not account pooling or automatic failover. One account may have multiple aliases; users should avoid treating those as separate allowances.
 
+## Pi model details
+
+In Vorton mode, the Pi account pane lists every selectable model in Pi’s discovered catalog, including models without a saved profile. Cards identify the current profile’s model and show reasoning support and reported input capabilities, context limits, and maximum output. These values describe Pi’s configuration, not a gateway’s advertised maximum. Unknown fields stay absent. Model discovery does not enable models, change limits, or send an inference request. Edit profile usage notes through **Manage profiles**.
+
 ## Local endpoint status
 
 Local Pi models with an explicit private or loopback HTTP endpoint can report TCP reachability in preset rows. The daemon probes at most sixteen distinct endpoints per catalog refresh and shares each probe across models on that endpoint. The check sends no inference or authentication request. Reachability does not prove that a model is loaded, authentication works, or inference capacity is available. Observations older than two minutes are displayed as stale. Cloud Pi configurations do not inherit a local or free label.

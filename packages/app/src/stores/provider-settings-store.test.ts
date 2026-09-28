@@ -8,6 +8,7 @@ describe("provider settings store", () => {
       provider: null,
       overlayParentLayer: 0,
       visible: false,
+      tab: "models",
     });
   });
 
@@ -24,5 +25,14 @@ describe("provider settings store", () => {
       provider: "claude",
     });
     expect(useProviderSettingsStore.getState().overlayParentLayer).toBe(0);
+  });
+  it("opens account profiles without changing the next model-settings entry point", () => {
+    useProviderSettingsStore
+      .getState()
+      .open({ serverId: "server-1", provider: "codex", tab: "profiles" });
+    expect(useProviderSettingsStore.getState().tab).toBe("profiles");
+    useProviderSettingsStore.getState().close();
+    useProviderSettingsStore.getState().open({ serverId: "server-1", provider: "codex" });
+    expect(useProviderSettingsStore.getState().tab).toBe("models");
   });
 });

@@ -35,11 +35,7 @@ export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps)
   const { items } = useSidebarNavItems();
   const vorton = useVortonMode();
   const visibleItems = useMemo(
-    () =>
-      items.filter(
-        (item) =>
-          item.visible && !(vorton && (item.key === "new-workspace" || item.key === "search")),
-      ),
+    () => items.filter((item) => item.visible && !(vorton && item.kind === "builtin")),
     [items, vorton],
   );
 

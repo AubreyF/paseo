@@ -266,6 +266,7 @@ export function HostPairDevicePage({ serverId }: { serverId: string }) {
 }
 
 export function HostAgentsPage({ serverId }: { serverId: string }) {
+  const vortonMode = useVortonMode();
   const { t } = useTranslation();
   const host = useHostProfile(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -288,7 +289,7 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
         </View>
       )}
       <AgentSkillsSection serverId={serverId} />
-      <AgentProfilesSection serverId={serverId} />
+      {!vortonMode ? <AgentProfilesSection serverId={serverId} /> : null}
     </View>
   );
 }

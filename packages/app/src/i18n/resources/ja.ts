@@ -1100,6 +1100,7 @@ export const ja: TranslationResources = {
   sidebar: {
     display: {
       trigger: "表示設定",
+      viewPreferences: "表示設定",
       heading: "表示",
       grouping: {
         label: "グループ化",
@@ -1113,6 +1114,7 @@ export const ja: TranslationResources = {
         branch: "ブランチ名",
       },
       show: {
+        activityBadges: "アクティビティバッジ",
         label: "表示項目",
         branch: "ブランチ",
         project: "プロジェクト",

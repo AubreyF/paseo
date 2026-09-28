@@ -3,12 +3,15 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useOpenNewWorkspace } from "@/hooks/use-open-new-workspace";
 import { useVortonTouch } from "@/vorton-touch";
 import { useVortonMode } from "@/vorton-mode";
-import { router } from "expo-router";
+import { router, usePathname } from "expo-router";
 import { useVortonCompatibilityCallout } from "./vorton-compatibility-callout";
 import {
   Search,
   FolderPlus,
   Plus,
+  History,
+  CalendarClock,
+  Settings2,
   GitBranch,
   Import,
   Server,
@@ -17,7 +20,8 @@ import {
   MoreHorizontal,
   CircleHelp,
 } from "lucide-react-native";
-import { useContainerWidth } from "@/hooks/use-container-width";
+import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
+import { builtinSidebarNavLabelKey } from "@/sidebar-nav/model";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -74,7 +78,12 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
-import { buildSettingsAddHostRoute, buildSettingsRoute } from "@/utils/host-routes";
+import {
+  buildSchedulesRoute,
+  buildSessionsRoute,
+  buildSettingsAddHostRoute,
+  buildSettingsRoute,
+} from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
@@ -295,6 +304,7 @@ function sidebarHostOptionTestID(serverId: string): string {
 
 function FooterIconButton({
   disabled = false,
+  active = false,
   buttonRef,
   onPress,
   testID,
@@ -305,6 +315,7 @@ function FooterIconButton({
   theme,
 }: {
   disabled?: boolean;
+  active?: boolean;
   onPress: () => void;
   testID: string;
   label: string;
@@ -314,25 +325,32 @@ function FooterIconButton({
   theme: SidebarTheme;
   buttonRef?: RefObject<View | null>;
 }) {
+  const touch = useVortonTouch();
+  const accessibilityState = useMemo(() => ({ selected: active }), [active]);
   return (
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Pressable
           ref={buttonRef}
           disabled={disabled}
-          style={styles.footerIconButton}
+          style={[
+            styles.footerIconButton,
+            touch && styles.touchIconButton,
+            active && styles.activeIconButton,
+          ]}
           testID={testID}
           nativeID={testID}
           collapsable={false}
           accessible
           accessibilityLabel={label}
           accessibilityRole="button"
+          accessibilityState={accessibilityState}
           onPress={onPress}
         >
           {({ hovered }) => (
             <Icon
               size={iconSize ?? theme.iconSize.md}
-              color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+              color={hovered || active ? theme.colors.foreground : theme.colors.foregroundMuted}
             />
           )}
         </Pressable>
@@ -456,117 +474,66 @@ function SidebarToolbar({
     onBeforeNavigate?.();
     setCommandCenterOpen(true);
   }, [onBeforeNavigate, setCommandCenterOpen]);
-  const newWorkspaceKeys = useShortcutKeys("new-workspace");
   const newAgentKeys = useShortcutKeys("new-agent");
   const settingsKeys = useShortcutKeys("toggle-settings");
   const { t } = useTranslation();
-  const { width, onLayout } = useContainerWidth();
   const [hostsOpen, setHostsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  // Keep creation actions visible longest when the toolbar overflows.
-  const touch = useVortonTouch();
+  const [displayOpen, setDisplayOpen] = useState(false);
   const vorton = useVortonMode();
-  const slotSize = touch ? 48 : 32;
-  const showSearch = vorton;
-  // Reserve a readable search field before allocating the trailing action slots.
-  const slots = Math.max(1, Math.floor((width - 16 - 8 - 96 + 4) / slotSize));
-  const showNewWorkspace = vorton;
-  const openHosts = useCallback(() => setHostsOpen(true), []);
+  const { items } = useSidebarNavItems();
+  const pathname = usePathname();
+  const touch = useVortonTouch();
+  const navigationItems = items.filter(
+    (item) => item.visible && (item.key === "history" || item.key === "schedules"),
+  );
+  const openHistory = useCallback(() => {
+    onBeforeNavigate?.();
+    router.push(buildSessionsRoute());
+  }, [onBeforeNavigate]);
+  const openSchedules = useCallback(() => {
+    onBeforeNavigate?.();
+    router.push(buildSchedulesRoute());
+  }, [onBeforeNavigate]);
   const openHelp = useCallback(() => setHelpOpen(true), []);
-  const actions = [
-    ...(!vorton
-      ? [
-          { id: "hosts", label: labels.hosts, onSelect: openHosts, icon: Server },
-          {
-            id: "import",
-            label: labels.importSession,
-            onSelect: handleImportSession,
-            icon: Import,
-          },
-        ]
-      : []),
-    { id: "help", label: t("sidebar.help.trigger"), onSelect: openHelp, icon: CircleHelp },
-    { id: "settings", label: labels.settings, onSelect: handleSettings, icon: Settings },
-    { id: "project", label: labels.addProject, onSelect: handleOpenProject, icon: FolderPlus },
-    ...(showNewWorkspace
-      ? [
-          {
-            id: "workspace",
-            label: t("sidebar.actions.newWorkspace"),
-            onSelect: handleNewWorkspace,
-            icon: Plus,
-          },
-        ]
-      : []),
-  ];
-  const hiddenCount =
-    !vorton || slots >= actions.length ? 0 : actions.length - Math.max(0, slots - 1);
-  const hiddenActions = actions.slice(0, hiddenCount);
-  const isHidden = (id: string) => hiddenActions.some((action) => action.id === id);
-  const isVisible = (id: string) => actions.some((action) => action.id === id) && !isHidden(id);
+  const openDisplay = useCallback(() => setDisplayOpen(true), []);
   const searchIcon = useMemo(
     () => <Search size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
     [theme.iconSize.sm, theme.colors.foregroundMuted],
   );
-  const actionIcons = useMemo(
+
+  const menuIcons = useMemo(
     () => ({
-      hosts: <Server size={theme.iconSize.md} color={theme.colors.foregroundMuted} />,
-      import: <Import size={theme.iconSize.md} color={theme.colors.foregroundMuted} />,
-      help: <CircleHelp size={theme.iconSize.md} color={theme.colors.foregroundMuted} />,
-      settings: <Settings size={theme.iconSize.md} color={theme.colors.foregroundMuted} />,
-      project: <FolderPlus size={theme.iconSize.md} color={theme.colors.foregroundMuted} />,
-      workspace: <Plus size={theme.iconSize.md} color={theme.colors.foregroundMuted} />,
+      project: <FolderPlus size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+      settings: <Settings size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+      help: <CircleHelp size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+      workspace: <Plus size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+      display: <Settings2 size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
     }),
-    [theme.iconSize.md, theme.colors.foregroundMuted],
+    [theme.iconSize.sm, theme.colors.foregroundMuted],
   );
 
   return (
-    <View
-      style={[styles.sidebarFooter, vorton && styles.sidebarToolbar]}
-      onLayout={onLayout}
-      testID="sidebar-toolbar"
-    >
+    <View style={[styles.sidebarFooter, vorton && styles.sidebarToolbar]} testID="sidebar-toolbar">
       {!vorton && <View style={styles.footerGap} />}
-      {showSearch && (
-        <Button
-          variant="outline"
-          size="sm"
-          leftIcon={searchIcon}
-          onPress={handleSearch}
-          style={styles.searchField}
-          accessibilityLabel={t("sidebar.sections.search")}
-          testID="sidebar-search"
-        >
-          {t("sidebar.sections.search")}
-        </Button>
+      {vorton && (
+        <View style={[styles.searchContainer, touch && styles.searchContainerTouch]}>
+          {touch && <View pointerEvents="none" style={styles.searchFieldSurface} />}
+          <Button
+            variant="outline"
+            size="sm"
+            leftIcon={searchIcon}
+            onPress={handleSearch}
+            style={[styles.searchField, touch && styles.searchFieldTouch]}
+            accessibilityLabel={t("sidebar.sections.search")}
+            testID="sidebar-search"
+          >
+            {t("sidebar.sections.search")}
+          </Button>
+        </View>
       )}
       <View style={styles.footerIconRow}>
-        {hiddenCount > 0 ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              style={styles.footerIconButton}
-              accessibilityLabel="More sidebar actions"
-              accessibilityRole="button"
-              testID="sidebar-footer-overflow"
-            >
-              <MoreHorizontal size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="bottom" align="start" width={220}>
-              {hiddenActions.map((action) => {
-                return (
-                  <DropdownMenuItem
-                    key={action.label}
-                    onSelect={action.onSelect}
-                    leading={actionIcons[action.id as keyof typeof actionIcons]}
-                  >
-                    {action.label}
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
-        {!isHidden("project") ? (
+        {!vorton && (
           <FooterIconButton
             testID="sidebar-add-project"
             icon={FolderPlus}
@@ -575,20 +542,25 @@ function SidebarToolbar({
             shortcutKeys={newAgentKeys}
             theme={theme}
           />
-        ) : null}
-        {isVisible("workspace") && (
-          <FooterIconButton
-            testID="sidebar-global-new-workspace"
-            icon={Plus}
-            onPress={handleNewWorkspace}
-            label={t("sidebar.actions.newWorkspace")}
-            shortcutKeys={newWorkspaceKeys}
-            theme={theme}
-          />
         )}
+        {vorton &&
+          navigationItems.map((item) => {
+            const history = item.key === "history";
+            const id = history ? "history" : "schedules";
+            return (
+              <FooterIconButton
+                key={item.key}
+                testID={history ? "sidebar-sessions" : "sidebar-schedules"}
+                icon={history ? History : CalendarClock}
+                onPress={history ? openHistory : openSchedules}
+                active={pathname.includes(history ? "/sessions" : "/schedules")}
+                label={t(builtinSidebarNavLabelKey(id))}
+                theme={theme}
+              />
+            );
+          })}
         {!vorton && (
           <SidebarHostPicker
-            hiddenTrigger={isHidden("hosts")}
             controlledOpen={hostsOpen}
             onOpenChange={setHostsOpen}
             theme={theme}
@@ -597,7 +569,7 @@ function SidebarToolbar({
             onOpenHostSettings={handleOpenHostSettings}
           />
         )}
-        {isVisible("import") ? (
+        {!vorton ? (
           <FooterIconButton
             onPress={handleImportSession}
             testID="sidebar-import-session"
@@ -606,12 +578,8 @@ function SidebarToolbar({
             theme={theme}
           />
         ) : null}
-        <SidebarHelpMenu
-          hiddenTrigger={isHidden("help")}
-          controlledOpen={helpOpen}
-          onOpenChange={setHelpOpen}
-        />
-        {!isHidden("settings") ? (
+        {!vorton && <SidebarHelpMenu />}
+        {!vorton ? (
           <FooterIconButton
             onPress={handleSettings}
             testID="sidebar-settings"
@@ -621,6 +589,63 @@ function SidebarToolbar({
             theme={theme}
           />
         ) : null}
+        {vorton && (
+          <View>
+            <SidebarHelpMenu hiddenTrigger controlledOpen={helpOpen} onOpenChange={setHelpOpen} />
+            <SidebarDisplayPreferencesMenu
+              hiddenTrigger
+              controlledOpen={displayOpen}
+              onOpenChange={setDisplayOpen}
+            />
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                style={[styles.footerIconButton, touch && styles.touchIconButton]}
+                accessibilityLabel="More sidebar actions"
+                accessibilityRole="button"
+                testID="sidebar-footer-overflow"
+              >
+                <MoreHorizontal size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="bottom" align="end" width={240}>
+                <DropdownMenuItem
+                  testID="sidebar-add-project"
+                  onSelect={handleOpenProject}
+                  leading={menuIcons.project}
+                >
+                  {labels.addProject}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  testID="sidebar-global-new-workspace"
+                  onSelect={handleNewWorkspace}
+                  leading={menuIcons.workspace}
+                >
+                  {t("sidebar.actions.newWorkspace")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  testID="sidebar-display-preferences-action"
+                  onSelect={openDisplay}
+                  leading={menuIcons.display}
+                >
+                  {t("sidebar.display.viewPreferences")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  testID="sidebar-settings"
+                  onSelect={handleSettings}
+                  leading={menuIcons.settings}
+                >
+                  {labels.settings}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  testID="sidebar-help-action"
+                  onSelect={openHelp}
+                  leading={menuIcons.help}
+                >
+                  {t("sidebar.help.trigger")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -680,25 +705,27 @@ function MobileSidebar({
         style={vorton ? styles.scrollingNavGroup : styles.sidebarHeaderGroup}
         onBeforeNavigate={closeSidebar}
       />
-      <WindowChromeSafeArea placement="inline" style={styles.mobileCloseButtonRow}>
-        <Pressable
-          style={styles.mobileCloseButton}
-          onPress={closeSidebar}
-          testID="sidebar-close"
-          nativeID="sidebar-close"
-          accessible
-          accessibilityRole="button"
-          accessibilityLabel={labels.closeSidebar}
-          hitSlop={8}
-        >
-          {({ hovered, pressed }) => (
-            <X
-              size={theme.iconSize.md}
-              color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
-            />
-          )}
-        </Pressable>
-      </WindowChromeSafeArea>
+      {!vorton && (
+        <WindowChromeSafeArea placement="inline" style={styles.mobileCloseButtonRow}>
+          <Pressable
+            style={styles.mobileCloseButton}
+            onPress={closeSidebar}
+            testID="sidebar-close"
+            nativeID="sidebar-close"
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel={labels.closeSidebar}
+            hitSlop={8}
+          >
+            {({ hovered, pressed }) => (
+              <X
+                size={theme.iconSize.md}
+                color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
+              />
+            )}
+          </Pressable>
+        </WindowChromeSafeArea>
+      )}
     </View>
   );
   const toolbar = (
@@ -750,7 +777,7 @@ function MobileSidebar({
             parentGestureRef={closeGestureRef}
             dragGestureHostActive={active}
             listTopComponent={vorton ? navigation : undefined}
-            listHeaderComponent={workspacesSectionHeaderElement}
+            listHeaderComponent={vorton ? undefined : workspacesSectionHeaderElement}
           />
         )}
 
@@ -935,7 +962,7 @@ function DesktopSidebar({
             onAddProject={handleOpenProject}
             onImportSession={handleImportSession}
             listTopComponent={vorton ? navigation : undefined}
-            listHeaderComponent={workspacesSectionHeaderElement}
+            listHeaderComponent={vorton ? undefined : workspacesSectionHeaderElement}
           />
         )}
 
@@ -1100,6 +1127,28 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  searchContainer: {
+    flex: 1,
+    minWidth: 0,
+  },
+  searchContainerTouch: {
+    height: 44,
+  },
+  searchFieldSurface: {
+    position: "absolute",
+    top: theme.spacing[1.5],
+    bottom: theme.spacing[1.5],
+    left: 0,
+    right: 0,
+    backgroundColor: theme.colors.surface0,
+    borderColor: theme.colors.border,
+    borderWidth: 1,
+    borderRadius: theme.borderRadius.md,
+  },
+  searchFieldTouch: {
+    backgroundColor: "transparent",
+    borderWidth: 0,
+  },
   searchField: {
     flex: 1,
     minWidth: 0,
@@ -1156,6 +1205,11 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[1],
+  },
+  touchIconButton: { width: 44, height: 44 },
+  activeIconButton: {
+    backgroundColor: theme.colors.interactionHighlight,
+    borderRadius: theme.borderRadius.md,
   },
   tooltipRow: {
     flexDirection: "row",

@@ -7,15 +7,26 @@ import { profileDetails } from "./profile-details";
 export function ProfileDetailsView({
   serverId,
   profile,
+  compact = false,
 }: {
   serverId: string | null;
   profile: AgentProfile;
+  compact?: boolean;
 }) {
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
-  const sections = profileDetails(
+  const allSections = profileDetails(
     profile,
     entries?.find((entry) => entry.provider === profile.provider),
   );
+  const sections = compact
+    ? allSections.filter((section) => {
+        if (section.title === "Saved profile permissions") return true;
+        if (section.title === "Features")
+          return Object.keys(profile.featureValues ?? {}).length > 0;
+        if (section.title === "When to use") return Boolean(profile.notes?.trim());
+        return false;
+      })
+    : allSections;
   return (
     <View testID="profile-customization-details" style={styles.sections}>
       {sections.map((section) => (

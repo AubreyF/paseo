@@ -1104,6 +1104,7 @@ export const ru: TranslationResources = {
   sidebar: {
     display: {
       trigger: "Настройки отображения",
+      viewPreferences: "Настройки отображения",
       heading: "Отображение",
       grouping: {
         label: "Группировка",
@@ -1117,6 +1118,7 @@ export const ru: TranslationResources = {
         branch: "Имя ветки",
       },
       show: {
+        activityBadges: "Значки активности",
         label: "Показывать",
         branch: "Ветка",
         project: "Проект",

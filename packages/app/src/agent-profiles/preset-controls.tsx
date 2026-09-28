@@ -1,3 +1,7 @@
+import { AccountPresetMenu } from "./account-preset-menu";
+import { accountPresets } from "./account-presets";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { AccountDisconnectedIcon } from "@/provider-usage/reconnect-control";
 import { ProfileDetailsView } from "./profile-details-view";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -5,10 +9,9 @@ import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { ActivityIndicator, Text, ScrollView, View, useWindowDimensions } from "react-native";
 import { EditingTextInput } from "@/components/ui/text-input";
 import { StyleSheet } from "react-native-unistyles";
-import { SelectField } from "@/components/ui/select-field";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { Button } from "@/components/ui/button";
-import { Combobox, ComboboxItem, SearchInput } from "@/components/ui/combobox";
+import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { usePresetData } from "./use-preset-data";
 import {
@@ -16,16 +19,13 @@ import {
   formatWorkerActivity,
 } from "@/provider-usage/local-endpoint-summary";
 import type { AgentProfilePicker } from "./internal/use-agent-profile-picker";
-import type { AgentModeControlValue } from "@/composer/agent-controls/mode-control";
 import { useAgentProfiles } from "./internal/use-agent-profiles";
 import { PresetUsageRail } from "./preset-usage-rail";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useVortonMode } from "@/vorton-mode";
 import { useVortonTouch } from "@/vorton-touch";
-import { useCompactPermission } from "./use-compact-permission";
 import { useCompactProfileName } from "./use-compact-profile-name";
 import { presetNickname } from "./nickname";
-import { permissionCaption } from "./permission-caption";
 import { RemainingRing } from "@/provider-usage/remaining-ring";
 import { selectedPresetPresentation } from "./selected-preset-presentation";
 
@@ -60,7 +60,6 @@ interface PresetControlsProps {
   selectedProfileName?: string;
   currentProvider?: string;
   quotaPausedAt?: string;
-  modeControl: AgentModeControlValue | null;
   onEdit?: () => void;
   disabled: boolean;
 }
@@ -77,7 +76,6 @@ export function PresetControls({
   selectedProfileId,
   selectedProfileName,
   currentProvider,
-  modeControl,
   onEdit,
   disabled,
 }: PresetControlsProps) {
@@ -86,12 +84,8 @@ export function PresetControls({
   const panelActive = useRetainedPanelActive();
   const vortonMode = useVortonMode();
   const touch = useVortonTouch();
+  const selectionDisabled = disabled || Boolean(profiles.isApplying);
   const controlsRef = useRef<View>(null);
-  const fullPermissionCaption = permissionCaption(
-    modeControl?.modeOptions.find((entry) => entry.id === modeControl.selectedModeId)?.label ??
-      "Permissions",
-    vortonMode,
-  );
   const triggerAccessibilityState = useMemo(
     () => ({ expanded: open, busy: waitingToOpen }),
     [open, waitingToOpen],
@@ -155,12 +149,32 @@ export function PresetControls({
       }),
     [profiles.rows, query, definitions],
   );
+  const { entries } = useProvidersSnapshot(serverId, { cwd: null });
+  const accounts = useMemo(
+    () => accountPresets({ rows: profiles.rows, definitions: definitions ?? [], entries, query }),
+    [profiles.rows, definitions, entries, query],
+  );
+  const accountOptions = useMemo(
+    () =>
+      accounts.map((account) => ({
+        id: account.rows.find((row) => row.id === selectedProfileId)?.id ?? account.rows[0].id,
+        label: account.label,
+      })),
+    [accounts, selectedProfileId],
+  );
   const options = useMemo(
     () => visibleRows.map((row) => ({ id: row.id, label: row.name })),
     [visibleRows],
   );
-  const inspected =
-    profiles.rows.find((row) => row.id === (inspectedId ?? selectedProfileId)) ?? visibleRows[0];
+  const inspected = useMemo(() => {
+    const id = inspectedId ?? selectedProfileId;
+    if (vortonMode) {
+      const account =
+        accounts.find((group) => group.rows.some((row) => row.id === id)) ?? accounts[0];
+      return account?.rows.find((row) => row.id === id) ?? account?.rows[0];
+    }
+    return profiles.rows.find((row) => row.id === id) ?? visibleRows[0];
+  }, [vortonMode, accounts, inspectedId, selectedProfileId, profiles.rows, visibleRows]);
   const inspectorRow = useMemo(
     () => (touch && isCompact ? undefined : inspected),
     [touch, isCompact, inspected],
@@ -181,15 +195,6 @@ export function PresetControls({
       view,
       now,
     });
-  const compactPermission = useCompactPermission(
-    controlsRef,
-    touch,
-    fullPermissionCaption,
-    triggerLabel,
-  );
-  const permissionControl = (
-    <PresetPermissions modeControl={modeControl} disabled={disabled} compact={compactPermission} />
-  );
   const show = useCallback(() => {
     setInspectedId(selectedProfileId);
     setQuery("");
@@ -201,13 +206,19 @@ export function PresetControls({
       if (disabled || profiles.isApplying) return;
       setInspectedId(id);
       profiles.applyProfile(id);
+      setOpen(false);
     },
     [disabled, profiles],
   );
   const edit = useCallback(() => {
     setOpen(false);
-    onEdit?.();
-  }, [onEdit]);
+    const provider = inspected?.provider ?? accounts[0]?.provider ?? entries?.[0]?.provider;
+    if (vortonMode && serverId && provider) {
+      useProviderSettingsStore.getState().open({ serverId, provider, tab: "profiles" });
+    } else {
+      onEdit?.();
+    }
+  }, [onEdit, vortonMode, serverId, inspected, accounts, entries]);
   const footer = useMemo(
     () =>
       onEdit ? (
@@ -217,25 +228,28 @@ export function PresetControls({
       ) : null,
     [onEdit, edit],
   );
-  const renderRail = (row: AgentProfilePicker["rows"][number]) => (
-    <PresetUsageRail
-      view={view}
-      now={now}
-      localStatus={
-        row.localEndpoint
-          ? `${formatLocalEndpointSummary(row.localEndpoint, now)?.replace("Local endpoint", "Local")} · ${formatWorkerActivity(
-              view.kind === "ready" ? view.payload.workerActivity : undefined,
-              row.provider,
-              now,
-            )
-              .replace("running provider workers", "workers running")
-              .replace("running provider worker", "worker running")}`
-          : undefined
-      }
-      serverId={serverId}
-      providerId={row.provider}
-      name={row.name}
-    />
+  const renderRail = useCallback(
+    (row: AgentProfilePicker["rows"][number]) => (
+      <PresetUsageRail
+        view={view}
+        now={now}
+        localStatus={
+          row.localEndpoint
+            ? `${formatLocalEndpointSummary(row.localEndpoint, now)?.replace("Local endpoint", "Local")} · ${formatWorkerActivity(
+                view.kind === "ready" ? view.payload.workerActivity : undefined,
+                row.provider,
+                now,
+              )
+                .replace("running provider workers", "workers running")
+                .replace("running provider worker", "worker running")}`
+            : undefined
+        }
+        serverId={serverId}
+        providerId={row.provider}
+        name={row.name}
+      />
+    ),
+    [view, now, serverId],
   );
   return (
     <View ref={controlsRef} style={controlsStyle} testID="preset-controls">
@@ -245,7 +259,7 @@ export function PresetControls({
           accessibilityRole="button"
           accessibilityState={triggerAccessibilityState}
           onPress={show}
-          disabled={disabled || profiles.isApplying}
+          disabled={selectionDisabled}
           accessibilityLabel={accessibilityLabel}
           testID="agent-preset-selector"
         >
@@ -262,9 +276,9 @@ export function PresetControls({
         </ComboboxTrigger>
       </View>
       <Combobox
-        options={options}
+        options={vortonMode ? accountOptions : options}
         value={selectedProfileId ?? ""}
-        onSelect={select}
+        onSelect={vortonMode ? setInspectedId : select}
         open={open}
         onOpenChange={setOpen}
         anchorRef={anchorRef}
@@ -276,18 +290,29 @@ export function PresetControls({
         desktopPreventInitialFlash
         desktopLockWidth
         desktopChildrenScrollEnabled={false}
+        mobileChildrenScrollEnabled={!vortonMode}
         keepOpenOnSelect
       >
-        <View style={isCompact || width < 760 ? styles.stacked : styles.split}>
-          <View style={styles.list}>
-            {vortonMode ? (
-              <SearchInput
-                placeholder="Search presets"
-                onChangeText={setQuery}
-                containerStyle={styles.presetSearch}
-                autoFocus
-              />
-            ) : (
+        {vortonMode ? (
+          <AccountPresetMenu
+            key={`${open}-${isCompact}`}
+            serverId={serverId}
+            accounts={accounts}
+            definitions={definitions ?? []}
+            entries={entries}
+            inspectedId={inspectedId ?? selectedProfileId}
+            selectedId={selectedProfileId}
+            compact={isCompact}
+            disabled={selectionDisabled}
+            onInspect={setInspectedId}
+            onApply={select}
+            onManage={edit}
+            onSearch={setQuery}
+            renderRail={renderRail}
+          />
+        ) : (
+          <View style={isCompact || width < 760 ? styles.stacked : styles.split}>
+            <View style={styles.list}>
               <EditingTextInput
                 initialValue={query}
                 onChangeText={setQuery}
@@ -296,96 +321,35 @@ export function PresetControls({
                 style={styles.search}
                 autoFocus
               />
-            )}
-            <ScrollView style={styles.rows} keyboardShouldPersistTaps="handled">
-              {visibleRows.map((row) => (
-                <PresetRow
-                  key={row.id}
-                  row={row}
-                  nickname={
-                    vortonMode
-                      ? presetNickname({
-                          name: row.name,
-                          nickname: definitions?.find((entry) => entry.id === row.id)?.nickname,
-                        })
-                      : undefined
-                  }
-                  rail={renderRail(row)}
-                  selected={row.id === selectedProfileId}
-                  active={row.id === inspected?.id}
-                  disabled={disabled || profiles.isApplying || row.unavailable}
-                  onSelect={select}
-                />
-              ))}
-              {!visibleRows.length ? <Text style={styles.meta}>No matching presets</Text> : null}
-            </ScrollView>
-            <View style={[styles.manage, vortonMode && styles.manageVorton]}>{footer}</View>
+              <ScrollView style={styles.rows} keyboardShouldPersistTaps="handled">
+                {visibleRows.map((row) => (
+                  <PresetRow
+                    key={row.id}
+                    row={row}
+                    rail={renderRail(row)}
+                    selected={row.id === selectedProfileId}
+                    active={row.id === inspected?.id}
+                    disabled={disabled || profiles.isApplying || row.unavailable}
+                    onSelect={select}
+                  />
+                ))}
+                {!visibleRows.length ? <Text style={styles.meta}>No matching presets</Text> : null}
+              </ScrollView>
+              <View style={styles.manage}>{footer}</View>
+            </View>
+            {inspectorRow ? (
+              <PresetInspector
+                serverId={serverId}
+                row={inspectorRow}
+                definition={definition}
+                worker={worker}
+                rail={renderRail(inspectorRow)}
+              />
+            ) : null}
           </View>
-          {inspectorRow ? (
-            <PresetInspector
-              serverId={serverId}
-              row={inspectorRow}
-              definition={definition}
-              worker={worker}
-              rail={renderRail(inspectorRow)}
-            />
-          ) : null}
-        </View>
+        )}
       </Combobox>
-      {touch ? <View style={styles.touchPermissions}>{permissionControl}</View> : permissionControl}
     </View>
-  );
-}
-function PresetPermissions({
-  modeControl,
-  disabled,
-  compact,
-}: {
-  modeControl: AgentModeControlValue | null;
-  disabled: boolean;
-  compact: boolean;
-}) {
-  const vortonMode = useVortonMode();
-  const selectedMode = modeControl?.modeOptions.find(
-    (entry) => entry.id === modeControl.selectedModeId,
-  );
-  const selectedDisplay = useMemo(
-    () =>
-      selectedMode
-        ? { ...selectedMode, label: permissionCaption(selectedMode.label, vortonMode, compact) }
-        : null,
-    [selectedMode, vortonMode, compact],
-  );
-  const selectMode = useCallback(
-    (modeId: string) => modeControl?.onSelectMode(modeId),
-    [modeControl],
-  );
-  return (
-    <SelectField
-      label="Permissions"
-      accessibilityLabel={
-        modeControl
-          ? `Permissions (${selectedMode?.label ?? "Permissions"})`
-          : "Permission modes unavailable"
-      }
-      triggerTestID="preset-permission-trigger"
-      toolbar
-      triggerTextStyle={styles.toolbarText}
-      size="sm"
-      desktopPlacement="top-start"
-      field={false}
-      value={modeControl?.selectedModeId ?? null}
-      selectedDisplay={selectedDisplay}
-      options={(modeControl?.modeOptions ?? []).map((entry) => ({
-        id: entry.id,
-        value: entry.id,
-        label: entry.label,
-      }))}
-      onChange={selectMode}
-      disabled={disabled || !modeControl || modeControl.disabled}
-      placeholder={permissionCaption("Permissions", vortonMode, compact)}
-      emptyText="No permission modes"
-    />
   );
 }
 function PresetRow({
@@ -474,7 +438,6 @@ function PresetInspector({
 const styles = StyleSheet.create((theme) => ({
   touchControls: { flex: 1, flexWrap: "nowrap" },
   centerControls: { justifyContent: "center", marginHorizontal: 8 },
-  touchPermissions: { flexShrink: 0 },
   controls: {
     minWidth: 0,
     flexShrink: 1,

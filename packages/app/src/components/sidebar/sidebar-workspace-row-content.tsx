@@ -96,6 +96,25 @@ export function SidebarWorkspaceRowFrame({
   );
 }
 
+function WorkspaceActivityBadges({
+  serverId,
+  workspaceId,
+  visible,
+}: {
+  serverId: string;
+  workspaceId: string;
+  visible: boolean;
+}) {
+  if (!visible) return null;
+  return (
+    <>
+      <WorkspaceQueueCount serverId={serverId} workspaceId={workspaceId} />
+      <WorkspaceSubagentCount serverId={serverId} workspaceId={workspaceId} />
+      <WorkspaceGoalBadge serverId={serverId} workspaceId={workspaceId} />
+    </>
+  );
+}
+
 export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowContent({
   workspace,
   hostBadge,
@@ -129,7 +148,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   children?: ReactNode;
 }) {
   const {
-    settings: { workspaceTitleSource },
+    settings: { workspaceTitleSource, sidebarRowItems },
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
   const vorton = useVortonMode();
@@ -181,20 +200,11 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
               ) : null}
               {children}
               {vorton && (
-                <>
-                  <WorkspaceQueueCount
-                    serverId={workspace.serverId}
-                    workspaceId={workspace.workspaceId}
-                  />
-                  <WorkspaceSubagentCount
-                    serverId={workspace.serverId}
-                    workspaceId={workspace.workspaceId}
-                  />
-                  <WorkspaceGoalBadge
-                    serverId={workspace.serverId}
-                    workspaceId={workspace.workspaceId}
-                  />
-                </>
+                <WorkspaceActivityBadges
+                  serverId={workspace.serverId}
+                  workspaceId={workspace.workspaceId}
+                  visible={sidebarRowItems.activityBadges}
+                />
               )}
             </View>
           </View>

@@ -59,8 +59,7 @@ export function ProfileHandoffModal({
       <View style={styles.body}>
         <Text style={styles.text}>
           Review and edit the handoff before starting a new task. The original stays unchanged. Stop
-          its active workers first. The current permission mode is preserved or the launch is
-          rejected.
+          its active workers first. The new chat uses the selected profile’s permissions.
         </Text>
         <Text style={styles.text}>
           This partial record excludes attachments and tool results. Add important decisions,

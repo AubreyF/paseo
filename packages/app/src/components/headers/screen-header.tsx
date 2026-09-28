@@ -9,7 +9,7 @@ import {
   HEADER_INNER_HEIGHT,
   VORTON_HEADER_HEIGHT,
   HEADER_INNER_HEIGHT_MOBILE,
-  HEADER_TOP_PADDING_MOBILE,
+  getHeaderTopPadding,
   useIsCompactFormFactor,
 } from "@/constants/layout";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
@@ -40,8 +40,8 @@ export function ScreenHeader({
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
   const vorton = useVortonMode();
-  // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
-  const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
+  // The row already provides the touch target; Vorton needs only the system safe area.
+  const topPadding = getHeaderTopPadding({ compact: isMobile, vorton: vorton });
   const baseHorizontalPadding = isMobile ? theme.spacing[2] : theme.spacing[3];
 
   const innerStyle = useMemo(

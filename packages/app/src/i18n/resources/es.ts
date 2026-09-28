@@ -1123,6 +1123,7 @@ export const es: TranslationResources = {
   sidebar: {
     display: {
       trigger: "Preferencias de visualización",
+      viewPreferences: "Preferencias de visualización",
       heading: "Visualización",
       grouping: {
         label: "Agrupación",
@@ -1136,6 +1137,7 @@ export const es: TranslationResources = {
         branch: "Nombre de rama",
       },
       show: {
+        activityBadges: "Insignias de actividad",
         label: "Mostrar",
         branch: "Rama",
         project: "Proyecto",

@@ -1,4 +1,8 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyVortonWeb } from "./vorton-web.web";
 
@@ -8,7 +12,7 @@ let stop = () => {};
 beforeEach(() => {
   document.head.innerHTML = `
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" data-paseo-status-bar-style="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Paseo">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <link rel="manifest" href="/manifest.json">
@@ -33,7 +37,7 @@ describe("Vorton Home Screen metadata", () => {
     ["iPhone browser tab", "iPhone", "iPhone", 5, false, false],
     ["Android PWA", "Android", "Linux", 5, true, false],
   ])(
-    "limits status-bar spacing to iOS Home Screen apps: %s",
+    "detects iOS Home Screen apps: %s",
     (_name, userAgent, platform, maxTouchPoints, standalone, expected) => {
       vi.stubGlobal("navigator", { userAgent, platform, maxTouchPoints, standalone });
       stop = applyVortonWeb(true, maxTouchPoints > 0);
@@ -83,4 +87,39 @@ describe("Vorton Home Screen metadata", () => {
     }
     stop = () => {};
   });
+});
+
+describe("opaque iPhone status bar", () => {
+  it.each([true, false])(
+    "applies mode %s before startup and restores the original on cleanup",
+    (enabled) => {
+      const navigator = {
+        userAgent: "iPhone",
+        platform: "iPhone",
+        maxTouchPoints: 5,
+        standalone: true,
+      };
+      vi.stubGlobal("navigator", navigator);
+      const html = readFileSync(
+        resolve(dirname(fileURLToPath(import.meta.url)), "../../public/index.html"),
+        "utf8",
+      );
+      const bootstrap = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+      if (!bootstrap) throw new Error("Missing status-bar bootstrap");
+      runInNewContext(bootstrap, {
+        navigator,
+        document,
+        localStorage: { getItem: () => JSON.stringify({ vortonMode: enabled }) },
+      });
+      const meta = document.querySelector<HTMLMetaElement>(
+        'meta[name="apple-mobile-web-app-status-bar-style"]',
+      );
+      if (!meta) throw new Error("Missing status-bar metadata");
+      expect(meta.content).toBe(enabled ? "black" : "black-translucent");
+      stop = applyVortonWeb(enabled, true);
+      expect(meta.content).toBe(enabled ? "black" : "black-translucent");
+      stop();
+      expect(meta.content).toBe("black-translucent");
+    },
+  );
 });

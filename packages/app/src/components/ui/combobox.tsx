@@ -31,10 +31,11 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   BottomSheetScrollView,
+  useBottomSheetInternal,
   BottomSheetBackdrop,
   BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
-import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import Animated, { FadeIn, FadeOut, useAnimatedStyle } from "react-native-reanimated";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Check, File, Folder, Search } from "lucide-react-native";
 import {
@@ -245,6 +246,7 @@ export interface ComboboxItemProps {
   trailingSlot?: ReactNode;
   selected?: boolean;
   selectionPlacement?: "leading" | "trailing";
+  selectionIndicatorSize?: number;
   active?: boolean;
   disabled?: boolean;
   accessibilityLabel?: string;
@@ -267,6 +269,7 @@ export function ComboboxItem({
   trailingSlot,
   selected,
   selectionPlacement = "trailing",
+  selectionIndicatorSize = 16,
   active,
   disabled,
   accessibilityLabel,
@@ -328,8 +331,10 @@ export function ComboboxItem({
       accessibilityState={accessibilityState}
     >
       {selectionPlacement === "leading" ? (
-        <View style={styles.comboboxItemLeadingSlot}>
-          {selected ? <Check size={16} color={theme.colors.foregroundMuted} /> : null}
+        <View style={styles.comboboxSelectionSlot(selectionIndicatorSize)}>
+          {selected ? (
+            <Check size={selectionIndicatorSize} color={theme.colors.foregroundMuted} />
+          ) : null}
         </View>
       ) : null}
       {leadingContent}
@@ -353,8 +358,10 @@ export function ComboboxItem({
       {(selected && selectionPlacement === "trailing") || trailingSlot ? (
         <View style={styles.comboboxItemTrailingContainer}>
           {selectionPlacement === "trailing" ? (
-            <View style={styles.comboboxItemTrailingSlot}>
-              {selected ? <Check size={16} color={theme.colors.foregroundMuted} /> : null}
+            <View style={styles.comboboxSelectionSlot(selectionIndicatorSize)}>
+              {selected ? (
+                <Check size={selectionIndicatorSize} color={theme.colors.foregroundMuted} />
+              ) : null}
             </View>
           ) : null}
           {trailingSlot}
@@ -988,6 +995,19 @@ interface MobileBodyProps {
   safeAreaBottom: number;
 }
 
+/** Non-scrollable sheet pages must fit the current snap point, not the largest one. */
+function MobileComboboxViewport({ children }: { children: ReactNode }) {
+  const { animatedPosition, animatedLayoutState } = useBottomSheetInternal();
+  const viewportStyle = useAnimatedStyle(() => {
+    const { containerHeight, handleHeight } = animatedLayoutState.value;
+    return {
+      height: Math.max(0, containerHeight - animatedPosition.value - Math.max(0, handleHeight)),
+      flexShrink: 0,
+    };
+  });
+  return <Animated.View style={viewportStyle}>{children}</Animated.View>;
+}
+
 function MobileComboboxBody(props: MobileBodyProps): ReactElement {
   const renderBackdrop = useCallback(
     (backdropProps: React.ComponentProps<typeof BottomSheetBackdrop>) => (
@@ -1023,6 +1043,48 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
     />
   );
 
+  const frame = (
+    <View style={frameStyle}>
+      {props.header ? (
+        <SheetHeaderView header={props.header} onClose={props.onClose} />
+      ) : (
+        <>
+          <View style={styles.bottomSheetHeader}>
+            <Text key={props.titleColor} style={comboboxTitleStyle}>
+              {props.title}
+            </Text>
+          </View>
+          {props.stickyHeader}
+          {!props.hasChildren && props.searchable ? (
+            <SearchInput
+              placeholder={props.searchPlaceholder}
+              onChangeText={props.setSearchQueryWithCallback}
+              onSubmitEditing={props.handleSubmitSearch}
+              autoFocus={false}
+              useBottomSheetInput
+              resetKey={props.searchResetKey}
+            />
+          ) : null}
+        </>
+      )}
+      {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
+        body
+      ) : (
+        <BottomSheetScrollView
+          style={styles.mobileSheetBody}
+          contentContainerStyle={[
+            styles.comboboxScrollContent,
+            props.mobileChildrenContentContainerStyle,
+          ]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {body}
+        </BottomSheetScrollView>
+      )}
+      {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
+    </View>
+  );
   return (
     <IsolatedBottomSheetModal
       ref={props.bottomSheetRef}
@@ -1040,46 +1102,11 @@ function MobileComboboxBody(props: MobileBodyProps): ReactElement {
       keyboardBlurBehavior="none"
       presentation={props.presentation}
     >
-      <View style={frameStyle}>
-        {props.header ? (
-          <SheetHeaderView header={props.header} onClose={props.onClose} />
-        ) : (
-          <>
-            <View style={styles.bottomSheetHeader}>
-              <Text key={props.titleColor} style={comboboxTitleStyle}>
-                {props.title}
-              </Text>
-            </View>
-            {props.stickyHeader}
-            {!props.hasChildren && props.searchable ? (
-              <SearchInput
-                placeholder={props.searchPlaceholder}
-                onChangeText={props.setSearchQueryWithCallback}
-                onSubmitEditing={props.handleSubmitSearch}
-                autoFocus={false}
-                useBottomSheetInput
-                resetKey={props.searchResetKey}
-              />
-            ) : null}
-          </>
-        )}
-        {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
-          body
-        ) : (
-          <BottomSheetScrollView
-            style={styles.mobileSheetBody}
-            contentContainerStyle={[
-              styles.comboboxScrollContent,
-              props.mobileChildrenContentContainerStyle,
-            ]}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {body}
-          </BottomSheetScrollView>
-        )}
-        {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
-      </View>
+      {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
+        <MobileComboboxViewport>{frame}</MobileComboboxViewport>
+      ) : (
+        frame
+      )}
     </IsolatedBottomSheetModal>
   );
 }
@@ -1757,11 +1784,6 @@ const styles = StyleSheet.create((theme) => ({
   comboboxItemDisabled: {
     opacity: 0.55,
   },
-  comboboxItemTrailingSlot: {
-    width: 16,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   comboboxItemTrailingContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -1777,6 +1799,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "baseline",
     gap: theme.spacing[2],
   },
+  comboboxSelectionSlot: (size: number) => ({
+    width: size,
+    alignItems: "center",
+    justifyContent: "center",
+  }),
   comboboxItemLeadingSlot: {
     width: 16,
     alignItems: "center",

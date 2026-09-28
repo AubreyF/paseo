@@ -1094,6 +1094,7 @@ export const ko: TranslationResources = {
   sidebar: {
     display: {
       trigger: "표시 설정",
+      viewPreferences: "표시 설정",
       heading: "표시",
       grouping: {
         label: "그룹화",
@@ -1107,6 +1108,7 @@ export const ko: TranslationResources = {
         branch: "브랜치 이름",
       },
       show: {
+        activityBadges: "활동 배지",
         label: "표시 항목",
         branch: "브랜치",
         project: "프로젝트",

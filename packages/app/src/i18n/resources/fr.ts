@@ -1122,6 +1122,7 @@ export const fr: TranslationResources = {
   sidebar: {
     display: {
       trigger: "Préférences d'affichage",
+      viewPreferences: "Préférences d'affichage",
       heading: "Affichage",
       grouping: {
         label: "Regroupement",
@@ -1135,6 +1136,7 @@ export const fr: TranslationResources = {
         branch: "Nom de branche",
       },
       show: {
+        activityBadges: "Badges d’activité",
         label: "Afficher",
         branch: "Branche",
         project: "Projet",

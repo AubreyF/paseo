@@ -1,3 +1,5 @@
+import { AgentProfilesSection } from "@/agent-profiles/settings/agent-profiles-section";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useVortonMode } from "@/vorton-mode";
 import * as Clipboard from "expo-clipboard";
 import { AlertTriangle, Copy, FileText, Plus, RotateCw, Trash2 } from "lucide-react-native";
@@ -32,7 +34,13 @@ import {
   type ProviderDiscoveredModelsCache,
 } from "./provider-diagnostic-models";
 
+const PROVIDER_TABS = [
+  { value: "models", label: "Models" },
+  { value: "profiles", label: "Profiles" },
+];
+
 interface ProviderDiagnosticSheetProps {
+  initialTab?: "models" | "profiles";
   provider: string;
   visible: boolean;
   onClose: () => void;
@@ -568,17 +576,20 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
 }
 
 export function ProviderDiagnosticSheet({
+  initialTab = "models",
   provider,
   visible,
   onClose,
   serverId,
 }: ProviderDiagnosticSheetProps) {
+  const vortonMode = useVortonMode();
+  const [tab, setTab] = useState<string>(initialTab);
+  const showingProfiles = vortonMode && tab === "profiles";
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
-  const vortonMode = useVortonMode();
   const showClaudeSignIn = vortonMode && provider === "claude";
   const [query, setQuery] = useState("");
   const [addSheetOpen, setAddSheetOpen] = useState(false);
@@ -627,10 +638,11 @@ export function ProviderDiagnosticSheet({
   useEffect(() => {
     if (!visible) {
       setQuery("");
+      setTab(initialTab);
       setAddSheetOpen(false);
       setDiagSheetOpen(false);
     }
-  }, [visible]);
+  }, [visible, initialTab]);
 
   const q = query.trim();
   const filteredDiscovered = useMemo(
@@ -672,13 +684,15 @@ export function ProviderDiagnosticSheet({
   const sheetHeader = useMemo<SheetHeader>(
     () => ({
       title: providerLabel,
-      search: {
-        onChange: setQuery,
-        placeholder: t("settings.providers.models.searchPlaceholder"),
-        testID: "provider-settings-search",
-      },
+      search: showingProfiles
+        ? undefined
+        : {
+            onChange: setQuery,
+            placeholder: t("settings.providers.models.searchPlaceholder"),
+            testID: "provider-settings-search",
+          },
     }),
-    [providerLabel, t],
+    [providerLabel, t, showingProfiles],
   );
 
   return (
@@ -688,15 +702,19 @@ export function ProviderDiagnosticSheet({
         visible={visible}
         onClose={onClose}
         testID="provider-settings-sheet"
-        footer={renderProviderSheetFooter({
-          fetchedAtLabel,
-          isCompact,
-          modelsRefreshing,
-          t,
-          onOpenAddSheet: handleOpenAddSheet,
-          onOpenDiagSheet: handleOpenDiagSheet,
-          onRefreshModels: handleRefreshModels,
-        })}
+        footer={
+          showingProfiles
+            ? undefined
+            : renderProviderSheetFooter({
+                fetchedAtLabel,
+                isCompact,
+                modelsRefreshing,
+                t,
+                onOpenAddSheet: handleOpenAddSheet,
+                onOpenDiagSheet: handleOpenDiagSheet,
+                onRefreshModels: handleRefreshModels,
+              })
+        }
         snapPoints={MAIN_SNAP_POINTS}
       >
         {showClaudeSignIn ? (
@@ -724,20 +742,35 @@ export function ProviderDiagnosticSheet({
             </Text>
           </View>
         ) : null}
-        <ProviderModalBody
-          discoveredCount={discoveredModels.length}
-          additionalCount={additionalModels.length}
-          providerSnapshotRefreshing={providerSnapshotRefreshing}
-          providerErrorMessage={providerErrorMessage}
-          modelsRefreshing={modelsRefreshing}
-          searchActive={Boolean(q)}
-          filteredDiscovered={filteredDiscovered}
-          filteredCustom={filteredCustom}
-          deletingModelId={deletingModelId}
-          onRefresh={handleRefreshModels}
-          onDeleteCustom={handleDeleteCustom}
-          theme={theme}
-        />
+        {vortonMode ? (
+          <View style={sheetStyles.tabs}>
+            <SegmentedControl
+              options={PROVIDER_TABS}
+              value={tab}
+              onValueChange={setTab}
+              size="md"
+              testID="provider-settings-tabs"
+            />
+          </View>
+        ) : null}
+        {showingProfiles ? (
+          <AgentProfilesSection serverId={serverId} provider={provider} />
+        ) : (
+          <ProviderModalBody
+            discoveredCount={discoveredModels.length}
+            additionalCount={additionalModels.length}
+            providerSnapshotRefreshing={providerSnapshotRefreshing}
+            providerErrorMessage={providerErrorMessage}
+            modelsRefreshing={modelsRefreshing}
+            searchActive={Boolean(q)}
+            filteredDiscovered={filteredDiscovered}
+            filteredCustom={filteredCustom}
+            deletingModelId={deletingModelId}
+            onRefresh={handleRefreshModels}
+            onDeleteCustom={handleDeleteCustom}
+            theme={theme}
+          />
+        )}
       </AdaptiveModalSheet>
       <AddCustomModelSubSheet
         provider={provider}
@@ -757,6 +790,7 @@ export function ProviderDiagnosticSheet({
 }
 
 const sheetStyles = StyleSheet.create((theme) => ({
+  tabs: { marginBottom: theme.spacing[4] },
   mutedText: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,

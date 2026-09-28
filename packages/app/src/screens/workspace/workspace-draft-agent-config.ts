@@ -13,7 +13,8 @@ export function buildWorkspaceDraftAgentConfig(input: {
     provider: input.provider,
     ...(input.profileId ? { profileId: input.profileId } : {}),
     cwd: input.cwd,
-    ...(input.modeId ? { modeId: input.modeId } : {}),
+    // The daemon resolves the latest profile permissions at launch.
+    ...(!input.profileId && input.modeId ? { modeId: input.modeId } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
     ...(input.featureValues ? { featureValues: input.featureValues } : {}),

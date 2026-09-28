@@ -1,16 +1,26 @@
+import { useVortonMode } from "@/vorton-mode";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { KeyboardTranslateView } from "@/keyboard/shift";
+import { HEADER_INNER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
+import type {
+  CreateAgentRequestOptions,
+  CreateWorkspaceRequestOptions,
+} from "@getpaseo/client/internal/daemon-client";
+import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
+import { encodeImages } from "@/utils/encode-images";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { ReactElement, RefObject } from "react";
+import type { ReactElement, ReactNode, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View, StyleSheet as RNStyleSheet } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/composer";
-import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
+import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import {
   resolveComposerAttachmentSubmitFormat,
@@ -27,7 +37,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { ScreenHeader } from "@/components/headers/screen-header";
-import { HEADER_INNER_HEIGHT, MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
@@ -53,7 +63,7 @@ import {
   navigateToWorkspace,
   useLastWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
-import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
+import { normalizeWorkspaceDescriptor, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
@@ -67,7 +77,6 @@ import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
-import { generateMessageId } from "@/types/stream";
 import { toErrorMessage } from "@/utils/error-messages";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import {
@@ -87,7 +96,7 @@ import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-att
 import type { MessagePayload } from "@/composer/types";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
-import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
@@ -122,6 +131,8 @@ import {
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
 } from "./workspace/terminals/state";
+import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
+import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -679,8 +690,13 @@ function IsolationPickerTrigger({
 
 // Wraps a single argument control in the mobile vertical stack. On desktop the
 // controls are laid out in one horizontal row, so no per-control wrapper is used.
+// Decorative padding must not block the dock background from iOS hit testing.
 function FormRow({ children }: { children: React.ReactNode }) {
-  return <View style={styles.row}>{children}</View>;
+  return (
+    <View style={styles.row} pointerEvents="box-none">
+      {children}
+    </View>
+  );
 }
 
 interface WorkspaceIsolationState {
@@ -730,13 +746,6 @@ function isolationLabel(t: TFunction, isolation: "local" | "worktree"): string {
     : t("newWorkspace.isolation.local");
 }
 
-function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
-  if (input.isCompact) {
-    return [styles.content, styles.contentCompact, { paddingBottom: input.insetBottom }];
-  }
-  return [styles.content, styles.contentCentered];
-}
-
 function normalizeBranchDetails(
   data: { branchDetails?: BranchPickerDetail[]; branches?: string[] } | undefined,
 ): BranchPickerDetail[] {
@@ -746,11 +755,24 @@ function normalizeBranchDetails(
   return names.map((name) => ({ name, committerDate: 0 }));
 }
 
+/**
+ * "background" means the user left the New workspace screen mid-creation, so nothing navigated
+ * and the screen — if still mounted under another route — has to drop its pending state itself.
+ */
+type SubmitOutcome = "navigated" | "background";
+
 interface SubmitDraftInput {
   goal?: MessagePayload["goal"];
+  clearConsumedDraft: () => void;
+  agentCreation?: {
+    result: Promise<AgentSnapshotPayload>;
+    retry: (input: CreateAgentRequestOptions) => Promise<AgentSnapshotPayload>;
+  };
   serverId: string;
+  draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftId?: string;
+  draftContextScopeKey: string | null;
   initialSetup?: WorkspaceDraftTabSetup;
   workspaceId: string;
   workspaceDirectory: string;
@@ -759,6 +781,8 @@ interface SubmitDraftInput {
   provider: AgentProvider;
   composerState: NewWorkspaceComposerState;
   supportsForgeSearch: boolean;
+  resolveClient: () => DaemonClient;
+  isStillOnCreateScreen: () => boolean;
 }
 
 type NewWorkspaceComposerState = NonNullable<
@@ -776,37 +800,22 @@ interface WorkspaceDraftSubmissionConfig {
   target: WorkspaceTabTarget;
 }
 
-async function createAndMergeWorkspace(input: {
-  client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
-  createInput: Parameters<
-    NonNullable<ReturnType<typeof useHostRuntimeClient>>["createPaseoWorktree"]
-  >[0];
-  mergeWorkspaces: (
-    serverId: string,
-    workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
-  ) => void;
-  serverId: string;
-  createFailedMessage: string;
-}): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
-  const payload = await input.client.createPaseoWorktree(input.createInput);
-  if (payload.error || !payload.workspace) {
-    throw new Error(payload.error ?? input.createFailedMessage);
-  }
-  const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
-  const workspaceForInitialMerge = input.createInput.firstAgentContext
-    ? { ...normalizedWorkspace, status: "running" as const, statusEnteredAt: new Date() }
-    : normalizedWorkspace;
-  input.mergeWorkspaces(input.serverId, [workspaceForInitialMerge]);
-  return normalizedWorkspace;
+interface WorkspaceCreationResult {
+  workspace: ReturnType<typeof normalizeWorkspaceDescriptor>;
+  agent?: AgentSnapshotPayload;
 }
 
 async function createMultiplicityWorkspace(input: {
+  idempotencyKey: string;
+  worktreeSlug: string;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isolation: "local" | "worktree";
   project: HostProjectListItem;
   sourceDirectory: string;
   checkoutRequest: PickerCheckoutRequest | undefined;
   withInitialAgent: boolean;
+  agent?: CreateWorkspaceRequestOptions["agent"];
+  onEvent?: (snapshot: CreationSnapshot) => void;
   prompt: string;
   attachments: AgentAttachment[];
   mergeWorkspaces: (
@@ -815,7 +824,7 @@ async function createMultiplicityWorkspace(input: {
   ) => void;
   serverId: string;
   createFailedMessage: string;
-}): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
+}): Promise<WorkspaceCreationResult> {
   const projectId = getHostProjectId(input.project, input.serverId);
   if (!projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
@@ -824,12 +833,15 @@ async function createMultiplicityWorkspace(input: {
     attachments: input.attachments,
   });
   const payload = await input.client.createWorkspace({
+    idempotencyKey: input.idempotencyKey,
+    agent: input.agent,
+    onEvent: input.onEvent,
     source: isWorktree
       ? {
           kind: "worktree",
           cwd: input.sourceDirectory,
           projectId,
-          worktreeSlug: createNameId(),
+          worktreeSlug: input.worktreeSlug,
           ...input.checkoutRequest,
         }
       : {
@@ -847,7 +859,7 @@ async function createMultiplicityWorkspace(input: {
     ? { ...normalizedWorkspace, status: "running" as const, statusEnteredAt: new Date() }
     : normalizedWorkspace;
   input.mergeWorkspaces(input.serverId, [workspaceForInitialMerge]);
-  return normalizedWorkspace;
+  return { workspace: normalizedWorkspace, agent: payload.agent };
 }
 
 interface CreateChatAgentInput {
@@ -859,11 +871,17 @@ interface CreateChatAgentInput {
     prompt: string;
     attachments: AgentAttachment[];
     withInitialAgent: boolean;
-  }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
+    agent?: CreateWorkspaceRequestOptions["agent"];
+    onEvent?: (snapshot: CreationSnapshot) => void;
+  }) => Promise<WorkspaceCreationResult>;
   serverId: string;
+  draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftId?: string;
+  draftContextScopeKey: string | null;
   supportsForgeSearch: boolean;
+  resolveClient: () => DaemonClient;
+  isStillOnCreateScreen: () => boolean;
   labels: {
     composerStateRequired: string;
     selectModel: string;
@@ -907,12 +925,10 @@ function buildWorkspaceDraftSetupForCreatedWorkspace(input: {
 }
 
 function buildComposerInitialValues(input: {
-  workingDir: string | undefined;
   initialSetup?: WorkspaceDraftTabSetup | null;
 }): CreateAgentInitialValues | undefined {
   if (input.initialSetup) {
     return {
-      workingDir: input.workingDir ?? input.initialSetup.cwd,
       provider: input.initialSetup.provider,
       profileId: input.initialSetup.profileId,
       modeId: input.initialSetup.modeId,
@@ -920,14 +936,23 @@ function buildComposerInitialValues(input: {
       thinkingOptionId: input.initialSetup.thinkingOptionId,
     };
   }
-  if (input.workingDir) {
-    return { workingDir: input.workingDir };
-  }
   return undefined;
 }
 
-async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
+const pendingWorkspaceSubmissions = new Map<string, Promise<SubmitOutcome>>();
+function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
+  const key = JSON.stringify([input.serverId, input.draftId]);
+  const pending = pendingWorkspaceSubmissions.get(key);
+  if (pending) return pending;
+  const submission = Promise.resolve().then(() => createWorkspaceChatAgent(input));
+  pendingWorkspaceSubmissions.set(key, submission);
+  void submission.finally(() => pendingWorkspaceSubmissions.delete(key)).catch(() => undefined);
+  return submission;
+}
+
+async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
   const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
+  const clearConsumedDraft = captureWorkspaceDraftCleanup(input);
   const { text, attachments, cwd } = payload;
   if (!composerState) {
     throw new Error(input.labels.composerStateRequired);
@@ -943,49 +968,105 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<void> {
     format: attachmentSubmitFormat,
   });
   const workspaceNamingAttachments = getWorkspaceNamingAttachments(reviewAttachments);
-  const ensuredWorkspace = await ensureWorkspace({
-    cwd,
-    prompt: text,
-    attachments: workspaceNamingAttachments,
-    withInitialAgent: true,
+  const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+    format: attachmentSubmitFormat,
   });
-  const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
-    forkDraftSetup: input.forkDraftSetup,
-    workspaceDirectory: ensuredWorkspace.workspaceDirectory,
-    provider,
-    composerState,
-  });
-  submitWorkspaceDraft({
-    serverId,
-    clearDraft,
-    draftId: input.draftId,
-    initialSetup,
-    workspaceId: ensuredWorkspace.id,
-    workspaceDirectory: ensuredWorkspace.workspaceDirectory,
-    goal: payload.goal,
-    text,
-    attachments,
-    provider,
-    composerState,
-    supportsForgeSearch: input.supportsForgeSearch,
-  });
+  const images = await encodeImages(wirePayload.images);
+  let navigated = false;
+  let outcome: SubmitOutcome = "background";
+  const initialAgent: NonNullable<CreateWorkspaceRequestOptions["agent"]> = {
+    config: {
+      provider,
+      ...(composerState.selectedProfileId ? { profileId: composerState.selectedProfileId } : {}),
+      cwd,
+      modeId: composerState.selectedMode || undefined,
+      model: composerState.effectiveModelId || undefined,
+      thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
+      featureValues: composerState.featureValues,
+    },
+    initialPrompt: text,
+    initialGoal: payload.goal,
+    clientMessageId: `${input.draftId}:initial-message`,
+    images: images?.length ? images : undefined,
+    attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
+  };
+  const execute = async (requestedAgent = initialAgent): Promise<AgentSnapshotPayload> => {
+    const { agent } = await ensureWorkspace({
+      cwd,
+      prompt: text,
+      attachments: workspaceNamingAttachments,
+      withInitialAgent: true,
+      agent: requestedAgent,
+      onEvent: (snapshot) => {
+        if (!snapshot.workspace || navigated) return;
+        navigated = true;
+        if (!input.isStillOnCreateScreen()) return;
+        const workspace = normalizeWorkspaceDescriptor(snapshot.workspace);
+        getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [
+          { ...workspace, status: "running" },
+        ]);
+        const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
+          forkDraftSetup: input.forkDraftSetup,
+          workspaceDirectory: workspace.workspaceDirectory,
+          provider,
+          composerState,
+        });
+        outcome = submitWorkspaceDraft({
+          clearConsumedDraft,
+          draftKey: input.draftKey,
+          draftContextScopeKey: input.draftContextScopeKey,
+          resolveClient: input.resolveClient,
+          isStillOnCreateScreen: input.isStillOnCreateScreen,
+          serverId,
+          clearDraft,
+          draftId: input.draftId,
+          initialSetup,
+          workspaceId: workspace.id,
+          workspaceDirectory: workspace.workspaceDirectory,
+          goal: payload.goal,
+          text,
+          attachments,
+          provider,
+          composerState,
+          supportsForgeSearch: input.supportsForgeSearch,
+          agentCreation,
+        });
+      },
+    });
+    if (!agent) throw new Error("Workspace creation returned no agent");
+    return agent;
+  };
+  const agentCreation = {
+    result: Promise.resolve().then(() => execute()),
+    retry: (request: CreateAgentRequestOptions) =>
+      execute({
+        ...initialAgent,
+        config: { ...request.config!, cwd },
+        initialPrompt: request.initialPrompt ?? "",
+        initialGoal: request.initialGoal,
+        clientMessageId: initialAgent.clientMessageId,
+        images: request.images,
+        attachments: request.attachments,
+      }),
+  };
+  await agentCreation.result;
+  if (outcome === "background") clearConsumedDraft();
+  return outcome;
 }
 
 function buildComposerConfig(input: {
   serverId: string;
-  isConnected: boolean;
   workspaceDirectory: string | null;
   sourceDirectory: string | null;
   initialSetup?: WorkspaceDraftTabSetup | null;
 }): Parameters<typeof useAgentInputDraft>[0]["composer"] {
-  const { serverId, isConnected, workspaceDirectory, sourceDirectory, initialSetup } = input;
+  const { serverId, workspaceDirectory, sourceDirectory, initialSetup } = input;
   const workingDir = workspaceDirectory || sourceDirectory || undefined;
   return {
     initialServerId: serverId || null,
-    initialValues: buildComposerInitialValues({ workingDir, initialSetup }),
+    initialValues: buildComposerInitialValues({ initialSetup }),
     initialFeatureValues: initialSetup?.featureValues,
     isVisible: true,
-    onlineServerIds: isConnected && serverId ? [serverId] : [],
     lockedWorkingDir: workingDir,
   };
 }
@@ -1034,7 +1115,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   };
 }
 
-function submitWorkspaceDraft(input: SubmitDraftInput): void {
+function submitWorkspaceDraft(input: SubmitDraftInput): SubmitOutcome {
   const {
     serverId,
     clearDraft,
@@ -1048,7 +1129,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     initialSetup,
   } = input;
   const draftId = draftIdInput?.trim() || generateDraftId();
-  const clientMessageId = generateMessageId();
+  const clientMessageId = `${draftId}:initial-message`;
   const timestamp = Date.now();
   const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
     format: resolveComposerAttachmentSubmitFormat({
@@ -1062,7 +1143,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     composerState,
     initialSetup,
   });
-  useCreateFlowStore.getState().setPending({
+  const started = useCreateFlowStore.getState().trySetPending({
     serverId,
     draftId,
     workspaceId,
@@ -1074,6 +1155,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
     ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
   });
+  if (!started) return "navigated";
   useWorkspaceDraftSubmissionStore.getState().setPending({
     serverId,
     workspaceId,
@@ -1091,6 +1173,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     ...(submission.thinkingOptionId ? { thinkingOptionId: submission.thinkingOptionId } : {}),
     ...(submission.featureValues ? { featureValues: submission.featureValues } : {}),
     allowEmptyText: true,
+    agentCreation: input.agentCreation,
   });
   clearDraft("sent");
   navigateToWorkspace({
@@ -1098,6 +1181,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     workspaceId,
     target: submission.target,
   });
+  return "navigated";
 }
 
 function useNewWorkspaceHostSelector(input: {
@@ -1530,23 +1614,27 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   );
 
   return isCompact ? (
-    <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
+    <View testID="new-workspace-ref-picker-row" style={styles.formStack} pointerEvents="box-none">
       <FormRow>{projectControl}</FormRow>
       {hostControl ? <FormRow>{hostControl}</FormRow> : null}
       {isolationControl ? <FormRow>{isolationControl}</FormRow> : null}
       {baseControl ? <FormRow>{baseControl}</FormRow> : null}
       <FormRow>{launchControl}</FormRow>
       {/* Keep fixed stack height without separating the visible controls. */}
-      {isolationControl ? null : <View style={styles.baseSpacer} />}
-      {baseControl ? null : <View style={styles.baseSpacer} />}
+      {isolationControl ? null : <View style={styles.baseSpacer} pointerEvents="none" />}
+      {baseControl ? null : <View style={styles.baseSpacer} pointerEvents="none" />}
     </View>
   ) : (
-    <View testID="new-workspace-ref-picker-row" style={styles.formStackDesktop}>
+    <View
+      testID="new-workspace-ref-picker-row"
+      style={styles.formStackDesktop}
+      pointerEvents="box-none"
+    >
       {projectControl}
       {hostControl}
       {isolationControl}
       {baseControl}
-      <View style={styles.launchSpacer} />
+      <View style={styles.launchSpacer} pointerEvents="none" />
       {launchControl}
     </View>
   );
@@ -1562,10 +1650,14 @@ export function NewWorkspaceScreen({
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
-  const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
+  const mergeWorkspaces = useCallback(
+    (targetServerId: string, workspaces: Iterable<WorkspaceDescriptor>) => {
+      getHostRuntimeStore().acceptWorkspaceSnapshots(targetServerId, Array.from(workspaces));
+    },
+    [],
+  );
   const {
     allHosts,
     selectedServerId,
@@ -1586,10 +1678,14 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
+  const [creationIdentity] = useState(() => ({
+    draftId: draftId ?? generateDraftId(),
+    worktreeSlug: createNameId(),
+  }));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
-    typeof normalizeWorkspaceDescriptor
-  > | null>(null);
+  const [creationResult, setCreationResult] = useState<
+    WorkspaceCreationResult | { workspace: null }
+  >({ workspace: null });
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
@@ -1602,6 +1698,7 @@ export function NewWorkspaceScreen({
   const isolationPickerAnchorRef = useRef<View>(null);
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
+  const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
 
   // Launch target: what the composer submits to (chat agent, or a terminal
   // profile). Mirrors useWorkspaceIsolation's pattern below: the derived
@@ -1634,6 +1731,13 @@ export function NewWorkspaceScreen({
     terminalSubmitLabel,
     launchFocusKey,
   } = useTerminalComposerState({ launchTarget, terminalProfiles, terminalPromptText });
+  const terminalTextSource = useMemo(
+    () => ({
+      getSnapshot: () => terminalComposerValue,
+      subscribe: (_listener: () => void) => () => {},
+    }),
+    [terminalComposerValue],
+  );
   const terminalTextReplacement = useMemo(
     () => ({ key: launchFocusKey, text: terminalComposerValue }),
     [launchFocusKey, terminalComposerValue],
@@ -1645,7 +1749,7 @@ export function NewWorkspaceScreen({
     return () => clearTimeout(timer);
   }, [pickerSearchQuery]);
 
-  const workspace = createdWorkspace;
+  const { workspace } = creationResult;
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
   const {
@@ -1683,7 +1787,6 @@ export function NewWorkspaceScreen({
     draftKey,
     composer: buildComposerConfig({
       serverId: selectedServerId,
-      isConnected,
       workspaceDirectory: workspace?.workspaceDirectory ?? null,
       sourceDirectory: selectedSourceDirectory,
       initialSetup: forkDraftSetup?.setup,
@@ -1708,11 +1811,12 @@ export function NewWorkspaceScreen({
   }, []);
 
   const withConnectedClient = useCallback(() => {
-    if (!client || !isConnected) {
+    const connectedClient = getHostRuntimeStore().getClient(selectedServerId);
+    if (!connectedClient?.isConnected) {
       throw new Error(t("newWorkspace.errors.hostDisconnected"));
     }
-    return client;
-  }, [client, isConnected, t]);
+    return connectedClient;
+  }, [selectedServerId, t]);
 
   const clientReady = isConnected && Boolean(client);
   const hasSelectedSourceDirectory = selectedSourceDirectory !== null;
@@ -1946,45 +2050,17 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(nextOpen);
   }, []);
 
-  const buildCreateWorktreeInput = useCallback(
-    (input: {
-      cwd: string;
-      prompt: string;
-      attachments: AgentAttachment[];
-      checkoutRequest: PickerCheckoutRequest | undefined;
-    }): CreatePaseoWorktreeInput => {
-      if (!selectedProject) {
-        throw new Error("Choose a project");
-      }
-      if (!selectedSourceDirectory) {
-        throw new Error("Choose a host for this project");
-      }
-      const firstAgentContext = buildFirstAgentContext(input);
-      const hostProjectId = getHostProjectId(selectedProject, selectedServerId);
-      if (!hostProjectId) {
-        throw new Error("Project is not available on the selected host");
-      }
-
-      return {
-        cwd: selectedSourceDirectory,
-        projectId: hostProjectId,
-        worktreeSlug: createNameId(),
-        ...(firstAgentContext ? { firstAgentContext } : {}),
-        ...input.checkoutRequest,
-      };
-    },
-    [selectedProject, selectedServerId, selectedSourceDirectory],
-  );
-
   const ensureWorkspace = useCallback(
     async (input: {
       cwd: string;
       prompt: string;
       attachments: AgentAttachment[];
       withInitialAgent: boolean;
+      agent?: CreateWorkspaceRequestOptions["agent"];
+      onEvent?: (snapshot: CreationSnapshot) => void;
     }) => {
-      if (createdWorkspace) {
-        return createdWorkspace;
+      if (creationResult.workspace) {
+        return creationResult;
       }
       if (!selectedProject) {
         throw new Error("Choose a project");
@@ -2007,33 +2083,29 @@ export function NewWorkspaceScreen({
             selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
           )
         : undefined;
-      const normalizedWorkspace = supportsWorkspaceMultiplicity
-        ? await createMultiplicityWorkspace({
-            client: connectedClient,
-            isolation: effectiveIsolation,
-            project: selectedProject,
-            sourceDirectory: selectedSourceDirectory,
-            checkoutRequest,
-            withInitialAgent: input.withInitialAgent,
-            prompt: input.prompt,
-            attachments: input.attachments,
-            mergeWorkspaces,
-            serverId: selectedServerId,
-            createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
-          })
-        : await createAndMergeWorkspace({
-            client: connectedClient,
-            createInput: buildCreateWorktreeInput({ ...input, checkoutRequest }),
-            mergeWorkspaces,
-            serverId: selectedServerId,
-            createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
-          });
-      setCreatedWorkspace(normalizedWorkspace);
+      const normalizedWorkspace = await createMultiplicityWorkspace({
+        idempotencyKey: creationIdentity.draftId,
+        worktreeSlug: creationIdentity.worktreeSlug,
+        client: connectedClient,
+        isolation: createsWorktree ? "worktree" : "local",
+        project: selectedProject,
+        sourceDirectory: selectedSourceDirectory,
+        checkoutRequest,
+        withInitialAgent: input.withInitialAgent,
+        prompt: input.prompt,
+        attachments: input.attachments,
+        agent: input.agent,
+        onEvent: input.onEvent,
+        mergeWorkspaces,
+        serverId: selectedServerId,
+        createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
+      });
+      setCreationResult(normalizedWorkspace);
       return normalizedWorkspace;
     },
     [
-      buildCreateWorktreeInput,
-      createdWorkspace,
+      creationIdentity,
+      creationResult,
       effectiveIsolation,
       mergeWorkspaces,
       queryClient,
@@ -2058,31 +2130,49 @@ export function NewWorkspaceScreen({
         await updateFormPreferences({ launchTarget });
         if (isEmptyWorkspaceSubmission(payload)) {
           setPendingAction("empty");
+          let outcome: SubmitOutcome = "background";
           await runCreateEmptyWorkspace({
             payload,
-            ensureWorkspace,
+            ensureWorkspace: async (request) => (await ensureWorkspace(request)).workspace,
             serverId: selectedServerId,
-            navigate: (targetServerId, workspaceId) =>
-              navigateToWorkspace({ serverId: targetServerId, workspaceId }),
+            navigate: (targetServerId, workspaceId) => {
+              if (!isStillOnCreateScreen()) {
+                return;
+              }
+              outcome = "navigated";
+              navigateToWorkspace({ serverId: targetServerId, workspaceId });
+            },
           });
+          // Nothing navigated, so this screen may still be mounted under another route. Release
+          // the pending lock it would otherwise keep forever.
+          if (outcome === "background") {
+            setPendingAction(null);
+          }
           return;
         }
 
         setPendingAction("chat");
-        await runCreateChatAgent({
+        const outcome = await runCreateChatAgent({
           payload,
           composerState,
           forkDraftSetup,
           ensureWorkspace,
           serverId: selectedServerId,
           clearDraft: chatDraft.clear,
-          draftId,
+          draftKey,
+          draftId: creationIdentity.draftId,
+          draftContextScopeKey,
           supportsForgeSearch,
+          resolveClient: withConnectedClient,
+          isStillOnCreateScreen,
           labels: {
             composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
             selectModel: t("newWorkspace.errors.selectModel"),
           },
         });
+        if (outcome === "background") {
+          setPendingAction(null);
+        }
       } catch (error) {
         const message = toErrorMessage(error);
         setPendingAction(null);
@@ -2093,17 +2183,21 @@ export function NewWorkspaceScreen({
     },
     [
       composerState,
-      draftId,
+      draftContextScopeKey,
+      creationIdentity,
       chatDraft.clear,
       formPreferences.vortonMode,
+      draftKey,
       ensureWorkspace,
       forkDraftSetup,
+      isStillOnCreateScreen,
       launchTarget,
       selectedServerId,
       supportsForgeSearch,
       t,
       toast,
       updateFormPreferences,
+      withConnectedClient,
     ],
   );
 
@@ -2112,12 +2206,13 @@ export function NewWorkspaceScreen({
       setErrorMessage(null);
       await updateFormPreferences({ launchTarget });
       setPendingAction("terminal");
+      let outcome: SubmitOutcome = "background";
       await runCreateTerminalWorkspace({
         cwd: selectedSourceDirectory ?? "",
         prompt: terminalPromptText,
         profile: selectedTerminalProfile,
         profileName: selectedTerminalProfile?.name,
-        ensureWorkspace,
+        ensureWorkspace: async (request) => (await ensureWorkspace(request)).workspace,
         createTerminal: async (input) => {
           const connectedClient = withConnectedClient();
           const createdTerminal = await connectedClient.createTerminal(
@@ -2145,9 +2240,20 @@ export function NewWorkspaceScreen({
           withConnectedClient().sendTerminalInput(terminalId, { type: "input", data });
         },
         serverId: selectedServerId,
-        navigate: (targetServerId, workspaceId, target) =>
-          navigateToWorkspace({ serverId: targetServerId, workspaceId, target }),
+        // The terminal is spawned and fed its command before this runs, so skipping the
+        // navigation costs nothing: it is standalone, and `reconcileTabs` auto-opens standalone
+        // terminals when the workspace is next visited.
+        navigate: (targetServerId, workspaceId, target) => {
+          if (!isStillOnCreateScreen()) {
+            return;
+          }
+          outcome = "navigated";
+          navigateToWorkspace({ serverId: targetServerId, workspaceId, target });
+        },
       });
+      if (outcome === "background") {
+        setPendingAction(null);
+      }
     } catch (error) {
       const message = toErrorMessage(error);
       setPendingAction(null);
@@ -2156,6 +2262,7 @@ export function NewWorkspaceScreen({
     }
   }, [
     ensureWorkspace,
+    isStillOnCreateScreen,
     launchTarget,
     queryClient,
     selectedServerId,
@@ -2201,11 +2308,6 @@ export function NewWorkspaceScreen({
       selectedServerId,
       supportsWorkspaceMultiplicity,
     ],
-  );
-
-  const contentStyle = useMemo(
-    () => getContentStyle({ isCompact, insetBottom: insets.bottom }),
-    [isCompact, insets.bottom],
   );
 
   const agentControlsWithDisabled = useMemo(
@@ -2288,89 +2390,134 @@ export function NewWorkspaceScreen({
 
   const screenHeaderLeft = useMemo(() => <SidebarMenuToggle />, []);
 
+  const composer = isTerminalLaunch ? (
+    <Composer
+      key="terminal"
+      externalKeyboardShift={formPreferences.vortonMode}
+      inputMode="terminal"
+      readOnly={!terminalTakesPrompt}
+      placeholder={terminalPlaceholder}
+      submitLabel={terminalSubmitLabel}
+      agentId={draftKey}
+      serverId={selectedServerId}
+      isPaneFocused={true}
+      onSubmitMessage={handleSubmitTerminalLaunch}
+      allowEmptySubmit={true}
+      submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
+      submitButtonTestID="new-workspace-launch-submit"
+      isSubmitLoading={isPending}
+      submitBehavior="preserve-and-lock"
+      blurOnSubmit={true}
+      textSource={terminalTextSource}
+      onChangeText={setTerminalPromptText}
+      textReplacement={terminalTextReplacement}
+      attachments={NO_TERMINAL_ATTACHMENTS}
+      onChangeAttachments={noopChangeAttachments}
+      cwd={selectedSourceDirectory ?? ""}
+      clearDraft={noopClearDraft}
+      autoFocus={terminalTakesPrompt}
+      autoFocusKey={launchFocusKey}
+    />
+  ) : (
+    <Composer
+      key="chat"
+      externalKeyboardShift={formPreferences.vortonMode}
+      agentId={draftKey}
+      serverId={selectedServerId}
+      isPaneFocused={true}
+      onSubmitMessage={handleSubmitNewWorkspace}
+      onSubmitGoal={handleSubmitNewWorkspace}
+      allowEmptySubmit={true}
+      submitButtonAccessibilityLabel={t("newWorkspace.create")}
+      submitButtonTestID="workspace-create-submit"
+      submitIcon="return"
+      isSubmitLoading={isPending}
+      waitForForgeAutoAttachOnSubmit
+      submitBehavior="preserve-and-lock"
+      blurOnSubmit={true}
+      textSource={chatDraft.textSource}
+      onChangeText={chatDraft.editText}
+      textReplacement={chatDraft.textReplacement}
+      attachments={chatDraft.attachments}
+      attachmentScopeKeys={visibleDraftContextScopeKeys}
+      onChangeAttachments={chatDraft.setAttachments}
+      onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
+      onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
+      cwd={selectedSourceDirectory ?? ""}
+      clearDraft={handleClearDraft}
+      autoFocus
+      autoFocusKey={launchFocusKey}
+      commandDraftConfig={composerState?.commandDraftConfig}
+      agentControls={agentControlsWithDisabled}
+    />
+  );
   return (
     <FileDropZone style={styles.container}>
       <ScreenHeader left={screenHeaderLeft} borderless />
-      <View style={contentStyle}>
+      <View style={styles.content}>
         <TitlebarDragRegion />
-        <KeyboardTranslateView style={animatedStaticStyles.centered}>
-          <View style={styles.composerTitleContainer}>
-            <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
-          </View>
-          {formStack}
-          {isTerminalLaunch ? (
-            <Composer
-              key="terminal"
-              externalKeyboardShift
-              inputMode="terminal"
-              readOnly={!terminalTakesPrompt}
-              placeholder={terminalPlaceholder}
-              submitLabel={terminalSubmitLabel}
-              agentId={draftKey}
-              serverId={selectedServerId}
-              isPaneFocused={true}
-              onSubmitMessage={handleSubmitTerminalLaunch}
-              allowEmptySubmit={true}
-              submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
-              submitButtonTestID="new-workspace-launch-submit"
-              isSubmitLoading={isPending}
-              submitBehavior="preserve-and-lock"
-              blurOnSubmit={true}
-              value={terminalComposerValue}
-              onChangeText={setTerminalPromptText}
-              textReplacement={terminalTextReplacement}
-              attachments={NO_TERMINAL_ATTACHMENTS}
-              onChangeAttachments={noopChangeAttachments}
-              cwd={selectedSourceDirectory ?? ""}
-              clearDraft={noopClearDraft}
-              autoFocus={terminalTakesPrompt}
-              autoFocusKey={launchFocusKey}
-            />
-          ) : (
-            <Composer
-              key="chat"
-              externalKeyboardShift
-              agentId={draftKey}
-              serverId={selectedServerId}
-              isPaneFocused={true}
-              onSubmitMessage={handleSubmitNewWorkspace}
-              onSubmitGoal={handleSubmitNewWorkspace}
-              allowEmptySubmit={true}
-              submitButtonAccessibilityLabel={t("newWorkspace.create")}
-              submitButtonTestID="workspace-create-submit"
-              submitIcon="return"
-              isSubmitLoading={isPending}
-              waitForForgeAutoAttachOnSubmit
-              submitBehavior="preserve-and-lock"
-              blurOnSubmit={true}
-              value={chatDraft.text}
-              onChangeText={chatDraft.editText}
-              textReplacement={chatDraft.textReplacement}
-              attachments={chatDraft.attachments}
-              attachmentScopeKeys={visibleDraftContextScopeKeys}
-              onChangeAttachments={chatDraft.setAttachments}
-              onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
-              onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
-              cwd={selectedSourceDirectory ?? ""}
-              clearDraft={handleClearDraft}
-              autoFocus
-              autoFocusKey={launchFocusKey}
-              commandDraftConfig={composerState?.commandDraftConfig}
-              agentControls={agentControlsWithDisabled}
-            />
-          )}
+        <NewWorkspaceLayout
+          isCompact={isCompact}
+          title={t("newWorkspace.title")}
+          formStack={formStack}
+        >
+          {composer}
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-        </KeyboardTranslateView>
+        </NewWorkspaceLayout>
       </View>
     </FileDropZone>
   );
 }
 
+function NewWorkspaceLayout({
+  isCompact,
+  title,
+  formStack,
+  children,
+}: {
+  isCompact: boolean;
+  title: string;
+  formStack: ReactNode;
+  children: ReactNode;
+}) {
+  const vortonMode = useVortonMode();
+  const insets = useSafeAreaInsets();
+  const setupFields = (
+    <>
+      <View style={styles.composerTitleContainer} pointerEvents="none">
+        <Text style={styles.composerTitle}>{title}</Text>
+      </View>
+      {formStack}
+    </>
+  );
+  if (vortonMode) {
+    return (
+      <View
+        style={[
+          styles.content,
+          styles.vortonContent,
+          isCompact
+            ? [styles.contentCompact, { paddingBottom: insets.bottom }]
+            : styles.contentCentered,
+        ]}
+      >
+        <KeyboardTranslateView style={animatedStaticStyles.centered}>
+          {setupFields}
+          {children}
+        </KeyboardTranslateView>
+      </View>
+    );
+  }
+  return (
+    <ComposerDock centered={!isCompact}>
+      {setupFields}
+      {children}
+    </ComposerDock>
+  );
+}
+
 const animatedStaticStyles = RNStyleSheet.create({
-  centered: {
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
-  },
+  centered: { width: "100%", maxWidth: MAX_CONTENT_WIDTH },
 });
 
 const styles = StyleSheet.create((theme) => ({
@@ -2382,15 +2529,13 @@ const styles = StyleSheet.create((theme) => ({
   content: {
     position: "relative",
     flex: 1,
-    alignItems: "center",
   },
+  vortonContent: { alignItems: "center" },
   contentCentered: {
     justifyContent: "center",
     paddingBottom: HEADER_INNER_HEIGHT + theme.spacing[6],
   },
-  contentCompact: {
-    justifyContent: "flex-end",
-  },
+  contentCompact: { justifyContent: "flex-end" },
   composerTitleContainer: {
     marginBottom: theme.spacing[8],
     paddingLeft: theme.spacing[6],

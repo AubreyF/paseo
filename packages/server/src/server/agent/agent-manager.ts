@@ -10,6 +10,10 @@ import {
 import type { MessageQueueService } from "../message-queue/service.js";
 import type { QueueItem } from "@getpaseo/protocol/message-queue";
 import { mergeGoalHistory } from "./goal-history.js";
+import { projectTimelineRows } from "./timeline-projection.js";
+import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
+import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
+import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
 import { randomUUID } from "node:crypto";
 import { countRunningWorkers } from "./worker-activity.js";
 import { basename, resolve } from "node:path";
@@ -103,6 +107,7 @@ import {
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
+import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
@@ -113,6 +118,7 @@ import {
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
+import { extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -294,6 +300,7 @@ interface AgentManagerRescueTimeouts {
 }
 
 interface ProviderEnabledFlag {
+  configuredEnv?: Record<string, string>;
   enabled: boolean;
   derivedFromProviderId?: string | null;
   validateOptions?: (options: ProviderOptions | undefined) => ProviderOptions | undefined;
@@ -321,6 +328,7 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  pluginLifecycle?: PluginLifecycle;
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
   idFactory?: () => string;
@@ -370,7 +378,7 @@ export interface WaitForAgentStartOptions {
   signal?: AbortSignal;
 }
 
-type AttentionState =
+export type AttentionState =
   | { requiresAttention: false }
   | {
       requiresAttention: true;
@@ -1090,6 +1098,7 @@ export class AgentManager {
       }
     }
   }
+  private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly governedClientGenerations = new Map<AgentProvider, number>();
   private readonly controllerSessions = new Map<
@@ -1150,6 +1159,7 @@ export class AgentManager {
     this.now = options.now ?? Date.now;
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options.registry;
+    this.pluginLifecycle = options.pluginLifecycle;
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
@@ -1196,6 +1206,7 @@ export class AgentManager {
   updateProviderRegistry(input: {
     providerDefinitions: ProviderEnabledMap;
     clients: ProviderClientMap;
+    retiredProviders?: readonly AgentProvider[];
   }): void {
     const providers = new Set([...this.clients.keys(), ...Object.keys(input.clients)]);
     for (const provider of providers) {
@@ -1222,6 +1233,18 @@ export class AgentManager {
     for (const [provider, client] of Object.entries(input.clients)) {
       if (client) {
         this.clients.set(provider, client);
+      }
+    }
+
+    for (const provider of input.retiredProviders ?? []) {
+      for (const agent of this.agents.values()) {
+        if (agent.provider !== provider) continue;
+        void this.closeAgent(agent.id).catch((error) => {
+          this.logger.warn(
+            { err: error, agentId: agent.id, provider },
+            "Failed to close agent after provider retirement",
+          );
+        });
       }
     }
   }
@@ -1776,7 +1799,10 @@ export class AgentManager {
   async getTimelineRows(id: string): Promise<AgentTimelineRow[]> {
     this.requireAgent(id);
     if (this.durableTimelineStore) {
-      return await this.durableTimelineStore.getCommittedRows(id);
+      return projectTimelineRows({
+        rows: await this.durableTimelineStore.getCommittedRows(id),
+        mode: "projected",
+      }).map((entry) => Object.assign({ seq: entry.seqEnd }, entry));
     }
     return this.timelineStore.getRows(id);
   }
@@ -1855,6 +1881,47 @@ export class AgentManager {
     return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
   }
 
+  private async applyCreatePluginDefaults(
+    config: AgentSessionConfig,
+    options: CreateAgentOptions,
+  ): Promise<{ config: AgentSessionConfig; options: CreateAgentOptions }> {
+    if (this.pluginLifecycle && !config.internal) {
+      const request = await this.pluginLifecycle.before("agent.create", {
+        config: structuredClone(config),
+        env: { ...options.env },
+      });
+      // Hooks may supply defaults, but cannot rewrite the admitted Vorton launch.
+      config = {
+        ...request.config,
+        ...config,
+        internal: config.internal,
+        profileId: config.profileId,
+        profileLaunch: config.profileLaunch,
+        quotaReservePolicy: config.quotaReservePolicy,
+        quotaReserve: config.quotaReserve,
+        quotaPausedAt: config.quotaPausedAt,
+        quotaResetAt: config.quotaResetAt,
+        ...(config.profileLaunch
+          ? {
+              model: config.model,
+              thinkingOptionId: config.thinkingOptionId,
+              featureValues: config.featureValues,
+              systemPrompt: config.systemPrompt,
+            }
+          : {}),
+      };
+      options = {
+        ...options,
+        env: {
+          ...request.env,
+          ...options.env,
+          ...this.providerDefinitions.get(config.provider)?.configuredEnv,
+        },
+      };
+    }
+    return { config, options };
+  }
+
   private async createAgentInternal(
     config: AgentSessionConfig,
     agentId: string | undefined,
@@ -1862,6 +1929,7 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+    ({ config, options } = await this.applyCreatePluginDefaults(config, options));
     if (
       this.controllerSessions.has(resolvedAgentId) ||
       this.agents.get(resolvedAgentId)?.config.controllerExecutionId ||
@@ -1885,6 +1953,7 @@ export class AgentManager {
       storedConfig.cwd,
       paseoToolPolicy,
       options?.env,
+      { reason: "create", purpose: "interactive", workspaceId: options.workspaceId ?? null },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
@@ -1893,13 +1962,19 @@ export class AgentManager {
     const parentId = options.labels?.[PARENT_AGENT_ID_LABEL];
     const pausedAt = parentId ? this.agents.get(parentId)?.config.quotaPausedAt : undefined;
     if (pausedAt) storedConfig.quotaPausedAt = pausedAt;
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
+    const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
       owner: options.owner,
       historyPrimed: true,
     });
+    if (!agent.internal) {
+      this.pluginLifecycle?.emit("agent.created", {
+        agent: describeHookAgent({ ...agent, title: agent.config.title }),
+      });
+    }
+    return agent;
   }
 
   private buildCreateSessionOptions(options?: {
@@ -1923,11 +1998,24 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      attention?: AttentionState;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
+    const resolvedAgentId = validateAgentId(
+      agentId ?? this.idFactory(),
+      "resumeAgentFromPersistence",
+    );
     return this.trackAgentRegistrationOperation(
-      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      this.runLifecycleMutation(resolvedAgentId, () =>
+        this.resumeAgentFromPersistenceInternal(
+          handle,
+          overrides,
+          resolvedAgentId,
+          options,
+          resumeOptions,
+        ),
+      ),
     );
   }
 
@@ -1972,6 +2060,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      attention?: AttentionState;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1999,6 +2088,12 @@ export class AgentManager {
       resolvedAgentId,
     );
 
+    // Decide residency from durable state inside the lifecycle lane. A loader may
+    // have read the record before a queued archive or restore completed.
+    const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
+    const currentResumeOptions = record
+      ? { purpose: record.archivedAt ? ("history" as const) : ("interactive" as const) }
+      : resumeOptions;
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
     if (!available) {
@@ -2012,18 +2107,25 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       paseoToolPolicy,
+      undefined,
+      {
+        reason: "resume",
+        purpose: currentResumeOptions?.purpose ?? "interactive",
+        workspaceId: options?.workspaceId ?? null,
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(
       handle,
       providerLaunchConfig,
       launchContext,
-      resumeOptions,
+      currentResumeOptions,
     );
     await this.requireExternalMcpSupport(session, storedConfig);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       persistence: handle,
+      restoring: true,
     });
   }
 
@@ -2072,6 +2174,8 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       paseoToolPolicy,
+      undefined,
+      { reason: "import", purpose: "interactive", workspaceId: input.workspaceId },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
@@ -2165,6 +2269,8 @@ export class AgentManager {
       client,
       storedConfig.cwd,
       paseoToolPolicy,
+      undefined,
+      { reason: "refresh", purpose: "interactive", workspaceId: existing.workspaceId },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     if (
@@ -2215,6 +2321,7 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
+        restoring: true,
       });
     } catch (error) {
       if (closedExisting) {
@@ -2328,14 +2435,11 @@ export class AgentManager {
       "agent.manager.close.start",
     );
     await this.drainSessionEvents(agentId);
+    // Retain ownership until shutdown succeeds. A failed close may still own a
+    // native writer, so publishing a resumable closed snapshot would orphan it.
+    await agent.session.close();
     this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
-    let closeError: unknown;
-    try {
-      await agent.session.close();
-    } catch (error) {
-      closeError = error;
-    }
 
     let persistError: unknown;
     try {
@@ -2353,9 +2457,6 @@ export class AgentManager {
       "agent.manager.close.complete",
     );
 
-    if (closeError !== undefined) {
-      throw closeError;
-    }
     if (persistError !== undefined) {
       throw persistError;
     }
@@ -2381,7 +2482,10 @@ export class AgentManager {
     return this.runLifecycleMutation(agentId, () => this.archiveAgentUnlocked(agentId));
   }
 
-  private async archiveAgentUnlocked(agentId: string): Promise<{ archivedAt: string }> {
+  private async archiveAgentUnlocked(
+    agentId: string,
+    requestedArchivedAt?: string,
+  ): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
     await this.assertControllerSettled(agent);
     if (!this.registry) {
@@ -2396,9 +2500,10 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
     }
 
-    const { archivedAt } = await this.markRecordArchived(stored);
+    const { archivedAt } = await this.markRecordArchived(stored, requestedArchivedAt);
     agent.updatedAt = new Date(archivedAt);
     await this.closeAgentRuntime(agentId);
+    await this.syncNativeArchiveState(stored.provider, stored.persistence, "archive");
     this.discardRetainedAgentState(agentId);
 
     await this.cascadeArchiveChildren(agentId);
@@ -2445,29 +2550,44 @@ export class AgentManager {
         } else if (this.agents.has(currentChild.id)) {
           await this.archiveAgentUnlocked(currentChild.id);
         } else {
-          await this.archiveSnapshot(currentChild.id, new Date().toISOString());
+          await this.archiveSnapshotUnlocked(currentChild.id, new Date().toISOString());
         }
       });
     }
   }
 
-  private async markRecordArchived(record: StoredAgentRecord): Promise<ArchivedStoredAgentRecord> {
-    const registry = this.requireRegistry();
-    const archivedAt = new Date().toISOString();
-    const archivedRecord = buildArchivedAgentRecord(record, { archivedAt, updatedAt: archivedAt });
-
-    await registry.upsert(archivedRecord);
-
-    await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
+  private async markRecordArchived(
+    record: StoredAgentRecord,
+    archivedAt = new Date().toISOString(),
+  ): Promise<ArchivedStoredAgentRecord> {
+    const archivedRecord = await this.persistArchivedRecord(record, {
+      archivedAt,
+      updatedAt: archivedAt,
+    });
 
     if (this.agents.has(record.id)) {
       this.notifyAgentState(record.id);
     } else if (!archivedRecord.internal) {
-      this.dispatchArchivedStoredAgent(archivedRecord);
+      this.dispatchStoredAgentState(archivedRecord);
     }
 
     await this.fireAgentArchived(record.id);
 
+    return archivedRecord;
+  }
+
+  private async persistArchivedRecord(
+    record: StoredAgentRecord,
+    options: { archivedAt: string; updatedAt?: string },
+  ): Promise<ArchivedStoredAgentRecord> {
+    const archivedRecord = buildArchivedAgentRecord(record, options);
+    await this.requireRegistry().upsert(archivedRecord);
+    if (!record.archivedAt && !record.internal) {
+      this.pluginLifecycle?.emit("agent.archived", {
+        agent: describeHookAgent(archivedRecord),
+        archivedAt: archivedRecord.archivedAt,
+      });
+    }
     return archivedRecord;
   }
 
@@ -2483,8 +2603,9 @@ export class AgentManager {
     }
   }
 
-  private dispatchArchivedStoredAgent(record: StoredAgentRecord): void {
+  private dispatchStoredAgentState(record: StoredAgentRecord): void {
     const updatedAt = new Date(record.updatedAt);
+    const attention = extractAttention(record);
     this.dispatch({
       type: "agent_state",
       agent: {
@@ -2518,7 +2639,7 @@ export class AgentManager {
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
         lastError: record.lastError ?? undefined,
-        attention: { requiresAttention: false },
+        attention,
         internal: record.internal,
         labels: record.labels,
       },
@@ -2884,14 +3005,65 @@ export class AgentManager {
     }
   }
 
+  async markAgentUnread(agentId: string): Promise<void> {
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      const isFinished = liveAgent.lifecycle === "idle";
+      const hasPendingPermissions = liveAgent.pendingPermissions.size > 0;
+      const canMarkUnread =
+        isFinished && !liveAgent.attention.requiresAttention && !hasPendingPermissions;
+      if (!canMarkUnread) {
+        throw new Error(`Agent is no longer finished and read: ${agentId}`);
+      }
+      liveAgent.attention = {
+        requiresAttention: true,
+        attentionReason: "finished",
+        attentionTimestamp: new Date(),
+      };
+      await this.persistSnapshot(liveAgent);
+      this.emitState(liveAgent, { persist: false });
+      return;
+    }
+
+    const registry = this.requireRegistry();
+    const record = await registry.get(agentId);
+    const hasFinishedStatus = record?.lastStatus === "idle" || record?.lastStatus === "closed";
+    const canMarkUnread =
+      record && !record.internal && !record.archivedAt && !record.requiresAttention;
+    if (!canMarkUnread || !hasFinishedStatus) {
+      throw new Error(`Agent is no longer finished and read: ${agentId}`);
+    }
+    const updatedAt = this.nextStoredUpdatedAt(record);
+    const nextRecord: StoredAgentRecord = {
+      ...record,
+      updatedAt,
+      requiresAttention: true,
+      attentionReason: "finished",
+      attentionTimestamp: updatedAt,
+    };
+    await registry.upsert(nextRecord);
+    this.dispatchStoredAgentState(nextRecord);
+  }
+
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
     await this.messageQueueControl?.pause(agentId);
+    return this.runLifecycleMutation(agentId, () =>
+      this.archiveSnapshotUnlocked(agentId, archivedAt),
+    );
+  }
+
+  private async archiveSnapshotUnlocked(
+    agentId: string,
+    archivedAt: string,
+  ): Promise<StoredAgentRecord> {
     const registry = this.requireRegistry();
-    const liveAgent = this.getAgent(agentId);
-    if (liveAgent) {
-      await this.persistSnapshot(liveAgent, {
-        internal: liveAgent.internal,
-      });
+    // A stored-only archive can have waited behind a persisted resume. Reuse the
+    // live archive transition so its newly acquired runtime is closed as well.
+    if (this.agents.has(agentId)) {
+      await this.archiveAgentUnlocked(agentId, archivedAt);
+      const archivedRecord = await registry.get(agentId);
+      if (!archivedRecord) throw new Error(`Agent not found: ${agentId}`);
+      return archivedRecord;
     }
 
     const record = await registry.get(agentId);
@@ -2899,19 +3071,12 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    const nextRecord = buildArchivedAgentRecord(record, { archivedAt });
-    await registry.upsert(nextRecord);
+    const nextRecord = await this.persistArchivedRecord(record, { archivedAt });
 
     await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
 
-    if (this.agents.has(agentId)) {
-      this.notifyAgentState(agentId);
-    } else {
-      this.discardRetainedAgentState(agentId);
-      if (!nextRecord.internal) {
-        this.dispatchArchivedStoredAgent(nextRecord);
-      }
-    }
+    this.discardRetainedAgentState(agentId);
+    if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
 
     await this.fireAgentArchived(agentId);
     await this.cascadeArchiveChildren(agentId);
@@ -2923,12 +3088,24 @@ export class AgentManager {
     agentId: string,
     updates?: { workspaceId?: string; labels?: AgentLabelPatch },
   ): Promise<boolean> {
+    return this.runLifecycleMutation(agentId, () =>
+      this.unarchiveSnapshotUnlocked(agentId, updates),
+    );
+  }
+
+  private async unarchiveSnapshotUnlocked(
+    agentId: string,
+    updates?: { workspaceId?: string; labels?: AgentLabelPatch },
+  ): Promise<boolean> {
     const registry = this.requireRegistry();
     const record = await registry.get(agentId);
     if (!record || !record.archivedAt) {
       return false;
     }
 
+    // Close and native restore share the lifecycle lane with persisted resume.
+    // No new history or interactive runtime can acquire the writer between them.
+    if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId);
     await this.syncNativeArchiveState(record.provider, record.persistence, "restore");
 
     await registry.upsert({
@@ -3151,6 +3328,13 @@ export class AgentManager {
       return result.turnId;
     } catch (error) {
       if (pendingRun.settled) {
+        throw error;
+      }
+      if (isStaleProviderSessionError(error)) {
+        pendingRun.start = { status: "failed", error: error.message };
+        agent.pendingReplacement = false;
+        if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
+        this.runs.settleForegroundRun(agentId, pendingRun.token);
         throw error;
       }
       agent.pendingReplacement = false;
@@ -3713,6 +3897,9 @@ export class AgentManager {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void> {
     const agent = this.requireAgent(agentId);
+    if (agent.inFlightPermissionResponses.has(requestId)) {
+      throw new Error("A response to this permission request is already being submitted");
+    }
     agent.inFlightPermissionResponses.add(requestId);
 
     try {
@@ -3998,8 +4185,11 @@ export class AgentManager {
           epoch: this.timelineStore.getEpoch(agentId),
         });
       }
-      await this.refreshRuntimeInfo(agent);
+      // Rewind stages provider events under the run lock; publish its final state directly.
+      this.refreshSessionPersistence(agent);
+      await this.refreshSessionState(agent, { emit: false });
       await this.persistSnapshot(agent);
+      this.emitState(agent, { persist: false });
       this.logger.info(
         { agentId, provider: agent.provider, messageId, mode },
         "agent.rewind.complete",
@@ -4270,6 +4460,12 @@ export class AgentManager {
       lastUsage?: AgentUsage;
       lastError?: string;
       attention?: AttentionState;
+      /**
+       * Bringing a known agent back, rather than starting a new one. Its timestamps and
+       * attention come from what was already recorded, and installing the session is not
+       * activity in it.
+       */
+      restoring?: boolean;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
       workspaceId?: string;
@@ -4326,7 +4522,12 @@ export class AgentManager {
       await this.refreshSessionState(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
       managed.lifecycle = "idle";
-      this.touchUpdatedAt(managed);
+      // Stamping now over a restored timestamp rewrote the workspace's "last used" in the
+      // sidebar every time a chat was reopened, because workspace `statusEnteredAt` is
+      // re-derived from persisted agent `updatedAt` on every daemon start.
+      if (!options?.restoring) {
+        this.touchUpdatedAt(managed);
+      }
       await this.persistSnapshot(managed);
       this.assertAgentRegistrationActive(managed);
       this.emitState(managed, { persist: false });
@@ -5191,14 +5392,18 @@ export class AgentManager {
 
   private onStreamThreadStarted(agent: ActiveManagedAgent): void {
     const previousSessionId = agent.persistence?.sessionId ?? null;
+    this.refreshSessionPersistence(agent);
+    if (agent.persistence?.sessionId !== previousSessionId) {
+      this.emitState(agent);
+    }
+    void this.refreshRuntimeInfo(agent);
+  }
+
+  private refreshSessionPersistence(agent: ActiveManagedAgent): void {
     const handle = agent.session.describePersistence();
     if (handle) {
       agent.persistence = attachPersistenceCwd(handle, agent.cwd);
-      if (agent.persistence?.sessionId !== previousSessionId) {
-        this.emitState(agent);
-      }
     }
-    void this.refreshRuntimeInfo(agent);
   }
 
   private async onStreamTimelineEvent(params: {
@@ -5406,6 +5611,7 @@ export class AgentManager {
   ): void {
     const hadPendingPermissions = agent.pendingPermissions.size > 0;
     agent.pendingPermissions.set(event.request.id, event.request);
+    this.refreshSessionPersistence(agent);
     if (!hadPendingPermissions && !agent.internal) {
       this.broadcastAgentAttention(agent, "permission");
     }
@@ -5420,6 +5626,7 @@ export class AgentManager {
   }): void {
     const { agent, event, options, flags } = params;
     agent.pendingPermissions.delete(event.requestId);
+    this.refreshSessionPersistence(agent);
     if (!options?.fromHistory && agent.inFlightPermissionResponses.has(event.requestId)) {
       agent.bufferedPermissionResolutions.set(event.requestId, event);
       flags.shouldDispatchEvent = false;
@@ -5876,6 +6083,14 @@ export class AgentManager {
       "agent.manager.dispatch_stream",
     );
     this.dispatch({ type: "agent_stream", agentId, event, ...metadata });
+    if (this.pluginLifecycle && agent && !agent.internal && event.type !== "timeline") {
+      publishAgentStream(
+        this.pluginLifecycle,
+        describeHookAgent({ ...agent, title: agent.config.title }),
+        event,
+        this.timelineStore.getItems(agentId),
+      );
+    }
   }
 
   private dispatch(event: AgentManagerEvent): void {
@@ -6071,11 +6286,31 @@ export class AgentManager {
     cwd: string,
     paseoToolPolicy: ProviderPaseoToolsPolicy | undefined,
     env?: Record<string, string>,
+    opening?: {
+      reason: PluginSessionOpenRequest["reason"];
+      purpose: PluginSessionOpenRequest["purpose"];
+      workspaceId?: string | null;
+    },
   ): Promise<AgentLaunchContext> {
+    if (this.pluginLifecycle) {
+      const request: PluginSessionOpenRequest = {
+        agentId,
+        provider: client.provider,
+        cwd,
+        workspaceId: opening?.workspaceId ?? null,
+        reason: opening?.reason ?? "resume",
+        purpose: opening?.purpose ?? "interactive",
+        env: { ...env },
+      };
+      const transformed = await this.pluginLifecycle.before("agent.session_open", request);
+      env = { ...transformed.env, ...env };
+    }
     const context: AgentLaunchContext = {
       agentId,
       env: {
         ...env,
+        // Configured account credentials and homes remain authoritative on create and resume.
+        ...this.providerDefinitions.get(client.provider)?.configuredEnv,
         PASEO_AGENT_ID: agentId,
         PASEO_AGENT_CWD: cwd,
       },

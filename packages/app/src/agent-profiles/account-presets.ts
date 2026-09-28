@@ -30,8 +30,12 @@ export function accountPresets(input: {
   }
   const query = input.query.trim().toLowerCase();
   return [...groups.values()].filter((group) => {
+    const models = input.entries?.find((entry) => entry.provider === group.provider)?.models;
+    const catalogTerms =
+      group.provider === "pi" ? (models?.map((model) => `${model.label} ${model.id}`) ?? []) : [];
     const searchable = [
       group.label,
+      ...catalogTerms,
       ...group.rows.map((row) => {
         const definition = input.definitions.find((profile) => profile.id === row.id);
         return `${row.name} ${row.summary} ${definition?.nickname ?? ""}`;

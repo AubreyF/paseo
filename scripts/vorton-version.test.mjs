@@ -8,7 +8,8 @@ import test from "node:test";
 const script = path.resolve("scripts/vorton-version.mjs");
 test("commit versions advance once, preserve staging, and synchronize lock metadata", () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "vorton-version-"));
-  const run = (bin, args) => execFileSync(bin, args, { cwd, encoding: "utf8", stdio: "pipe" });
+  const run = (bin, args) =>
+    execFileSync(bin, args, { cwd, encoding: "utf8", stdio: "pipe", maxBuffer: 16 * 1024 * 1024 });
   const git = (...args) => run("git", args);
   const write = (file, value) =>
     writeFileSync(path.join(cwd, file), `${JSON.stringify(value, null, 2)}\n`);
@@ -27,6 +28,8 @@ test("commit versions advance once, preserve staging, and synchronize lock metad
     });
     write("packages/a/package.json", { name: "a", version: "0.7.2" });
     write("package-lock.json", {
+      // Real monorepo lockfiles exceed Node's default subprocess buffer.
+      fixturePadding: "x".repeat(1024 * 1024),
       version: "0.7.2",
       packages: { "": { version: "0.7.2" }, "packages/a": { version: "0.7.2" } },
     });
@@ -60,6 +63,30 @@ test("commit versions advance once, preserve staging, and synchronize lock metad
     write("package.json", root);
     run(process.execPath, [script]);
     assert.equal(read("package.json").version, "0.7.3-vorton.1");
+    root.version = "0.9.0-beta.2";
+    write("package.json", root);
+    run(process.execPath, [script]);
+    assert.equal(read("package.json").version, "0.9.0-beta.2.vorton.1");
+    git("add", "package.json", "packages/a/package.json", "package-lock.json");
+    git("commit", "-m", "beta base");
+    run(process.execPath, [script, "--hook"]);
+    assert.equal(read("package.json").version, "0.9.0-beta.2.vorton.2");
+    root.version = "0.9.0-beta.1";
+    write("package.json", root);
+    assert.throws(() => run(process.execPath, [script]), /cannot decrease/);
+    root.version = "0.9.0-beta.3";
+    write("package.json", root);
+    run(process.execPath, [script]);
+    assert.equal(read("package.json").version, "0.9.0-beta.3.vorton.1");
+    root.version = "0.9.0";
+    write("package.json", root);
+    run(process.execPath, [script]);
+    assert.equal(read("package.json").version, "0.9.0-vorton.1");
+    git("add", "package.json", "packages/a/package.json", "package-lock.json");
+    git("commit", "-m", "stable base");
+    root.version = "0.9.0-beta.3";
+    write("package.json", root);
+    assert.throws(() => run(process.execPath, [script]), /cannot decrease/);
     root.version = "0.7.1";
     write("package.json", root);
     assert.throws(() => run(process.execPath, [script]), /cannot decrease/);
@@ -68,46 +95,53 @@ test("commit versions advance once, preserve staging, and synchronize lock metad
   }
 });
 
-test("merge versions advance beyond both parents and remain stable across preparation", () => {
-  const cwd = mkdtempSync(path.join(tmpdir(), "vorton-merge-version-"));
-  const run = (bin, args) => execFileSync(bin, args, { cwd, encoding: "utf8", stdio: "pipe" });
-  const git = (...args) => run("git", args);
-  const writeVersion = (version) => {
-    writeFileSync(
-      path.join(cwd, "package.json"),
-      JSON.stringify({ name: "root", version, workspaces: [] }),
-    );
-    writeFileSync(
-      path.join(cwd, "package-lock.json"),
-      JSON.stringify({ version, packages: { "": { version } } }),
-    );
-  };
-  const version = () => JSON.parse(readFileSync(path.join(cwd, "package.json"), "utf8")).version;
-  try {
-    git("init", "-b", "task");
-    git("config", "user.name", "Version test");
-    git("config", "user.email", "version@example.invalid");
-    git("config", "core.hooksPath", "/dev/null");
-    writeVersion("0.7.2-vorton.11");
-    git("add", ".");
-    git("commit", "-m", "task fixture");
-    git("checkout", "-b", "incoming");
-    writeVersion("0.7.2-vorton.23");
-    git("add", ".");
-    git("commit", "-m", "incoming fixture");
-    git("checkout", "task");
-    git("merge", "--no-ff", "--no-commit", "incoming");
-    run(process.execPath, [script]);
-    assert.equal(version(), "0.7.2-vorton.24");
-    git("add", ".");
-    run(process.execPath, [script, "--hook"]);
-    run(process.execPath, [script, "--check"]);
-    assert.equal(version(), "0.7.2-vorton.24");
-    assert.equal(
-      JSON.parse(readFileSync(path.join(cwd, "package-lock.json"), "utf8")).version,
-      version(),
-    );
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
+for (const versions of [
+  ["0.7.2-vorton.11", "0.7.2-vorton.23", "0.7.2-vorton.24"],
+  ["0.9.0-beta.2.vorton.1", "0.9.0-beta.2.vorton.23", "0.9.0-beta.2.vorton.24"],
+  ["0.9.0-beta.2.vorton.1", "0.7.2-vorton.29", "0.9.0-beta.2.vorton.2"],
+]) {
+  test(`merge versions advance beyond both parents: ${versions.join(", ")}`, () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "vorton-merge-version-"));
+    const run = (bin, args) => execFileSync(bin, args, { cwd, encoding: "utf8", stdio: "pipe" });
+    const git = (...args) => run("git", args);
+    const writeVersion = (version) => {
+      writeFileSync(
+        path.join(cwd, "package.json"),
+        JSON.stringify({ name: "root", version, workspaces: [] }),
+      );
+      writeFileSync(
+        path.join(cwd, "package-lock.json"),
+        JSON.stringify({ version, packages: { "": { version } } }),
+      );
+    };
+    const version = () => JSON.parse(readFileSync(path.join(cwd, "package.json"), "utf8")).version;
+    try {
+      git("init", "-b", "task");
+      git("config", "user.name", "Version test");
+      git("config", "user.email", "version@example.invalid");
+      git("config", "core.hooksPath", "/dev/null");
+      writeVersion(versions[0]);
+      git("add", ".");
+      git("commit", "-m", "task fixture");
+      git("checkout", "-b", "incoming");
+      writeVersion(versions[1]);
+      git("add", ".");
+      git("commit", "-m", "incoming fixture");
+      git("checkout", "task");
+      git("merge", "--no-ff", "--no-commit", "incoming");
+      writeVersion(versions[0]);
+      run(process.execPath, [script]);
+      assert.equal(version(), versions[2]);
+      git("add", ".");
+      run(process.execPath, [script, "--hook"]);
+      run(process.execPath, [script, "--check"]);
+      assert.equal(version(), versions[2]);
+      assert.equal(
+        JSON.parse(readFileSync(path.join(cwd, "package-lock.json"), "utf8")).version,
+        version(),
+      );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+}

@@ -50,7 +50,7 @@ export async function runUpdateCommand(
     clearMaxRuns: options.noMaxRuns,
     clearExpires: options.noExpiresIn,
   });
-  const { client } = await connectScheduleClient(options.host);
+  const { client } = await connectScheduleClient(options.daemonTarget);
   try {
     const schedule = await requireNewAgentSchedule(client, id);
     const supportsRevision =

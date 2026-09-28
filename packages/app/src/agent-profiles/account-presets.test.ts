@@ -24,6 +24,19 @@ describe("account presets", () => {
     expect(accountPresets({ rows, definitions, entries: undefined, query: "missing" })).toEqual([]);
   });
 
+  it("finds Pi models even when they do not have a saved profile", () => {
+    const rows = [row("saved", "pi")];
+    const entries = [
+      {
+        provider: "pi",
+        status: "ready" as const,
+        enabled: true,
+        models: [{ provider: "pi", id: "local/other", label: "Another model" }],
+      },
+    ];
+    expect(accountPresets({ rows, definitions: [], entries, query: "Another" })).toHaveLength(1);
+  });
+
   it("uses stored reasoning rather than guessing from the profile name", () => {
     expect(
       intelligenceLabel(

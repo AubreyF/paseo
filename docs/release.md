@@ -4,7 +4,7 @@ All workspaces share one version.
 
 ## Vorton commit versions
 
-This fork uses `<upstream-base>-vorton.<counter>`, starting at `0.7.2-vorton.1`. Every new local commit, including documentation and tooling changes, advances the counter. Change the upstream base only when adopting that upstream release; the new base starts at counter 1. Record source provenance with the Git commit, not build metadata in the version.
+This fork uses `<upstream-base>-vorton.<counter>` for stable upstream bases and `<upstream-base>.vorton.<counter>` for beta bases, for example `0.9.0-beta.2.vorton.1`. Every new local commit, including documentation and tooling changes, advances the counter. Change the upstream base only when adopting that upstream release; the new base starts at counter 1. A newer beta or promotion to stable starts a new counter. Returning to an earlier beta or from stable to a beta of the same release is rejected. Record source provenance with the Git commit, not build metadata in the version.
 
 The installed Lefthook pre-commit hook runs `scripts/vorton-version.mjs` before validation. It synchronizes the root, workspace manifests, internal dependency pins and lockfile, then stages those files. It refuses unstaged manifest edits so it cannot include unrelated work. Stage intended manifest changes before committing. Other unstaged files stay untouched.
 
@@ -12,7 +12,7 @@ Use `npm run version:vorton` to prepare the same bump before a build or review, 
 
 Use ordinary Git commits for Vorton work. Do not use `npm version` or the upstream `release:*` commands for these bumps: they perform upstream release preparation and publication. Commit versioning does not publish, tag, deploy or restart anything. The private desktop feed and distribution identity remain pending in [desktop builds](desktop-auto-builds.md).
 
-Vorton native metadata reserves 100,000 build slots per upstream base and fails when a counter or platform integer limit is exhausted. This supports Expo configuration; it does not configure a separate mobile store distribution.
+Vorton native metadata reserves 100,000 build numbers per upstream major/minor/patch base. Starting at `0.9.0`, beta slots 1 through 98 and stable slot 99 each allow Vorton counters 1 through 999. The native build number is `upstreamNumericBase * 100000 + slot * 1000 + counter`, so later betas and stable promotion increase monotonically. Versions before `0.9.0` retain their original numbering. Exhausted slots, counters and platform integer limits fail explicitly. This supports Expo configuration; it does not configure a separate mobile store distribution.
 
 ## Upstream release procedure
 
@@ -65,6 +65,36 @@ commit the prepared inputs locally and run the release command. Its branch and
 tag push is the one remote release batch and starts CI for the complete release
 commit.
 
+## Release branch discipline
+
+While you finalize a release on `main`, use a temporary `next` branch for work intended for the following
+release. This applies to both beta and stable releases.
+
+- Create each new `next` from freshly fetched `origin/main`. Reuse it while active.
+- "This goes to next" means create the PR against `next` or retarget an existing
+  PR, and keep that destination through delivery.
+- Keep `next` current by merging `origin/main` into it as release fixes land.
+  Avoid rebasing this shared branch because agents and open PRs depend on its history.
+- After the release ships, bring `next` up to date and open a `next` → `main` PR.
+  Pass CI and merge without squashing away the individual PR commits needed for
+  the changelog. Retarget remaining PRs based on `next` to `main` and delete the integrated
+  `next`. Create it fresh when needed again.
+
+**Setup still needed:** CI, Docker, and Nix PR checks currently target only `main`,
+and GitHub permits only squash merges. Enable checks and required-check protection
+for `next`, CI on its pushes, and merge commits for the integration PR. Handle PR
+base changes (`edited` events) so retargeting runs checks against the new base;
+GitHub's default PR events do not cover this. Deployment triggers stay unchanged.
+
+### Hotfix from a release tag
+
+If `main` contains changes you do not want to release, branch from the affected
+release tag and cherry-pick only the required fixes. Run CI on that branch, then
+use the normal release flow with it as the explicit source, choosing a new patch
+or beta version. Ensure the fixes and changelog also reach `main` and any active
+`next`, preserving newer development and version changes there. This is a
+short-lived hotfix branch, not another maintained release track.
+
 ## ACP catalog updates
 
 ACP catalog work enters a release through an explicit user request:
@@ -82,7 +112,7 @@ release push as the changelog and version commit.
 
 There are two supported release paths:
 
-1. **Direct stable release**: you are ready to ship the current `main` commit to everyone immediately.
+1. **Direct stable release**: you are ready to ship the resolved release source to everyone immediately (default `origin/main`).
 2. **Beta flow**: release candidates on the `beta` channel. Each beta carries its own changelog entry, publishes npm only on the explicit `beta` dist-tag, and stays behind the Stable/Beta switch on `/download`.
 
 Paseo has one linear release track even though npm dist-tags are independent
@@ -180,6 +210,7 @@ npm run release:promote          # Promote X.Y.Z-beta.N to stable X.Y.Z
 - Betas publish desktop assets and APKs for testing. They also build iOS, upload it to TestFlight, add it to the `Paseo Beta` external group, and submit it for Beta App Review. They do not submit mobile builds to the production stores.
 - `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
+- Require the Linux artifact CI checks with both restricted and usable user namespaces to pass before publication; see [packaged desktop smoke](testing.md#packaged-desktop-smoke). Keep the installed-package and AppImage checks together.
 - Beta releases use Electron's `beta` update channel. Users on the stable channel only receive stable releases; users on the beta channel receive beta releases and the final stable release when it is published.
 - **Each beta carries its own changelog entry.** `Release Notes Sync` mirrors the matching `## X.Y.Z-beta.N` entry into that prerelease body. Promotion collapses every beta entry for the version into one final stable entry. See the Changelog policy section.
 
@@ -489,6 +520,8 @@ Release notes depend on the changelog heading format. The heading **must** be st
 ```
 
 No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or `## X.Y.Z-beta.N`) line for the pushed tag to extract the version. A malformed heading breaks the release-notes sync for that tag.
+
+`CHANGELOG.md` on `main` is also what the app's **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render — the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update — write it for them.
 
 ## Changelog policy
 

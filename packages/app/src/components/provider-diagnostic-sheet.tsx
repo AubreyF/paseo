@@ -590,6 +590,7 @@ export function ProviderDiagnosticSheet({
   const isCompact = useIsCompactFormFactor();
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
+  const showClaudeSignIn = vortonMode && provider === "claude";
   const [query, setQuery] = useState("");
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [diagSheetOpen, setDiagSheetOpen] = useState(false);
@@ -716,6 +717,31 @@ export function ProviderDiagnosticSheet({
         }
         snapPoints={MAIN_SNAP_POINTS}
       >
+        {showClaudeSignIn ? (
+          <View style={sheetStyles.section} testID="claude-sign-in-instructions">
+            <SectionHeader title="Sign in to Claude Code" />
+            <Text style={sheetStyles.mutedText}>
+              On the machine running Docker, open a terminal in your installation directory (the
+              directory containing compose.yaml), then open the container shell:
+            </Text>
+            <Text selectable style={sheetStyles.monoHint}>
+              docker compose exec --user paseo paseo bash
+            </Text>
+            <Text style={sheetStyles.mutedText}>
+              Run these commands inside the container. You can also run them in the Vorton Terminal,
+              which is already inside the container:
+            </Text>
+            <Text selectable style={sheetStyles.monoHint}>
+              {"claude auth login\nclaude auth status"}
+            </Text>
+            <Text style={sheetStyles.mutedText}>
+              Open the login URL in your browser and follow the Claude prompts. If the command is
+              missing, install Claude Code inside the container as the paseo user first. After
+              signing in, use Refresh below to check this provider again. A Claude login on your
+              Docker host does not authenticate the container.
+            </Text>
+          </View>
+        ) : null}
         {vortonMode ? (
           <View style={sheetStyles.tabs}>
             <SegmentedControl

@@ -27,7 +27,7 @@ export function ProfilePermissionWarning({
         profileId: session?.profile?.id,
         provider: session?.provider,
         mode: session?.currentModeId,
-        running: session?.status === "running" || Boolean(session?.activeTurn),
+        running: session?.status === "running" || session?.turn.phase === "open",
       };
     }),
   );

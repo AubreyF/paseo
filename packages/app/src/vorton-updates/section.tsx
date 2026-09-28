@@ -5,7 +5,7 @@ import { Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
-import { SettingsSection } from "@/screens/settings/settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { useDraftStore } from "@/stores/draft-store";
 import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";

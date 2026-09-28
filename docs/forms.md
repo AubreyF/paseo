@@ -82,6 +82,14 @@ The schedule form captures its configuration revision when opened, alongside the
   timezone) once — never in a preview line AND a helper line.
 - `useUnistyles` is banned (see docs/unistyles.md); lint enforces.
 
+## Settings rows
+
+Use the named components from `@/components/settings` for settings cards and controls.
+`SettingsCard` owns row separators; `SettingsRow` accepts custom content. Heading-only screens
+can import `SettingsGroup` and `SettingsSection` directly from their modules in
+`@/components/settings/headings/`.
+The plugin UI entry exposes the same components; keep them independent of storage and routing.
+
 ## Data gating
 
 Aggregate hooks return a discriminated load state:

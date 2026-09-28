@@ -1,55 +1,53 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
+const git = (...args) =>
+  execFileSync("git", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }).trim();
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
 const writeJson = (file, value) => writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 const mode = process.argv[2] ?? "--bump";
 if (!["--bump", "--hook", "--check"].includes(mode)) throw new Error(`Unknown mode: ${mode}`);
 const root = readJson("package.json");
 const previous = JSON.parse(git("show", "HEAD:package.json")).version;
-const pattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-vorton\.([1-9]\d*))?$/;
+const pattern =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.([1-9]\d*)(?:\.vorton\.([1-9]\d*))?|-vorton\.([1-9]\d*))?$/;
 const before = pattern.exec(previous);
 const current = pattern.exec(root.version);
-if (!before || !current) throw new Error("Expected a stable base or a Vorton version.");
-const base = current.slice(1, 4).join(".");
-const baseComparison = current
-  .slice(1, 4)
-  .map(Number)
-  .findIndex((n, i) => n !== Number(before[i + 1]));
-if (
-  baseComparison !== -1 &&
-  Number(current[baseComparison + 1]) < Number(before[baseComparison + 1])
-) {
-  throw new Error("The upstream base cannot decrease. Revert code under a newer Vorton version.");
+if (!before || !current)
+  throw new Error("Expected a stable or beta base, optionally with a Vorton counter.");
+function upstreamBase(parts) {
+  return parts.slice(1, 4).join(".") + (parts[4] ? `-beta.${parts[4]}` : "");
 }
-// Read both parents during a merge so preparation and hook retries produce the
-// same version without lowering the incoming branch's counter.
-const mergeHeadPath = git("rev-parse", "--git-path", "MERGE_HEAD");
+function compareBase(left, right) {
+  const a = [...left.slice(1, 4).map(Number), left[4] ? Number(left[4]) : Infinity];
+  const b = [...right.slice(1, 4).map(Number), right[4] ? Number(right[4]) : Infinity];
+  const difference = a.findIndex((value, index) => value !== b[index]);
+  return difference === -1 ? 0 : Math.sign(a[difference] - b[difference]);
+}
+const base = upstreamBase(current);
 const parentVersions = [before];
+// Read both parents so preparation and hook retries preserve the incoming counter.
+const mergeHeadPath = git("rev-parse", "--git-path", "MERGE_HEAD");
 if (existsSync(mergeHeadPath)) {
   for (const head of readFileSync(mergeHeadPath, "utf8").trim().split(/\s+/)) {
     const version = JSON.parse(git("show", `${head}:package.json`)).version;
     const parsed = pattern.exec(version);
-    if (!parsed) throw new Error("Expected a stable base or a Vorton version in merge parent.");
-    const difference = parsed
-      .slice(1, 4)
-      .findIndex((part, i) => Number(part) !== Number(current[i + 1]));
-    if (difference !== -1 && Number(parsed[difference + 1]) > Number(current[difference + 1])) {
-      throw new Error("The upstream base cannot decrease below a merge parent.");
-    }
+    if (!parsed) throw new Error("Expected a stable or beta base in merge parent.");
     parentVersions.push(parsed);
   }
+}
+if (parentVersions.some((parent) => compareBase(current, parent) < 0)) {
+  throw new Error("The upstream base cannot decrease below a parent.");
 }
 const counter =
   Math.max(
     0,
     ...parentVersions
-      .filter((parent) => parent.slice(1, 4).join(".") === base)
-      .map((parent) => Number(parent[4] ?? 0)),
+      .filter((parent) => upstreamBase(parent) === base)
+      .map((parent) => Number(parent[5] ?? parent[6] ?? 0)),
   ) + 1;
 if (!Number.isSafeInteger(counter)) throw new Error("Vorton counter exceeds safe integer range.");
-const next = `${base}-vorton.${counter}`;
+const next = `${base}${current[4] ? "." : "-"}vorton.${counter}`;
 const files = [
   "package.json",
   ...root.workspaces.map((workspace) => `${workspace}/package.json`),

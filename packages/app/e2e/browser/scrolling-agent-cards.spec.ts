@@ -1,3 +1,4 @@
+import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -83,16 +84,23 @@ test("agents, tasks, plugin pills, queue and goals share the scrolling footer", 
     await mockGoalObservation(page, agent.agentId, goalState);
     await writeFile(
       path.join(pluginDirectory, "paseo-plugin.json"),
-      JSON.stringify({ id: pluginId }),
+      JSON.stringify({ id: pluginId, requirements: pluginRequirements }),
     );
     await writeFile(
       path.join(pluginDirectory, "index.client.tsx"),
-      `import React from "react";
-import { Text } from "react-native";
-export default function contribute(client) {
-  let remove = () => {};
-  remove = client.addComposerPill({ id: "scroll", title: "Scrolling plugin action", workspaceId: ${JSON.stringify(agent.workspaceId)}, agentId: ${JSON.stringify(agent.agentId)}, Component: () => <Text>Plugin pill</Text>, onPress: () => remove() });
-  return () => remove();
+      `export default function contribute(client) {
+  const registration = client.addComposerPill({
+    id: "scroll",
+    workspaceId: ${JSON.stringify(agent.workspaceId)},
+    agentId: ${JSON.stringify(agent.agentId)},
+    button: {
+      title: "Scrolling plugin action",
+      label: "Plugin pill",
+      icon: "Sparkles",
+      behavior: { kind: "action", onPress: () => registration.remove() },
+    },
+  });
+  return () => registration.remove();
 }`,
     );
     await client.patchDaemonConfig({ pluginsEnabled: true });

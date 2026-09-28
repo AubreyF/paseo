@@ -60,6 +60,8 @@ export type EnsureWorkspaceForCreate = (
 export interface CreateAgentFromSessionInput {
   onCreated?: CreateAgentFromMcpInput["onCreated"];
   kind: "session";
+  onAgentReady?: (agent: ManagedAgent) => Promise<void>;
+  agentId?: string;
   config: AgentSessionConfig;
   workspaceId: string;
   worktreeName?: string;
@@ -192,7 +194,7 @@ export async function createAgentCommand(
 
   const snapshot = await dependencies.agentManager.createAgent(
     resolved.config,
-    undefined,
+    input.kind === "session" ? input.agentId : undefined,
     resolved.createOptions,
   );
   await input.onCreated?.({
@@ -203,6 +205,8 @@ export async function createAgentCommand(
   resolved.setupContinuation?.startAfterAgentCreate({
     agentId: snapshot.id,
   });
+
+  if (input.kind === "session") await input.onAgentReady?.(snapshot);
 
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;

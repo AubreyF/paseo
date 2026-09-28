@@ -7,6 +7,44 @@ const {
 } = require("./native-release-version");
 
 describe("native release version", () => {
+  it("orders Vorton beta revisions, later betas, stable promotion and the next base", () => {
+    const versions = [
+      "0.8.999-vorton.99999",
+      "0.9.0-beta.1.vorton.1",
+      "0.9.0-beta.1.vorton.999",
+      "0.9.0-beta.2.vorton.1",
+      "0.9.0-beta.98.vorton.999",
+      "0.9.0-vorton.1",
+      "0.9.0-vorton.999",
+      "0.9.1-beta.1.vorton.1",
+    ];
+    const builds = versions.map((version) => getNativeReleaseVersion(version));
+    for (let i = 1; i < builds.length; i++) {
+      expect(builds[i].androidVersionCode).toBeGreaterThan(builds[i - 1].androidVersionCode);
+      expect(Number(builds[i].iosBuildNumber)).toBeGreaterThan(
+        Number(builds[i - 1].iosBuildNumber),
+      );
+    }
+    expect(getNativeReleaseVersion("0.9.0-beta.2.vorton.1")).toEqual({
+      appVersion: "0.9.0",
+      androidVersionCode: 900002001,
+      iosBuildNumber: "900002001",
+    });
+  });
+
+  it("rejects exhausted Vorton revision and beta slots without collisions", () => {
+    for (const version of [
+      "0.9.0-beta.2.vorton.0",
+      "0.9.0-beta.2.vorton.1000",
+      "0.9.0-vorton.1000",
+    ]) {
+      expect(() => getNativeReleaseVersion(version)).toThrow("out of range");
+    }
+    expect(() => getNativeReleaseVersion("0.9.0-beta.99.vorton.1")).toThrow("between 1 and 98");
+    expect(() => getNativeReleaseVersion("0.8.0-beta.1.vorton.1")).toThrow("from 0.9.0");
+    expect(() => getNativeReleaseVersion("0.9.0-vorton.1.vorton.1")).toThrow("unsupported");
+  });
+
   it("orders Vorton builds within and across upstream bases", () => {
     const first = getNativeReleaseVersion("0.7.2-vorton.9999");
     const next = getNativeReleaseVersion("0.7.2-vorton.10000");

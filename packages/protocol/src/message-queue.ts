@@ -130,7 +130,7 @@ export const QueueSubscribeResponseSchema = z.object({
 });
 export const QueueChangedSchema = z.object({
   type: z.literal("agent.queue.changed"),
-  payload: QueueSnapshotSchema,
+  payload: QueueSnapshotSchema.extend({ subscriptionId: z.string().optional() }),
 });
 
 export type QueueAttachment = z.infer<typeof QueueContentSchema>["attachments"][number];

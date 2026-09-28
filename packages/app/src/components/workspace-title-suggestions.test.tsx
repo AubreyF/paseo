@@ -39,6 +39,9 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
       replaceText: (text) => {
         if (inputRef.current) inputRef.current.value = text;
       },
+      reset: () => {
+        if (inputRef.current) inputRef.current.value = "";
+      },
       getNativeRef: () => inputRef.current,
     }));
     const onChangeText = props.onChangeText;

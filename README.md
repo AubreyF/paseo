@@ -6,6 +6,10 @@ Vorton extends [Paseo](https://github.com/getpaseo/paseo) with multiple Codex ac
 
 Connect your Codex accounts once and run tasks under different accounts simultaneously. Choose the account for each task without repeatedly signing out and back in. Keep work moving across accounts while seeing which account each profile uses and when its usage limits reset.
 
+For Claude Code, [sign in inside the container](docs/docker.md#accounts-and-tools). The authentication-monitoring update checks the CLI sign-in status before reporting readiness and requires a daemon update on existing installations. That update also makes configured Claude accounts read session history and model settings from their own configuration directories.
+
+See the [account connector roadmap](docs/roadmap.md#account-connectors) for account naming behavior and the planned Claude account connector.
+
 Save named profiles that combine an account, model, reasoning level, permissions and instructions. Switch from a fast everyday profile to a deeper reasoning profile, or choose a different account for your next task, directly from the composer. Set a default for new tasks and use short profile nicknames on smaller screens.
 
 The account picker groups saved profiles under each account in compact, equal-height rows, with a larger selection check on the left. Desktop uses a split pane; mobile slides into the selected account’s details with a back button to return to connections. The mobile list scrolls with the sheet. **Use profile** stays at the bottom of the details pane. Pi’s details list its discovered models with reasoning support, reported context and output limits, and supported inputs. Local connections also show endpoint and worker status in the account list. Search stays beside **Manage profiles**, which opens the account’s **Profiles** tab in provider settings. Profile permissions apply to new chats. Existing chats keep their permissions and show a warning with a recreate action when the saved profile differs.
@@ -21,10 +25,20 @@ For an existing task, changing profiles opens a handoff you can review and edit 
 - **Give agents room to work without handing them your whole machine.** The installer automatically builds and starts a local container for Vorton and your agents. This limits the damage an accidental destructive command can do to your host: agents can modify the container home and mounted projects, while unmounted personal files stay outside their filesystem access. Keep backups of mounted projects; the container does not protect those files from deletion. See the [security boundaries](docs/container-tailscale.md).
 - **See your available capacity.** Check account usage and reset times beside your profiles. Use existing reset credits where the provider supports them.
 - **Give Codex a goal.** Set an objective with an optional token budget. Follow progress, elapsed time and token usage from the goal bar, and pause or resume when you need to intervene.
-- **Line up the next steps.** Queue messages with files or images, then edit, reorder, pause or send them from another connected device. The host owns the queue and can keep delivering messages after you close the client. Pausing the queue leaves an active goal eligible to continue; stopping the task pauses both. Saved queues do not guarantee uninterrupted execution of an active turn during a host restart. Queue, goal and subagent cards scroll with the conversation. Unsaved queue edits stay on the device across reloads, including newly added images. Save synchronizes text and attachment changes; Cancel leaves the shared message unchanged. Drag queued messages to reorder them; sidebar badges show queued messages, subagents and active goals.
+- **Line up the next steps.** Queue messages with files or images, then edit, reorder, pause or send them from another connected device. The host owns the queue and can keep delivering messages after you close the client. Pausing the queue leaves an active goal eligible to continue; stopping the task pauses both. Saved queues do not guarantee uninterrupted execution of an active turn during a host restart. Queue, goal and subagent cards scroll with the conversation. Collapse the Subagents card using its heading; the count and Archive finished action stay visible. Unsaved queue edits stay on the device across reloads, including newly added images. Save synchronizes text and attachment changes; Cancel leaves the shared message unchanged. Drag queued messages to reorder them; sidebar badges show queued messages, subagents and active goals.
 - **Put local workers to work.** Configure a Pi profile for a local or private OpenAI-compatible endpoint, then let a supervisor delegate work with a limit on concurrent workers.
 - **Keep projects in view.** In Vorton mode, History and Schedules sit in the top sidebar toolbar. The three-dot menu holds Add project, New workspace, View preferences, Settings, and Help and support. In View preferences → Show, turn Activity badges on or off to show or hide subagent counts, queued-message counts, and active-goal badges. On mobile, the compact search field keeps a full-height tap target. iPhone toolbars use the system safe area without an extra blank strip. Vorton requests an opaque iPhone Home Screen status bar to keep system translucency off the toolbar.
 - **Work from your phone or tablet.** Compact profiles, visible touch controls and responsive task views keep account selection and task management within reach. Sidebar rows and actions expand into larger touch targets on touchscreens and in narrow windows. The workspace diff counter keeps a 44-pixel touch target in compact layouts. On desktop, hover a project or workspace row to reveal its three-dot menu.
+
+## Plugins
+
+Add themes, workspace panels, commands, settings screens, and coding-agent providers with trusted
+TypeScript plugins. Install from npm, Git, or a local directory with `paseo plugin install <source>`.
+
+Vorton’s selected launch settings, profile instructions, reserve policy, and configured account environment take precedence over plugin launch hooks. Hooks can supply defaults and additional environment variables.
+
+Start with the [plugin quickstart](https://paseo.sh/docs/plugins). Plugins run with access to your daemon
+machine and inside connected clients; install only code you trust.
 
 ## Install
 
@@ -47,7 +61,7 @@ Your task is to get the user to a working web interface.
 2. Confirm the container is running, then open the installation’s HTTPS address and verify that the web interface loads. A running container alone does not establish success. If access fails, diagnose and fix it before handing over.
 3. As soon as access works, give the user the clickable HTTPS address and tell them where to find their login password. Keep the handoff short.
 
-Provider authentication happens afterward in the web interface. Do not ask the user to authenticate Codex, Claude, or other providers through the container CLI during installation. Do not delay the browser handoff for provider setup, presets, or optional configuration.
+Provider authentication happens afterward through the provider settings, which explain any required container CLI sign-in. Do not ask the user to authenticate Codex, Claude, or other providers during installation. Do not delay the browser handoff for provider setup, presets, or optional configuration.
 
 Keep progress messages brief. If verification requires access only the user has, request that specific check and state what remains unverified.
 

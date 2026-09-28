@@ -85,6 +85,11 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
           input.setSelectionRange(selection.start, selection.end);
         }
       },
+      reset: () => {
+        textRef.current = "";
+        const input = inputRef.current as unknown as HTMLTextAreaElement | null;
+        if (input && "value" in input) input.value = "";
+      },
       getNativeRef: () => inputRef.current,
     }));
 

@@ -16,7 +16,7 @@ export async function runQuotaCommand(
   _command: Command,
 ): Promise<ListResult<QuotaRow>> {
   if (!options.provider?.trim()) throw new Error("Choose a configured provider account.");
-  const client = await connectToDaemon({ host: options.host });
+  const client = await connectToDaemon({ target: options.daemonTarget });
   return inspectScheduleQuota({ client, providerId: options.provider });
 }
 

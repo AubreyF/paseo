@@ -45,6 +45,7 @@ export interface SeedDaemonClient {
     entries: SeedWorkspaceDescriptor[];
   }>;
   setWorkspacePinned(workspaceId: string, pinned: boolean): Promise<{ pinnedAt: string | null }>;
+  clearWorkspaceAttention(workspaceId: string): Promise<void>;
   setWorkspaceLabel(input: {
     workspaceId: string;
     label: { name: string; color: "red" };
@@ -160,6 +161,7 @@ export interface SeedDaemonClient {
     features?: {
       projectAdd?: boolean;
       workspaceRecovery?: boolean;
+      workspaceMarkUnread?: boolean;
     } | null;
   } | null;
   fetchAgentHistory(options?: {

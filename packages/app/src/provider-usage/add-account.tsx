@@ -10,10 +10,15 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { useHostFeature } from "@/runtime/host-features";
 import { useSessionStore } from "@/stores/session-store";
 import { refreshAndApplyProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { useVortonMode } from "@/vorton-mode";
 import { ProviderLoginPanel } from "./login-panel";
-import { openAccountForm, type CreatedCodexAccount } from "./account-form";
+import {
+  openAccountForm,
+  suggestedCodexAccountName,
+  type CreatedCodexAccount,
+} from "./account-form";
 
 interface AddAccountProps {
   serverId: string;
@@ -48,6 +53,7 @@ export function AddCodexAccountButton({
 }
 
 function AccountSheet({ onClose, ...props }: AddAccountProps & { onClose: () => void }) {
+  const { config } = useDaemonConfig(props.serverId);
   const supported = useHostFeature(props.serverId, "codexAccountCreation");
   const permissions = useSessionStore(
     (state) => state.sessions[props.serverId]?.serverInfo?.permissions,
@@ -57,6 +63,16 @@ function AccountSheet({ onClose, ...props }: AddAccountProps & { onClose: () => 
   if (!supported) message = "Update this host to add Codex accounts here.";
   else if (!canManage)
     message = "This connection needs permission to manage the host before it can add an account.";
+  let content = <Text style={styles.text}>{message ?? "Loading accounts..."}</Text>;
+  if (!message && config) {
+    content = (
+      <AccountForm
+        {...props}
+        initialName={suggestedCodexAccountName(config.providers)}
+        onClose={onClose}
+      />
+    );
+  }
   return (
     <AdaptiveModalSheet
       visible
@@ -65,24 +81,23 @@ function AccountSheet({ onClose, ...props }: AddAccountProps & { onClose: () => 
       desktopMaxWidth={520}
       testID="add-codex-account-dialog"
     >
-      <View style={styles.body}>
-        {message ? (
-          <Text style={styles.text}>{message}</Text>
-        ) : (
-          <AccountForm {...props} onClose={onClose} />
-        )}
-      </View>
+      <View style={styles.body}>{content}</View>
     </AdaptiveModalSheet>
   );
 }
 
-function useAccountForm({ serverId, onCreated }: AddAccountProps) {
+function useAccountForm({
+  serverId,
+  onCreated,
+  initialName,
+}: AddAccountProps & { initialName: string }) {
   const client = useHostRuntimeClient(serverId);
   const cache = useQueryClient();
   const live = useRef({ client, onCreated });
   live.current = { client, onCreated };
   const [model] = useState(() =>
     openAccountForm(globalThis.crypto.randomUUID(), {
+      initialName,
       async create(creationId, name) {
         const current = live.current.client;
         if (!current) throw new Error("Reconnect to the host and try again.");
@@ -106,7 +121,10 @@ function useAccountForm({ serverId, onCreated }: AddAccountProps) {
   return { model, state: useSyncExternalStore(model.subscribe, model.getState, model.getState) };
 }
 
-function AccountForm({ onClose, ...props }: AddAccountProps & { onClose: () => void }) {
+function AccountForm({
+  onClose,
+  ...props
+}: AddAccountProps & { onClose: () => void; initialName: string }) {
   const { model, state } = useAccountForm(props);
   const connected = useHostRuntimeIsConnected(props.serverId);
   const size = useIsCompactFormFactor() ? "md" : "sm";
@@ -129,7 +147,7 @@ function AccountForm({ onClose, ...props }: AddAccountProps & { onClose: () => v
     <>
       <Field label="Account name">
         <FormTextInput
-          initialValue=""
+          initialValue={state.name}
           onChangeText={model.setName}
           editable={!creating}
           size={size}

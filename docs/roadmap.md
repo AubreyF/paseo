@@ -33,8 +33,10 @@ The immediate Claude change uses the existing connector. Its details explain how
 
 - [ ] Add **Claude Code (Claude account)** to the web interface for connecting additional accounts, distinct from the auto-detected CLI provider.
 
-Reuse the existing Claude Agent SDK adapter with private `CLAUDE_CONFIG_DIR` directories and account-scoped history, resume, credentials and usage. First prove remote CLI login completion, then extend the existing account controls and compatible login protocol.
+Reuse the existing Claude Agent SDK adapter with private `CLAUDE_CONFIG_DIR` directories and account-scoped history, resume, credentials and usage. First confirm the authentication route: Anthropic requires prior approval for third-party products offering claude.ai login. Without that approval, choose API credentials or leave sign-in in the official CLI. Then prove remote login completion for the chosen route and extend the existing account controls and compatible login protocol.
 
 Target 1 to 2 engineering hours for a minimal implementation only if that experiment confirms a supported flow. Budget the work as 20 minutes to prove authentication, 40 minutes to reuse account creation and isolated runtime configuration, and 60 minutes for lifecycle handling and focused validation. Re-estimate if authentication requires unsupported endpoints or new infrastructure. Acceptance requires two isolated accounts, cancellation and timeout handling, correct signed-out status, and no credentials in logs or browser storage. Cross-platform acceptance and a new OAuth implementation are outside this estimate.
 
 Claude Code retains its [official CLI login flow](https://code.claude.com/docs/en/authentication). Anthropic's [third-party authentication guidance](https://support.claude.com/en/articles/13189465-log-in-to-your-claude-account) is a separate constraint; the continued availability of CLI login does not establish permission to offer a third-party subscription login flow.
+
+Account isolation groundwork is implemented: configured Claude providers use their own environment for session discovery, resumed history and model settings. Activation requires a daemon update. The additional-account UI and authentication lifecycle remain pending.

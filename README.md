@@ -6,7 +6,7 @@ Vorton extends [Paseo](https://github.com/getpaseo/paseo) with multiple Codex ac
 
 Connect your Codex accounts once and run tasks under different accounts simultaneously. Choose the account for each task without repeatedly signing out and back in. Keep work moving across accounts while seeing which account each profile uses and when its usage limits reset.
 
-For Claude Code, [sign in inside the container](docs/docker.md#accounts-and-tools). The authentication-monitoring update checks the CLI sign-in status before reporting readiness and requires a daemon update on existing installations. That update also makes configured Claude accounts read session history and model settings from their own configuration directories.
+For Claude Code, [sign in inside the container](docs/docker.md#accounts-and-tools). The authentication-monitoring update checks the CLI sign-in status before reporting readiness and requires a daemon update on existing installations. That update also makes configured Claude accounts read session history and model settings from their own configuration directories. Managed account deletion preserves shared and external account directories.
 
 See the [account connector roadmap](docs/roadmap.md#account-connectors) for account naming behavior and the planned Claude account connector.
 

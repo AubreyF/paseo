@@ -73,3 +73,28 @@ it("rejects blank names, traversal identifiers, and conflicting configurations",
   expect(() => createCodexAccount({ ...f, creationId, name: "Work" })).toThrow("already in use");
   expect(f.store.get().providers[providerId].env).toEqual({ CODEX_HOME: "/another/home" });
 });
+
+it("persists isolated Claude account directories and reconciles retries without changing existing accounts", async () => {
+  const { createClaudeAccount } = await import("./create-account.js");
+  const f = fixture();
+  const before = f.store.get();
+  const creationId = randomUUID();
+  const first = createClaudeAccount({ ...f, creationId, name: " Claude Work " });
+  const second = createClaudeAccount({ ...f, creationId: randomUUID(), name: "Claude Personal" });
+  const providers = f.store.get().providers;
+  expect(first.name).toBe("Claude Work");
+  expect(providers[first.providerId]).toMatchObject({
+    extends: "claude",
+    label: "Claude Work",
+    enabled: true,
+    env: { CLAUDE_CONFIG_DIR: path.join(f.paseoHome, "claude-accounts", first.providerId) },
+  });
+  expect(providers[first.providerId].env).not.toEqual(providers[second.providerId].env);
+  expect(providers.primary).toEqual(before.providers.primary);
+  expect(f.store.get().agentProfiles).toEqual(before.agentProfiles);
+  const reopened = new DaemonConfigStore(f.paseoHome, f.store.get());
+  expect(createClaudeAccount({ ...f, store: reopened, creationId, name: "Retry" })).toEqual(first);
+  expect(loadPersistedConfig(f.paseoHome).agents?.providers?.[first.providerId]).toEqual(
+    providers[first.providerId],
+  );
+});

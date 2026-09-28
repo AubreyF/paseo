@@ -1,5 +1,6 @@
 import {
   planProviderRemoval,
+  defaultProviderAccountHomes,
   deleteManagedProviderCredentials,
   ProviderRemovalError,
 } from "../services/provider-login/removal.js";
@@ -2708,7 +2709,7 @@ export class Session {
           paseoHome: this.paseoHome,
           providers: this.daemonConfigStore.get().providers,
           providerId: msg.providerId,
-          defaultCodexHome: process.env.CODEX_HOME ?? resolve(homedir(), ".codex"),
+          ...defaultProviderAccountHomes(),
         };
         if (msg.type === "provider.connection.preview_remove.request") {
           this.emit({

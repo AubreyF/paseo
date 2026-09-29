@@ -25,6 +25,12 @@ Vorton extends Paseo with multi-account agent workflows. This npm monorepo runs 
 - Primary web publication requires clean, committed integration source and the guarded build/publish scripts in [instance continuity](docs/instance-continuity.md). Task worktrees produce previews. Never publish raw exports or reuse another build directory; integrate the currently deployed source before rebuilding a stale candidate.
 - Preserve wire compatibility: new fields are optional, existing fields are not removed or narrowed, and wire schemas stay pure. Gate new features on their advertised capability; tag compatibility shims as required by the compatibility doc.
 
+## Archive requests
+
+- “Archive this out” means archive the current workspace and its threads with `archive_workspace`.
+- For “archive the thread”, inspect the containing workspace's unarchived threads. If this is its only remaining thread, archive the workspace; otherwise archive only the requested thread. Count threads by workspace identity, not by directory or visible tabs.
+- After archiving the selected workspace, return the user to the empty New workspace page. An archive requested through an agent must leave the same usable page as an archive from the interface.
+
 ## Check your work
 
 - Run `npm run typecheck` and `npm run lint` after changes. Use npm scripts for linting and formatting; run `npm run format` before committing. For selected files, use `npm run format:files -- <paths>`.

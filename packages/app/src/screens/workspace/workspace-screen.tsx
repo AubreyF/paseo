@@ -1,3 +1,4 @@
+import { useWorkspaceArchiveRedirect } from "@/workspace/use-workspace-archive-redirect";
 import { StartupStatus } from "@/components/startup-status";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
@@ -1664,6 +1665,14 @@ function WorkspaceScreenContent({
   const hasHydratedWorkspaces = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.hasHydratedWorkspaces ?? false,
   );
+  useWorkspaceArchiveRedirect({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    workspace: workspaceDescriptor,
+    isRouteFocused,
+    isConnected,
+    hasHydratedWorkspaces,
+  });
   const workspaceRecovery = useWorkspaceRecovery({
     serverId: normalizedServerId,
     workspaceId: normalizedWorkspaceId,

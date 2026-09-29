@@ -1,5 +1,5 @@
 import { expect, test } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
+import { gotoAppShell, setVortonMode } from "../support/helpers/app";
 import { waitForWorkspaceInReplicaCache } from "../support/helpers/replica-cache-storage";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import {
@@ -14,23 +14,74 @@ async function archiveWorkspaceOutsideTheApp(workspace: SeededWorkspace): Promis
 }
 
 test.describe("Workspace archive cache coherence", () => {
-  test("an archived selected workspace cannot return from the durable cache", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "archive-cache-" });
+  test("archiving a retained background workspace keeps the current workspace open", async ({
+    page,
+  }) => {
+    const archived = await seedWorkspace({ repoPrefix: "archive-background-" });
+    const selected = await seedWorkspace({ repoPrefix: "archive-selected-" });
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await selectWorkspaceInSidebar(page, archived.workspaceId);
+      await selectWorkspaceInSidebar(page, selected.workspaceId);
+      const selectedUrl = page.url();
+      await archiveWorkspaceOutsideTheApp(archived);
+      await expectWorkspaceAbsentFromSidebar(page, archived.workspaceId);
+      await expect(page).toHaveURL(selectedUrl);
+      await expect(page.getByText("Workspace unavailable", { exact: true })).toHaveCount(0);
+    } finally {
+      await selected.cleanup();
+      await archived.cleanup();
+    }
+  });
 
+  test("an unknown workspace still reports that it is unavailable", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "archive-missing-" });
     try {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await selectWorkspaceInSidebar(page, workspace.workspaceId);
-      await waitForWorkspaceInReplicaCache(page, workspace.workspaceId);
-
-      await archiveWorkspaceOutsideTheApp(workspace);
-
-      await expectWorkspaceAbsentFromSidebar(page, workspace.workspaceId);
-      await expect(page.getByText("Workspace unavailable", { exact: true })).toBeVisible({
-        timeout: 30_000,
-      });
+      const missingUrl = page
+        .url()
+        .replace(encodeURIComponent(workspace.workspaceId), "missing-workspace");
+      await page.goto(missingUrl);
+      await expect(page.getByText("Workspace unavailable", { exact: true })).toBeVisible();
+      await expect(page).toHaveURL(missingUrl);
     } finally {
       await workspace.cleanup();
     }
   });
+
+  for (const vortonMode of [false, true]) {
+    test(`an external archive leaves the selected workspace in ${vortonMode ? "Vorton" : "Paseo"} mode`, async ({
+      page,
+    }) => {
+      const workspace = await seedWorkspace({ repoPrefix: "archive-cache-" });
+
+      try {
+        await gotoAppShell(page);
+        await waitForSidebarHydration(page);
+        await setVortonMode(page, vortonMode);
+        await selectWorkspaceInSidebar(page, workspace.workspaceId);
+        await waitForWorkspaceInReplicaCache(page, workspace.workspaceId);
+
+        await archiveWorkspaceOutsideTheApp(workspace);
+
+        await expectWorkspaceAbsentFromSidebar(page, workspace.workspaceId);
+        await expect(page).toHaveURL(/\/new\?/, { timeout: 30_000 });
+        await expect(page.getByText("Workspace unavailable", { exact: true })).toHaveCount(0);
+        await expect(page.getByTestId("new-workspace-project-picker-trigger")).toBeVisible();
+        await test.info().attach("after-archive", {
+          body: await page.screenshot(),
+          contentType: "image/png",
+        });
+        await page.reload();
+        await waitForSidebarHydration(page);
+        await expectWorkspaceAbsentFromSidebar(page, workspace.workspaceId);
+        await expect(page.getByTestId("new-workspace-project-picker-trigger")).toBeVisible();
+      } finally {
+        await workspace.cleanup();
+      }
+    });
+  }
 });

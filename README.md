@@ -30,6 +30,8 @@ For an existing task, changing profiles opens a handoff you can review and edit 
 - **Keep projects in view.** In Vorton mode, History and Schedules sit in the top sidebar toolbar. The three-dot menu holds Add project, New workspace, View preferences, Settings, and Help and support. In View preferences → Show, turn Activity badges on or off to show or hide subagent counts, queued-message counts, and active-goal badges. On mobile, the compact search field keeps a full-height tap target. iPhone toolbars use the system safe area without an extra blank strip. Vorton requests an opaque iPhone Home Screen status bar to keep system translucency off the toolbar.
 - **Work from your phone or tablet.** Compact profiles, visible touch controls and responsive task views keep account selection and task management within reach. Sidebar rows and actions expand into larger touch targets on touchscreens and in narrow windows. The workspace diff counter keeps a 44-pixel touch target in compact layouts. On desktop, hover a project or workspace row to reveal its three-dot menu.
 
+Archiving a workspace also archives its threads. When the selected workspace is archived, including through an agent or another client, you return to an empty New workspace page for the same project.
+
 ## Plugins
 
 Add themes, workspace panels, commands, settings screens, and coding-agent providers with trusted

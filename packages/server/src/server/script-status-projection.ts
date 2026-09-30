@@ -1,3 +1,4 @@
+import { readWorkspacePreviewOrigin } from "./workspace-preview-origin.js";
 import type { Logger } from "pino";
 import type {
   ScriptStatusUpdateMessage,
@@ -256,6 +257,15 @@ export function buildWorkspaceScriptPayloads(
     payloads.push(buildOrphanRuntimePayload(runtimeEntry, serviceState, ctx));
   }
 
+  for (const payload of payloads) {
+    if (payload.type !== "service" || payload.lifecycle !== "running") continue;
+    const origin = readWorkspacePreviewOrigin(workspaceId, payload.scriptName);
+    if (origin) {
+      // publicProxyUrl means reachable beyond localhost, including private tailnets.
+      payload.publicProxyUrl = origin;
+      payload.proxyUrl = origin;
+    }
+  }
   return sortPayloads(payloads);
 }
 

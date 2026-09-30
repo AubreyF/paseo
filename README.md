@@ -94,7 +94,7 @@ Keep personal files, Docker's socket and other users' homes outside the containe
 - [Accounts and presets](docs/agent-presets.md)
 - [Development inside the container](docs/development.md)
 - [Updates and troubleshooting](docs/docker.md)
-- [Optional private workspace previews](docker/tailscale/README.md)
+- [Optional private workspace previews](docker/tailscale/README.md). With matching daemon and web updates installed, Vorton workspace hover cards include clickable globe rows for running previews, using the broker private HTTPS address.
 - [Team handoff and testing](docs/host-handoff.md)
 - [Planned work](docs/roadmap.md)
 

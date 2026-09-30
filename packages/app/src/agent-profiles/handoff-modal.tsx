@@ -65,16 +65,23 @@ export function ProfileHandoffModal({
           This partial record excludes attachments and tool results. Add important decisions,
           changed files and test results here.
         </Text>
-        <AdaptiveTextInput
-          initialValue={initialContext}
-          onChangeText={edit}
-          multiline
-          maxLength={50_000}
-          editable={!state.pending}
-          style={styles.input}
-          accessibilityLabel="Handoff context"
-          testID="preset-handoff-context"
-        />
+        <View style={styles.editor}>
+          {/* Measure wrapped text so only the sheet body scrolls, including after deletions. */}
+          <Text style={[styles.input, styles.measure]} aria-hidden accessible={false}>
+            {state.context + "\n"}
+          </Text>
+          <AdaptiveTextInput
+            initialValue={initialContext}
+            onChangeText={edit}
+            multiline
+            scrollEnabled={false}
+            maxLength={50_000}
+            editable={!state.pending}
+            style={[styles.input, styles.editorInput]}
+            accessibilityLabel="Handoff context"
+            testID="preset-handoff-context"
+          />
+        </View>
         {state.error ? (
           <Text style={styles.text} accessibilityRole="alert">
             {state.error}
@@ -99,12 +106,15 @@ export function ProfileHandoffModal({
 const styles = StyleSheet.create((theme) => ({
   body: { padding: theme.spacing[4], gap: theme.spacing[3] },
   text: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
+  editor: { minHeight: 220 },
   input: {
-    minHeight: 220,
-    maxHeight: 340,
+    padding: 0,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.5,
     textAlignVertical: "top",
   },
+  measure: { opacity: 0, pointerEvents: "none" },
+  editorInput: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
   actions: { flexDirection: "row", justifyContent: "flex-end", gap: theme.spacing[2] },
 }));

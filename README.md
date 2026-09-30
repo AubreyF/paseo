@@ -18,7 +18,7 @@ The account picker groups saved profiles under each account in compact, equal-he
 
 _Account switching and profiles in action._
 
-For an existing task, changing profiles opens a handoff you can review and edit before starting a successor task. The original stays available. This transfers selected conversation context, not the provider's entire session history.
+For an existing task, changing profiles opens a handoff you can review and edit before starting a successor task. The handoff body scrolls beneath the title, including the instructions, editable context and action buttons. The original stays available. This transfers selected conversation context, not the provider's entire session history.
 
 ## More control over your agents
 

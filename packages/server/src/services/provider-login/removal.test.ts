@@ -26,6 +26,7 @@ function fixture() {
     home,
     providers,
     defaultCodexHome: path.join(paseoHome, "external"),
+    defaultClaudeHome: path.join(paseoHome, "external-claude"),
   };
 }
 
@@ -129,4 +130,63 @@ it("refuses a managed-directory symlink instead of claiming its target credentia
   expect(plan.credentials).toBe("managed");
   expect(() => deleteManagedProviderCredentials(f, plan.revision)).toThrow("symbolic link");
   expect(existsSync(path.join(target, "auth.json"))).toBe(true);
+});
+
+it("removes only exclusively managed Claude files and preserves aliases and external CLI homes", () => {
+  const f = fixture();
+  const providerId = f.providerId.replace("codex", "claude");
+  const home = path.join(f.paseoHome, "claude-accounts", providerId);
+  mkdirSync(home, { recursive: true });
+  writeFileSync(path.join(home, ".credentials.json"), "test credential");
+  const input = {
+    ...f,
+    providerId,
+    defaultClaudeHome: path.join(f.paseoHome, "external-claude"),
+    providers: MutableDaemonConfigSchema.parse({
+      mcp: { injectIntoAgents: false },
+      providers: {
+        [providerId]: { extends: "claude", env: { CLAUDE_CONFIG_DIR: home } },
+        alias: { extends: "claude", enabled: false, env: { CLAUDE_CONFIG_DIR: home } },
+      },
+    }).providers,
+  };
+  const shared = planProviderRemoval(input);
+  expect(shared.credentials).toBe("shared");
+  deleteManagedProviderCredentials(input, shared.revision);
+  expect(existsSync(home)).toBe(true);
+  delete input.providers.alias;
+  const exclusive = planProviderRemoval(input);
+  expect(exclusive.credentials).toBe("managed");
+  expect(() => deleteManagedProviderCredentials(input, shared.revision)).toThrow("changed");
+  deleteManagedProviderCredentials(input, exclusive.revision);
+  expect(existsSync(home)).toBe(false);
+  expect(existsSync(f.home)).toBe(true);
+  input.providers[providerId].env = { CLAUDE_CONFIG_DIR: input.defaultClaudeHome };
+  expect(planProviderRemoval(input).credentials).toBe("shared");
+});
+
+it("requires managed deletion before a legacy config patch can remove a Claude account", async () => {
+  const { DaemonConfigStore } = await import("../../server/daemon-config-store.js");
+  const { createClaudeAccount } = await import("./create-account.js");
+  const f = fixture();
+  const store = new DaemonConfigStore(
+    f.paseoHome,
+    MutableDaemonConfigSchema.parse({
+      mcp: { injectIntoAgents: false },
+      providers: {},
+    }),
+  );
+  const { providerId } = createClaudeAccount({
+    paseoHome: f.paseoHome,
+    store,
+    name: "Work",
+    creationId: "33333333-3333-4333-8333-333333333333",
+  });
+  const home = path.join(f.paseoHome, "claude-accounts", providerId);
+  mkdirSync(home, { recursive: true });
+  writeFileSync(path.join(home, ".credentials.json"), "test credential");
+  expect(() => store.patch({ removeProviders: [providerId] })).toThrow("connection deletion");
+  const input = { ...f, providerId, providers: store.get().providers };
+  deleteManagedProviderCredentials(input, planProviderRemoval(input).revision);
+  expect(() => store.patch({ removeProviders: [providerId] })).not.toThrow();
 });

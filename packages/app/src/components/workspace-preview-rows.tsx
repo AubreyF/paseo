@@ -4,6 +4,7 @@ import { Globe, ExternalLink } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import type { Theme } from "@/styles/theme";
+import { isWeb } from "@/constants/platform";
 import { useVortonMode } from "@/vorton-mode";
 import { resolveWorkspaceScriptLink } from "@/utils/workspace-script-links";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -37,14 +38,19 @@ function WorkspacePreviewRow({ script }: { script: WorkspaceScriptPayload }) {
   const url = target?.url;
   const onPress = useCallback(
     (event: GestureResponderEvent) => {
+      event.preventDefault();
       event.stopPropagation();
       if (url) void openExternalUrl(url);
     },
     [url],
   );
+  const webLinkProps = isWeb
+    ? { href: url, hrefAttrs: { target: "_blank", rel: "noopener noreferrer" } }
+    : {};
   if (!target) return null;
   return (
     <Pressable
+      {...webLinkProps}
       testID={`hover-card-preview-${script.scriptName}`}
       accessibilityRole="link"
       accessibilityLabel={`${script.scriptName}: ${target.url}`}

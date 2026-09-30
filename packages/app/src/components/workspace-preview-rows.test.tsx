@@ -69,6 +69,8 @@ describe("workspace preview rows", () => {
     );
     const links = screen.getAllByRole("link");
     expect(links).toHaveLength(2);
+    expect(links[0].tagName).toBe("A");
+    expect(links[0].getAttribute("href")).toBe("https://preview.example.ts.net:32780");
     fireEvent.click(links[1]);
     expect(state.open).toHaveBeenCalledWith("https://preview.example.ts.net:32781");
     fireEvent.click(links[0]);

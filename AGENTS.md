@@ -47,6 +47,8 @@ Vorton extends Paseo with multi-account agent workflows. This npm monorepo runs 
 
 ## Finish the task
 
+- “Ship it” authorizes committing the requested changes, integrating them into `main`, and pushing `main` to `origin` on GitHub, unless the user explicitly names another destination. Complete any required deployment too. Preserve unrelated work and use a normal fast-forward push; never force-push `main`.
+- Before reporting “shipped”, verify the remote branch directly and prove it contains the task commits. Report GitHub publication and deployment separately. A successful deployment, local commit, open PR or pushed feature branch alone does not complete shipping. If either required step is blocked, state what remains instead of claiming completion.
 - In this repository, a request to "push" means integrate the requested changes into `main` and push `main` to `origin`, unless the user explicitly names another destination. Do not publish a feature branch instead. Preserve unrelated work and use a normal fast-forward push; never force-push `main`.
 
 - Update the README in the same change when shipped user-facing behavior changes. Follow the [writing rules](docs/writing.md); preserve the author's animation and other demos.

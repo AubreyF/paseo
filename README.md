@@ -1,6 +1,6 @@
-# Paseo + Vorton
+# Vorteo + Vorton
 
-Vorton extends [Paseo](https://github.com/getpaseo/paseo) with multiple Codex accounts, usage visibility, reusable profiles, task goals, cross-device message queuing, and a smoother ux. I've used it to build massive open-source projects such as [Freed](https://freed.wtf). I'm sharing it as open source to empower other OS devs with max agentic leverage and efficiency. Let's steer the course of history, together.
+[Vorton](https://github.com/AubreyF/vorton) is the local home for AubOS and FreedOS goals, tasks, and executive recommendations. Vorteo extends [Paseo](https://github.com/getpaseo/paseo) with multiple Codex accounts, usage visibility, reusable profiles, task goals, cross-device message queuing, and a smoother ux. I've used it to build massive open-source projects such as [Freed](https://freed.wtf). I'm sharing it as open source to empower other OS devs with max agentic leverage and efficiency. Let's steer the course of history, together.
 
 ## Multiple accounts, one place to work
 
@@ -51,7 +51,7 @@ Install Git and start Docker with Compose. Install Tailscale on the devices you 
 Give your agent this command, or run it yourself:
 
 ```sh
-git clone https://github.com/AubreyF/paseo.git "$HOME/paseo-source" &&
+git clone https://github.com/AubreyF/vorteo.git "$HOME/paseo-source" &&
   bash "$HOME/paseo-source/docker/multiplex/install.sh" "$HOME/paseo-instance"
 ```
 

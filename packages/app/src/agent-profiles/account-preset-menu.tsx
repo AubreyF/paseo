@@ -1,3 +1,5 @@
+import { useVortonTouch } from "@/vorton-touch";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
@@ -42,6 +44,8 @@ interface AccountPresetMenuProps {
 
 export function AccountPresetMenu(props: AccountPresetMenuProps) {
   const { accounts, inspectedId, selectedId, compact, onInspect } = props;
+  const touch = useVortonTouch();
+  const headerSize = touch ? "md" : "sm";
   const [detailsOpen, setDetailsOpen] = useState(false);
   const showDetails = compact && detailsOpen;
   const inspectAccount = useCallback(
@@ -90,7 +94,7 @@ export function AccountPresetMenu(props: AccountPresetMenuProps) {
           {showDetails ? (
             <Button
               variant="ghost"
-              size="md"
+              size={headerSize}
               leftIcon={ArrowLeft}
               onPress={back}
               style={styles.back}
@@ -102,6 +106,7 @@ export function AccountPresetMenu(props: AccountPresetMenuProps) {
           ) : null}
           <View style={showDetails ? styles.hidden : styles.searchField}>
             <SearchInput
+              size={headerSize}
               placeholder="Search accounts"
               onChangeText={props.onSearch}
               autoFocus={!compact}
@@ -110,7 +115,7 @@ export function AccountPresetMenu(props: AccountPresetMenuProps) {
         </View>
         <Button
           variant="outline"
-          size="md"
+          size={headerSize}
           onPress={props.onManage}
           testID="preset-manage-profiles"
         >
@@ -305,7 +310,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    padding: theme.spacing[3],
+    padding: theme.spacing[2],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
@@ -326,11 +331,11 @@ const styles = StyleSheet.create((theme) => ({
   detail: { flex: 1, backgroundColor: theme.colors.surface1 },
   account: {
     padding: theme.spacing[1],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
   accountButton: {
-    height: Math.max(80, Math.ceil(theme.fontSize.base * 1.4) * 3 + theme.spacing[4]),
+    minHeight: Math.ceil(theme.fontSize.base * 1.4) + CONTROL_HEIGHTS.field + theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    paddingRight: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
   },
   accountTitle: {
@@ -339,7 +344,7 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
   },
   usage: {
-    height: Math.max(32, Math.ceil(theme.fontSize.base * 1.4) * 2),
+    minHeight: CONTROL_HEIGHTS.field,
     justifyContent: "center",
   },
   detailScroll: { flex: 1, minHeight: 0 },

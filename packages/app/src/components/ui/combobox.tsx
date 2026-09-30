@@ -1,3 +1,4 @@
+import { CONTROL_HEIGHTS, createControlGeometry, type FieldControlSize } from "./control-geometry";
 import {
   useCallback,
   useEffect,
@@ -183,6 +184,7 @@ function ComboboxSheetBackground({ style }: BottomSheetBackgroundProps) {
 }
 
 export interface SearchInputProps {
+  size?: FieldControlSize;
   containerStyle?: StyleProp<ViewStyle>;
   placeholder: string;
   onChangeText: (text: string) => void;
@@ -193,6 +195,7 @@ export interface SearchInputProps {
 }
 
 export function SearchInput({
+  size,
   containerStyle,
   placeholder,
   onChangeText,
@@ -214,12 +217,11 @@ export function SearchInput({
   }, [autoFocus]);
 
   return (
-    <View style={[styles.searchInputContainer, containerStyle]}>
+    <View style={[styles.searchInputContainer, size && searchControlStyles[size], containerStyle]}>
       <Search size={16} color={theme.colors.foregroundMuted} />
       <AdaptiveTextInput
         ref={inputRef}
-        // @ts-expect-error - outlineStyle is web-only
-        style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
+        style={[styles.searchInput, size && searchControlStyles.text(size)]}
         placeholder={placeholder}
         accessibilityLabel={placeholder}
         placeholderTextColor={theme.colors.foregroundMuted}
@@ -1746,6 +1748,7 @@ const styles = StyleSheet.create((theme) => ({
     ...(IS_WEB ? {} : { marginHorizontal: theme.spacing[1] }),
   },
   searchInput: {
+    ...(IS_WEB ? { outlineWidth: 0 } : {}),
     flex: 1,
     paddingVertical: theme.spacing[3],
     color: theme.colors.foreground,
@@ -1885,3 +1888,26 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
   },
 }));
+
+const searchControlStyles = StyleSheet.create((theme) => {
+  const geometry = createControlGeometry(theme);
+  return {
+    sm: {
+      ...geometry.fieldControlSm,
+      paddingVertical: 0,
+      borderBottomWidth: 0,
+      marginHorizontal: 0,
+    },
+    md: {
+      ...geometry.fieldControlMd,
+      paddingVertical: 0,
+      borderBottomWidth: 0,
+      marginHorizontal: 0,
+    },
+    text: (size: FieldControlSize) => ({
+      ...geometry.fieldTextSm,
+      paddingVertical: 0,
+      minHeight: size === "sm" ? CONTROL_HEIGHTS.compact : CONTROL_HEIGHTS.field,
+    }),
+  };
+});

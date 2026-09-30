@@ -27,6 +27,11 @@ Vorton extends Paseo with multi-account agent workflows. This npm monorepo runs 
 
 ## Archive requests
 
+- Never say a code task is ready to archive until all associated changes are committed, merged into the intended integration branch (`main` unless the user specified another destination), and pushed to `origin`. Verify the remote branch directly and prove it contains the task commits. A local branch, backup, deployment, open PR or pushed feature branch is not sufficient.
+- If integration or publication is unfinished, say the task is not ready to archive and finish the authorized delivery. If publication is not authorized or is blocked, state that blocker; never describe an unpublished task as archive-ready. An explicit request to archive unfinished work must be handled as preservation of incomplete work, not a claim of completion.
+- Before saying a task is ready to archive, inspect its actual worktree, staged and unstaged changes, untracked files, branch tip, and intended integration branch. A sidebar line counter can include committed changes against the base; it is not a count of unsaved work.
+- Report completion separately for committed source, integration into the intended branch, remote publication, and deployed runtime. Verify commit ancestry and deployment receipts. A clean worktree or successful deployment does not prove the work reached `main` or a remote.
+- Preserve task work before archiving a managed worktree. Keep a named branch for its commits and preserve any uncommitted or untracked work outside the directory that archive removes. Verify the recovery artifact and record its path outside Git. Do not discard unrelated changes or interpret archive permission as permission to push.
 - “Archive this out” means archive the current workspace and its threads with `archive_workspace`.
 - For “archive the thread”, inspect the containing workspace's unarchived threads. If this is its only remaining thread, archive the workspace; otherwise archive only the requested thread. Count threads by workspace identity, not by directory or visible tabs.
 - After archiving the selected workspace, return the user to the empty New workspace page. An archive requested through an agent must leave the same usable page as an archive from the interface.

@@ -281,14 +281,22 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
   ]);
 });
 
-test("packaging runs on main without allocating pull-request runners", () => {
-  for (const workflowPath of [dockerWorkflowPath, nixWorkflowPath]) {
-    const source = readFileSync(workflowPath, "utf8");
-    const trigger = source.split("jobs:", 1)[0];
-    assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
-    assert.doesNotMatch(trigger, /pull_request/);
-    assert.doesNotMatch(source, /dorny\/paths-filter/);
-  }
+test("Nix packaging runs on main without allocating pull-request runners", () => {
+  const source = readFileSync(nixWorkflowPath, "utf8");
+  const trigger = source.split("jobs:", 1)[0];
+  assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
+  assert.doesNotMatch(trigger, /pull_request/);
+  assert.doesNotMatch(source, /dorny\/paths-filter/);
+});
+
+test("container installation smokes pull requests that change the shipped container", () => {
+  const source = readFileSync(dockerWorkflowPath, "utf8");
+  const trigger = source.split("jobs:", 1)[0];
+  assert.match(trigger, /pull_request:\s*\n\s+branches: \[main\]\s*\n\s+paths:/);
+  assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
+  assert.match(trigger, /- "docker\/\*\*"/);
+  assert.match(source, /architecture: \[amd64, arm64\]/);
+  assert.match(source, /bash docker\/multiplex\/smoke.sh paseo-container:check/);
 });
 
 test("desktop packaging smokes main pushes and only the pull requests that touch packaging", () => {

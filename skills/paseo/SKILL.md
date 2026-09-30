@@ -31,6 +31,10 @@ Choose `baseBranch` explicitly: `origin/main` selects the remote-tracking branch
 
 **`archive_workspace`** — `{ workspaceId }`. Archives the workspace, its agents, and its terminals. Local directories remain; Paseo removes an owned worktree only after its final active workspace reference is archived.
 
+Never declare a code task ready to archive until all associated changes are committed, merged into the intended integration branch (`main` unless the user specified another destination), and pushed to `origin`. Verify the remote branch directly and prove it contains the task commits. A local branch, backup, deployment, open PR or pushed feature branch is not sufficient. If publication is unauthorized or blocked, report that the task is not ready to archive. An explicit archive of unfinished work preserves incomplete work; it does not establish completion.
+
+Before archiving, inspect the target worktree's staged, unstaged and untracked changes, branch tip, and integration ancestry. Report committed, integrated, remotely published and deployed status separately. Diff counters can include committed changes against a base. Preserve commits on a named branch and any uncommitted files in a verified recovery artifact outside the removed worktree. Record recovery paths privately. Archive permission alone does not authorize publication. After archive, verify navigation returns to the empty New workspace page rather than a missing-workspace route.
+
 **`rename_workspace`** — `{ workspaceId, name }`. Rename workspace.
 
 ## Workspace scripts

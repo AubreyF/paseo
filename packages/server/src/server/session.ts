@@ -1,3 +1,4 @@
+import { browseProjectDirectories, projectDirectoryEnvironment } from "./project-directories.js";
 import {
   planProviderRemoval,
   defaultProviderAccountHomes,
@@ -2881,6 +2882,8 @@ export class Session {
         return this.checkoutSession.handleValidateBranchRequest(msg);
       case "branch_suggestions_request":
         return this.checkoutSession.handleBranchSuggestionsRequest(msg);
+      case "project.directory.browse.request":
+        return this.handleProjectDirectoryBrowseRequest(msg);
       case "directory_suggestions_request":
         return this.handleDirectorySuggestionsRequest(msg);
       case "checkout.diff.get.request":
@@ -5406,6 +5409,28 @@ export class Session {
         },
       });
       throw error;
+    }
+  }
+
+  private async handleProjectDirectoryBrowseRequest(
+    msg: Extract<SessionInboundMessage, { type: "project.directory.browse.request" }>,
+  ): Promise<void> {
+    try {
+      const payload = await browseProjectDirectories(msg, await projectDirectoryEnvironment());
+      this.emit({ type: "project.directory.browse.response", payload });
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "Invalid host filesystem configuration");
+      this.emit({
+        type: "project.directory.browse.response",
+        payload: {
+          roots: [],
+          directory: null,
+          error:
+            "Host folder configuration is invalid. Review the installation's shared-folder configuration.",
+          errorCode: "configuration_error",
+          requestId: msg.requestId,
+        },
+      });
     }
   }
 

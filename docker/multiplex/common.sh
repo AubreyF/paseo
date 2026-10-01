@@ -3,7 +3,11 @@
 set -euo pipefail
 
 paseo_compose() {
-  docker compose --project-directory "$deployment" --env-file "$deployment/.env" -f "$deployment/compose.yaml" "$@"
+  local files=(-f "$deployment/compose.yaml")
+  if [[ -f "$deployment/shared-folders.compose.json" ]]; then
+    files+=(-f "$deployment/shared-folders.compose.json")
+  fi
+  docker compose --project-directory "$deployment" --env-file "$deployment/.env" "${files[@]}" "$@"
 }
 
 paseo_image() {

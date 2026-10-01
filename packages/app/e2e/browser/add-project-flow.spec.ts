@@ -221,8 +221,7 @@ test.describe("Add Project command-center flow", () => {
     await gotoAppShell(page);
     await openAddProjectFlow(page);
 
-    await page.keyboard.press("Enter");
-    await expectAddProjectPage(page, "directory-search");
+    await chooseAddProjectMethod(page, "directory-search");
     await page.keyboard.type(projectPickerFixture.fuzzyQuery);
     await expect(addProjectFlow(page)).toContainText(projectPickerFixture.projectName, {
       timeout: 30_000,

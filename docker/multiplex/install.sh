@@ -38,6 +38,7 @@ umask 077
 mkdir "$deployment"
 mkdir -p "$deployment/data/home" "$deployment/workspace"
 cp "$source_dir/compose.yaml" "$source_dir/common.sh" "$source_dir/connect.sh" "$source_dir/update.sh" "$deployment/"
+cp "$source_dir/share-folder.sh" "$source_dir/shared-folders.mjs" "$deployment/"
 chmod 700 "$deployment/"*.sh
 cat > "$deployment/.env" <<ENV
 PASEO_IMAGE=$image
@@ -50,4 +51,5 @@ printf '%s\n' 1 > "$deployment/.container-installation"
 paseo_compose config --quiet
 paseo_compose up -d --pull never paseo
 printf 'Installation created at %s\nKeep the password in .env private. Complete the Tailscale login below.\n' "$deployment"
+printf 'To share an existing host project folder, run %s/share-folder.sh /absolute/path/to/folder, then review and apply the staged change.\n' "$deployment"
 "$deployment/connect.sh"

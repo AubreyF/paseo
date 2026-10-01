@@ -1,3 +1,4 @@
+import { WorkspacePreviewRows } from "@/components/workspace-preview-rows";
 import { useVortonTouch } from "@/vorton-touch";
 import {
   useCallback,
@@ -330,6 +331,7 @@ function WorkspaceHoverCardContent({
               testID="hover-card-workspace-cwd"
             />
           ) : null}
+          <WorkspacePreviewRows scripts={workspace.scripts} />
           {prHint?.checks && prHint.checks.length > 0 ? (
             <>
               <View style={styles.separator} />

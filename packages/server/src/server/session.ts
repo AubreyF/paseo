@@ -117,6 +117,8 @@ import type {
   ManagedAgent,
 } from "./agent/agent-manager.js";
 import { createAgentCommand } from "./agent/create-agent/create.js";
+import { normalizeClientMessageId } from "./client-message-id.js";
+import { createAgentForMessage, AgentCreationRequestError } from "./agent/create-agent/requests.js";
 import { resolveCreateAgentIntent, type CreateAgentIntent } from "./agent/create-agent/intent.js";
 import {
   archiveAgentCommand,
@@ -4328,7 +4330,37 @@ export class Session {
         if (!record) throw new Error("Previously created agent no longer exists");
         agent = this.buildStoredAgentPayload(record);
       } else {
-        agent = await this.createSessionAgent(msg);
+        const messageId = normalizeClientMessageId(msg.clientMessageId);
+        if (messageId) {
+          const { requestId: _requestId, ...payload } = msg;
+          const agentId = await createAgentForMessage({
+            home: this.paseoHome,
+            principal: JSON.stringify([
+              this.principalId ?? this.clientId,
+              msg.callerAgentId ?? null,
+            ]),
+            messageId,
+            payload,
+            create: async (recordCreated) => {
+              const created = await this.createSessionAgent(
+                msg,
+                undefined,
+                undefined,
+                recordCreated,
+              );
+              return created.id;
+            },
+          });
+          const existing = await this.getAgentPayloadById(agentId);
+          if (!existing) {
+            throw new AgentCreationRequestError(
+              "The agent created for this message is no longer available. Submit a new message to start a new task.",
+            );
+          }
+          agent = existing;
+        } else {
+          agent = await this.createSessionAgent(msg);
+        }
       }
       this.emit({
         type: "status",
@@ -4367,6 +4399,7 @@ export class Session {
     msg: CreateAgentRequestMessage,
     agentId?: string,
     onAgentReady?: (agent: AgentSnapshotPayload) => Promise<void>,
+    recordCreated?: (agentId: string) => Promise<void>,
   ): Promise<AgentSnapshotPayload> {
     const {
       config,
@@ -4445,6 +4478,7 @@ export class Session {
           config: resolvedIntent.config,
           onCreated: async ({ agentId: registeredAgentId }) => {
             createdAgentId = registeredAgentId;
+            await recordCreated?.(registeredAgentId);
             if (initialPrompt && !msg.callerAgentId) {
               await this.ownerEvidence.record({
                 taskId: registeredAgentId,

@@ -94,7 +94,7 @@ Keep personal files, Docker's socket and other users' homes outside the containe
 - [Accounts and presets](docs/agent-presets.md)
 - [Development inside the container](docs/development.md)
 - [Updates and troubleshooting](docs/docker.md)
-- [Optional private workspace previews](docker/tailscale/README.md)
+- [Optional private workspace previews](docker/tailscale/README.md) reuse the task workspace, configured service and private HTTPS reservation.
 - [Team handoff and testing](docs/host-handoff.md)
 - [Planned work](docs/roadmap.md)
 

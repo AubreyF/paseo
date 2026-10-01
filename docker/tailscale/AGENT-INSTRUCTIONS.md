@@ -23,3 +23,11 @@ Bind loopback for Tailscale Serve. Preserve any explicitly approved private list
 HTTPS does not add application authentication, change tailnet access, or grant clipboard/microphone permission. Test the rendered application, not only HTTP health. Keep URLs, credentials, clipboard content and installation receipts out of public source or logs.
 
 The broker runs while the Mac is awake and the user session is available. It revalidates owned mappings but does not revive stopped, crashed, moved or reconfigured services. After a daemon restart, use explicit start for a broker-managed preview. Legacy preview restoration remains separate for services not adopted by the broker. Host startup cannot bypass FileVault or login. Agents cannot administer host recovery.
+
+## Preview workspace reuse
+
+A preview belongs to the existing task workspace. Reuse its workspace ID, configured service and HTTPS reservation on every start or restart. A preview request never authorizes creating another project, workspace, copied checkout or proxy-only workspace. A host policy failure must go through the host continuity workflow; do not try alternate directories to evade it.
+
+Keep code isolation separate from preview registration. When starting a new implementation task that requires a worktree, establish that task's workspace in the worktree before launching its agent. Reuse an existing dedicated task worktree on continuation. Do not add a second sidebar workspace merely because an existing task edits an isolated worktree. Attach the service to the owning task workspace and explicitly configure its command for the verified task worktree, retaining host mapping and listener checks. If the host cannot validate that source path, use the host continuity workflow instead of creating another registration.
+
+Before starting work, check the current workspace for an existing agent handling the same submitted task. Do not independently repeat its implementation. Preserve code and conversation history before consolidating duplicate task or preview records. Test fixtures belong in an isolated test daemon, with teardown, rather than the owner's project registry.

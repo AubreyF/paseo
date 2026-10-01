@@ -6,9 +6,13 @@ Use the [team handoff guide](host-handoff.md) to choose fresh installation, exis
 
 ## Updates from the app
 
-In Vorteo mode, the app checks public `AubreyF/paseo` main every 30 minutes while open. Settings → About shows the comparison with the interface's build commit. This checks source commits, not tested releases or the running daemon version. Unpublished commits and builds without provenance show an unknown comparison instead of claiming an update is available.
+In Vorteo mode, the app checks public `AubreyF/paseo` main every 30 minutes while open. Settings → General shows the comparison with the interface's build commit. This checks source commits, not tested releases or the running daemon version. Unpublished commits and builds without provenance show an unknown comparison instead of claiming an update is available.
 
 **Help me update** opens a separate draft with an update task. Select the Vorteo source project, the host that owns the installation, and an agent preset, then send it. The task tells the agent to preserve local changes, help merge conflicts, validate and publish the interface, and request approval before restarting the instance. It does not run Git or start an agent until you send the draft. Review ambiguous conflicts with the agent; updating a checkout alone does not update the served application.
+
+**Paseo upstream updates** appears below Vorteo updates in General. It shows the last upstream merge recorded in this interface build and highlights the section after more than seven days. **Copy host prompt** copies a reusable synchronization task to run in an agent session on the installation host. Copying does not start an agent, modify Git, or restart anything. **Show prompt** lets you review or select the text.
+
+The source provenance record is `packages/app/src/vorton-updates/upstream-sync.json`: the upstream commit, actual merge commit, and its Git committer timestamp. Update it after each successful upstream merge, as instructed by the host prompt. A check with no incoming changes must not change this date. Rebuild and publish the interface to display the new record. The date does not assert that the daemon is updated or that upstream has no newer commits.
 
 Builds from a Git checkout record HEAD as their source base. For source snapshots, pass the original full SHA through `PASEO_BUILD_COMMIT`; `build-instance-web.mjs` carries it automatically and records it in the snapshot’s ignored `.build-source-commit` file. Keep that file when exporting the same snapshot again; otherwise a separate export process loses the source identity. A real Git checkout always uses its own HEAD ahead of a snapshot stamp. Uncommitted source changes are not described by that SHA. The container installer and CI pass it into the image build. A source archive without that value can still use the prepared agent task, but cannot compare commits automatically.
 

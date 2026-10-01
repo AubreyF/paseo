@@ -44,6 +44,10 @@ Vorteo’s selected launch settings, profile instructions, reserve policy, and c
 Start with the [plugin quickstart](https://paseo.sh/docs/plugins). Plugins run with access to your daemon
 machine and inside connected clients; install only code you trust.
 
+## Updates
+
+Settings → General includes app information and update controls. In Vorteo mode, **Paseo upstream updates** shows the last upstream merge included in this interface and highlights it after a week. Copy the host prompt to have an agent merge and validate upstream changes while preserving the fork. Instance restarts require your approval.
+
 ## Install
 
 The product is now named Vorteo. Existing `paseo` commands, `PASEO_*` environment variables, package names, configuration paths and deep links remain unchanged.

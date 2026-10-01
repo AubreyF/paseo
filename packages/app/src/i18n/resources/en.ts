@@ -2230,6 +2230,21 @@ export const en = {
       },
     },
     about: {
+      upstreamUpdates: {
+        title: "Paseo upstream updates",
+        lastMerge: "Last upstream merge: {{date}}",
+        unknown: "Last upstream merge is not recorded.",
+        buildRecord:
+          "Merge recorded in this interface build. Your daemon may run a different revision.",
+        overdue: "More than a week since the last merge",
+        instructions:
+          "Copy this weekly update task and run it in an agent session on your installation host. It preserves fork changes and requires approval before restarting the instance.",
+        copy: "Copy host prompt",
+        showPrompt: "Show prompt",
+        hidePrompt: "Hide prompt",
+        copied: "Prompt copied. Paste it into an agent session on your host.",
+        copyFailed: "Could not copy. Show the prompt and select the text to copy it manually.",
+      },
       vortonUpdates: {
         confirmedCurrent: "You're up to date",
         checkComplete: "Check complete",

@@ -2086,6 +2086,7 @@ export const zhCN: TranslationResources = {
       },
     },
     about: {
+      upstreamUpdates: en.settings.about.upstreamUpdates,
       vortonUpdates: en.settings.about.vortonUpdates,
       title: "关于",
       appVersion: "应用版本",

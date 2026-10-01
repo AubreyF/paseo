@@ -2145,6 +2145,7 @@ export const ptBR: TranslationResources = {
       },
     },
     about: {
+      upstreamUpdates: en.settings.about.upstreamUpdates,
       vortonUpdates: en.settings.about.vortonUpdates,
       title: "Sobre",
       appVersion: "Versão do app",

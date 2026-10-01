@@ -2110,6 +2110,7 @@ export const ar: TranslationResources = {
       },
     },
     about: {
+      upstreamUpdates: en.settings.about.upstreamUpdates,
       vortonUpdates: en.settings.about.vortonUpdates,
       title: "عن",
       appVersion: "نسخة التطبيق",

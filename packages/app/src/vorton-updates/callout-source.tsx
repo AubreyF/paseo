@@ -12,7 +12,7 @@ export function VortonUpdateCalloutSource() {
   const update = useVortonUpdate(true);
   const callouts = useSidebarCallouts();
   const router = useRouter();
-  const review = useCallback(() => router.push(buildSettingsSectionRoute("about")), [router]);
+  const review = useCallback(() => router.push(buildSettingsSectionRoute("general")), [router]);
   useEffect(() => {
     if (
       !vorton ||

@@ -46,7 +46,7 @@ test("Vorteo checks main and opens a separate update draft without overwriting e
   await page.getByTestId("settings-vorton-mode").getByLabel("Vorteo mode", { exact: true }).click();
   // Client navigation retains the selected mode; the initialization above only applies to document loads.
   await page.getByTestId("settings-sidebar-version").click();
-  await expect(page).toHaveURL(/\/settings\/about$/);
+  await expect(page).toHaveURL(/\/settings\/general$/);
   await expect(page.getByTestId("vorton-update-status")).toHaveText(
     "3 new commits are available on main.",
   );
@@ -123,6 +123,7 @@ test("manual checks show lasting feedback and the version footer starts a fresh 
   const instructions = page.getByTestId("vorton-update-instructions");
   const feedbackArea = page.getByTestId("vorton-update-feedback-area");
   const helpButton = page.getByTestId("vorton-help-update");
+  await page.getByTestId("vorton-updates-section").scrollIntoViewIfNeeded();
   const originalArea = await feedbackArea.boundingBox();
   const originalButton = await helpButton.boundingBox();
   await button.click();
@@ -139,7 +140,7 @@ test("manual checks show lasting feedback and the version footer starts a fresh 
   await page.getByTestId("settings-sidebar").getByText("General", { exact: true }).click();
   const before = requests;
   await page.getByTestId("settings-sidebar-version").click();
-  await expect(page).toHaveURL(/\/settings\/about$/);
+  await expect(page).toHaveURL(/\/settings\/general$/);
   await expect.poll(() => requests).toBeGreaterThan(before);
   await expect(page.getByTestId("vorton-check-success")).toHaveText("You're up to date");
 });

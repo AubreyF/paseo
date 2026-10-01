@@ -2147,6 +2147,7 @@ export const ru: TranslationResources = {
       },
     },
     about: {
+      upstreamUpdates: en.settings.about.upstreamUpdates,
       vortonUpdates: en.settings.about.vortonUpdates,
       title: "О приложении",
       appVersion: "Версия приложения",

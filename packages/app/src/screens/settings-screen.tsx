@@ -31,7 +31,6 @@ import {
   Gauge,
   Keyboard,
   Stethoscope,
-  Info,
   Bell,
   Shield,
   Puzzle,
@@ -95,6 +94,7 @@ import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
+import { UpstreamUpdatesSection } from "@/vorton-updates/upstream-section";
 import { VortonUpdatesSection } from "@/vorton-updates/section";
 import { resolveAppVersion } from "@/utils/app-version";
 import { useVortonUpdate } from "@/vorton-updates/use-update";
@@ -185,7 +185,6 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     desktopOnly: true,
   },
   { id: "diagnostics", labelKey: "settings.sections.diagnostics", icon: Stethoscope },
-  { id: "about", labelKey: "settings.sections.about", icon: Info },
 ];
 
 interface HostSectionItem {
@@ -620,6 +619,7 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
         </View>
       </SettingsSection>
       <VortonUpdatesSection />
+      <UpstreamUpdatesSection />
       <ConnectedHostsSection clientVersion={appVersion} />
       <View style={styles.aboutCommunity}>
         <CommunityLinks />
@@ -1087,7 +1087,7 @@ function SettingsSidebar({
   const { checkNow } = useVortonUpdate();
   const openAbout = useCallback(() => {
     checkNow();
-    onSelectSection("about");
+    onSelectSection("general");
   }, [onSelectSection, checkNow]);
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -1240,7 +1240,7 @@ function SettingsSidebar({
           {vorton && (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`${appVersionText}, ${t("settings.sections.about")}`}
+              accessibilityLabel={`${appVersionText}, ${t("settings.sections.general")}`}
               onPress={openAbout}
               style={sidebarStyles.versionButton}
               testID="settings-sidebar-version"
@@ -1589,6 +1589,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                   handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
                 />
                 {isDesktopApp ? <BrowserDataSection /> : null}
+                <AboutSection
+                  appVersion={appVersion}
+                  appVersionText={appVersionText}
+                  isDesktopApp={isDesktopApp}
+                />
               </>
             );
           case "appearance":
@@ -1612,14 +1617,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                 isPlaybackTestRunning={isPlaybackTestRunning}
                 playbackTestResult={playbackTestResult}
                 handlePlaybackTest={handlePlaybackTest}
-              />
-            );
-          case "about":
-            return (
-              <AboutSection
-                appVersion={appVersion}
-                appVersionText={appVersionText}
-                isDesktopApp={isDesktopApp}
               />
             );
         }

@@ -2162,6 +2162,7 @@ export const es: TranslationResources = {
       },
     },
     about: {
+      upstreamUpdates: en.settings.about.upstreamUpdates,
       vortonUpdates: en.settings.about.vortonUpdates,
       title: "Acerca de",
       appVersion: "Versión de la aplicación",

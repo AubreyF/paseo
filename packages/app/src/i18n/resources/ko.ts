@@ -2121,6 +2121,7 @@ export const ko: TranslationResources = {
       },
     },
     about: {
+      upstreamUpdates: en.settings.about.upstreamUpdates,
       vortonUpdates: en.settings.about.vortonUpdates,
       title: "정보",
       appVersion: "앱 버전",

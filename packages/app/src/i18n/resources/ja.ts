@@ -2129,6 +2129,7 @@ export const ja: TranslationResources = {
       },
     },
     about: {
+      upstreamUpdates: en.settings.about.upstreamUpdates,
       vortonUpdates: en.settings.about.vortonUpdates,
       title: "アプリ情報",
       appVersion: "アプリバージョン",

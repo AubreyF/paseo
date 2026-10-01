@@ -8,6 +8,7 @@ import SettingsScreen from "@/screens/settings-screen";
 import { StartupSplashScreen } from "@/screens/startup-splash-screen";
 import {
   buildSettingsHostSectionRoute,
+  buildSettingsSectionRoute,
   buildSettingsRoute,
   isSettingsSectionSlug,
   type SettingsSectionSlug,
@@ -49,6 +50,8 @@ export default function SettingsSectionRoute() {
       </HostRouteBootstrapBoundary>
     );
   }
+
+  if (rawSection === "about") return <Redirect href={buildSettingsSectionRoute("general")} />;
 
   return <SettingsScreen view={view} openAddHostIntent={openAddHostIntent} />;
 }

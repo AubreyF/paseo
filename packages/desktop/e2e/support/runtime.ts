@@ -347,7 +347,7 @@ export async function openDesktopSettings(page: Page, serverId: string): Promise
 
 export async function openDesktopAboutSettings(page: Page): Promise<void> {
   await openSettings(page);
-  await openSettingsSection(page, "about");
+  await openSettingsSection(page, "general");
   await expect(page.getByText("App updates", { exact: true })).toBeVisible();
 }
 

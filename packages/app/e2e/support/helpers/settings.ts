@@ -26,7 +26,6 @@ const SECTION_LABELS = {
   integrations: "Integrations",
   permissions: "Permissions",
   diagnostics: "Diagnostics",
-  about: "About",
 } as const;
 
 export type SettingsSection = keyof typeof SECTION_LABELS;
@@ -386,7 +385,7 @@ export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<vo
   // App group rows remain top-level.
   await expect(sidebar.getByRole("button", { name: "General", exact: true })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: "Diagnostics", exact: true })).toBeVisible();
-  await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeVisible();
+  await expect(sidebar.getByRole("button", { name: "About", exact: true })).toHaveCount(0);
   await expect(sidebar.getByRole("button", { name: "Daemon", exact: true })).toHaveCount(0);
 
   // Host group rows are now flat top-level sections (no drill-in).

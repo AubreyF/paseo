@@ -15,7 +15,7 @@ beforeEach(() => {
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" data-paseo-status-bar-style="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Vorteo">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <link rel="manifest" href="/manifest.json">
+    <link rel="manifest" href="/manifest-aac9363a34802b69.json">
   `;
 });
 afterEach(() => {
@@ -59,7 +59,7 @@ describe("Vorteo Home Screen metadata", () => {
     stop = applyVortonWeb(true, true);
     expect(legacyMetadata()).toHaveLength(2);
     expect(document.head.querySelector('link[rel="manifest"]')?.getAttribute("href")).toBe(
-      "/manifest.json",
+      "/manifest-aac9363a34802b69.json",
     );
     expect(document.head.querySelector('meta[name="viewport"]')?.getAttribute("content")).toContain(
       "viewport-fit=cover",

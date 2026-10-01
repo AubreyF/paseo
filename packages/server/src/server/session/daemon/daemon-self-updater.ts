@@ -44,7 +44,7 @@ const defaultRuntime: DaemonSelfUpdateRuntime = {
 };
 
 const DESKTOP_MANAGED_UPDATE_ERROR =
-  "This daemon is managed by Paseo Desktop. Update Paseo Desktop on the host.";
+  "This daemon is managed by Vorteo Desktop. Update Vorteo Desktop on the host.";
 
 export class DaemonSelfUpdater {
   private inProgress = false;

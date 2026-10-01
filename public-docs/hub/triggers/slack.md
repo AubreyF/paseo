@@ -41,7 +41,7 @@ The reply posts in the triggering thread. A root message gets a thread; a thread
 Leading declared inputs follow the mention:
 
 ```text
-@Paseo repo=project agent=claude investigate the failed sync
+@Vorteo repo=project agent=claude investigate the failed sync
 ```
 
 Hub consumes consecutive declared headers and exposes the remainder as `${{ paseo.prompt }}`. See [Workflows](/docs/hub/workflows).

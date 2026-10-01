@@ -65,12 +65,12 @@ export function AgentTranscript() {
   return (
     <div className="space-y-[13px] pt-[2px]">
       <Para>
-        The homepage is built. It leads with Paseo&rsquo;s actual value, then uses the product
+        The homepage is built. It leads with Vorteo&rsquo;s actual value, then uses the product
         itself to prove the story instead of falling back to generic dashboard art.
       </Para>
       <div>
         <Bullet>Reworked the hero around &ldquo;The control plane for coding agents.&rdquo;</Bullet>
-        <Bullet>Built desktop and mobile scenes from real Paseo workflows and assets.</Bullet>
+        <Bullet>Built desktop and mobile scenes from real Vorteo workflows and assets.</Bullet>
         <Bullet>Added believable agent, review, plugin, shipping, and host states.</Bullet>
         <Bullet>
           Matched the app&rsquo;s tabs, explorer, diff tree, controls, and layout rails.
@@ -78,7 +78,7 @@ export function AgentTranscript() {
       </div>
       <TurnFooter duration="31m 46s" />
       <UserBubble>Create a PR</UserBubble>
-      <Para>PR opened: Rebuild the homepage around live Paseo workflows.</Para>
+      <Para>PR opened: Rebuild the homepage around live Vorteo workflows.</Para>
       <span className="block text-[13.5px] text-mock-accent-bright">
         https://github.com/getpaseo/paseo/pull/3981
       </span>
@@ -166,7 +166,7 @@ export function PluginBuildTranscript() {
   return (
     <div className="space-y-[13px] pt-[2px]">
       <UserBubble>
-        Build me a release radar for Paseo. I want an explorer panel showing merged PRs, changes in
+        Build me a release radar for Vorteo. I want an explorer panel showing merged PRs, changes in
         review, failing checks, and seven-day activity, accessible from the sidebar.
       </UserBubble>
       <Para>
@@ -174,7 +174,7 @@ export function PluginBuildTranscript() {
       </Para>
       <PluginToolGroup calls={PLUGIN_DISCOVERY_CALLS} />
       <Para>
-        The plugin API exposes Paseo&rsquo;s live project and workspace state, so the radar
+        The plugin API exposes Vorteo&rsquo;s live project and workspace state, so the radar
         doesn&rsquo;t need a separate service.
       </Para>
       <PluginToolGroup calls={PLUGIN_BUILD_CALLS} />

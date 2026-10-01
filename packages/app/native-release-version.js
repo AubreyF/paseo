@@ -44,7 +44,7 @@ function getNativeReleaseVersion(version) {
     throw new Error(`Derived iOS buildNumber is out of range: ${iosBuildNumber}`);
   }
 
-  // Vorton uses a separate native distribution. Reserve five digits per upstream base.
+  // Vorteo uses a separate native distribution. Reserve five digits per upstream base.
   if (channel === "vorton" || betaVortonCounter !== undefined) {
     const build = getVortonBuildNumber(
       version,
@@ -71,7 +71,7 @@ function getVortonBuildNumber(version, versionCode, counter, betaNumber) {
   const partitioned = versionCode >= 9_000;
   const slot = betaNumber ?? 99;
   if (betaNumber !== null && (!partitioned || slot < 1 || slot > 98)) {
-    throw new Error(`Vorton beta native slot must be between 1 and 98 from 0.9.0: ${version}`);
+    throw new Error(`Vorteo beta native slot must be between 1 and 98 from 0.9.0: ${version}`);
   }
   const build = versionCode * 100_000 + (partitioned ? slot * 1_000 : 0) + counter;
   if (
@@ -80,7 +80,7 @@ function getVortonBuildNumber(version, versionCode, counter, betaNumber) {
     counter >= (partitioned ? 1_000 : 100_000) ||
     build > 2_100_000_000
   ) {
-    throw new Error(`Vorton native build number is out of range: ${version}`);
+    throw new Error(`Vorteo native build number is out of range: ${version}`);
   }
   return build;
 }

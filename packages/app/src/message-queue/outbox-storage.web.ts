@@ -47,7 +47,7 @@ export function createOutboxStorage(databaseName = "paseo-message-outbox"): Outb
         reject(request.error ?? new Error("Cannot open message outbox")),
       );
       request.addEventListener("blocked", () =>
-        reject(new Error("Close other Paseo tabs to upgrade the message outbox.")),
+        reject(new Error("Close other Vorteo tabs to upgrade the message outbox.")),
       );
     }).catch((error: unknown) => {
       opening = null;

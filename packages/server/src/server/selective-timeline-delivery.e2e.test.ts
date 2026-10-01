@@ -639,7 +639,7 @@ test("blocked setup remains readable on mixed-capability sockets sharing a sessi
   expect(oldStatus.snapshot).toMatchObject({
     status: "failed",
     error:
-      "Workspace setup is blocked pending approval of code from a fork pull request. Update Paseo to review and run setup.",
+      "Workspace setup is blocked pending approval of code from a fork pull request. Update Vorteo to review and run setup.",
   });
   expect(newStatus.snapshot).toMatchObject({
     status: "blocked",

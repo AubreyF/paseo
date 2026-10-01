@@ -3,7 +3,7 @@ import { expect, test } from "../support/fixtures";
 const API = "https://api.github.com/repos/AubreyF/paseo";
 const latestCommit = "b".repeat(40);
 
-test("Vorton checks main and opens a separate update draft without overwriting existing text", async ({
+test("Vorteo checks main and opens a separate update draft without overwriting existing text", async ({
   page,
 }) => {
   let requests = 0;
@@ -43,7 +43,7 @@ test("Vorton checks main and opens a separate update draft without overwriting e
   expect(requests).toBe(0);
 
   await page.goto("/settings/general");
-  await page.getByTestId("settings-vorton-mode").getByLabel("Vorton mode", { exact: true }).click();
+  await page.getByTestId("settings-vorton-mode").getByLabel("Vorteo mode", { exact: true }).click();
   // Client navigation retains the selected mode; the initialization above only applies to document loads.
   await page.getByTestId("settings-sidebar-version").click();
   await expect(page).toHaveURL(/\/settings\/about$/);
@@ -53,7 +53,7 @@ test("Vorton checks main and opens a separate update draft without overwriting e
   await page.getByTestId("vorton-help-update").click();
   await expect(page).toHaveURL(/\/new\?.*draftId=/);
   const composer = page.getByRole("textbox", { name: "Message agent..." });
-  await expect(composer).toHaveValue(/Help me update my Vorton installation/);
+  await expect(composer).toHaveValue(/Help me update my Vorteo installation/);
   await expect(composer).toHaveValue(/Preserve all local work/);
   await expect(composer).toHaveValue(/Ask for explicit approval before stopping or restarting/);
   await expect(composer).toHaveValue(new RegExp(latestCommit));

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the narrow broker into an existing deployment, without restarting Paseo."""
+"""Install the narrow broker into an existing deployment, without restarting Vorteo."""
 import argparse
 import json
 import os

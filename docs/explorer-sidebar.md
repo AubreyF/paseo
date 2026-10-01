@@ -35,8 +35,8 @@ interrupting the user's work. Closing the tab opts that workspace out of future 
 even for a different PR; moving or reordering it remains the user's choice.
 Callers request the content and never choose the shell.
 The Changes counter is a two-stage desktop action: it first reveals Explorer on Changes, then
-routes later presses to the working diff through the shared diff preference. Vorton places it in
-the workspace toolbar before the runner; Paseo keeps it above the composer.
+routes later presses to the working diff through the shared diff preference. Vorteo places it in
+the workspace toolbar before the runner; Vorteo keeps it above the composer.
 
 The persisted layout still contains the Explorer pane so tabs survive reloads. The renderer removes
 that pane from the workspace split tree and docks it separately. Persisted identifiers retain the

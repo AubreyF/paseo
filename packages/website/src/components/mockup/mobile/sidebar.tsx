@@ -143,7 +143,7 @@ const READY: RowData[] = [
   {
     key: "paseo-homepage",
     icon: <WorkspaceGlyph />,
-    title: "Paseo homepage",
+    title: "Vorteo homepage",
     time: "now",
     pr: "3981",
     passed: true,

@@ -1,6 +1,6 @@
 # Container operations
 
-This fork runs the Paseo daemon, agents and provider tools inside Docker. Vorton is a client mode on that same daemon. Start with the [installer](../docker/multiplex/README.md); there is no separate native-daemon installation path. Browser and mobile clients run on their own devices.
+This fork runs the Vorteo daemon, agents and provider tools inside Docker. The Standard and Vorteo client modes use that same daemon. Start with the [installer](../docker/multiplex/README.md); there is no separate native-daemon installation path. Browser and mobile clients run on their own devices.
 
 ## Build and install
 
@@ -12,7 +12,7 @@ From the repository root:
 
 The image builds for Linux AMD64 or ARM64. On macOS use Docker Desktop; on Windows use Docker's Linux-container backend. The installer needs Bash and Docker Compose, not host Node, Python or Tailscale. Only mount projects the agents should access. The default workspace is an empty private directory; clone projects into `/workspace` from the container.
 
-Installation generates a password and separate random instance name, pins the image to a digest or local image ID, and keeps state outside the checkout. Startup waits for Tailscale enrollment, configures private HTTPS 443, and starts Paseo as a non-root user with an exact hostname/origin. The daemon binds container loopback; Compose publishes no host ports. Existing HTTPS routes are never replaced to claim 443.
+Installation generates a password and separate random instance name, pins the image to a digest or local image ID, and keeps state outside the checkout. Startup waits for Tailscale enrollment, configures private HTTPS 443, and starts Vorteo as a non-root user with an exact hostname/origin. The daemon binds container loopback; Compose publishes no host ports. Existing HTTPS routes are never replaced to claim 443.
 
 If enrollment is interrupted, run `./connect.sh` from the deployment directory. Approve HTTPS in the tailnet administration page if Tailscale requests it; the container logs include the enablement link. Review the complete tailnet policy before admitting other users: permit only intended clients to this node's TCP 443. Keep Funnel disabled. The optional preview broker has its own port requirements.
 
@@ -33,11 +33,11 @@ docker compose exec --user paseo paseo bash
 
 For additional Claude accounts, use **Settings → Providers → Add provider → Claude Code (Claude account)**. Start sign-in, open the browser link, and paste the returned code into the account panel. Each account gets its own configuration directory. New images install Claude Code with the pinned `PASEO_CLAUDE_PACKAGE` build argument.
 
-For the built-in Claude Code provider, open the container shell above and run `claude auth login`, then `claude auth status`. Open the URL printed by Claude in your browser and follow its prompts. You can also use Vorton's Terminal, which already runs inside the container. If `claude` is missing, install Claude Code inside the container as `paseo` using the [official installation instructions](https://code.claude.com/docs/en/setup). Signing in on the Docker host does not sign in the container. Return to Claude's provider details and select Refresh after login.
+For the built-in Claude Code provider, open the container shell above and run `claude auth login`, then `claude auth status`. Open the URL printed by Claude in your browser and follow its prompts. You can also use Vorteo's Terminal, which already runs inside the container. If `claude` is missing, install Claude Code inside the container as `paseo` using the [official installation instructions](https://code.claude.com/docs/en/setup). Signing in on the Docker host does not sign in the container. Return to Claude's provider details and select Refresh after login.
 
 For an additional Codex account configured manually, give its provider a distinct `env.CODEX_HOME` under `/home/paseo`, then supply that same path with `docker compose exec --user paseo -e CODEX_HOME=/home/paseo/ACCOUNT paseo codex login --device-auth`. Existing installations need a coordinated daemon restart after manual provider configuration changes.
 
-New homes enable Paseo's agent-tool injection for managed workers. Existing configuration is preserved. Use `profileId` for preset launches as described in [agent operation](../skills/paseo/SKILL.md).
+New homes enable Vorteo's agent-tool injection for managed workers. Existing configuration is preserved. Use `profileId` for preset launches as described in [agent operation](../skills/paseo/SKILL.md).
 
 Local inference is optional. MTPLX runs natively on a Mac and is reached from Pi over its authenticated endpoint. Merge [the Pi template](../docker/multiplex/pi-models.example.json) into `/home/paseo/.pi/agent/models.json`, set the real model ID and limits, and add `MTPLX_API_KEY` to the deployment `.env`. Recreate the instance during maintenance to apply environment changes. Start with one managed worker; endpoint reachability does not prove model availability or capacity.
 
@@ -68,7 +68,7 @@ Run `docker compose ps` and `docker compose logs --tail=100 paseo` from the priv
 
 Use `docker compose exec --user paseo paseo paseo provider diagnostic PROVIDER --json` for provider failures. Check mounted-file ownership if the non-root user cannot access a project. Never recursively change ownership of an existing project tree to fix an unrelated startup error.
 
-Docker must remain running and the host awake. Automated host recovery and agent-managed HTTPS previews are [optional macOS tools](../docker/tailscale/README.md); ordinary Paseo access does not depend on them. Xcode and the iOS simulator do not run inside this Linux environment.
+Docker must remain running and the host awake. Automated host recovery and agent-managed HTTPS previews are [optional macOS tools](../docker/tailscale/README.md); ordinary Vorteo access does not depend on them. Xcode and the iOS simulator do not run inside this Linux environment.
 
 ## Share host project folders
 

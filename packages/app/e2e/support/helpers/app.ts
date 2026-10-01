@@ -46,7 +46,7 @@ export const setVortonMode = async (page: Page, enabled: boolean) => {
   const returnUrl = page.url();
   await openSettings(page);
   const button = page.getByTestId("settings-vorton-mode").getByRole("button", {
-    name: enabled ? "Vorton mode" : "Paseo mode",
+    name: enabled ? "Vorteo mode" : "Standard mode",
     exact: true,
   });
   await button.click();

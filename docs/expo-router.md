@@ -1,6 +1,6 @@
 # Expo Router
 
-Paseo's mobile route tree is fragile because Expo Router and React Navigation do
+Vorteo's mobile route tree is fragile because Expo Router and React Navigation do
 not fail loudly when a nested native route is mounted under the wrong layout. The
 usual symptom is a white or blank native screen with no JavaScript crash.
 

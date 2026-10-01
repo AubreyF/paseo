@@ -6,8 +6,8 @@ Status: proposed, not implemented. Recorded September 16, 2026. This plan covers
 
 - The embedded browser requires Electron. The [Electron pane](../packages/app/src/desktop/browser/pane/index.electron.tsx) implements it; the [web pane](../packages/app/src/desktop/browser/pane/index.web.tsx) displays an unavailable message. Install a desktop build of this branch to receive its custom interface.
 - The [desktop workflow](../.github/workflows/desktop-release.yml) already builds multiple platforms. Adapt it instead of creating an unrelated release system. The desktop build exports the Electron renderer and packages the backend from source; publishing the private web export alone cannot update installed desktop renderers.
-- The [builder configuration](../packages/desktop/electron-builder.yml) still identifies the app as official Paseo and points updates at `getpaseo/paseo`. Separate the custom distribution before shipping it, or upstream updates could replace custom functionality.
-- The [updater](../packages/desktop/src/features/auto-updater.ts) already downloads automatically. Paseo validates updates before installing on quit; the AppImage path deliberately excludes quit-time installation because it can hang. Preserve that exception.
+- The [builder configuration](../packages/desktop/electron-builder.yml) uses the Vorteo display name but retains the Paseo application identifiers and points updates at `getpaseo/paseo`. Separate the custom distribution before shipping it, or upstream updates could replace custom functionality.
+- The [updater](../packages/desktop/src/features/auto-updater.ts) already downloads automatically. Vorteo validates updates before installing on quit; the AppImage path deliberately excludes quit-time installation because it can hang. Preserve that exception.
 - The [desktop quit lifecycle](../packages/desktop/src/main.ts) can stop its managed daemon. Use independently managed remote hosts for ongoing agents when desktop updates must not interrupt work.
 
 ## Proposed architecture
@@ -16,7 +16,7 @@ Build an exact custom-branch commit after checks pass. Produce the renderer and 
 
 Use a private HTTPS endpoint reachable through Tailscale, subject to confirming workstation connectivity. Electron supports a generic HTTPS update provider. Keep client credentials out of the binary and scope build-worker publication credentials to the release destination. A disconnected client must continue running its installed version. A dedicated public GitHub Releases repository is an alternative if public binaries are acceptable. See [electron-builder's updater documentation](https://www.electron.build/v26/docs/features/auto-update/).
 
-Give the custom distribution its own app identity, settings directory, installer name, and update feed. Audit deep links, shortcuts, Linux desktop entries, and local daemon discovery for coexistence with official Paseo. Keep custom interface behavior behind the existing Vorton toggle.
+Give the custom distribution its own app identity, settings directory, installer name, and update feed. Audit deep links, shortcuts, Linux desktop entries, and local daemon discovery for coexistence with official Paseo. Keep custom interface behavior behind the existing Vorteo toggle.
 
 Serialize publication and reject stale build promotion. Coalesce superseded builds before publication. Upload artifacts before switching manifests, retaining previous artifacts for recovery. Platform manifests share one release version and source commit. Clients download automatically and install at normal quit or explicit restart; AppImage uses explicit restart. Do not force a restart during active work.
 
@@ -34,7 +34,7 @@ Confirm the actual workstation architectures before implementation. Add Windows 
 
 ## Versioning
 
-The selected scheme is `<upstream-base>-vorton.<counter>`, incremented for every commit. [Vorton commit versions](release.md#vorton-commit-versions) owns the workflow and synchronization rules. This replaces the earlier open question about Freed-style numbering.
+The selected scheme is `<upstream-base>-vorton.<counter>`, incremented for every commit. [Vorteo commit versions](release.md#vorton-commit-versions) owns the workflow and synchronization rules. This replaces the earlier open question about Freed-style numbering.
 
 Desktop distribution still needs its separate app identity and private feed, explicit prerelease channel handling, and a packaged update test. Recover by packaging known-good code under a higher version; do not rely on automatic downgrades.
 
@@ -48,7 +48,7 @@ Desktop distribution still needs its separate app identity and private feed, exp
 - [ ] Implement immutable uploads, publication serialization, complete manifests, and stale-build rejection.
 - [ ] On each supported platform, install A, publish B, verify automatic download and installation, check version and source revision, preserve settings, and confirm remote agents remain running.
 - [ ] Test interrupted downloads, unavailable feeds, recovery releases, and local daemon ownership during quit and restart.
-- [ ] For interface changes, verify Vorton off/on behavior and publish the tested private web export. Obtain physical-device acceptance where emulation cannot establish behavior; never launch macOS Playwright WebKit.
+- [ ] For interface changes, verify Vorteo off/on behavior and publish the tested private web export. Obtain physical-device acceptance where emulation cannot establish behavior; never launch macOS Playwright WebKit.
 - [ ] Record private installation and recovery instructions, then enable unattended publication after acceptance and authorization.
 
 ## Estimated effort

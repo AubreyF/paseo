@@ -1575,7 +1575,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           case "general":
             return (
               <>
-                <SettingsSection title="Vorton" testID="settings-vorton-section">
+                <SettingsSection title="Vorteo" testID="settings-vorton-section">
                   <View style={settingsStyles.card}>
                     <VortonModeToggle />
                   </View>

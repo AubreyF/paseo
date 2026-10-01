@@ -5,7 +5,7 @@ import { openAgentRoute } from "../support/helpers/mock-agent";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { setVortonMode } from "../support/helpers/app";
 
-test("diff counter moves between the toolbar and composer with Vorton mode", async ({ page }) => {
+test("diff counter moves between the toolbar and composer with Vorteo mode", async ({ page }) => {
   const workspace = await seedWorkspace({
     repoPrefix: "toolbar-diff-",
     repo: {

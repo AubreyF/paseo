@@ -100,7 +100,7 @@ function providerScaffold(
       connection,
       filters: { from_users: [user] },
       reply: "slack.reply",
-      testAction: "Mention `@Paseo have a look` in Slack.",
+      testAction: "Mention `@Vorteo have a look` in Slack.",
     };
   }
 
@@ -110,7 +110,7 @@ function providerScaffold(
     connection,
     filters: { from_users: [user] },
     reply: "discord.reply",
-    testAction: "Mention `@Paseo have a look` in Discord.",
+    testAction: "Mention `@Vorteo have a look` in Discord.",
   };
 }
 

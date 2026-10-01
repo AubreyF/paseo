@@ -2,9 +2,9 @@
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
 client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
-Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
+Vorteo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
-> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
+> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Vorteo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
 ## Install a directory source
 
@@ -41,7 +41,7 @@ runtime-safe: run `paseo reload` after editing `config.json`. Enabling starts ev
 enabled plugin; disabling tears them all down without restarting the daemon. Plugin source entries
 remain lifecycle-owned and do not reload from manual config edits.
 
-The directory contains a manifest declaring identity and Paseo requirements, one optional entry per runtime, runtime-owned
+The directory contains a manifest declaring identity and Vorteo requirements, one optional entry per runtime, runtime-owned
 directories, and local typechecking support. At least one entry is required.
 
 ```text
@@ -57,7 +57,7 @@ my-plugin/
 ```
 
 The generated `package.json` installs `@getpaseo/plugin` and the other host modules as development
-dependencies for local typechecking and tests. Paseo compiles TypeScript and TSX and supplies the
+dependencies for local typechecking and tests. Vorteo compiles TypeScript and TSX and supplies the
 runtime modules, so consumers do not install these packages when adding the plugin.
 
 ```json
@@ -67,7 +67,7 @@ runtime modules, so consumers do not install these packages when adding the plug
 }
 ```
 
-Declare the supported Paseo range and keep it current when adopting newer APIs. See the
+Declare the supported Vorteo range and keep it current when adopting newer APIs. See the
 [requirements contract](../public-docs/plugins/reference.md#requirements), including legacy
 manifests and prerelease matching.
 
@@ -78,10 +78,10 @@ keys.
 
 Never enable plugins on a user's behalf without explicit permission. Before asking, check the
 target daemon's current `pluginsEnabled` value. State that plugins are trusted, unsandboxed code:
-backend code can access the daemon machine, while client contributions run inside the Paseo app.
+backend code can access the daemon machine, while client contributions run inside the Vorteo app.
 
 Source changes are explicit. Run `paseo plugin reload <id>` to stop and fully tear down the old
-plugin before compiling and starting from disk. A failed reload stays failed; Paseo does not restore
+plugin before compiling and starting from disk. A failed reload stays failed; Vorteo does not restore
 the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Removing a directory source
 never deletes it. The global `pluginsEnabled` switch remains available.
 
@@ -105,7 +105,7 @@ Append `:relative/path` to the source when the plugin lives below the repository
 
 `--ref` chooses the initial branch, tag, or commit once. Ordinary updates resolve the remote's
 current default HEAD and ask for approval. `ls` reports the installed commit without contacting the remote.
-Removing a Git source deletes Paseo's managed checkout.
+Removing a Git source deletes Vorteo's managed checkout.
 
 ## Managed source ownership
 
@@ -136,7 +136,7 @@ session is stored in the daemon. PluginService owns activation/recovery and inde
 ### Declare Git preparation
 
 Most plugins should omit `build`. Use it only when the staged checkout must install a dependency
-that Paseo does not provide, generate source or assets, or perform another required preparation
+that Vorteo does not provide, generate source or assets, or perform another required preparation
 step:
 
 ```json
@@ -151,16 +151,16 @@ step:
 ```
 
 `build` is an optional list of argv arrays. Each array must contain at least one non-empty string;
-shell command strings are rejected. Paseo starts the executable directly, without a shell, from the
+shell command strings are rejected. Vorteo starts the executable directly, without a shell, from the
 plugin directory in the staged checkout. It never detects lockfiles or chooses a package manager.
 
-On install and every update, Paseo resolves the exact Git revision and manifest, runs the declared
+On install and every update, Vorteo resolves the exact Git revision and manifest, runs the declared
 commands, then validates, compiles, and activates the candidate. It logs each argv command and its
-output in the daemon log. If a command fails, the error includes its output, Paseo discards the
+output in the daemon log. If a command fails, the error includes its output, Vorteo discards the
 candidate, and the existing installed and running version stays untouched. On a remote daemon, all
 of this happens on the remote daemon host.
 
-Server contributions can write to stdout and stderr with normal Node logging. Paseo adds `[paseo]`
+Server contributions can write to stdout and stderr with normal Node logging. Vorteo adds `[paseo]`
 entries for loading, ready, stopping, and stopped transitions. Compilation and load failures are
 recorded as stderr entries before a subprocess exists. Inspect the recent in-memory
 tail from the host plugin settings or with `paseo plugin logs <id>`. Git preparation commands are
@@ -183,7 +183,7 @@ wiring. Runtime code lives behind directory boundaries:
 Do not put any other code modules in the plugin root.
 
 Shared files import contract helpers and types from `@getpaseo/plugin`. Server handler files import
-`PluginHandlerContext` from `@getpaseo/plugin/server`. Client files import Paseo UI from
+`PluginHandlerContext` from `@getpaseo/plugin/server`. Client files import Vorteo UI from
 `@getpaseo/plugin/client/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
@@ -259,25 +259,25 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-The contribution function must return cleanup. Server cleanup may be async; Paseo waits for it when
+The contribution function must return cleanup. Server cleanup may be async; Vorteo waits for it when
 the plugin is reloaded, disabled, removed, disconnected, or shut down. Cleanup is for resources
-created by plugin code. Paseo removes registered contributions, unmounts surfaces, clears query
+created by plugin code. Vorteo removes registered contributions, unmounts surfaces, clears query
 state, rejects pending RPCs, closes the plugin's daemon session, and stops the subprocess. Cleanup
 errors are logged and do not interrupt host teardown.
 
-Paseo owns the route, screen header, Lucide icon validation, close action, theme DTO, layout facts,
+Vorteo owns the route, screen header, Lucide icon validation, close action, theme DTO, layout facts,
 and render error boundary. The contributed component owns the complete body below the header.
 
 RPC contracts validate inputs and outputs in both the app and plugin subprocess. `useRpc` returns a
 typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
-Paseo gives each plugin installation its own query client.
+Vorteo gives each plugin installation its own query client.
 
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
 workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
 selected host's existing connection; switching the screen's host changes both `usePaseo()` and
 `useRpc()` to that host. An offline selected host fails there and never falls through to another
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
-Use plugin RPC for plugin-specific backend behavior that is not a normal Paseo operation.
+Use plugin RPC for plugin-specific backend behavior that is not a normal Vorteo operation.
 
 Host-targeted clients and discovery are owned by `packages/app/src/plugins/hosts`, with per-installation
 bindings supplied by the bundle loader. Bind the imperative getter to that installation; do not
@@ -290,7 +290,7 @@ grace. During daemon startup, plugin sessions may connect while application WebS
 paused; the daemon accepts clients only after configured plugins have settled and the initial
 catalog is complete.
 
-When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
+When the same plugin contribution exists on multiple hosts, Vorteo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
 query cache. Explicit SDK targets follow the [host API contract](../public-docs/plugins/reference.md#discover-hosts-and-target-another-host).
 
@@ -308,7 +308,7 @@ workspace only. Location controls hosting, not context. An agent panel target ke
 when moved between hosts. Explorer configuration can create workspace-context panels and remove
 existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
 
-Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
+Command Center callbacks use the selected host's existing `PaseoApi` for normal Vorteo operations.
 They use typed plugin RPC only for plugin-specific backend work. Surface and panel navigation
 belongs to the app; plugins do not receive Expo Router or workspace-layout store access.
 See the public [navigation fields](../public-docs/plugins/reference.md#surfaces-and-sidebar-items)
@@ -351,7 +351,7 @@ need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
 Route messages, structured commands, steering, and command side effects through `session.prompt`.
-Provider settings are toggle/select data that Paseo renders in the composer. Keep private options in
+Provider settings are toggle/select data that Vorteo renders in the composer. Keep private options in
 the opaque `providerOptions` config object.
 
 Agent refresh closes the current provider session and opens it again with current configuration and
@@ -373,7 +373,7 @@ owns author workflow, lifecycle, testing, and distribution guidance.
 It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
 self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
 external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
-allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
+allowed. Vorteo reads and sanitizes the file when the plugin starts; the string is never an inline
 SVG or URL.
 
 ## Contribute buttons
@@ -406,12 +406,12 @@ built-in projection stay unchanged. The app transforms each source item while bu
 model, for both fetched history and live events, before native Markdown splitting and Overview
 tool grouping. Assistant callbacks receive the accumulated source text, never display fragments.
 Live assistant messages use `phase: "streaming"`; committing to history makes them `"complete"`.
-Paseo memoizes by source-item reference and phase and derives replacement IDs from source identity, so
+Vorteo memoizes by source-item reference and phase and derives replacement IDs from source identity, so
 streaming updates preserve mounted component identity.
 
 `query.itemType` selects one public `AgentTimelineItem.type`. The callback owns any detailed
 recognition and returns plain plugin item objects. `undefined` keeps the source item, `items`
-replaces it, and an empty array removes it. Output `data` must be JSON-compatible. Paseo adds the
+replaces it, and an empty array removes it. Output `data` must be JSON-compatible. Vorteo adds the
 runtime plugin ID, preserves the source timeline cursor and identity, validates renderer data with
 its Zod schema, and mounts the component inside the normal plugin runtime and error boundary. An
 optional output `id` distinguishes several stable replacements from the same source item; its output
@@ -460,14 +460,14 @@ client.addSlashCommand({
 });
 ```
 
-Paseo owns the autocomplete row, input clearing, and error toast. It never sends the command text to
+Vorteo owns the autocomplete row, input clearing, and error toast. It never sends the command text to
 the agent. Built-in client commands win name and alias collisions, plugin commands win
 provider-command collisions, and the first plugin in stable catalog order wins collisions between
 plugins. Plugin slash commands do not run when the composer has attachments.
 
 ## Contribute composer attachments
 
-Register a declarative attachment source backed by a plugin RPC. Paseo owns the attachment menu,
+Register a declarative attachment source backed by a plugin RPC. Vorteo owns the attachment menu,
 search picker, drafts, selected pill, and submission. The plugin returns complete text snapshots;
 credentials and vendor API calls stay in the daemon handler.
 
@@ -517,7 +517,7 @@ subscription cleanup belongs in the plugin's contribution cleanup when it outliv
 
 ## Contribute a theme
 
-`addTheme` takes a small light or dark palette and a display name. Paseo expands it through the
+`addTheme` takes a small light or dark palette and a display name. Vorteo expands it through the
 same semantic builders as the built-in themes, so plugins do not depend on the complete app token
 contract. Unistyles needs every theme name at `StyleSheet.configure` time, so
 `packages/app/src/styles/theme.ts` reserves one light and one dark plugin slot. The appearance

@@ -101,7 +101,7 @@ fs.writeFileSync(path, JSON.stringify(cfg, null, 2));
 
 Write-Host @"
 ======================================================
-  Paseo Desktop Dev (Windows)
+  Vorteo Desktop Dev (Windows)
 ======================================================
   Metro:      http://localhost:$($env:EXPO_PORT)
   Daemon:     $($env:PASEO_LISTEN) (isolated)

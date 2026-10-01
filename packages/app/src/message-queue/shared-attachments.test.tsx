@@ -97,7 +97,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("hides shared controls in Paseo mode and restores them without fetching", async () => {
+it("hides shared controls in Vorteo mode and restores them without fetching", async () => {
   state.vorton = false;
   await render();
   expect(container.textContent).toBe("");

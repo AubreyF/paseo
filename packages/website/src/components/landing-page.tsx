@@ -349,7 +349,7 @@ function SocialProofWall() {
     >
       <SectionTitle
         title="Loved by developers"
-        description="See what developers are saying about Paseo"
+        description="See what developers are saying about upstream Paseo"
       />
 
       <div className="social-proof-marquee space-y-4 overflow-hidden">
@@ -458,7 +458,7 @@ function TurnkeySection() {
   return (
     <FeatureSection
       title="Run it anywhere"
-      description="Use Paseo locally, from another machine, or with a team"
+      description="Use Vorteo locally, from another machine, or with a team"
     >
       <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
         <div className="flex flex-col gap-6 border-b border-white/10 p-6 sm:flex-row sm:items-center sm:justify-between md:p-8">
@@ -487,7 +487,7 @@ function TurnkeySection() {
             <TurnkeyExtensionCard
               icon={Laptop}
               title="Remote machines"
-              description="Run Paseo on a home lab, or a cloud machine"
+              description="Run Vorteo on a home lab, or a cloud machine"
               ctaHref="/docs#server--cli"
               ctaLabel="Docs"
             />
@@ -496,7 +496,7 @@ function TurnkeySection() {
               title="Teams and triggers"
               description="Share access or start work from GitHub, Slack, and Discord"
               ctaHref="/hub"
-              ctaLabel="Paseo Hub"
+              ctaLabel="Vorteo Hub"
               showIntegrationIcons
             />
           </div>
@@ -588,7 +588,7 @@ function AutomationSection() {
   return (
     <FeatureSection
       title="Built for automation"
-      description="Use MCP, the CLI, or the TypeScript SDK to automate Paseo"
+      description="Use MCP, the CLI, or the TypeScript SDK to automate Vorteo"
       links={AUTOMATION_LINKS}
     >
       <div className="grid gap-4 md:grid-cols-[14rem_minmax(0,1fr)]">
@@ -785,7 +785,7 @@ function SdkAutomationExample() {
 
 function ExtensibleSection() {
   return (
-    <FeatureSection title="Make it yours" description="Extend Paseo to work just the way you want">
+    <FeatureSection title="Make it yours" description="Extend Vorteo to work just the way you want">
       <div className="grid gap-4 md:grid-cols-2">
         <ExtensibleCard
           icon={Puzzle}
@@ -796,7 +796,7 @@ function ExtensibleSection() {
         <ExtensibleCard
           icon={GitFork}
           title="Fork the repo"
-          description="Paseo is licensed under Apache 2.0. You can inspect the implementation, fork the project, and adapt it to your workflow or organization"
+          description="Vorteo is licensed under Apache 2.0. You can inspect the implementation, fork the project, and adapt it to your workflow or organization"
           links={FORK_CARD_LINKS}
         />
       </div>
@@ -995,7 +995,7 @@ function ServerInstallButton() {
     <CommandDialog
       trigger={SERVER_INSTALL_TRIGGER}
       title="Run agents on a remote machine"
-      description="For headless machines you want to connect to from the Paseo apps. The desktop app already includes a built-in daemon"
+      description="For headless machines you want to connect to from the Vorteo apps. The desktop app already includes a built-in daemon"
       command="npm install -g @getpaseo/cli && paseo"
       footnote={SERVER_INSTALL_FOOTNOTE}
     />
@@ -1079,7 +1079,7 @@ function PhoneShowcase() {
           style={leftPhoneStyle}
           className="w-[160px] md:w-[240px] absolute"
           role="img"
-          aria-label="Paseo workspace drawer"
+          aria-label="Vorteo workspace drawer"
         >
           <PhoneFrame time="18:54" depth="right">
             <MobileSidebar />
@@ -1093,7 +1093,7 @@ function PhoneShowcase() {
           transition={EASE_OUT_06_DELAY_01}
           className="w-[220px] md:w-[240px] relative z-10"
           role="img"
-          aria-label="Paseo agent chat"
+          aria-label="Vorteo agent chat"
         >
           <PhoneFrame time="18:53">
             <MobileChat />
@@ -1105,7 +1105,7 @@ function PhoneShowcase() {
           style={rightPhoneStyle}
           className="w-[160px] md:w-[240px] absolute"
           role="img"
-          aria-label="Paseo diff view"
+          aria-label="Vorteo diff view"
         >
           <PhoneFrame time="18:55" depth="left">
             <MobileDiff />
@@ -1128,12 +1128,12 @@ function FAQ() {
       <h2 className="text-3xl font-medium">FAQ</h2>
       <div className="space-y-6">
         <FAQItem question="Is this free?">
-          Yes. Paseo is free and open source. You need agent providers installed with your own
+          Yes. Vorteo is free and open source. You need agent providers installed with your own
           credentials. Voice is local-first by default and can optionally use cloud speech providers
           if you configure them.
         </FAQItem>
         <FAQItem question="Does my code leave my machine?">
-          Paseo doesn&apos;t send your code anywhere. Agents run locally and talk to their own APIs
+          Vorteo doesn&apos;t send your code anywhere. Agents run locally and talk to their own APIs
           as they normally would. For remote access, you can use the optional{" "}
           <a href="/docs/security" className="underline hover:text-white/80">
             end-to-end encrypted relay
@@ -1141,16 +1141,16 @@ function FAQ() {
           , connect directly over your local network, or use your own tunnel.
         </FAQItem>
         <FAQItem question="What agents does it support?">
-          Paseo supports many providers. It has custom implementations for Claude, Codex, OpenCode,
+          Vorteo supports many providers. It has custom implementations for Claude, Codex, OpenCode,
           Pi, and OMP, and supports many more via ACP. See the full list here:{" "}
           <a href="/agents" className="underline hover:text-white/80">
             all supported providers
           </a>
           .
         </FAQItem>
-        <FAQItem question="How does Paseo run providers?">
-          Paseo runs the providers installed on your machine as you&apos;d normally run them. Paseo
-          doesn&apos;t modify or change their behavior.
+        <FAQItem question="How does Vorteo run providers?">
+          Vorteo runs the providers installed on your machine as you&apos;d normally run them.
+          Vorteo doesn&apos;t modify or change their behavior.
         </FAQItem>
         <FAQItem question="Do I need the desktop app?">
           No. You can run the daemon headless and use any client to connect. The desktop app just
@@ -1166,7 +1166,7 @@ function FAQ() {
           .
         </FAQItem>
         <FAQItem question="Can I connect from outside my network?">
-          Yes. You can use the hosted relay (end-to-end encrypted, Paseo can&apos;t read your
+          Yes. You can use the hosted relay (end-to-end encrypted, Vorteo can&apos;t read your
           traffic), set up your own tunnel (Tailscale, Cloudflare Tunnel, etc.), or expose the
           daemon port directly. See{" "}
           <a href="/docs/configuration" className="underline hover:text-white/80">
@@ -1175,16 +1175,16 @@ function FAQ() {
           .
         </FAQItem>
         <FAQItem question="Do I need git or GitHub?">
-          No. Paseo works in any directory. Worktrees are optional and only relevant if you use git.
-          You can run agents anywhere you&apos;d normally work.
+          No. Vorteo works in any directory. Worktrees are optional and only relevant if you use
+          git. You can run agents anywhere you&apos;d normally work.
         </FAQItem>
-        <FAQItem question="Can I get banned for using Paseo?">
-          Paseo is designed to use each provider&apos;s officially supported integration and does
+        <FAQItem question="Can I get banned for using Vorteo?">
+          Vorteo is designed to use each provider&apos;s officially supported integration and does
           not attempt to bypass its terms of service. It doesn&apos;t extract tokens or call
           inference APIs directly.
         </FAQItem>
         <FAQItem question="How do worktrees work?">
-          When you launch an agent with the worktree option (from the app, desktop, or CLI), Paseo
+          When you launch an agent with the worktree option (from the app, desktop, or CLI), Vorteo
           creates a git worktree and runs the agent inside it. The agent works on an isolated branch
           without touching your main working directory. See the{" "}
           <a href="/docs/worktrees" className="underline hover:text-white/80">
@@ -1207,6 +1207,7 @@ function SponsorCTA() {
       className="rounded-xl bg-white/5 border border-white/10 p-8 md:p-10 text-left space-y-4 max-w-xl mx-auto"
     >
       <div className="text-sm text-muted-foreground leading-relaxed space-y-3">
+        <p>From the maintainer of upstream Paseo:</p>
         <p>Paseo is an independent open source project for running coding agents.</p>
         <p>Its guiding principle is optionality and freedom of choice.</p>
         <p>

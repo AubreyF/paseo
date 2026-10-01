@@ -662,7 +662,7 @@ describe("PersistedConfigSchema voice mode config", () => {
 });
 
 describe("loadPersistedConfig", () => {
-  test("materializes relay disabled for a new Paseo home", () => {
+  test("materializes relay disabled for a new Vorteo home", () => {
     const home = createTempHome();
     try {
       const config = loadPersistedConfig(home);

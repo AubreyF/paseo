@@ -48,7 +48,7 @@ jobs:
           release_args=(
             release create "$RELEASE_TAG"
             --repo "${{ github.repository }}"
-            --title "Paseo $RELEASE_TAG"
+            --title "Vorteo $RELEASE_TAG"
             --notes ""
             --draft
           )

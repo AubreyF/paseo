@@ -112,7 +112,7 @@ test("updates a draft release body without publishing it", () => {
           {
             id: 311163621,
             draft: true,
-            name: "Paseo v0.1.60-beta.1",
+            name: "Vorteo v0.1.60-beta.1",
             tag_name: "untagged-draft",
             html_url: "https://github.com/getpaseo/paseo/releases/tag/untagged-draft",
           },
@@ -160,7 +160,7 @@ test("creates missing beta releases as drafts", () => {
               {
                 id: 311163621,
                 draft: true,
-                name: "Paseo v0.1.60-beta.1",
+                name: "Vorteo v0.1.60-beta.1",
                 tag_name: "v0.1.60-beta.1",
               },
             ])

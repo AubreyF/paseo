@@ -15,7 +15,7 @@ if [ -z "${PASEO_LOCAL_MODELS_DIR}" ]; then
 fi
 
 echo "══════════════════════════════════════════════════════"
-echo "  Paseo Dev Daemon"
+echo "  Vorteo Dev Daemon"
 echo "══════════════════════════════════════════════════════"
 echo "  Home:    ${PASEO_HOME}"
 echo "  Models:  ${PASEO_LOCAL_MODELS_DIR}"

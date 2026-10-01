@@ -1,6 +1,6 @@
 ---
 title: Schedules from the CLI
-description: Create and manage Paseo schedules with paseo schedule.
+description: Create and manage Vorteo schedules with paseo schedule.
 nav: CLI
 order: 27
 category: Schedules
@@ -64,7 +64,7 @@ paseo schedule create \
 
 ## Heartbeats
 
-Inside a running Paseo agent, create a heartbeat for that same conversation:
+Inside a running Vorteo agent, create a heartbeat for that same conversation:
 
 ```bash
 paseo heartbeat create \
@@ -80,7 +80,7 @@ paseo heartbeat update <id> --cron "*/10 * * * *"
 paseo heartbeat delete <id>
 ```
 
-Updating a heartbeat changes only its cron cadence and optional time zone. Its target and prompt stay fixed. Heartbeat commands require `PASEO_AGENT_ID`, which Paseo sets inside agent sessions.
+Updating a heartbeat changes only its cron cadence and optional time zone. Its target and prompt stay fixed. Heartbeat commands require `PASEO_AGENT_ID`, which Vorteo sets inside agent sessions.
 
 Heartbeats require a raw `--cron` expression. The `--every` presets below are available only for new-agent schedules.
 

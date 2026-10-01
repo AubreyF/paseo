@@ -10,7 +10,7 @@ category: Workspaces
 
 Git worktrees are one kind of workspace.
 
-A [workspace](/docs/workspaces) is the place where a task happens. When that workspace is backed by a git worktree, Paseo creates a separate directory on a separate branch so parallel agents never step on each other.
+A [workspace](/docs/workspaces) is the place where a task happens. When that workspace is backed by a git worktree, Vorteo creates a separate directory on a separate branch so parallel agents never step on each other.
 
 This page covers the git-specific details: where worktrees live, how branches are chosen, and how to configure setup hooks, scripts, terminals, and long-running services through `paseo.json`.
 
@@ -25,7 +25,7 @@ Worktrees live under `$PASEO_HOME/worktrees/` by default, grouped by a hash of t
     └── bold-owl/
 ```
 
-With a custom root, Paseo keeps the same hashed layout under that directory:
+With a custom root, Vorteo keeps the same hashed layout under that directory:
 
 ```json
 {
@@ -35,10 +35,10 @@ With a custom root, Paseo keeps the same hashed layout under that directory:
 }
 ```
 
-1. Create a workspace with worktree isolation, Paseo creates the worktree and runs your setup hooks
+1. Create a workspace with worktree isolation, Vorteo creates the worktree and runs your setup hooks
 2. Launch one or more agents in that workspace
 3. Review the diff against the base branch
-4. Merge or archive the workspace; after the last workspace using it is archived, Paseo runs teardown and removes the worktree
+4. Merge or archive the workspace; after the last workspace using it is archived, Vorteo runs teardown and removes the worktree
 
 ## Create a worktree-backed workspace
 
@@ -55,7 +55,7 @@ paseo workspace create \
   --base origin/main
 ```
 
-Use `origin/main` rather than `main`. Paseo fetches remote refs in the background, so the remote-tracking branch is current, while your local `main` is whatever you last pulled. An unqualified `main` resolves to that local branch first, and the worktree starts from stale history. Prefixing the remote names the fetched ref explicitly.
+Use `origin/main` rather than `main`. Vorteo fetches remote refs in the background, so the remote-tracking branch is current, while your local `main` is whatever you last pulled. An unqualified `main` resolves to that local branch first, and the worktree starts from stale history. Prefixing the remote names the fetched ref explicitly.
 
 Check out an existing branch:
 
@@ -76,11 +76,11 @@ paseo workspace create \
   --pr-number 2186
 ```
 
-Add `--forge <name>` when Paseo cannot infer the forge from the source checkout.
+Add `--forge <name>` when Vorteo cannot infer the forge from the source checkout.
 
 ## paseo.json
 
-Drop a `paseo.json` in your repo root. Paseo reads it from the committed version of the base branch you picked, so uncommitted changes in other branches don't apply.
+Drop a `paseo.json` in your repo root. Vorteo reads it from the committed version of the base branch you picked, so uncommitted changes in other branches don't apply.
 
 ```json
 {
@@ -114,7 +114,7 @@ Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to re
 
 ## Scripts and services
 
-`scripts` are named commands you can run inside a worktree on demand. Mark one as a _service_ and Paseo supervises it as a long-running process, assigns it a port, and routes HTTP traffic to it through the daemon's reverse proxy.
+`scripts` are named commands you can run inside a worktree on demand. Mark one as a _service_ and Vorteo supervises it as a long-running process, assigns it a port, and routes HTTP traffic to it through the daemon's reverse proxy.
 
 Run them from the app, or manage them from automation with [`paseo script`](/docs/cli#workspace-scripts) and the [workspace-script MCP tools](/docs/mcp#workspace-scripts).
 
@@ -148,11 +148,11 @@ Run them from the app, or manage them from automation with [`paseo script`](/doc
 }
 ```
 
-Omit `port` to let Paseo auto-assign one. Bind your process to `$PASEO_PORT` rather than hard-coding, each worktree gets a distinct port so multiple copies of the same service coexist.
+Omit `port` to let Vorteo auto-assign one. Bind your process to `$PASEO_PORT` rather than hard-coding, each worktree gets a distinct port so multiple copies of the same service coexist.
 
 ### Dynamic port allocation
 
-By default, Paseo asks the OS for an available ephemeral port. Configure a range globally in
+By default, Vorteo asks the OS for an available ephemeral port. Configure a range globally in
 `~/.paseo/config.json` or per project in `paseo.json`:
 
 ```json
@@ -186,12 +186,12 @@ For an external allocator, configure `portScript` instead:
 }
 ```
 
-Paseo runs the executable in the workspace directory with four arguments: service name, workspace
+Vorteo runs the executable in the workspace directory with four arguments: service name, workspace
 ID, branch name, and worktree path. Since the script is executed directly without a shell, `portScript` must point to a real executable (such as a compiled binary or a script with a proper shebang line like `#!/bin/bash`) rather than an inline shell command or pipeline. If you need shell evaluation or pipelines, wrap them in a small executable script. A missing branch is passed as an empty string. The same values
 are available as `PASEO_SCRIPTNAME`, `PASEO_WORKSPACE_ID`, `PASEO_BRANCH_NAME`, and
 `PASEO_WORKTREE_PATH`. It must print one valid TCP port to stdout. `portScript` wins over `range` in
-the same block. Paseo trusts the external allocator, so the returned port may already be in use, for
-example by a service Paseo will attach to.
+the same block. Vorteo trusts the external allocator, so the returned port may already be in use, for
+example by a service Vorteo will attach to.
 
 ### Reverse proxy
 

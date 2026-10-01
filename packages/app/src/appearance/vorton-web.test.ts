@@ -13,7 +13,7 @@ beforeEach(() => {
   document.head.innerHTML = `
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" data-paseo-status-bar-style="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Paseo">
+    <meta name="apple-mobile-web-app-title" content="Vorteo">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <link rel="manifest" href="/manifest.json">
   `;
@@ -28,7 +28,7 @@ function legacyMetadata() {
     'meta[name="apple-mobile-web-app-capable"], meta[name="apple-mobile-web-app-status-bar-style"]',
   );
 }
-describe("Vorton Home Screen metadata", () => {
+describe("Vorteo Home Screen metadata", () => {
   it.each([
     ["Mac PWA", "Macintosh", "MacIntel", 0, true, false],
     ["Mac trackpad PWA", "Macintosh", "MacIntel", 1, true, false],
@@ -46,7 +46,7 @@ describe("Vorton Home Screen metadata", () => {
       expect(document.documentElement.dataset.vortonIosStandalone).toBeUndefined();
     },
   );
-  it("preserves baseline Paseo installation metadata", () => {
+  it("preserves baseline Vorteo installation metadata", () => {
     stop = applyVortonWeb(false, true);
     expect(legacyMetadata()).toHaveLength(2);
     expect(
@@ -55,7 +55,7 @@ describe("Vorton Home Screen metadata", () => {
         ?.getAttribute("content"),
     ).toBe("black-translucent");
   });
-  it("preserves installation metadata in Vorton without requiring a new shortcut", () => {
+  it("preserves installation metadata in Vorteo without requiring a new shortcut", () => {
     stop = applyVortonWeb(true, true);
     expect(legacyMetadata()).toHaveLength(2);
     expect(document.head.querySelector('link[rel="manifest"]')?.getAttribute("href")).toBe(
@@ -68,9 +68,9 @@ describe("Vorton Home Screen metadata", () => {
       document.head
         .querySelector('meta[name="apple-mobile-web-app-title"]')
         ?.getAttribute("content"),
-    ).toBe("Paseo");
+    ).toBe("Vorteo");
   });
-  it("restores the original metadata nodes when switching back to Paseo", () => {
+  it("restores the original metadata nodes when switching back to Standard mode", () => {
     const original = Array.from(legacyMetadata());
     stop = applyVortonWeb(true, true);
     stop();

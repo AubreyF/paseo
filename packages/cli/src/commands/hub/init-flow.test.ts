@@ -43,7 +43,7 @@ describe("Hub guided setup continuation", () => {
     );
 
     assert.deepEqual(prompts.confirmations, [
-      "Connect this daemon to Paseo Hub?\n\nConnecting lets Hub identify this daemon and show whether it is online.\nIt does not allow Hub to create workspaces or run agents.",
+      "Connect this daemon to Vorteo Hub?\n\nConnecting lets Hub identify this daemon and show whether it is online.\nIt does not allow Hub to create workspaces or run agents.",
       "Allow Hub automations to run agents on this daemon?\n\nThis lets workflows triggered from GitHub, Slack, Discord, Linear, and other integrations create workspaces and run agents here.\n\nAgents can access files and run commands allowed by their workspace runtime.",
     ]);
     assert.deepEqual(prompts.selections, []);
@@ -346,7 +346,7 @@ function setupEnvironment(
           daemons: [{ id: "daemon-1", slug: "macbook" }],
           github: [],
           discord: [],
-          slack: [{ slug: "paseo", teamName: "Paseo" }],
+          slack: [{ slug: "paseo", teamName: "Vorteo" }],
           linear: [],
         }
       );

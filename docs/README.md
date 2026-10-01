@@ -5,7 +5,7 @@ Use this index to find the document that owns your task. Read relevant subjects 
 | Doc                                                             | What's in it                                                                                                                   |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | [docs/roadmap.md](roadmap.md)                                   | Planned fork work, separate from shipped capabilities                                                                          |
-| [docs/product.md](product.md)                                   | What Paseo is, who it's for, where it's going                                                                                  |
+| [docs/product.md](product.md)                                   | What Vorteo is, who it's for, where it's going                                                                                 |
 | [docs/architecture.md](architecture.md)                         | System design, package layering, WebSocket protocol, agent lifecycle, data flow                                                |
 | [docs/agent-lifecycle.md](agent-lifecycle.md)                   | Agent states, parent/child relationships, archive semantics, tabs vs archive, subagents track                                  |
 | [docs/data-model.md](data-model.md)                             | File-based JSON persistence, Zod schemas, atomic writes, no migrations                                                         |
@@ -46,7 +46,7 @@ Use this index to find the document that owns your task. Read relevant subjects 
 | [docs/host-handoff.md](host-handoff.md)                         | Team handoff entry point, fresh installation, migration and acceptance                                                         |
 | [docs/instance-continuity.md](instance-continuity.md)           | Persistent web publication and active-instance development                                                                     |
 | [docs/agent-presets.md](agent-presets.md)                       | Saved presets, managed workers, quota lifecycle and implementation status                                                      |
-| [docs/vorton-touch-audit.md](vorton-touch-audit.md)             | Vorton touch contract, historical checks and physical-device limits                                                            |
+| [docs/vorton-touch-audit.md](vorton-touch-audit.md)             | Vorteo touch contract, historical checks and physical-device limits                                                            |
 | [docs/publication-hygiene.md](publication-hygiene.md)           | Public source boundaries, secret checks and history cleanup                                                                    |
 | [docs/release.md](release.md)                                   | Release playbook, draft releases, completion checklist                                                                         |
 | [docs/desktop-auto-builds.md](desktop-auto-builds.md)           | Proposed private desktop build and update pipeline, findings, acceptance work, and effort estimate                             |

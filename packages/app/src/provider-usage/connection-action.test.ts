@@ -42,7 +42,7 @@ it("uses configured provider identity, including built-in Codex, rather than nam
   ).toBeNull();
 });
 
-it("keeps Paseo mode unchanged for both new and rejected accounts", () => {
+it("keeps Vorteo mode unchanged for both new and rejected accounts", () => {
   expect(providerConnectionAction({ ...input, vortonMode: false })).toBeNull();
   expect(
     providerConnectionAction({

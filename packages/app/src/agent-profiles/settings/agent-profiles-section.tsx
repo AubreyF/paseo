@@ -233,7 +233,7 @@ export function AgentProfilesSection({
               emptyText="No configurations available"
             />
             <Text style={styles.emptyText}>
-              Used for new Vorton chats on this host. Existing chats and their accounts stay
+              Used for new Vorteo chats on this host. Existing chats and their accounts stay
               unchanged. The first available configuration is selected when no default is set.
             </Text>
           </>

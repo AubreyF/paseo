@@ -61,8 +61,8 @@ export async function resolveWorkspaceScriptWorkspaceId(
   }
   throw {
     code: "WORKSPACE_NOT_FOUND",
-    message: `No Paseo workspace found for ${cwd}`,
-    details: "Open the directory in Paseo first, or pass --workspace <workspace-id>.",
+    message: `No Vorteo workspace found for ${cwd}`,
+    details: "Open the directory in Vorteo first, or pass --workspace <workspace-id>.",
   } satisfies CommandError;
 }
 

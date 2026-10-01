@@ -33,7 +33,7 @@ Common optional configuration:
 | `reconnect.maxDelayMs`  | `number`      | Client default | Maximum reconnect delay.                         |
 | `logger`                | `PaseoLogger` | Unset          | Debug, info, warning, and error sink.            |
 
-Relay E2EE clients can also pass `e2ee.enabled` and `e2ee.daemonPublicKeyB64`. `appVersion`, `runtimeGeneration`, and runtime-metrics options exist for Paseo client surfaces; ordinary integrations can omit them.
+Relay E2EE clients can also pass `e2ee.enabled` and `e2ee.daemonPublicKeyB64`. `appVersion`, `runtimeGeneration`, and runtime-metrics options exist for Vorteo client surfaces; ordinary integrations can omit them.
 
 ## Client lifecycle
 
@@ -127,7 +127,7 @@ See [events](./events.md#follow-provider-catalog-changes) for explicit event obs
 | ------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------- |
 | `list(options?)`         | `PaseoWorkspaceListResult`    | Lists, filters, pages, or subscribes to the workspace directory.                               |
 | `open(cwd)`              | `PaseoWorkspaceHandle`        | Reuses the active workspace for a directory or creates one.                                    |
-| `create(options)`        | `PaseoWorkspaceHandle`        | Always creates a fresh directory-backed or Paseo-worktree workspace.                           |
+| `create(options)`        | `PaseoWorkspaceHandle`        | Always creates a fresh directory-backed or Vorteo-worktree workspace.                          |
 | `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`        | Creates a local handle.                                                                        |
 | `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult` | Archives without first creating a handle.                                                      |
 | `subscribe(handler)`     | Unsubscribe function          | Local listener for this API instance. Requires an owned `list({ subscribe: {} })` observation. |

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the reviewed login agent without stopping Docker or Paseo."""
+"""Install the reviewed login agent without stopping Docker or Vorteo."""
 import os
 from pathlib import Path
 import shutil

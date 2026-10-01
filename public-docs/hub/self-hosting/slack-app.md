@@ -30,7 +30,7 @@ Paste both tokens into Hub and choose **Connect Slack**. Hub verifies the instal
 Invite the bot to each channel it should watch:
 
 ```text
-/invite @Paseo
+/invite @Vorteo
 ```
 
 Now write a [Slack trigger](/docs/hub/triggers/slack).

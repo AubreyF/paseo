@@ -16,7 +16,7 @@ Save named profiles that combine an account, model, reasoning level, permissions
 
 The account picker groups saved profiles under each account in compact, equal-height rows, without row dividers, with a larger selection check on the left. Search and **Manage profiles** share rounded corners and compact desktop sizing while retaining full touch targets. Desktop uses a split pane; mobile slides into the selected account’s details with a back button to return to connections. The mobile list scrolls with the sheet. **Use profile** stays at the bottom of the details pane. Pi’s details list its discovered models with reasoning support, reported context and output limits, and supported inputs. Local connections also show endpoint and worker status in the account list. Search stays beside **Manage profiles**, which opens the account’s **Profiles** tab in provider settings. Profile permissions apply to new chats. Existing chats keep their permissions and show a warning with a recreate action when the saved profile differs.
 
-<img width="600" alt="Animated demo of Vorton account switching and profiles" src="https://github.com/user-attachments/assets/ae3f9872-f3d6-4efa-8f23-a032aa3133de" />
+<img width="600" alt="Animated demo of Vorteo account switching and profiles" src="https://github.com/user-attachments/assets/ae3f9872-f3d6-4efa-8f23-a032aa3133de" />
 
 _Account switching and profiles in action._
 
@@ -24,12 +24,12 @@ For an existing task, changing profiles opens a handoff you can review and edit 
 
 ## More control over your agents
 
-- **Give agents room to work without handing them your whole machine.** The installer automatically builds and starts a local container for Vorton and your agents. This limits the damage an accidental destructive command can do to your host: agents can modify the container home and mounted projects, while unmounted personal files stay outside their filesystem access. Keep backups of mounted projects; the container does not protect those files from deletion. See the [security boundaries](docs/container-tailscale.md).
+- **Give agents room to work without handing them your whole machine.** The installer automatically builds and starts a local container for Vorteo and your agents. This limits the damage an accidental destructive command can do to your host: agents can modify the container home and mounted projects, while unmounted personal files stay outside their filesystem access. Keep backups of mounted projects; the container does not protect those files from deletion. See the [security boundaries](docs/container-tailscale.md).
 - **See your available capacity.** Check account usage and reset times beside your profiles. Use existing reset credits where the provider supports them.
 - **Give Codex a goal.** Set an objective with an optional token budget. Follow progress, elapsed time and token usage from the goal bar, and pause or resume when you need to intervene.
 - **Line up the next steps.** Queue messages with files or images, then edit, reorder, pause or send them from another connected device. The host owns the queue and can keep delivering messages after you close the client. Pausing the queue leaves an active goal eligible to continue; stopping the task pauses both. Saved queues do not guarantee uninterrupted execution of an active turn during a host restart. Queue, goal and subagent cards scroll with the conversation. Collapse the Subagents card using its heading; the count and Archive finished action stay visible. Unsaved queue edits stay on the device across reloads, including newly added images. Save synchronizes text and attachment changes; Cancel leaves the shared message unchanged. Drag queued messages to reorder them; sidebar badges show queued messages, subagents and active goals.
 - **Put local workers to work.** Configure a Pi profile for a local or private OpenAI-compatible endpoint, then let a supervisor delegate work with a limit on concurrent workers.
-- **Keep projects in view.** In Vorton mode, History and Schedules sit in the top sidebar toolbar. The three-dot menu holds Add project, New workspace, View preferences, Settings, and Help and support. In View preferences → Show, turn Activity badges on or off to show or hide subagent counts, queued-message counts, and active-goal badges. On mobile, the compact search field keeps a full-height tap target. iPhone toolbars use the system safe area without an extra blank strip. Vorton requests an opaque iPhone Home Screen status bar to keep system translucency off the toolbar.
+- **Keep projects in view.** In Vorteo mode, History and Schedules sit in the top sidebar toolbar. The three-dot menu holds Add project, New workspace, View preferences, Settings, and Help and support. In View preferences → Show, turn Activity badges on or off to show or hide subagent counts, queued-message counts, and active-goal badges. On mobile, the compact search field keeps a full-height tap target. iPhone toolbars use the system safe area without an extra blank strip. Vorteo requests an opaque iPhone Home Screen status bar to keep system translucency off the toolbar.
 - **Work from your phone or tablet.** Compact profiles, visible touch controls and responsive task views keep account selection and task management within reach. Sidebar rows and actions expand into larger touch targets on touchscreens and in narrow windows. The workspace diff counter keeps a 44-pixel touch target in compact layouts. On desktop, hover a project or workspace row to reveal its three-dot menu.
 
 Archiving a workspace also archives its threads. When the selected workspace is archived, including through an agent or another client, you return to an empty New workspace page for the same project.
@@ -39,12 +39,14 @@ Archiving a workspace also archives its threads. When the selected workspace is 
 Add themes, workspace panels, commands, settings screens, and coding-agent providers with trusted
 TypeScript plugins. Install from npm, Git, or a local directory with `paseo plugin install <source>`.
 
-Vorton’s selected launch settings, profile instructions, reserve policy, and configured account environment take precedence over plugin launch hooks. Hooks can supply defaults and additional environment variables.
+Vorteo’s selected launch settings, profile instructions, reserve policy, and configured account environment take precedence over plugin launch hooks. Hooks can supply defaults and additional environment variables.
 
 Start with the [plugin quickstart](https://paseo.sh/docs/plugins). Plugins run with access to your daemon
 machine and inside connected clients; install only code you trust.
 
 ## Install
+
+The product is now named Vorteo. Existing `paseo` commands, `PASEO_*` environment variables, package names, configuration paths and deep links remain unchanged.
 
 Use the [host folder sharing workflow](docs/docker.md#share-host-project-folders) to make existing projects accessible to the container. Hosts with folder browsing support list shared folders separately from container storage in **Add project**, with the same selection flow for new directories and clone destinations. Older hosts accept container paths; typed paths remain selectable while search suggestions load.
 
@@ -69,7 +71,7 @@ Provider authentication happens afterward through the provider settings, which e
 
 Keep progress messages brief. If verification requires access only the user has, request that specific check and state what remains unverified.
 
-The installer builds locally, creates private storage and starts the container. Complete the Tailscale login, open the printed HTTPS address, and use the password in `$HOME/paseo-instance/.env`. Connect your provider accounts in the web interface. Vorton is enabled by default on a fresh installation.
+The installer builds locally, creates private storage and starts the container. Complete the Tailscale login, open the printed HTTPS address, and use the password in `$HOME/paseo-instance/.env`. Connect your provider accounts in the web interface. Vorteo mode is enabled by default on a fresh installation.
 
 No registry account, host Node or separate host Tailscale installation is needed. Existing checkout? See [installation details](docker/multiplex/README.md).
 
@@ -96,7 +98,7 @@ Keep personal files, Docker's socket and other users' homes outside the containe
 - [Accounts and presets](docs/agent-presets.md)
 - [Development inside the container](docs/development.md)
 - [Updates and troubleshooting](docs/docker.md)
-- [Optional private workspace previews](docker/tailscale/README.md) reuse the task workspace, configured service and private HTTPS reservation. The host can admit registered projects and worktrees without individual grants while retaining host path verification. With matching daemon and web updates installed, Vorton workspace hover cards include clickable globe rows for running previews, using the broker private HTTPS address.
+- [Optional private workspace previews](docker/tailscale/README.md) reuse the task workspace, configured service and private HTTPS reservation. The host can admit registered projects and worktrees without individual grants while retaining host path verification. With matching daemon and web updates installed, Vorteo workspace hover cards include clickable globe rows for running previews, using the broker private HTTPS address.
 - [Team handoff and testing](docs/host-handoff.md)
 - [Planned work](docs/roadmap.md)
 

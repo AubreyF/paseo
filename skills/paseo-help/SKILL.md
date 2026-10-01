@@ -1,11 +1,11 @@
 ---
 name: paseo-help
-description: Answer questions about the Paseo product and app, including setup, configuration, connectivity, providers, workspaces, updates, logs, and troubleshooting. Use when a user inside Paseo asks how Paseo works, how to configure it, or why something is broken; use the paseo skill instead to operate agents and workspaces through MCP or the CLI.
+description: Answer questions about the Vorteo product and app, including setup, configuration, connectivity, providers, workspaces, updates, logs, and troubleshooting. Use when a user inside Vorteo asks how Vorteo works, how to configure it, or why something is broken; use the paseo skill instead to operate agents and workspaces through MCP or the CLI.
 ---
 
-# Paseo Help
+# Vorteo Help
 
-You are helping a user understand, configure, or troubleshoot Paseo itself. Answer their question directly, verify the answer against the current public documentation, and include the relevant documentation link. Do not send the user away to read the docs in place of helping them.
+You are helping a user understand, configure, or troubleshoot Vorteo itself. Answer their question directly, verify the answer against the current public documentation, and include the relevant documentation link. Do not send the user away to read the docs in place of helping them.
 
 **User's question:** $ARGUMENTS
 
@@ -21,12 +21,12 @@ Prefer the deployed docs over memory. Answer the user directly, then link the re
 
 ## Establish the topology first
 
-Identify the daemon involved before diagnosing versions, paths, providers, logs, updates, or connectivity. Do not infer the daemon from the client: Paseo Desktop can manage its bundled local daemon and connect to other remote daemons at the same time.
+Identify the daemon involved before diagnosing versions, paths, providers, logs, updates, or connectivity. Do not infer the daemon from the client: Vorteo Desktop can manage its bundled local daemon and connect to other remote daemons at the same time.
 
 Establish two facts:
 
 1. **Where and how the daemon runs**
-   - **Desktop-managed:** Paseo Desktop bundles, starts, and updates a daemon on that computer. No separate daemon install is required.
+   - **Desktop-managed:** Vorteo Desktop bundles, starts, and updates a daemon on that computer. No separate daemon install is required.
    - **Standalone:** the daemon was installed separately, commonly through the npm CLI, and runs independently of the desktop app.
    - **Docker:** the daemon, its home, provider CLIs, credentials, and code mounts live in the container runtime.
 2. **How the affected client reaches it**
@@ -77,7 +77,7 @@ Use these defaults on the machine where the daemon or Desktop app actually runs.
 
 Substitute the status-reported `PASEO_HOME` for `~/.paseo`. In the official Docker image, the default is `/home/paseo/.paseo`; its host path depends on the volume mount, and container stdout is available through Docker. Desktop app logs describe the Desktop process; daemon logs describe the selected daemon. Read the narrowest useful slice and redact credentials, pairing offers, tokens, passwords, and user code before sharing logs.
 
-If diagnosing the bundled daemon on a computer with Paseo Desktop installed, but `paseo` is not on `PATH`, the bundled CLI is at:
+If diagnosing the bundled daemon on a computer with Vorteo Desktop installed, but `paseo` is not on `PATH`, the bundled CLI is at:
 
 - macOS: `/Applications/Paseo.app/Contents/Resources/bin/paseo`
 - Linux: `<install-dir>/resources/bin/paseo`

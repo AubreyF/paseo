@@ -30,7 +30,7 @@ async function main() {
     fs.chmodSync(appImage, 0o755);
     execFileSync(appImage, ["--appimage-extract"], { cwd: extracted, stdio: "ignore" });
     const appDir = path.join(extracted, "squashfs-root");
-    const desktopEntry = fs.readFileSync(path.join(appDir, "Paseo.desktop"), "utf8");
+    const desktopEntry = fs.readFileSync(path.join(appDir, "Vorteo.desktop"), "utf8");
     if (/^Exec=.*--no-sandbox/m.test(desktopEntry)) {
       throw new Error("AppImage desktop entry bypasses runtime sandbox policy");
     }

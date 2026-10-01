@@ -32,7 +32,7 @@ if (paseoArchitectures.size() == 1) {
     def paseoAbi = paseoArchitectures[0]
     def paseoAbiVersionCode = paseoAbiVersionCodes[paseoAbi]
     if (paseoAbiVersionCode == null) {
-        throw new GradleException("Unsupported Paseo Android ABI: " + paseoAbi)
+        throw new GradleException("Unsupported Vorteo Android ABI: " + paseoAbi)
     }
     android.defaultConfig.versionCode = android.defaultConfig.versionCode * 10 + paseoAbiVersionCode
 }

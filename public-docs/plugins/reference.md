@@ -12,19 +12,19 @@ Start with the [plugin quickstart](/docs/plugins) to create your first plugin.
 
 Migrating an existing plugin? Follow the standalone [runtime-entry migration guide](/docs/plugins/migration).
 
-Local plugins are directory sources installed into one Paseo daemon. A plugin can contribute:
+Local plugins are directory sources installed into one Vorteo daemon. A plugin can contribute:
 
-- React Native surfaces and sidebar items to Paseo clients;
+- React Native surfaces and sidebar items to Vorteo clients;
 - workspace and agent panels opened as workspace tabs;
 - global, workspace, and agent actions in the Command Center;
 - slash commands in the message composer;
 - transformed and daemon-pushed agent timeline rows;
 - light and dark themes in Settings → Appearance;
 - schema-validated RPC handlers running beside the daemon;
-- normal Paseo operations through the TypeScript SDK;
+- normal Vorteo operations through the TypeScript SDK;
 - searchable external resources in the message composer.
 
-Plugin code is trusted and unsandboxed. Client surfaces run in the Paseo app. Backend contributions run in a subprocess with access to the daemon machine, including its files, processes, credentials, and network.
+Plugin code is trusted and unsandboxed. Client surfaces run in the Vorteo app. Backend contributions run in a subprocess with access to the daemon machine, including its files, processes, credentials, and network.
 
 ## Project files
 
@@ -56,14 +56,14 @@ The required root manifest is `paseo-plugin.json`:
 | -------------- | -------- | ---------------------------------------------------------------------- |
 | `id`           | Yes      | Default installation ID.                                               |
 | `description`  | No       | Non-empty summary shown below the plugin ID in **Settings → Plugins**. |
-| `requirements` | No       | Supported Paseo versions, described below.                             |
+| `requirements` | No       | Supported Vorteo versions, described below.                            |
 | `build`        | No       | Preparation commands, described in the CLI reference.                  |
 
 ### Requirements
 
 `requirements` is an optional object. Its currently supported key, `paseo`, accepts an npm semver
 range. An omitted `requirements.paseo` means `<0.8.0`: the plugin predates the first breaking
-plugin release. Paseo 0.8 and later reject it with a link to the [migration guide](migration).
+plugin release. Vorteo 0.8 and later reject it with a link to the [migration guide](migration).
 Empty strings, invalid ranges, and unknown manifest requirement keys are rejected.
 
 | Range            | Compatible releases                                                          |
@@ -72,7 +72,7 @@ Empty strings, invalid ranges, and unknown manifest requirement keys are rejecte
 | `^0.8.0`         | 0.8.x releases, including prereleases                                        |
 | `>=0.8.3 <0.9.0` | 0.8.3 through the last 0.8 patch, including prereleases                      |
 
-Prerelease Paseo versions also satisfy a range their stable core (`major.minor.patch`) satisfies, so `0.8.0-beta.1` satisfies `>=0.8.0` but not `<0.8.0`.
+Prerelease Vorteo versions also satisfy a range their stable core (`major.minor.patch`) satisfies, so `0.8.0-beta.1` satisfies `>=0.8.0` but not `<0.8.0`.
 
 `paseo plugin init` writes `>=` followed by the current CLI version and pins the matching SDK
 for typechecking. Raise the minimum when adopting a newer API. Add an upper bound when a later
@@ -90,10 +90,10 @@ and cannot show this new diagnostic.
 
 ### Runtime entries
 
-| Entry              | Runtime               | Receives              | Required                                                                        |
-| ------------------ | --------------------- | --------------------- | ------------------------------------------------------------------------------- |
-| `index.client.tsx` | Paseo app, per client | `PluginClientContext` | When the plugin has any UI, callback, theme, or attachment source               |
-| `index.server.ts`  | Daemon subprocess     | `PluginServerContext` | When the plugin contributes handlers, hooks, settings persistence, or providers |
+| Entry              | Runtime                | Receives              | Required                                                                        |
+| ------------------ | ---------------------- | --------------------- | ------------------------------------------------------------------------------- |
+| `index.client.tsx` | Vorteo app, per client | `PluginClientContext` | When the plugin has any UI, callback, theme, or attachment source               |
+| `index.server.ts`  | Daemon subprocess      | `PluginServerContext` | When the plugin contributes handlers, hooks, settings persistence, or providers |
 
 At least one entry is required; both accept `.ts` or `.tsx`. A directory that still has only the
 old `index.ts` fails to load and points at the [migration guide](/docs/plugins/migration).
@@ -102,7 +102,7 @@ Plugin, surface, sidebar-item, workspace-panel, Command Center item, attachment-
 slash-command IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
 
 The generated `package.json` installs `@getpaseo/plugin` and the other host modules as development
-dependencies for local typechecking and tests. Paseo supplies their runtime instances. Consumers do
+dependencies for local typechecking and tests. Vorteo supplies their runtime instances. Consumers do
 not install them when adding the plugin.
 
 Every other module lives in one of three directories. Nesting inside them is fine; a module at the
@@ -116,7 +116,7 @@ plugin root is a compile error.
 
 ## Runtime modules
 
-Paseo builds each bundle from its matching entry. An import from `client/` into the daemon bundle,
+Vorteo builds each bundle from its matching entry. An import from `client/` into the daemon bundle,
 from `server/` into the app bundle, or of a Node module anywhere in the app bundle is a compile
 error. Server imports of React, React Native, or client SDK entries also fail. Shared code imports
 only shared code: no Node, React, runtime-specific SDK entries, or runtime-specific types.
@@ -128,13 +128,13 @@ dependencies. `/client/host` is private to the app host; plugins cannot import i
 
 ### Client runtime
 
-Paseo provides these modules to client code:
+Vorteo provides these modules to client code:
 
 | Module                                 | Use it for                                                                                        |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `@getpaseo/plugin`                     | Shared data, `defineRpc`, `defineSettings`, `defineAttachmentSource`, `RpcInput`, and `RpcOutput` |
 | `@getpaseo/plugin/client/ui`           | Named, composable settings components                                                             |
-| `@getpaseo/plugin/client/react-native` | Paseo UI components and UI hooks                                                                  |
+| `@getpaseo/plugin/client/react-native` | Vorteo UI components and UI hooks                                                                 |
 | `@getpaseo/plugin/client`              | Client contribution contexts, `usePaseo`, `useRpc`, `useSettings`, and data hooks                 |
 | `@tanstack/react-query`                | Request state and caching                                                                         |
 | `react`                                | Components and hooks                                                                              |
@@ -148,7 +148,7 @@ guarantee compatibility with another host's renderer.
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
-Do not import `lucide-react-native`, `react-native-svg`, or DOM libraries. Set contribution `icon` fields to a [Lucide icon name](https://lucide.dev/icons/); Paseo validates the name and renders the icon.
+Do not import `lucide-react-native`, `react-native-svg`, or DOM libraries. Set contribution `icon` fields to a [Lucide icon name](https://lucide.dev/icons/); Vorteo validates the name and renders the icon.
 
 ### Cross-platform rules
 
@@ -168,7 +168,7 @@ components; do not add `/// <reference lib="dom" />` or `"DOM"` to `lib`.
 
 ### External links and workspace browsers
 
-Use `ExternalLink` to open documentation outside Paseo:
+Use `ExternalLink` to open documentation outside Vorteo:
 
 ```tsx
 import { ExternalLink } from "@getpaseo/plugin/client/ui";
@@ -267,7 +267,7 @@ Use `openSettings`, `openSurface`, and `openPanel` for your own registered contr
 
 ### Server runtime
 
-Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
+Vorteo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
 `@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, and `zod` to server code. Backend
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
@@ -287,11 +287,11 @@ Use the single `session.prompt` input for messages, structured commands, steerin
 effects. Repeat `clientMessageId` on the live user timeline item and publish exactly one matching
 `session.prompt_result`. Publish provider-created children as sessions with `parentSessionId`.
 
-Provider settings are toggle/select descriptors that Paseo renders in the composer. Keep
+Provider settings are toggle/select descriptors that Vorteo renders in the composer. Keep
 provider-private JSON under `providerOptions`. Host tools arrive as MCP servers in the complete
 session config.
 
-Paseo refreshes an agent by closing its current provider session and opening it with current
+Vorteo refreshes an agent by closing its current provider session and opening it with current
 configuration and persistence. Providers re-read external state during `session.open`.
 
 Use `runAcpProvider()` from `@getpaseo/plugin/server/acp` to adapt a command-backed ACP. Add transformer
@@ -301,14 +301,14 @@ hooks only for a vendor's discovery, configuration, notification, or tool-call d
 It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
 self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
 external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
-allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
+allowed. Vorteo reads and sanitizes the file when the plugin starts; the string is never an inline
 SVG or URL.
 
 ## Entry point and cleanup
 
 Each present entry default-exports one contribution function and returns cleanup. Client entries
 receive `PluginClientContext`; server entries receive `PluginServerContext`. Client registration methods return idempotent removers, except header buttons and composer pills,
-which return `{ update, remove }` handles. The entry cleanup runs before Paseo removes remaining registrations.
+which return `{ update, remove }` handles. The entry cleanup runs before Vorteo removes remaining registrations.
 
 ```ts
 import type { PluginClientContext } from "@getpaseo/plugin/client";
@@ -320,7 +320,7 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Paseo also removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin's daemon session, and stops its subprocess on reload, disable, removal, disconnect, or daemon shutdown.
+Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Vorteo also removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin's daemon session, and stops its subprocess on reload, disable, removal, disconnect, or daemon shutdown.
 
 ## Lifecycle hooks
 
@@ -604,7 +604,7 @@ type PluginTurnOutcome =
 Creation request
   → agent.create hooks (plugin-ID order; registration order within each plugin)
   → resolve defaults and validate provider configuration
-  → derive launch configuration with Paseo runtime tools and daemon prompt
+  → derive launch configuration with Vorteo runtime tools and daemon prompt
   → agent.session_open hooks (same ordering; env only)
   → set PASEO_AGENT_ID and PASEO_AGENT_CWD
   → open provider session and save agent configuration
@@ -700,16 +700,16 @@ export default function contribute(client: PluginClientContext) {
 
 | Field        | Meaning                                                                                                                                                                                                                                                                                                                           |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                      |
+| `theme`      | Typed `PluginTheme` color tokens for the active Vorteo theme.                                                                                                                                                                                                                                                                     |
 | `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                           |
 | `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                            |
 | `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
 
-Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
+Vorteo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
 
 ## Host UI
 
-Import Paseo-owned UI from `@getpaseo/plugin/client/react-native` in client code. This example
+Import Vorteo-owned UI from `@getpaseo/plugin/client/react-native` in client code. This example
 opens a controlled modal, renders a host icon, and confirms the action with a toast:
 
 ```tsx
@@ -794,7 +794,7 @@ Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorksp
 ### Scrolling
 
 Import `ScrollView` and `FlatList` from `@getpaseo/plugin/client/react-native` when content can appear in a
-Paseo modal. They accept React Native props and refs and integrate with the sheet's gestures. Outside
+Vorteo modal. They accept React Native props and refs and integrate with the sheet's gestures. Outside
 a sheet they use ordinary React Native scrolling. Do not import bottom-sheet libraries directly.
 
 Use one vertical scroll owner: either the default modal body, or your own list with
@@ -882,7 +882,7 @@ Showing another toast replaces the currently visible toast. An empty message is 
 
 ### Icons
 
-`Icon` renders a [Lucide icon](https://lucide.dev/icons/) from Paseo's installed icon set. Plugin bundles do not import
+`Icon` renders a [Lucide icon](https://lucide.dev/icons/) from Vorteo's installed icon set. Plugin bundles do not import
 `lucide-react-native` or `react-native-svg`.
 
 | Prop    | Type     | Required | Behavior                                        |
@@ -894,7 +894,7 @@ Showing another toast replaces the currently visible toast. An empty message is 
 ## Timeline items
 
 A plugin can replace an agent timeline entry with its own data and React Native renderer. Both
-registrations are client contributions. Paseo applies the transformer while building the render
+registrations are client contributions. Vorteo applies the transformer while building the render
 model, including every live streaming update.
 
 ```tsx
@@ -941,17 +941,17 @@ provider- or tool-specific recognition. Returning `undefined` keeps the original
 input is `"streaming"` for the live assistant message, running tool calls, and loading reasoning;
 it is `"complete"` for committed or fetched messages and finished tools or reasoning.
 Assistant and reasoning callbacks receive the full accumulated text on each update, including
-paragraph separators. Paseo invokes transformers before splitting native Markdown or grouping
+paragraph separators. Vorteo invokes transformers before splitting native Markdown or grouping
 tools in Overview. A claimed assistant message remains one source item throughout streaming;
 return `undefined` until recognizable if the first text is insufficient to identify it.
-Each replacement may set an optional plugin-local `id`; otherwise Paseo uses its index within that
+Each replacement may set an optional plugin-local `id`; otherwise Vorteo uses its index within that
 source item's output.
 
-Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`. Paseo validates
+Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`. Vorteo validates
 `item.data` with the registered schema before rendering. Keep transformers synchronous and
-deterministic. Paseo memoizes results by source-item reference and derives replacement identity from
+deterministic. Vorteo memoizes results by source-item reference and derives replacement identity from
 the source row, so updates to one streaming item do not remount its renderer. Use the exported
-`useRevealedText(text, phase)` hook when a renderer should pace streaming text like Paseo's built-in
+`useRevealedText(text, phase)` hook when a renderer should pace streaming text like Vorteo's built-in
 assistant rows.
 
 ### Append a timeline row from the daemon
@@ -982,13 +982,13 @@ async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
 
 The daemon stamps `pluginId` from the calling plugin session and rejects this RPC from non-plugin
 sessions. The row appears live, survives timeline refetches, and keeps only the latest value for the
-same plugin and `id`. If its renderer is missing, Paseo shows the existing unavailable row. Daemons
+same plugin and `id`. If its renderer is missing, Vorteo shows the existing unavailable row. Daemons
 reject `data` over the limit rather than truncating it. Daemons that support this operation
 advertise `server_info.features.pluginTimelineItems`.
 
 ## Theme and layout
 
-Plugin UI runs on desktop, browser, iOS, and Android, across every Paseo theme. `theme` is a typed `PluginTheme` mapped from the active host theme. Color and spacing must come from those props. Hardcoded colors and unstyled `Text` break when the host theme changes.
+Plugin UI runs on desktop, browser, iOS, and Android, across every Vorteo theme. `theme` is a typed `PluginTheme` mapped from the active host theme. Color and spacing must come from those props. Hardcoded colors and unstyled `Text` break when the host theme changes.
 
 Recreate styles when `theme` or `layout.compact` changes.
 
@@ -1040,7 +1040,7 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-Every color is a hex string; anything else fails to load. Paseo expands the palette into the full
+Every color is a hex string; anything else fails to load. Vorteo expands the palette into the full
 token set the built-in dark themes use, so a contributed theme covers panels, menus, diffs, status
 colors, and the terminal without listing them.
 
@@ -1055,11 +1055,11 @@ colors, and the terminal without listing them.
 | `mutedForeground` | Secondary text                                                    |
 | `ring`            | Focus rings, scrollbars, and terminal bright black                |
 
-`appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
+`appearance` is `"light"` or `"dark"`. Vorteo uses it to select the matching surface, status,
 diff, syntax, terminal, and shadow derivation.
 
 Only one contributed theme is active at a time. Selecting one persists the choice; if the plugin is
-later disabled or removed, Paseo falls back to the default theme rather than leaving the app
+later disabled or removed, Vorteo falls back to the default theme rather than leaving the app
 unpainted.
 
 Themes need a host that supports them. A client released before `addTheme` cannot evaluate that client entry and reports
@@ -1076,7 +1076,7 @@ Call `client.openSettings(id)` or a Command Center callback's `openSettings(id)`
 of your own screens. Each installation has its own values and route, even when several hosts
 install the same plugin.
 
-The component receives `PluginSurfaceProps`. Paseo owns the header, back navigation, safe areas,
+The component receives `PluginSurfaceProps`. Vorteo owns the header, back navigation, safe areas,
 scrolling, and the centered settings column. Compact windows push a full-screen detail; wide
 windows keep the settings sidebar. Render content inside that frame using React Native components.
 A disabled or removed plugin leaves an unavailable screen with working Back navigation.
@@ -1102,15 +1102,15 @@ export function DisplaySettings() {
 }
 ```
 
-| Component                          | Props and behavior                                                                                                                       |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `SettingsGroup`, `SettingsSection` | Required `title`, `children`; optional `info` tooltip, `trailing` content, `testID`. Own section spacing and headings.                   |
-| `SettingsCard`                     | `children`, optional `testID`. Owns the card surface and dividers between direct children. Give mapped rows stable React keys.           |
-| `SettingsRow`                      | Required `label`; optional `hint`, `error`, `children`, `testID`. Wrap any custom control or content.                                    |
-| `SettingsSwitch`                   | Row props plus required `value: boolean`, `onValueChange`; optional `disabled`.                                                          |
-| `SettingsSelect`                   | Row props plus required string `value`, `options: { label, value }[]`, `onValueChange`; optional `disabled`. Uses Paseo's adaptive menu. |
-| `SettingsInput`                    | Row props plus required `onChangeText`; optional `initialValue`, `placeholder`, `disabled`, `secureTextEntry`, `ref`.                    |
-| `SettingsAction`                   | Row props plus required `actionLabel`, `onPress`; optional `disabled`.                                                                   |
+| Component                          | Props and behavior                                                                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `SettingsGroup`, `SettingsSection` | Required `title`, `children`; optional `info` tooltip, `trailing` content, `testID`. Own section spacing and headings.                    |
+| `SettingsCard`                     | `children`, optional `testID`. Owns the card surface and dividers between direct children. Give mapped rows stable React keys.            |
+| `SettingsRow`                      | Required `label`; optional `hint`, `error`, `children`, `testID`. Wrap any custom control or content.                                     |
+| `SettingsSwitch`                   | Row props plus required `value: boolean`, `onValueChange`; optional `disabled`.                                                           |
+| `SettingsSelect`                   | Row props plus required string `value`, `options: { label, value }[]`, `onValueChange`; optional `disabled`. Uses Vorteo's adaptive menu. |
+| `SettingsInput`                    | Row props plus required `onChangeText`; optional `initialValue`, `placeholder`, `disabled`, `secureTextEntry`, `ref`.                     |
+| `SettingsAction`                   | Row props plus required `actionLabel`, `onPress`; optional `disabled`.                                                                    |
 
 `SettingsInput` owns in-progress text. `initialValue` seeds it when mounted. Its ref exposes
 `focus()`, `blur()`, `getText()`, and `replaceText(text)` for explicit programmatic changes.
@@ -1273,7 +1273,7 @@ export default function contribute(client: PluginClientContext) {
 
 A workspace panel receives `PluginWorkspacePanelProps`: `context: "workspace"`, `theme`, `host`, `layout`, and `workspaceId`. An agent panel receives `PluginAgentPanelProps`: `context: "agent"`, the same common fields and `workspaceId`, plus `agentId`.
 
-Read cached state with `useWorkspace(workspaceId, selector)` and `useAgent(agentId, selector)`. A selector is required. Paseo compares its result shallowly, so selecting `{ name, status }` does not re-render when unrelated fields change. Select every field the component renders in one call; do not select the whole snapshot.
+Read cached state with `useWorkspace(workspaceId, selector)` and `useAgent(agentId, selector)`. A selector is required. Vorteo compares its result shallowly, so selecting `{ name, status }` does not re-render when unrelated fields change. Select every field the component renders in one call; do not select the whole snapshot.
 
 Both hooks return `null` when the record is unavailable. Otherwise they run synchronously against normalized client state. Snapshot DTOs and their nested values are deeply readonly and frozen at runtime. Do not call plugin RPC to discover the current workspace or agent. Fetch optional or vendor-specific enrichment after the component renders.
 
@@ -1316,7 +1316,7 @@ Agent snapshot fields:
 | `parentAgentId`     | `string \| null`                                               |
 | `labels`            | `Record<string, string>`                                       |
 
-Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC providers, and the render error boundary. A restored tab whose plugin, panel, context, workspace, or agent is unavailable stays open with an unavailable message instead of crashing the workspace.
+Vorteo owns tab focus, splitting, closing, persistence, query state, the API/RPC providers, and the render error boundary. A restored tab whose plugin, panel, context, workspace, or agent is unavailable stays open with an unavailable message instead of crashing the workspace.
 
 ## Command Center items
 
@@ -1377,7 +1377,7 @@ An agent callback may open either an agent panel or a workspace panel. A workspa
 
 ## Slash commands
 
-Register a command that runs in the Paseo client when the user submits `/name args` from the
+Register a command that runs in the Vorteo client when the user submits `/name args` from the
 message composer. The text is never sent to the agent:
 
 ```ts
@@ -1402,8 +1402,8 @@ client.addSlashCommand({
 | `onSubmit`     | Yes      | Client callback for the matching context.      |
 
 `onSubmit` receives the matching Command Center callback context plus `args`. For `/review src`,
-`args` is `"src"`; Paseo trims only the remainder's leading and trailing whitespace and leaves
-parsing to the plugin. Paseo owns the autocomplete row, input clearing, and the error toast. It
+`args` is `"src"`; Vorteo trims only the remainder's leading and trailing whitespace and leaves
+parsing to the plugin. Vorteo owns the autocomplete row, input clearing, and the error toast. It
 does not wait for `onSubmit` or show a pending state; use a composer pill or panel for that.
 
 Precedence is built-in client commands, plugin commands, then provider commands. A lower-precedence
@@ -1443,7 +1443,7 @@ review.remove();
 ```
 
 Omit `label` for an icon-only header button. Menus and popovers show a chevron on wide layouts.
-Compact header buttons use icons without labels or chevrons. Paseo moves excess contributions
+Compact header buttons use icons without labels or chevrons. Vorteo moves excess contributions
 into a shared overflow menu. Placement and overflow are host decisions.
 
 ## Composer pills
@@ -1496,7 +1496,7 @@ type PluginButtonBehavior =
   | { kind: "popover"; Content: React.ComponentType<PluginButtonContentProps> };
 ```
 
-An action runs on the client. Paseo marks the button busy until its promise settles, blocks repeated
+An action runs on the client. Vorteo marks the button busy until its promise settles, blocks repeated
 presses, and shows failures in a toast. A failed action can be retried. Use the client's `paseo` for
 ordinary operations and `rpc` for plugin-specific backend work.
 
@@ -1532,7 +1532,7 @@ const behavior: PluginButtonBehavior = {
 
 An item requires `kind: "item"`, `id`, `title`, and `behavior`. Its optional `icon`, `visible`, and
 `disabled` follow the button rules. A separator contains only `kind: "separator"` and `id`.
-Paseo removes leading, trailing, and consecutive separators after filtering hidden items.
+Vorteo removes leading, trailing, and consecutive separators after filtering hidden items.
 
 Items can use all three behaviors. Nested menus open flyouts on wide layouts and pages with back
 navigation within the same compact sheet. Custom content pages open on selection, never hover.
@@ -1541,11 +1541,11 @@ Choosing an action closes the menu; opening another page keeps it open.
 ### Custom icons and popover content
 
 `PluginButtonIconProps` contains `theme`, `host`, `layout`, `size`, `color`, and the target context.
-Render a React Native icon or indicator within the supplied size. Paseo bounds the icon slot and
+Render a React Native icon or indicator within the supplied size. Vorteo bounds the icon slot and
 owns all pointer interaction. The icon component can use plugin hooks.
 
 `PluginButtonContentProps` contains `theme`, `host`, `layout`, the target context, and `close()`.
-Render the body only; Paseo owns anchoring, scrolling, padding, and sheet presentation. Content can
+Render the body only; Vorteo owns anchoring, scrolling, padding, and sheet presentation. Content can
 use `usePaseo`, `useRpc`, `useWorkspace`, `useAgent`, and the installation's React Query cache.
 
 The target context is one of:
@@ -1570,13 +1570,13 @@ Hiding or disabling a button closes its surface. Updating its behavior also clos
 Hiding preserves the registration, so showing it again restores its position. It does not cancel
 an action already in progress.
 
-`remove()` is idempotent. Updates after removal do nothing. Paseo removes outstanding buttons when
+`remove()` is idempotent. Updates after removal do nothing. Vorteo removes outstanding buttons when
 the plugin installation or host connection is torn down. Return cleanup from the client entry for
 your subscriptions, timers, and other resources.
 
-## Use the Paseo SDK
+## Use the Vorteo SDK
 
-Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.
+Use `usePaseo()` for ordinary Vorteo operations from a surface. It borrows the selected host's existing connection; do not create another client.
 
 ```tsx
 import { type PluginSurfaceProps, usePaseo } from "@getpaseo/plugin/client";
@@ -1609,7 +1609,7 @@ function PullRequestAction({ theme }: PluginSurfaceProps) {
 }
 ```
 
-The returned API covers projects, workspaces, agents, terminals, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
+The returned API covers projects, workspaces, agents, terminals, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Vorteo owns the connection.
 
 ### Discover hosts and target another host
 
@@ -1689,7 +1689,7 @@ URLs or credentials, and borrowed APIs provide no connection lifecycle controls.
 
 ## Add plugin-specific backend behavior
 
-Use plugin RPC only for work that is not a normal Paseo operation: reading a vendor API, accessing daemon-local resources, or keeping credentials off the client.
+Use plugin RPC only for work that is not a normal Vorteo operation: reading a vendor API, accessing daemon-local resources, or keeping credentials off the client.
 
 Define one contract with Zod, handle it in the subprocess, and call it from the surface:
 
@@ -1768,9 +1768,9 @@ console.log("Refreshing issues");
 console.error("Issue refresh failed", error);
 ```
 
-Paseo adds `[paseo]` entries when the plugin starts loading, becomes ready, starts stopping, and has
+Vorteo adds `[paseo]` entries when the plugin starts loading, becomes ready, starts stopping, and has
 stopped. It records compilation and load failures as stderr entries, including failures that happen
-before the plugin subprocess starts. Paseo also captures output emitted during initialization, RPC
+before the plugin subprocess starts. Vorteo also captures output emitted during initialization, RPC
 handlers, cleanup, and process failure. Protocol traffic uses a separate channel, so `console.log()`
 cannot corrupt plugin RPCs.
 
@@ -1787,7 +1787,7 @@ The command returns a snapshot rather than following live output. Refresh the se
 the command again for newer entries. Each entry includes its timestamp, stdout or stderr stream,
 sequence, and message.
 
-Paseo retains up to 500 entries and 256 KiB per plugin in memory. Individual lines are capped at
+Vorteo retains up to 500 entries and 256 KiB per plugin in memory. Individual lines are capped at
 16 KiB. Reload, disable, compilation failure, initialization failure, and process failure retain the
 tail. Removing the plugin clears it, and a daemon restart starts a new tail. Structured copies are
 also written to the daemon log at `$PASEO_HOME/daemon.log`.
@@ -1870,11 +1870,11 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent.
+Vorteo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent.
 
 ## Hosts and lifecycle
 
-Plugins are installed per daemon. When the same contribution exists on several connected hosts, Paseo shows one sidebar item and adds a host picker. The selected host supplies the bundle, Paseo API, RPC transport, and query cache. Calls never fall through to another host when the selected host is offline.
+Plugins are installed per daemon. When the same contribution exists on several connected hosts, Vorteo shows one sidebar item and adds a host picker. The selected host supplies the bundle, Vorteo API, RPC transport, and query cache. Calls never fall through to another host when the selected host is offline.
 
 Attachment sources remain scoped to each composer's host.
 
@@ -1911,7 +1911,7 @@ source for those locations. Use the `npm:` prefix for an unscoped package with b
 and subdirectory (`npm:review@1.2.0:nested`); without it, `user@host:path` is an SCP Git source.
 The package registry validates the selected version, tag, or range.
 
-Paseo resolves an identifier in this order:
+Vorteo resolves an identifier in this order:
 
 1. An existing directory matching the complete identifier on the daemon host wins, including a
    literal directory containing `:`.
@@ -1944,7 +1944,7 @@ paseo plugin install npm:@acme/plugins@^1.2.0:plugins/review
 ```
 
 `--ref` applies only to Git and accepts a branch, tag, or commit for this installation. Without it,
-Paseo installs the remote's default HEAD. Installation selectors do not constrain later updates. The legacy
+Vorteo installs the remote's default HEAD. Installation selectors do not constrain later updates. The legacy
 `--path relative/plugin/path` option is equivalent to a subdirectory suffix, including for npm.
 
 ### npm installation and publishing
@@ -2017,10 +2017,10 @@ Put `--host <url>` before a management command when the target is not the CLI's 
 never deletes a directory source; it deletes managed files for Git and npm sources. The install-time
 `--id` is the runtime ID and allows the same directory or repository to be installed more than once.
 
-> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With the global `--host` option, commands run on the remote daemon host.
+> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Vorteo. Dependencies and future updates are part of that decision. With the global `--host` option, commands run on the remote daemon host.
 
 Most plugins should omit `build`. Use it only when the staged checkout must install a dependency
-that Paseo does not provide, generate source or assets, or perform another required preparation
+that Vorteo does not provide, generate source or assets, or perform another required preparation
 step:
 
 ```json
@@ -2031,7 +2031,7 @@ step:
 }
 ```
 
-`build` is a list of non-empty argv arrays. Paseo runs each executable directly, without a shell,
+`build` is a list of non-empty argv arrays. Vorteo runs each executable directly, without a shell,
 from the staged plugin directory after resolving the exact commit and manifest. It never infers a
 package manager or commands from lockfiles. Install and update both run `build` before validation,
 compilation, activation, or replacement. A failing command reports its output, discards the
@@ -2060,5 +2060,5 @@ Use `paseo plugin ls` to read the current status and error.
 | Client module is unavailable                                          | Import only the host-provided client modules listed above.                                                                              |
 | RPC rejects                                                           | Check both Zod schemas and the daemon-side handler error.                                                                               |
 | Edited code does not appear                                           | Run `npm run typecheck`, then `paseo plugin reload <id>`.                                                                               |
-| Reload fails                                                          | Read `paseo plugin ls` and `paseo plugin logs <id>`, fix the source error, then reload; Paseo does not restore the previous bundle.     |
+| Reload fails                                                          | Read `paseo plugin ls` and `paseo plugin logs <id>`, fix the source error, then reload; Vorteo does not restore the previous bundle.    |
 | Plugin exits unexpectedly                                             | Read `paseo plugin logs <id>` for retained initialization, cleanup, stderr, and final crash output.                                     |

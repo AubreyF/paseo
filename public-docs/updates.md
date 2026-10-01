@@ -1,6 +1,6 @@
 ---
 title: Updates
-description: How Paseo releases work, the difference between stable and beta channels, and how to opt in to earlier updates.
+description: How Vorteo releases work, the difference between stable and beta channels, and how to opt in to earlier updates.
 nav: Updates
 order: 5
 category: Getting started
@@ -8,13 +8,13 @@ category: Getting started
 
 # Updates
 
-Paseo ships updates through two channels: **Stable** and **Beta**.
+Vorteo ships updates through two channels: **Stable** and **Beta**.
 
 Most releases go out on the stable channel. Betas are release candidates that let you test what's coming next before it rolls out to everyone.
 
 ## Version numbers
 
-Paseo follows [Semantic Versioning](https://semver.org) with prerelease tags.
+Vorteo follows [Semantic Versioning](https://semver.org) with prerelease tags.
 
 A stable release looks like this:
 

@@ -24,9 +24,9 @@ export function useVortonCompatibilityCallout() {
     if (!enabled || !unsupported) return;
     return callouts.show({
       id: "vorton-host-compatibility",
-      title: "Vorton is not fully available",
+      title: "Vorteo is not fully available",
       description:
-        "This host does not support Vorton launch controls. Install and start a Vorton-capable Paseo daemon on this host, then reconnect, or select a host that supports Vorton. Updating the web interface alone is not enough.",
+        "This host does not support Vorteo launch controls. Install and start a Vorteo-capable daemon on this host, then reconnect, or select a host that supports Vorteo. Updating the web interface alone is not enough.",
       priority: 80,
       dismissible: false,
       actions: [

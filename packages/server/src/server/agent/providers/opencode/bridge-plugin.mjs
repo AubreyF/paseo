@@ -13,7 +13,7 @@ export default async function paseoPlugin(input, options) {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const error = new Error(payload.error ?? `Paseo OpenCode bridge failed: ${response.status}`);
+      const error = new Error(payload.error ?? `Vorteo OpenCode bridge failed: ${response.status}`);
       error.status = response.status;
       throw error;
     }

@@ -88,7 +88,7 @@ function daemonIdentity() {
       if (!["ENOENT", "EACCES", "ESRCH"].includes(error.code)) throw error;
     }
   }
-  throw new Error("Paseo daemon is not ready");
+  throw new Error("Vorteo daemon is not ready");
 }
 function config(entry) {
   const file = join(entry.cwd, "paseo.json");

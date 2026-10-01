@@ -10,7 +10,7 @@ category: Schedules
 
 A schedule starts a new agent for you on a cron cadence: at this time, run this prompt, in this repo, with these agent settings.
 
-Paseo also has **heartbeats**. A heartbeat sends a recurring prompt back into one existing agent so it can reassess and continue the same conversation.
+Vorteo also has **heartbeats**. A heartbeat sends a recurring prompt back into one existing agent so it can reassess and continue the same conversation.
 
 Both concepts use the same cron engine, but their product surfaces stay separate:
 

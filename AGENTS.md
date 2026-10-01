@@ -1,6 +1,6 @@
 # Agent guide
 
-Vorton extends Paseo with multi-account agent workflows. This npm monorepo runs agents in your environment and exposes web, mobile and desktop clients. `CLAUDE.md` links here; edit `AGENTS.md`.
+Vorteo extends upstream Paseo with multi-account agent workflows. This npm monorepo runs agents in your environment and exposes web, mobile and desktop clients. `CLAUDE.md` links here; edit `AGENTS.md`.
 
 ## Before editing
 
@@ -50,7 +50,7 @@ Vorton extends Paseo with multi-account agent workflows. This npm monorepo runs 
 - Add tests to existing suites and reuse their npm scripts and CI jobs instead of creating feature-specific runners.
 - Reuse passing test evidence from another agent for unchanged code. Do not add provider-auth checks or auth-dependent skips to tests.
 - Before diagnosing cross-package type errors, rebuild declarations with `npm run build:client` or `npm run build:server` as appropriate. Do not patch types to hide stale declarations. See [development](docs/development.md).
-- Every commit increments the Vorton version through the installed hook. Stage intended manifest changes first; never bypass hooks or use upstream release commands for routine commits.
+- Every commit increments the Vorteo version through the installed hook. Stage intended manifest changes first; never bypass hooks or use upstream release commands for routine commits.
 
 ## Finish the task
 

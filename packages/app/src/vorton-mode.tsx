@@ -34,11 +34,11 @@ export function VortonModeToggle() {
   return (
     <View style={settingsStyles.row}>
       <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>Vorton Mode</Text>
+        <Text style={settingsStyles.rowTitle}>Vorteo Mode</Text>
         <Text style={settingsStyles.rowHint}>
           {enabled
             ? "On: named presets, usage rails, reset credits, and local-worker supervision."
-            : "Off: standard Paseo model, reasoning, and permission controls."}{" "}
+            : "Off: standard model, reasoning, and permission controls."}{" "}
           Saved accounts and presets are retained. Applies on this device; running tasks are
           unchanged.
         </Text>
@@ -80,12 +80,12 @@ function ModeSegment({
       disabled={saving}
       accessibilityRole="button"
       dataSet={COMPACT_MODE_SEGMENT}
-      accessibilityLabel={mode ? "Vorton mode" : "Paseo mode"}
+      accessibilityLabel={mode ? "Vorteo mode" : "Standard mode"}
       accessibilityState={state}
       style={[styles.segment, enabled === mode && styles.selectedSegment]}
     >
       <Text style={[styles.segmentText, enabled === mode && styles.selectedText]}>
-        {mode ? "Vorton" : "Paseo"}
+        {mode ? "Vorteo" : "Standard"}
       </Text>
     </Pressable>
   );

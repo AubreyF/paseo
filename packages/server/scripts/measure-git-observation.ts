@@ -201,7 +201,7 @@ async function main(): Promise<void> {
   writeFileSync(trackedPath, "base\n");
   runGit(repoDir, ["init", "-b", "main"]);
   runGit(repoDir, ["config", "user.email", "measurement@paseo.local"]);
-  runGit(repoDir, ["config", "user.name", "Paseo Measurement"]);
+  runGit(repoDir, ["config", "user.name", "Vorteo Measurement"]);
   runGit(repoDir, ["add", ".gitignore", "tracked.txt"]);
   runGit(repoDir, ["commit", "-m", "fixture"]);
   runGit(repoDir, ["checkout", "-b", "feature"]);

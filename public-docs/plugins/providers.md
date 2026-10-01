@@ -1,6 +1,6 @@
 ---
 title: Build a provider plugin
-description: Add a coding agent to Paseo directly or adapt an ACP agent.
+description: Add a coding agent to Vorteo directly or adapt an ACP agent.
 nav: Provider plugins
 order: 46
 category: Plugins
@@ -8,9 +8,9 @@ category: Plugins
 
 # Build a provider plugin
 
-Start with the [plugin quickstart](/docs/plugins) if you have not built a Paseo plugin before.
+Start with the [plugin quickstart](/docs/plugins) if you have not built a Vorteo plugin before.
 
-A provider plugin connects a coding agent to Paseo without adding it to Paseo core. [Publish the plugin](/docs/plugins/publishing) on npm or in a Git repository so users can
+A provider plugin connects a coding agent to Vorteo without adding it to Vorteo core. [Publish the plugin](/docs/plugins/publishing) on npm or in a Git repository so users can
 install it with `paseo plugin install`.
 
 Choose one implementation path:
@@ -75,7 +75,7 @@ to `ProviderEvent` objects before publishing it.
 
 ## Return models, modes, and thinking options
 
-Paseo requests the catalog before creating a session. Return the choices needed by the agent form:
+Vorteo requests the catalog before creating a session. Return the choices needed by the agent form:
 
 ```ts
 if (input.type === "catalog") {
@@ -197,7 +197,7 @@ emit({ type: "session.turn", sessionId, turnId, state: "completed" });
 ```
 
 Publish exactly one `session.prompt_result` for each `clientMessageId`. Copy `clientMessageId` onto
-the user timeline item so Paseo replaces its optimistic message. Every started turn needs one
+the user timeline item so Vorteo replaces its optimistic message. Every started turn needs one
 terminal `completed`, `failed`, or `canceled` event.
 
 At this point the provider is usable: users can select a model, open a session, send a message, and
@@ -239,29 +239,29 @@ emit({
 });
 ```
 
-Paseo renders these controls in the composer. A user change arrives as `session.configure`; apply it
+Vorteo renders these controls in the composer. A user change arrives as `session.configure`; apply it
 and publish the committed `session.config` before `request.completed`. The provider may change the
 available controls at runtime, including after a model change.
 
 `settings` are user-facing controls. `providerOptions` is opaque JSON supplied at session creation
-for provider-specific configuration that Paseo does not render. A provider-specific token budget
+for provider-specific configuration that Vorteo does not render. A provider-specific token budget
 belongs in one of those two places; it is not a dedicated prompt field.
 
 ## Add persistence and replay
 
 Advertise `session.persistence` when a native session can be reopened. Open a new native session
 when `session.open.persistence` is absent. Resume the identified native session when it is present.
-Return an opaque persistence value in `session.opened` or `session.persistence`; Paseo stores it
+Return an opaque persistence value in `session.opened` or `session.persistence`; Vorteo stores it
 without inspecting it.
 
 When `history` is `"replay"`, publish the native session's existing `timeline.item` snapshots before
 `session.ready`. Use `history: "skip"` to open without replaying old rows.
 
-Paseo refreshes an agent by closing its current provider session and opening it again with current
+Vorteo refreshes an agent by closing its current provider session and opening it again with current
 configuration and persistence. Re-read credentials, environment, global configuration, and MCP
 servers during `session.open`. There is no separate reload operation.
 
-Use `restoration: "core"` when Paseo can reopen a session from persistence. A provider-owned child
+Use `restoration: "core"` when Vorteo can reopen a session from persistence. A provider-owned child
 uses `restoration: "parent"`; emit it as another `session.opened` event with `parentSessionId` and
 recreate it while restoring the parent.
 
@@ -277,13 +277,13 @@ All user input arrives through `session.prompt`:
 Publish `session.commands` to add structured commands to the composer. A command can start a normal
 turn or finish as a side effect with a `completed` prompt result.
 
-Advertise only capabilities you implement. If steering is unsupported, omit `prompt.steer`; Paseo
+Advertise only capabilities you implement. If steering is unsupported, omit `prompt.steer`; Vorteo
 can replace the active turn instead.
 
 ## Publish timeline items
 
 Publish complete snapshots through `timeline.item`. Reuse an item `id` when updating streamed text,
-a running tool, or a todo list. Paseo derives the live delta and keeps the normal timeline.
+a running tool, or a todo list. Vorteo derives the live delta and keeps the normal timeline.
 
 Built-in item types cover user and assistant messages, reasoning, tools, todos, errors,
 notifications, and compaction. Use a plugin item when your provider has a presentation that those

@@ -19,7 +19,7 @@ agent-device close --session terminal-author
 
 `close` writes the script. Keep selectors based on stable app IDs. Keep assertions as `wait`, `get`, `is`, or `find` commands; screenshots are evidence, not assertions.
 
-Run the Paseo mobile suite:
+Run the Vorteo mobile suite:
 
 ```bash
 npm run test:e2e:mobile
@@ -172,7 +172,7 @@ For async elements, use `extendedWaitUntil`:
 
 Two reusable flows handle Expo dev client screens after launch:
 
-- `flows/launch.yaml` — handles dev launcher, dismisses dev menu, asserts "Welcome to Paseo"
+- `flows/launch.yaml` — handles dev launcher, dismisses dev menu, asserts "Welcome to Vorteo"
 - `flows/dev-client.yaml` — same but without asserting a particular app route
 
 ### Reach the composer
@@ -284,16 +284,16 @@ Voice mode uses the custom `expo-two-way-audio` Android module, so incoming call
 
 ```bash
 adb shell am start -n sh.paseo/.MainActivity
-# Start voice mode in an existing composer, then background Paseo with Home.
+# Start voice mode in an existing composer, then background Vorteo with Home.
 adb emu gsm call 5551234
-# Foreground Paseo while the call is still ringing.
+# Foreground Vorteo while the call is still ringing.
 ```
 
-Expected result: Paseo does not throw `RuntimeException: Audio focus request failed`; native audio reports an interruption and voice mode stops or pauses coherently.
+Expected result: Vorteo does not throw `RuntimeException: Audio focus request failed`; native audio reports an interruption and voice mode stops or pauses coherently.
 
 ### Releasing the audio session when idle
 
-Paseo must not hold the OS audio session once it is neither capturing nor playing, or the user's
+Vorteo must not hold the OS audio session once it is neither capturing nor playing, or the user's
 background music stays paused. On iOS this is not just a "while recording" problem: the
 `.playAndRecord`/`.voiceChat` category is non-mixing and survives backgrounding, and iOS re-asserts
 it every time the app returns to the foreground — so one dictation turn kills music for the life of
@@ -309,7 +309,7 @@ also releases on `OnAppEntersBackground`. The native side re-guards on `isRecord
 wrappers (voice provider + dictation) and only it knows the true state.
 
 This cannot be validated by a JS test — verify on a device: play music through Bluetooth earbuds,
-open Paseo, use dictation once, stop, and confirm the music resumes at full quality; then
+open Vorteo, use dictation once, stop, and confirm the music resumes at full quality; then
 background/foreground the app and confirm it keeps playing at full quality.
 
 ## Unistyles + Reanimated
@@ -470,7 +470,7 @@ To verify only that native Swift compiles, skip signing entirely — the pods ha
 
 ```bash
 cd packages/app/ios
-xcodebuild -workspace PaseoDebug.xcworkspace -scheme ExpoTwoWayAudio \
+xcodebuild -workspace VorteoDebug.xcworkspace -scheme ExpoTwoWayAudio \
   -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
 ```
 

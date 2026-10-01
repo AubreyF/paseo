@@ -1,6 +1,6 @@
 ---
 title: Self-hosting the web UI
-description: Serve the Paseo web app from your own daemon and reach it over your own LAN, VPN, reverse proxy, or tunnel.
+description: Serve the Vorteo web app from your own daemon and reach it over your own LAN, VPN, reverse proxy, or tunnel.
 nav: Web UI
 order: 6
 category: Getting started
@@ -8,7 +8,7 @@ category: Getting started
 
 # Self-hosting the web UI
 
-Paseo's daemon can serve the browser web app itself, from the same address it already uses for the API. You don't need the hosted app at [app.paseo.sh](https://app.paseo.sh): point a browser at your own daemon and you get the full UI, connected to your own agents, on infrastructure you control.
+Vorteo's daemon can serve the browser web app itself, from the same address it already uses for the API. You don't need the hosted app at [app.paseo.sh](https://app.paseo.sh): point a browser at your own daemon and you get the full UI, connected to your own agents, on infrastructure you control.
 
 This is useful when you want to:
 
@@ -188,7 +188,7 @@ Only use `trustedProxies: true` when your final trusted proxy overwrites client-
 
 If you serve the UI over HTTPS but the app tries to connect over `ws://` (and the browser blocks it as mixed content), your proxy isn't forwarding `X-Forwarded-Proto` or the daemon doesn't trust the proxy address. Fix whichever applies.
 
-For the remote/relay path (driving a daemon through the Paseo relay rather than a reverse proxy), the relay has its own public-vs-internal TLS settings, see [Security](/docs/security).
+For the remote/relay path (driving a daemon through the Vorteo relay rather than a reverse proxy), the relay has its own public-vs-internal TLS settings, see [Security](/docs/security).
 
 ## Tunnels
 

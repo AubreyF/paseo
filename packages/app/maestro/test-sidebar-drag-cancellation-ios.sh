@@ -37,7 +37,7 @@ if [ ! -f "$CLIENT_EXPORTS" ] || [ ! -f "$RELAY_EXPORTS" ]; then
 fi
 
 if ! curl --fail --silent --show-error --max-time 3 "$PASEO_MAESTRO_DAEMON_HEALTH_URL" >/dev/null; then
-  echo "Paseo daemon is unavailable at $PASEO_MAESTRO_DAEMON_HEALTH_URL" >&2
+  echo "Vorteo daemon is unavailable at $PASEO_MAESTRO_DAEMON_HEALTH_URL" >&2
   exit 1
 fi
 
@@ -87,7 +87,7 @@ for project_name in \
   mkdir -p "$project_path"
   git -C "$project_path" init >/dev/null
   git -C "$project_path" checkout -b main >/dev/null 2>&1 || true
-  git -C "$project_path" config user.name "Paseo Maestro"
+  git -C "$project_path" config user.name "Vorteo Maestro"
   git -C "$project_path" config user.email "maestro@getpaseo.local"
   printf '# Sidebar drag cancellation fixture\n' > "$project_path/README.md"
   git -C "$project_path" add README.md

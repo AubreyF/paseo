@@ -56,7 +56,7 @@ body:
   - type: input
     id: paseo-version
     attributes:
-      label: Paseo version
+      label: Vorteo version
       description: Settings → About in the app, or `paseo --version` from the CLI.
       placeholder: "0.1.71"
     validations:
@@ -101,9 +101,9 @@ body:
         Paste relevant log output. Strongly preferred for crashes and daemon issues.
 
         - **Daemon log:** `~/.paseo/daemon.log` (override with `$PASEO_HOME`)
-        - **Electron log (macOS):** `~/Library/Logs/Paseo/main.log`
-        - **Electron log (Windows):** `%APPDATA%\Paseo\logs\main.log`
-        - **Electron log (Linux):** `~/.config/Paseo/logs/main.log`
+        - **Electron log (macOS):** `~/Library/Logs/Vorteo/main.log`
+        - **Electron log (Windows):** `%APPDATA%\Vorteo\logs\main.log`
+        - **Electron log (Linux):** `~/.config/Vorteo/logs/main.log`
 
         Paste the **full log around the time of the bug**, not a summary. If you used an AI to investigate, paste the raw log it read, not the AI's interpretation. AI summaries skew the signal and waste my time.
       render: text

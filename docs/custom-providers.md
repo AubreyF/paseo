@@ -1,6 +1,6 @@
 # Custom Provider Configuration
 
-Paseo supports configuring custom agent providers through `config.json` (located at `$PASEO_HOME/config.json`, typically `~/.paseo/config.json`). You can extend built-in providers with different API backends, add ACP-compatible agents, set custom binaries, disable providers, and create multiple profiles for the same underlying provider.
+Vorteo supports configuring custom agent providers through `config.json` (located at `$PASEO_HOME/config.json`, typically `~/.paseo/config.json`). You can extend built-in providers with different API backends, add ACP-compatible agents, set custom binaries, disable providers, and create multiple profiles for the same underlying provider.
 
 Provider definitions live under `agents.providers` in config.json:
 
@@ -203,7 +203,7 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 
 Codex talks to OpenAI's Responses API by default. Custom providers that extend `"codex"` can point Codex at any OpenAI-compatible endpoint (OpenRouter, LiteLLM, vLLM, llama.cpp server, an internal gateway, etc.) by setting `OPENAI_BASE_URL` and `OPENAI_API_KEY` in the provider `env`.
 
-Paseo passes those variables through to the Codex app-server process **and** maps them into Codex's thread config under `model_provider` / `model_providers`, because Codex reads provider routing from config rather than from `OPENAI_BASE_URL` alone.
+Vorteo passes those variables through to the Codex app-server process **and** maps them into Codex's thread config under `model_provider` / `model_providers`, because Codex reads provider routing from config rather than from `OPENAI_BASE_URL` alone.
 
 ### Setup
 
@@ -226,9 +226,9 @@ Paseo passes those variables through to the Codex app-server process **and** map
 }
 ```
 
-### What Paseo wires up
+### What Vorteo wires up
 
-Under the hood, for each custom Codex provider Paseo injects this into Codex's config:
+Under the hood, for each custom Codex provider Vorteo injects this into Codex's config:
 
 ```toml
 model_provider = "my-codex"
@@ -241,15 +241,15 @@ env_key = "OPENAI_API_KEY"
 requires_openai_auth = false
 ```
 
-- `base_url` — taken from `OPENAI_BASE_URL`. If it does not already end in `/v1`, Paseo appends `/v1`. Trailing slashes are stripped.
+- `base_url` — taken from `OPENAI_BASE_URL`. If it does not already end in `/v1`, Vorteo appends `/v1`. Trailing slashes are stripped.
 - `wire_api` — always `"responses"` (OpenAI Responses API protocol).
-- `env_key` — set to `"OPENAI_API_KEY"` when that env var is present and non-empty, so Codex reads the key from the same env var Paseo passes through.
+- `env_key` — set to `"OPENAI_API_KEY"` when that env var is present and non-empty, so Codex reads the key from the same env var Vorteo passes through.
 - `requires_openai_auth` — forced to `false` when `OPENAI_API_KEY` is provided, so Codex skips its built-in OpenAI login flow.
 
 ### Notes
 
 - The endpoint must speak the OpenAI **Responses API**, not just chat completions. Many gateways (OpenRouter, LiteLLM) support both — pick the Responses-compatible route.
-- Set `models` explicitly. Custom endpoints expose their own model IDs (`anthropic/claude-opus-4-7`, `qwen/qwen3-coder`, `local/llama`, etc.), and Paseo does not discover them automatically for Codex.
+- Set `models` explicitly. Custom endpoints expose their own model IDs (`anthropic/claude-opus-4-7`, `qwen/qwen3-coder`, `local/llama`, etc.), and Vorteo does not discover them automatically for Codex.
 - To run multiple endpoints side-by-side, define multiple entries that each extend `"codex"` with different IDs, labels, and env. Each appears as its own provider in the app.
 - If you only want to override the binary (e.g. a nightly Codex build) without changing the endpoint, omit `OPENAI_BASE_URL` and use `command` instead — see [Custom binary for a provider](#custom-binary-for-a-provider).
 
@@ -261,11 +261,11 @@ You can create multiple entries that extend the same built-in provider. Each get
 
 "Profile" here means a provider alias, and it is not an **Agent profile** — that is a named bundle of provider, model, mode, thinking option and features, stored under `daemon.agentProfiles`. See [glossary.md](glossary.md) for all four senses of the word.
 
-In Vorton mode, use **Settings > your host > Providers > Add provider**, search for **Codex**, and select **Add**, or **Add Codex account** in the preset editor. Name the account, create it, then start sign-in. Codex stays in search so you can add another account. Use **Rename** or **Delete** beside an existing custom provider; built-in providers can be renamed or disabled. Each account gets a separate credential directory under the daemon's Paseo home. Back up that directory with the host configuration.
+In Vorteo mode, use **Settings > your host > Providers > Add provider**, search for **Codex**, and select **Add**, or **Add Codex account** in the preset editor. Name the account, create it, then start sign-in. Codex stays in search so you can add another account. Use **Rename** or **Delete** beside an existing custom provider; built-in providers can be renamed or disabled. Each account gets a separate credential directory under the daemon's Vorteo home. Back up that directory with the host configuration.
 
 Deleting a connection removes its exclusively owned, app-managed account directory and saved credentials. The confirmation identifies shared credentials or external CLI credentials that will remain. Archive the provider's open tasks and cancel active sign-in before deletion. This flow requires `providerCredentialRemoval` on the host.
 
-Select the account in a preset's **Provider** field. Creating an account inside the editor selects it without saving the preset. Connect remains available in the editor, provider list, and quick preset switcher when usage is unavailable. Unavailable usage alone does not prove rejected credentials. Account creation requires a host advertising `codexAccountCreation`; sign-in uses `providerAccountLogin`. Turning Vorton off keeps accounts and presets intact.
+Select the account in a preset's **Provider** field. Creating an account inside the editor selects it without saving the preset. Connect remains available in the editor, provider list, and quick preset switcher when usage is unavailable. Unavailable usage alone does not prove rejected credentials. Account creation requires a host advertising `codexAccountCreation`; sign-in uses `providerAccountLogin`. Turning Vorteo off keeps accounts and presets intact.
 
 Example: two different Anthropic accounts as separate profiles:
 
@@ -294,7 +294,7 @@ Example: two different Anthropic accounts as separate profiles:
 }
 ```
 
-Each profile appears as a separate provider in the Paseo app. You can select which one to use when launching an agent.
+Each profile appears as a separate provider in the Vorteo app. You can select which one to use when launching an agent.
 
 You can also combine profiles with model overrides to pin specific models per profile:
 
@@ -367,7 +367,7 @@ Override the command used to launch any provider with the `command` field. This 
 }
 ```
 
-The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
+The `command` array completely replaces the default command for that provider. The binary must exist on the system — Vorteo checks for its availability and will mark the provider as unavailable if not found.
 
 ### OMP profiles and Pi-compatible forks
 
@@ -383,7 +383,7 @@ OMP ships as a first-class built-in provider option. It is disabled by default; 
 }
 ```
 
-Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui` approvals, native Paseo host tools, provider-managed subagents, and import behavior:
+Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui` approvals, native Vorteo host tools, provider-managed subagents, and import behavior:
 
 ```json
 {
@@ -410,7 +410,7 @@ Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui`
 }
 ```
 
-`params.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command. OMP waits 20 seconds for its initial `ready` frame and 60 seconds for later control-plane RPCs by default. `params.rpcTimeoutMs` overrides both deadlines.
+`params.sessionDir` is used only for importing sessions that were started outside Vorteo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command. OMP waits 20 seconds for its initial `ready` frame and 60 seconds for later control-plane RPCs by default. `params.rpcTimeoutMs` overrides both deadlines.
 
 For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
 
@@ -457,11 +457,11 @@ This works for both built-in and custom providers. To re-enable, set `enabled: t
 
 ## ACP providers
 
-The [Agent Client Protocol (ACP)](https://agentclientprotocol.com) is an open standard for communication between editors and AI coding agents — think LSP but for AI agents. Any agent that supports ACP can be added to Paseo as a custom provider.
+The [Agent Client Protocol (ACP)](https://agentclientprotocol.com) is an open standard for communication between editors and AI coding agents — think LSP but for AI agents. Any agent that supports ACP can be added to Vorteo as a custom provider.
 
-ACP agents communicate over JSON-RPC 2.0 on stdio. Paseo spawns the agent process and talks to it through stdin/stdout.
+ACP agents communicate over JSON-RPC 2.0 on stdio. Vorteo spawns the agent process and talks to it through stdin/stdout.
 
-Paseo also ships an in-app ACP provider catalog for common agents, including CodeWhale, Cursor, DeepAgents, DimCode, Gemini CLI, Hermes, Qwen Code, and Kimi Code. Catalog entries create the same `extends: "acp"` provider config shown below.
+Vorteo also ships an in-app ACP provider catalog for common agents, including CodeWhale, Cursor, DeepAgents, DimCode, Gemini CLI, Hermes, Qwen Code, and Kimi Code. Catalog entries create the same `extends: "acp"` provider config shown below.
 
 ### Adding a generic ACP provider
 
@@ -490,7 +490,7 @@ Required fields for ACP providers:
 - `label`
 - `command` — the command to spawn the agent process (must support ACP over stdio)
 
-Paseo tools such as subagent creation come from the shared internal tool catalog. ACP providers receive those tools through the MCP fallback by default because ACP exposes `mcpServers`, not Paseo's native tool catalog. Some ACP adapters cannot create sessions when `mcpServers` is non-empty. Disable injected MCP for those providers with `params.supportsMcpServers: false`:
+Vorteo tools such as subagent creation come from the shared internal tool catalog. ACP providers receive those tools through the MCP fallback by default because ACP exposes `mcpServers`, not Vorteo's native tool catalog. Some ACP adapters cannot create sessions when `mcpServers` is non-empty. Disable injected MCP for those providers with `params.supportsMcpServers: false`:
 
 ```json
 {
@@ -510,8 +510,8 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
 ```
 
 ACP agents execute filesystem operations in their own environment by default,
-while terminal operations run through Paseo on the host. To customize which
-operations Paseo handles, configure client capabilities in provider params:
+while terminal operations run through Vorteo on the host. To customize which
+operations Vorteo handles, configure client capabilities in provider params:
 
 ```json
 {
@@ -538,13 +538,13 @@ operations Paseo handles, configure client capabilities in provider params:
 
 When an agent runs in a container or remote environment that manages its own
 terminal, set `terminal: false` to keep command execution inside the agent
-container. When delegating filesystem operations to Paseo (`fs.readTextFile: true`
-or `fs.writeTextFile: true`), ensure the agent and Paseo share equivalent
+container. When delegating filesystem operations to Vorteo (`fs.readTextFile: true`
+or `fs.writeTextFile: true`), ensure the agent and Vorteo share equivalent
 absolute workspace paths.
 
 ### Generic ACP diagnostics
 
-Paseo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.
+Vorteo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.
 
 For package-runner commands such as `npx -y @google/gemini-cli --acp`, the version probe keeps the package spec and runs `npx -y @google/gemini-cli --version`. This diagnoses the actual agent package instead of only proving that `npx` exists.
 
@@ -600,19 +600,19 @@ Ref: [Gemini CLI ACP mode docs](https://github.com/google-gemini/gemini-cli/blob
 
 Ref: [Hermes ACP docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)
 
-### How ACP providers work in Paseo
+### How ACP providers work in Vorteo
 
 When you launch an agent with an ACP provider:
 
-1. Paseo spawns the process using the configured `command`
+1. Vorteo spawns the process using the configured `command`
 2. Sends an `initialize` JSON-RPC request over stdin
 3. The agent responds with its capabilities, available modes, and models
-4. Paseo creates a session and sends prompts through the ACP protocol
+4. Vorteo creates a session and sends prompts through the ACP protocol
 5. The agent streams responses, tool calls, and permission requests back over stdout
 
-Every ACP provider exposes an **Auto Accept** toggle. Enable it per session to let Paseo approve
+Every ACP provider exposes an **Auto Accept** toggle. Enable it per session to let Vorteo approve
 ACP permission requests without surfacing each prompt. If the provider sends no allow option,
-Paseo leaves the request for you to answer. Unattended agents enable Auto Accept unless you
+Vorteo leaves the request for you to answer. Unattended agents enable Auto Accept unless you
 explicitly disable it.
 
 Models and modes are discovered dynamically at runtime from the agent process. If you want to override the model list (e.g., to curate which models appear in the UI), use the `models` field:
@@ -720,9 +720,9 @@ Each entry in the `models` array:
 
 ### Claude settings.json model discovery
 
-The built-in `claude` provider appends concrete model IDs from `~/.claude/settings.json` to its first-party Claude model list. Paseo reads the top-level `model` field and these `env` keys: `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL`.
+The built-in `claude` provider appends concrete model IDs from `~/.claude/settings.json` to its first-party Claude model list. Vorteo reads the top-level `model` field and these `env` keys: `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL`.
 
-This lets users who already configured Claude Code for Bedrock, OpenRouter, ollama, Z.AI, or another Anthropic-compatible gateway select the exact model ID in Paseo. Explicit model IDs are passed unchanged to Claude Code, even when the same string is a compatibility alias for a built-in model. When `agents.providers.claude.models` is set it **replaces** both the hardcoded first-party Claude list and any settings.json-discovered entries; use `agents.providers.claude.additionalModels` to keep the first-party list and append curated entries on top.
+This lets users who already configured Claude Code for Bedrock, OpenRouter, ollama, Z.AI, or another Anthropic-compatible gateway select the exact model ID in Vorteo. Explicit model IDs are passed unchanged to Claude Code, even when the same string is a compatibility alias for a built-in model. When `agents.providers.claude.models` is set it **replaces** both the hardcoded first-party Claude list and any settings.json-discovered entries; use `agents.providers.claude.additionalModels` to keep the first-party list and append curated entries on top.
 
 ### Gotcha: `extends: "claude"` with third-party endpoints
 

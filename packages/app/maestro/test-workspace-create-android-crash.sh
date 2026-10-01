@@ -77,7 +77,7 @@ if [ -z "${PASEO_MAESTRO_PROJECT_PATH:-}" ]; then
   mkdir -p "$PASEO_MAESTRO_PROJECT_PATH"
   git -C "$PASEO_MAESTRO_PROJECT_PATH" init >/dev/null
   git -C "$PASEO_MAESTRO_PROJECT_PATH" checkout -b main >/dev/null 2>&1 || true
-  git -C "$PASEO_MAESTRO_PROJECT_PATH" config user.name "Paseo Maestro"
+  git -C "$PASEO_MAESTRO_PROJECT_PATH" config user.name "Vorteo Maestro"
   git -C "$PASEO_MAESTRO_PROJECT_PATH" config user.email "maestro@getpaseo.local"
   printf "# Workspace create Android repro\n" > "$PASEO_MAESTRO_PROJECT_PATH/README.md"
   git -C "$PASEO_MAESTRO_PROJECT_PATH" add README.md

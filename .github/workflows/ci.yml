@@ -51,7 +51,7 @@ jobs:
         with:
           filters: .github/ci-paths.yml
 
-      - name: Test Vorton commit versioning
+      - name: Test Vorteo commit versioning
         run: node --test scripts/vorton-version.test.mjs
 
       - name: Validate CI contracts

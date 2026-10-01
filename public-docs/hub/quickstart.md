@@ -10,7 +10,7 @@ category: Hub
 
 Run Hub on your machine, connect it to Slack without a public server, and answer a mention with an agent in your repository. Hub's browser setup hands off to your terminal, and `paseo hub init` writes and deploys a starter trigger for you.
 
-You need [Paseo installed and running](/docs), Node.js, and a Slack workspace where you can create an app.
+You need [Vorteo installed and running](/docs), Node.js, and a Slack workspace where you can create an app.
 
 ## 1. Start Hub
 
@@ -29,7 +29,7 @@ The first run needs no database, Docker, environment variables, or API keys. Hub
 Paste the App-level token and Bot token back into Hub, then choose **Connect Slack**. Invite the bot to the channel where you will use it:
 
 ```text
-/invite @Paseo
+/invite @Vorteo
 ```
 
 GitHub and Discord can wait. Their setup stays available under **Apps**.
@@ -48,7 +48,7 @@ Approve the login in the browser tab that opens. Leave the Hub tab open: it watc
 
 ## 4. Create the starter trigger
 
-After approving login, answer **Yes** to **Connect this daemon to Paseo Hub?** and **Allow Hub automations to run agents on this daemon?**. Execution permission defaults to no, so enable it explicitly for this setup.
+After approving login, answer **Yes** to **Connect this daemon to Vorteo Hub?** and **Allow Hub automations to run agents on this daemon?**. Execution permission defaults to no, so enable it explicitly for this setup.
 
 Then run:
 
@@ -81,7 +81,7 @@ If `slack-help.yml` already exists, setup asks before replacing that file. Other
 In the channel you invited the bot to:
 
 ```text
-@Paseo have a look
+@Vorteo have a look
 ```
 
 Hub starts the agent on your daemon and posts its reply in the Slack thread. The terminal links to **Triggers**, where you can manage the trigger and inspect its runs. If nothing runs, [Activity](/docs/hub/activity) tells a filtered mention from one that never matched a trigger.

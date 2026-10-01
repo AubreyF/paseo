@@ -14,7 +14,7 @@ paseo-preview restart preview --workspace WORKSPACE_ID
 paseo-preview stop preview --workspace WORKSPACE_ID
 ```
 
-Start requests private HTTPS by default. Only a `ready` result contains a verified usable URL. `pending` means startup or verification is incomplete. `failed` includes a diagnostic. A timeout is not permission to kill listeners or restart Paseo. Repeat start adopts the same reservation. Use a new status request to inspect an uncertain result. Stop removes the owned mapping before stopping the managed service and prevents queued older starts from reviving it. Restart retains the HTTPS port. Never use another service's reserved frontend as a backend port.
+Start requests private HTTPS by default. Only a `ready` result contains a verified usable URL. `pending` means startup or verification is incomplete. `failed` includes a diagnostic. A timeout is not permission to kill listeners or restart Vorteo. Repeat start adopts the same reservation. Use a new status request to inspect an uncertain result. Stop removes the owned mapping before stopping the managed service and prevents queued older starts from reviving it. Restart retains the HTTPS port. Never use another service's reserved frontend as a backend port.
 
 The helper sends bounded JSON through the installed filesystem inbox. Do not write ad hoc requests or change broker installation markers. Host policy, executable code and mapping ownership are outside agent-writable mounts. Agents must not execute host administration scripts, use Docker, access the protected Tailscale socket or state, request operator privileges, change grants, enable Funnel, or alter unrelated mappings.
 

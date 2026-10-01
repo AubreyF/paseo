@@ -1,6 +1,6 @@
 ---
 title: Publish a plugin
-description: Share a Paseo plugin on npm, through a private registry, or from a Git repository.
+description: Share a Vorteo plugin on npm, through a private registry, or from a Git repository.
 nav: Publishing
 order: 45
 category: Plugins
@@ -8,7 +8,7 @@ category: Plugins
 
 # Publish a plugin
 
-Publish your plugin so other people can install and use it in Paseo. Start with a working
+Publish your plugin so other people can install and use it in Vorteo. Start with a working
 [plugin project](/docs/plugins), then choose where to share it:
 
 - [npm](#publish-on-npm): publish a package on the public npm registry.
@@ -69,7 +69,7 @@ The scaffold includes this `files` list in `package.json`:
 
 - Add any assets stored outside these directories to `files`.
 - Keep the scaffold's SDK and host libraries in `devDependencies`.
-- Add other runtime libraries with `npm install <package>`. Paseo installs their dependencies too.
+- Add other runtime libraries with `npm install <package>`. Vorteo installs their dependencies too.
 - The npm package name identifies the source. The manifest's `id` identifies the installed plugin.
 
 See the [project reference](/docs/plugins/reference#project-files) for entry points and runtime boundaries.
@@ -78,7 +78,7 @@ See the [project reference](/docs/plugins/reference#project-files) for entry poi
 
 ### Plugins with a build step
 
-Paseo compiles TypeScript. An ordinary plugin needs no separate build before publication.
+Vorteo compiles TypeScript. An ordinary plugin needs no separate build before publication.
 If your plugin generates files, include the generated output in the package.
 
 **Installation scripts do not run automatically.** If a dependency needs host-specific setup,
@@ -93,7 +93,7 @@ declare a [preparation command](/docs/plugins/reference#cli-reference).
 - Remove Git-only dependency-install commands from the published manifest; npm installation already
   installs production dependencies.
 
-Paseo skips npm lifecycle scripts during installation, including dependency scripts. For example,
+Vorteo skips npm lifecycle scripts during installation, including dependency scripts. For example,
 a native dependency that needs rebuilding requires an explicit preparation command.
 
 :::
@@ -110,7 +110,7 @@ npm publish --registry=https://npm.pkg.github.com
 [Configure GitHub authentication and package access](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry)
 before publishing.
 
-To install the plugin, configure npm **on the daemon host, as the user running Paseo**:
+To install the plugin, configure npm **on the daemon host, as the user running Vorteo**:
 
 1. Add your organization's registry to `~/.npmrc`:
 
@@ -131,7 +131,7 @@ To install the plugin, configure npm **on the daemon host, as the user running P
    paseo plugin install npm:@acme/paseo-review
    ```
 
-Paseo uses the host's npm registry settings and credentials for installation and updates.
+Vorteo uses the host's npm registry settings and credentials for installation and updates.
 In the app, enter only the source identifier.
 
 :::
@@ -163,4 +163,4 @@ command to `paseo-plugin.json`:
 - `--omit=dev` excludes development tools.
 - npm must be available on the daemon host.
 
-Plugins that only use Paseo's host libraries need no preparation command.
+Plugins that only use Vorteo's host libraries need no preparation command.

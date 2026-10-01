@@ -19,12 +19,14 @@ Skills give your agents reusable instructions for delegation, handoffs, and revi
 
 ## Installation
 
-- **In Paseo:** Open **Settings → your host → Agents → Orchestration skills** and choose which skills to install on that host.
+- **In Vorteo:** Open **Settings → your host → Agents → Orchestration skills** and choose which skills to install on that host.
 - **From the terminal:** Run `npx skills add getpaseo/paseo` on the machine where your agents run.
 
-Use the same settings card to update or uninstall skills. The host also refreshes selected installed Paseo skills on startup.
+Use the same settings card to update or uninstall skills. The host also refreshes selected installed Vorteo skills on startup.
 
-## `/paseo`, Paseo Reference
+<a id="paseo-paseo-reference"></a>
+
+## `/paseo`, Vorteo Reference
 
 The foundational reference used by the other skills. It teaches agents to check your [agent profiles and their notes](/docs/agent-profiles#guide-delegation-with-notes) before delegating, then apply the selected launch settings. If no profile fits, it directs them to discover available providers and models and tell you about the fallback.
 

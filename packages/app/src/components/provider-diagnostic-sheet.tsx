@@ -728,7 +728,7 @@ export function ProviderDiagnosticSheet({
               docker compose exec --user paseo paseo bash
             </Text>
             <Text style={sheetStyles.mutedText}>
-              Run these commands inside the container. You can also run them in the Vorton Terminal,
+              Run these commands inside the container. You can also run them in the Vorteo Terminal,
               which is already inside the container:
             </Text>
             <Text selectable style={sheetStyles.monoHint}>

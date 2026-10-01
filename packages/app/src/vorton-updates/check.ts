@@ -81,12 +81,12 @@ export async function checkVortonUpdate(
 }
 
 export function buildUpdatePrompt(currentCommit: string | null, latestCommit: string | null) {
-  return `Help me update my Vorton installation from ${VORTON_REPOSITORY}, branch main.
+  return `Help me update my Vorteo installation from ${VORTON_REPOSITORY}, branch main.
 The web client’s source base is ${currentCommit ?? "an unknown commit"}. ${latestCommit ? `The update check found commit ${latestCommit}.` : "Check the latest commit on main."}
 
 First identify the installation's actual source checkout and deployment. The selected project may be unrelated or a separate worktree: verify its remote and the serving installation before changing anything. Read AGENTS.md and docs/docker.md and docs/instance-continuity.md. Inspect the branch, local changes, and existing merge/rebase state.
 
-Fetch main from the verified Vorton repository. Preserve all local work. Fast-forward when possible; otherwise help merge upstream changes and resolve conflicts without dropping customizations. Ask me about genuinely ambiguous conflict resolutions. Do not reset, clean, force-push, or overwrite uncommitted work. Do not start a second merge over an unfinished one. Do not push anything remotely.
+Fetch main from the verified Vorteo repository. Preserve all local work. Fast-forward when possible; otherwise help merge upstream changes and resolve conflicts without dropping customizations. Ask me about genuinely ambiguous conflict resolutions. Do not reset, clean, force-push, or overwrite uncommitted work. Do not start a second merge over an unfinished one. Do not push anything remotely.
 
 Run the required focused checks, build, and publish the updated web interface to this installation. Explain any additional daemon/container update needed. Ask for explicit approval before stopping or restarting the running instance; active agents may be interrupted. Docker administration belongs to the host operator, so provide the exact host command if unavailable here. Verify the served version and commit before claiming the installation is updated. A successful Git merge alone does not update the running app.`;
 }

@@ -1,8 +1,8 @@
 {
   "name": "@getpaseo/desktop",
-  "version": "0.9.0-beta.2.vorton.19",
+  "version": "0.9.0-beta.2.vorton.20",
   "private": true,
-  "description": "Paseo desktop app (Electron wrapper)",
+  "description": "Vorteo desktop app (Electron wrapper)",
   "homepage": "https://paseo.sh",
   "license": "Apache-2.0",
   "author": {
@@ -46,5 +46,5 @@
     "vitest": "^4.1.6",
     "wait-on": "8.0.5"
   },
-  "desktopName": "Paseo.desktop"
+  "desktopName": "Vorteo.desktop"
 }

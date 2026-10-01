@@ -1,9 +1,9 @@
 npmRebuild: false
 appId: sh.paseo.desktop
-productName: Paseo
+productName: Vorteo
 executableName: Paseo
 protocols:
-  - name: Paseo agent link
+  - name: Vorteo agent link
     schemes:
       - paseo
 afterPack: ./scripts/after-pack.js
@@ -72,7 +72,7 @@ rpm:
   afterInstall: scripts/linux-sandbox/after-install.tpl
 appImage:
   # A nonempty argument list replaces builder's hardcoded --no-sandbox default.
-  executableArgs: ["--class=Paseo"]
+  executableArgs: ["--class=Vorteo"]
   # Keep the AppImage filename stable across versions (no ${version}) so
   # electron-updater overwrites the file in place instead of renaming it to a new
   # versioned path. A rename orphans the old binary, breaks desktop shortcuts, and

@@ -17,7 +17,7 @@ export function createQueueEditDraftStorage(
       opening.onsuccess = () => resolve(opening.result);
       opening.addEventListener("error", () => reject(opening.error));
       opening.onblocked = () =>
-        reject(new Error("Close other Paseo tabs to open saved queue edits."));
+        reject(new Error("Close other Vorteo tabs to open saved queue edits."));
     });
     try {
       return await new Promise<T>((resolve, reject) => {

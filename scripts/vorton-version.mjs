@@ -14,7 +14,7 @@ const pattern =
 const before = pattern.exec(previous);
 const current = pattern.exec(root.version);
 if (!before || !current)
-  throw new Error("Expected a stable or beta base, optionally with a Vorton counter.");
+  throw new Error("Expected a stable or beta base, optionally with a Vorteo counter.");
 function upstreamBase(parts) {
   return parts.slice(1, 4).join(".") + (parts[4] ? `-beta.${parts[4]}` : "");
 }
@@ -46,7 +46,7 @@ const counter =
       .filter((parent) => upstreamBase(parent) === base)
       .map((parent) => Number(parent[5] ?? parent[6] ?? 0)),
   ) + 1;
-if (!Number.isSafeInteger(counter)) throw new Error("Vorton counter exceeds safe integer range.");
+if (!Number.isSafeInteger(counter)) throw new Error("Vorteo counter exceeds safe integer range.");
 const next = `${base}${current[4] ? "." : "-"}vorton.${counter}`;
 const files = [
   "package.json",
@@ -92,4 +92,4 @@ if (mode === "--check") {
   for (const [file, pkg] of packages) writeJson(file, pkg);
   if (mode === "--hook") git("add", "--", ...files);
 }
-console.log(`Vorton version: ${next}`);
+console.log(`Vorteo version: ${next}`);

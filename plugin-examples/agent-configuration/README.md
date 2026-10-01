@@ -17,7 +17,7 @@ paseo plugin install /absolute/path/to/plugin-examples/agent-configuration
 ```
 
 The callback receives the request after earlier plugins have transformed it. The nested spreads
-preserve their settings; the explicit values replace only the named fields. Paseo validates and saves
+preserve their settings; the explicit values replace only the named fields. Vorteo validates and saves
 the resulting configuration before starting the agent. Existing agents are unchanged.
 
 See the [lifecycle reference](../../public-docs/plugins/reference.md#lifecycle-hooks) for ordering

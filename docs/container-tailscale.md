@@ -1,10 +1,10 @@
-# Single-container Paseo and Tailscale
+# Single-container Vorteo and Tailscale
 
-Run one container per user with Paseo and kernel-mode Tailscale sharing a network namespace. Each instance owns its persistent home, credentials, workspace mounts and Tailscale identity. The host administrator remains trusted. Use the [single container installer](../docker/multiplex/README.md).
+Run one container per user with Vorteo and kernel-mode Tailscale sharing a network namespace. Each instance owns its persistent home, credentials, workspace mounts and Tailscale identity. The host administrator remains trusted. Use the [single container installer](../docker/multiplex/README.md).
 
 ## Privilege boundary
 
-A root supervisor starts Tailscale and Paseo independently. Only Tailscale needs the TUN device and network administration capability. Paseo and its agents run as the non-root user after all capabilities are dropped, with no-new-privileges enabled. Keep identity state and the control socket protected from agents. Do not expose Docker's socket or sibling environments.
+A root supervisor starts Tailscale and Vorteo independently. Only Tailscale needs the TUN device and network administration capability. Vorteo and its agents run as the non-root user after all capabilities are dropped, with no-new-privileges enabled. Keep identity state and the control socket protected from agents. Do not expose Docker's socket or sibling environments.
 
 The installer builds the checkout locally using [one Dockerfile](../docker/base/Dockerfile). Provider and GitHub logins belong in persistent home, not image layers. Accounts and projects in the same container share an OS user and are not isolated from each other. Mounted files remain writable by agents; containerization does not protect those files from destructive commands or prevent network exfiltration. Provider permissions are an additional control.
 
@@ -12,13 +12,13 @@ The installer builds the checkout locally using [one Dockerfile](../docker/base/
 
 The daemon binds container loopback. Compose publishes no host ports. Internal Tailscale provides private HTTPS on port 443 after enrollment. Grant only intended users access and keep Funnel disabled. Connecting devices need Tailscale; the Docker host does not need its own client.
 
-Agent-managed workspace HTTPS previews use the [optional macOS broker](../docker/tailscale/README.md). Agent users do not receive Tailscale control privileges. Browser access to Paseo works without the broker.
+Agent-managed workspace HTTPS previews use the [optional macOS broker](../docker/tailscale/README.md). Agent users do not receive Tailscale control privileges. Browser access to Vorteo works without the broker.
 
 For an optional custom hostname, follow the [private-domain setup guide](private-domain.md).
 
 ## Lifecycle and recovery
 
-Use Paseo's service allocator and lifecycle. Persist a preview's allocated port and explicit restoration intent. Legacy HTTP recovery restores only unchanged registered services after a new daemon session, with bounded retries. The HTTPS broker conservatively requires explicit start after a service or daemon restart and removes stale owned mappings. A deliberate stop must remain stopped. Reject occupied ports without killing their owner.
+Use Vorteo's service allocator and lifecycle. Persist a preview's allocated port and explicit restoration intent. Legacy HTTP recovery restores only unchanged registered services after a new daemon session, with bounded retries. The HTTPS broker conservatively requires explicit start after a service or daemon restart and removes stale owned mappings. A deliberate stop must remain stopped. Reject occupied ports without killing their owner.
 
 Host recovery can start Docker after login and start the retained stopped container. It must not recreate containers, restart an unhealthy running daemon, or run production alongside rollback against the same home. Pause automatic recovery before maintenance. Keep consistent backups and exact rollback images outside Git.
 

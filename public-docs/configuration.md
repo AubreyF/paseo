@@ -12,7 +12,7 @@ Managed instances load their configuration from the home’s `config.json` and d
 
 ## Where config lives
 
-By default, Paseo uses `~/.paseo` as its home directory. The configuration file is:
+By default, Vorteo uses `~/.paseo` as its home directory. The configuration file is:
 
 ```bash
 ~/.paseo/config.json
@@ -80,9 +80,9 @@ Deployment environment variables and legacy supervisor flags remain authoritativ
 
 ## Agent providers
 
-Agent providers, both the first-class ones Paseo ships with and custom entries you add under `agents.providers`, are documented on their own page.
+Agent providers, both the first-class ones Vorteo ships with and custom entries you add under `agents.providers`, are documented on their own page.
 
-See [Providers](/docs/providers) for the mental model and [Supported providers](/docs/supported-providers) for the full list of agents Paseo can launch. For pointing Claude at Anthropic-compatible endpoints (Z.AI, Alibaba/Qwen), multiple profiles, custom binaries, ACP agents, and the `additionalModels` merge behavior, see [Custom providers](/docs/custom-providers). The full field reference lives on GitHub at [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md).
+See [Providers](/docs/providers) for the mental model and [Supported providers](/docs/supported-providers) for the full list of agents Vorteo can launch. For pointing Claude at Anthropic-compatible endpoints (Z.AI, Alibaba/Qwen), multiple profiles, custom binaries, ACP agents, and the `additionalModels` merge behavior, see [Custom providers](/docs/custom-providers). The full field reference lives on GitHub at [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md).
 
 ## Worktrees
 
@@ -96,7 +96,7 @@ New worktrees are created under `$PASEO_HOME/worktrees` by default. To place new
 }
 ```
 
-Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain where they are; changing this setting only changes where Paseo creates and discovers Paseo-managed worktrees going forward.
+Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain where they are; changing this setting only changes where Vorteo creates and discovers Vorteo-managed worktrees going forward.
 
 ## Voice
 
@@ -219,7 +219,7 @@ In the mobile app, enter the password in the direct connection setup screen.
 
 ## Relay
 
-New homes write `daemon.relay.enabled: false`. Paseo asks before enabling relay when you pair a device; existing homes keep their saved value. See [Connectivity](/docs/connectivity) to choose and configure a connection method, and [Security](/docs/security) for the relay encryption model.
+New homes write `daemon.relay.enabled: false`. Vorteo asks before enabling relay when you pair a device; existing homes keep their saved value. See [Connectivity](/docs/connectivity) to choose and configure a connection method, and [Security](/docs/security) for the relay encryption model.
 
 Set the persisted value in `config.json`:
 
@@ -237,7 +237,7 @@ Set the persisted value in `config.json`:
 
 ## Common env vars
 
-- `PASEO_HOME`, set Paseo home directory
+- `PASEO_HOME`, set Vorteo home directory
 - `PASEO_HOST`, set the daemon target for CLI commands
 - `PASEO_PASSWORD`, on the daemon, the password to require (plaintext, hashed at startup); on the CLI, the password used to connect when the host URI doesn't include one
 - `PASEO_LISTEN`, override `daemon.listen`

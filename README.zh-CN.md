@@ -1,4 +1,4 @@
-# Paseo with Vorton
+# Vorteo
 
 This fork uses one container installation workflow. Follow the [English README](README.md) for current setup instructions.
 

@@ -8,7 +8,7 @@ category: Hub
 
 # Daemons in Hub
 
-A daemon is one of your machines running the Paseo daemon. Enroll it once with your Hub organization, then triggers can reference it.
+A daemon is one of your machines running the Vorteo daemon. Enroll it once with your Hub organization, then triggers can reference it.
 
 ## Connect
 

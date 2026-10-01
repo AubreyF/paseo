@@ -2,7 +2,9 @@
 
 All workspaces share one version.
 
-## Vorton commit versions
+<a id="vorton-commit-versions"></a>
+
+## Vorteo commit versions
 
 This fork uses `<upstream-base>-vorton.<counter>` for stable upstream bases and `<upstream-base>.vorton.<counter>` for beta bases, for example `0.9.0-beta.2.vorton.1`. Every new local commit, including documentation and tooling changes, advances the counter. Change the upstream base only when adopting that upstream release; the new base starts at counter 1. A newer beta or promotion to stable starts a new counter. Returning to an earlier beta or from stable to a beta of the same release is rejected. Record source provenance with the Git commit, not build metadata in the version.
 
@@ -10,9 +12,9 @@ The installed Lefthook pre-commit hook runs `scripts/vorton-version.mjs` before 
 
 Use `npm run version:vorton` to prepare the same bump before a build or review, then stage the changed manifests and lockfile. Repeated preparation or a failed commit retry retains the same next version relative to HEAD. An amend advances from the version currently in HEAD. After a rebase or cherry-pick, prepare a fresh version before creating another commit. Do not bypass hooks to avoid versioning. Run `npm run prepare` after installing dependencies to install hooks in a new checkout. `npm run version:vorton:check` checks the staged version and synchronization.
 
-Use ordinary Git commits for Vorton work. Do not use `npm version` or the upstream `release:*` commands for these bumps: they perform upstream release preparation and publication. Commit versioning does not publish, tag, deploy or restart anything. The private desktop feed and distribution identity remain pending in [desktop builds](desktop-auto-builds.md).
+Use ordinary Git commits for Vorteo work. Do not use `npm version` or the upstream `release:*` commands for these bumps: they perform upstream release preparation and publication. Commit versioning does not publish, tag, deploy or restart anything. The private desktop feed and distribution identity remain pending in [desktop builds](desktop-auto-builds.md).
 
-Vorton native metadata reserves 100,000 build numbers per upstream major/minor/patch base. Starting at `0.9.0`, beta slots 1 through 98 and stable slot 99 each allow Vorton counters 1 through 999. The native build number is `upstreamNumericBase * 100000 + slot * 1000 + counter`, so later betas and stable promotion increase monotonically. Versions before `0.9.0` retain their original numbering. Exhausted slots, counters and platform integer limits fail explicitly. This supports Expo configuration; it does not configure a separate mobile store distribution.
+Vorteo native metadata reserves 100,000 build numbers per upstream major/minor/patch base. Starting at `0.9.0`, beta slots 1 through 98 and stable slot 99 each allow Vorteo counters 1 through 999. The native build number is `upstreamNumericBase * 100000 + slot * 1000 + counter`, so later betas and stable promotion increase monotonically. Versions before `0.9.0` retain their original numbering. Exhausted slots, counters and platform integer limits fail explicitly. This supports Expo configuration; it does not configure a separate mobile store distribution.
 
 ## Upstream release procedure
 
@@ -115,12 +117,12 @@ There are two supported release paths:
 1. **Direct stable release**: you are ready to ship the resolved release source to everyone immediately (default `origin/main`).
 2. **Beta flow**: release candidates on the `beta` channel. Each beta carries its own changelog entry, publishes npm only on the explicit `beta` dist-tag, and stays behind the Stable/Beta switch on `/download`.
 
-Paseo has one linear release track even though npm dist-tags are independent
+Vorteo has one linear release track even though npm dist-tags are independent
 pointers. The npm invariant is:
 
 - A beta release moves only `beta`; `latest` remains on the newest stable.
 - A stable release moves both `latest` and `beta` to that stable version. This
-  keeps users who install `@getpaseo/cli@beta` on the newest Paseo release after
+  keeps users who install `@getpaseo/cli@beta` on the newest Vorteo release after
   a beta is promoted or superseded by a direct stable release.
 
 ## Release version decision
@@ -141,7 +143,7 @@ version:
 The release agent selects patch or minor during preparation and presents the
 target version with the changelog for approval. Agents never select a major
 version autonomously. A major release requires an explicit user instruction and
-approval; Paseo remains on major version zero until that deliberate decision.
+approval; Vorteo remains on major version zero until that deliberate decision.
 
 Version bumps are never used to retry a failed build. Retry the existing version
 as described in **Fixing a failed release build**.
@@ -178,7 +180,7 @@ stable release complete.
 
 This fork builds container images locally during installation. The Container workflow verifies source builds on both architectures without publishing images or responding to release tags. See [container operations](docker.md).
 
-The production relay is the Elixir service in [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay), with its own deployment process. Paseo releases and pushes to this repository do not deploy it. The Cloudflare relay code and workflow in this repository are legacy and are not used in production.
+The production relay is the Elixir service in [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay), with its own deployment process. Vorteo releases and pushes to this repository do not deploy it. The Cloudflare relay code and workflow in this repository are legacy and are not used in production.
 
 **Stable means stable.** If the user says "stable" or "ship stable", do not ask whether they want a beta first. They picked stable; treat it as a direct stable release. Only run the beta flow when the user explicitly says "beta".
 
@@ -539,13 +541,13 @@ No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or 
 
 ## Changelog wording
 
-The changelog is shown on the Paseo homepage. Each bullet is a compact factual record of
+The changelog is shown on the Vorteo homepage. Each bullet is a compact factual record of
 product behavior that changed.
 
 - **Name the exact change.** Prefer `Added <capability>`, `Removed <behavior>`,
   `Changed <behavior>`, or `Fixed <failure> when <condition>`.
 - **Keep the scope exact.** A conditional bug is not a general reliability problem. Do not
-  broaden one failure into claims that Paseo is now faster, smoother, responsive, or reliable.
+  broaden one failure into claims that Vorteo is now faster, smoother, responsive, or reliable.
 - **Use concrete product and runtime terms.** Git polling, persisted cache, provider catalog,
   and WebSocket reconnects can identify the affected behavior. Component names, internal
   modules, code symbols, and implementation techniques cannot: omit `WorkingIndicator`,
@@ -557,7 +559,7 @@ product behavior that changed.
 
 | Avoid                                                        | Write                                                 |
 | ------------------------------------------------------------ | ----------------------------------------------------- |
-| Paseo stays responsive with many idle Git workspaces         | Removed periodic Git polling for idle workspaces      |
+| Vorteo stays responsive with many idle Git workspaces        | Removed periodic Git polling for idle workspaces      |
 | Incompatible saved app data no longer crashes after upgrades | Fixed crash when persisted cache was incompatible     |
 | Splitting layouts no longer remounts the active agent        | Fixed scroll position resetting when splitting a pane |
 | Mobile model selector is faster and more straightforward     | Added search to the mobile model selector             |

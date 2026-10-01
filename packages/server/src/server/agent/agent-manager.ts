@@ -6250,7 +6250,7 @@ export class AgentManager {
         paseoToolPolicy?.disabledTools?.includes("create_agent"))
     ) {
       throw new Error(
-        "This team preset requires Paseo agent tools. Enable daemon.mcp.injectIntoAgents and the provider's create_agent tool before launching.",
+        "This team preset requires Vorteo agent tools. Enable daemon.mcp.injectIntoAgents and the provider's create_agent tool before launching.",
       );
     }
     const launchConfig = this.applyDaemonAppendSystemPrompt(

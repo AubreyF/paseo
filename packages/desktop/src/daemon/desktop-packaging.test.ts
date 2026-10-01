@@ -33,10 +33,10 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
   const helperPath = join(
     contentsPath,
     "Frameworks",
-    "Paseo Helper.app",
+    "Vorteo Helper.app",
     "Contents",
     "MacOS",
-    "Paseo Helper",
+    "Vorteo Helper",
   );
 
   mkdirSync(dirname(shimPath), { recursive: true });
@@ -119,10 +119,10 @@ describe("desktop packaging", () => {
     expect(runtimeTrace).toContain('"packages/server/dist/server/skills/**"');
   });
 
-  it("registers Paseo agent links with the operating system", () => {
+  it("registers Vorteo agent links with the operating system", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
-    expect(config).toContain("name: Paseo agent link");
+    expect(config).toContain("name: Vorteo agent link");
     expect(config).toContain("- paseo");
   });
 
@@ -170,7 +170,7 @@ describe("desktop packaging", () => {
       const result = spawnSync(bundle.shimPath, ["--version"], { encoding: "utf8" });
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Bundled Paseo Helper executable not found");
+      expect(result.stderr).toContain("Bundled Vorteo Helper executable not found");
       expect(result.stdout).not.toContain("main-executable");
     } finally {
       rmSync(bundle.root, { recursive: true, force: true });

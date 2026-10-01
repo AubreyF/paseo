@@ -94,13 +94,13 @@ Each agent is one complete provider configuration:
 | ------------------ | -------- | ---------------------------------------------------------------- |
 | `provider`         | yes      | Provider ID.                                                     |
 | `model`            | no       | Provider model ID.                                               |
-| `mode`             | no       | Paseo mode ID.                                                   |
+| `mode`             | no       | Vorteo mode ID.                                                  |
 | `thinkingOptionId` | no       | Provider thinking option.                                        |
 | `options`          | no       | JSON-safe provider-native options, preserving names and nesting. |
 
 A named selection preserves the complete object, including structured options. Named agents have no parent, patch, or per-step override.
 
-Hub passes `model`, `mode`, `thinkingOptionId`, and `options` to the Paseo daemon without renaming or flattening provider fields. The selected daemon validates them against its current provider schema; Hub does not translate provider-native options.
+Hub passes `model`, `mode`, `thinkingOptionId`, and `options` to the Vorteo daemon without renaming or flattening provider fields. The selected daemon validates them against its current provider schema; Hub does not translate provider-native options.
 
 ## Workflow files
 
@@ -275,7 +275,7 @@ A follow-up steers the active agent without extending its runtime deadline or cr
 
 ### Upgrading
 
-Upgrade the connected Paseo daemons before enabling the new Hub version. Hub requires the daemon's ordinary agent RPC and request receipt capabilities; an older host produces an actionable dispatch error.
+Upgrade the connected Vorteo daemons before enabling the new Hub version. Hub requires the daemon's ordinary agent RPC and request receipt capabilities; an older host produces an actionable dispatch error.
 
 Hub's database migration adds sessions and nullable execution associations. Existing executions retain their saved launch contract and execution-specific MCP endpoint until they finish. New arrivals for existing self-contained trigger documents use the conversation default. Historical agents are not backfilled into sessions.
 

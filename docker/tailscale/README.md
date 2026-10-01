@@ -1,6 +1,6 @@
 # Optional preview broker and host recovery
 
-Install Paseo through the [multiplex installer](../multiplex/README.md). The image already contains Tailscale and serves Paseo over private HTTPS. This directory contains that runtime support plus optional macOS host tools for agent-managed workspace previews and recovery. These tools are not required for ordinary Paseo access.
+Install Vorteo through the [multiplex installer](../multiplex/README.md). The image already contains Tailscale and serves Vorteo over private HTTPS. This directory contains that runtime support plus optional macOS host tools for agent-managed workspace previews and recovery. These tools are not required for ordinary Vorteo access.
 
 Set `PASEO_SOURCE` to the checkout and `PASEO_DEPLOYMENT_DIR` to the private installation. The broker requires the standard `data/home` bind layout and a deployment directory outside agent-writable mounts. Python 3 and an awake, logged-in macOS user session are required for these optional host tools.
 
@@ -40,11 +40,11 @@ python3 install-https-broker.py --container EXISTING_NAME \
   --allowed-root /absolute/development/root --rollback RETAINED_ROLLBACK_NAME
 ```
 
-The installer uses Docker mount metadata to locate the existing deployment. It rejects host code or policy targets beneath writable container mounts, preserves configuration backups, installs a bounded login consumer, and updates the persistent helper and instructions without restarting Paseo. Run the same installer after upgrading these tools. The image also distributes the helper module for new installations. Keep the existing Tailscale identity and grants. Review the current packet-filter scope; installation must not broaden it. The runtime fails closed if that scope or node identity changes.
+The installer uses Docker mount metadata to locate the existing deployment. It rejects host code or policy targets beneath writable container mounts, preserves configuration backups, installs a bounded login consumer, and updates the persistent helper and instructions without restarting Vorteo. Run the same installer after upgrading these tools. The image also distributes the helper module for new installations. Keep the existing Tailscale identity and grants. Review the current packet-filter scope; installation must not broaden it. The runtime fails closed if that scope or node identity changes.
 
 Agents use the [approved helper workflow](AGENT-INSTRUCTIONS.md). A local preview request means a verified private Tailscale HTTPS link. To admit current and future active registered projects and worktrees without individual grants, install with `--workspace-policy registered`. Each workspace must still resolve through verified host bind mappings, including the persistent container home. Registration does not grant access to host directories outside those mappings. Symlinks, archived workspaces, changed pinned paths, unregistered services, and unsafe listeners remain rejected. The installer retains this policy on subsequent runs when the option is omitted.
 
-The default `--workspace-policy approved-roots` retains the existing restricted behavior: local workspaces must be beneath an allowed root and worktrees additionally require an exact workspace grant. For that mode, use `--approve-workspace WORKSPACE_ID=/absolute/container/worktree/path`. Keep passing the current allowed roots on reinstall; switching workspace policy does not change tailnet grants, node identity, or unrelated mappings. The installer backs up the previous configuration and broker code before applying the update, without restarting Paseo.
+The default `--workspace-policy approved-roots` retains the existing restricted behavior: local workspaces must be beneath an allowed root and worktrees additionally require an exact workspace grant. For that mode, use `--approve-workspace WORKSPACE_ID=/absolute/container/worktree/path`. Keep passing the current allowed roots on reinstall; switching workspace policy does not change tailnet grants, node identity, or unrelated mappings. The installer backs up the previous configuration and broker code before applying the update, without restarting Vorteo.
 
 Requests contain only lifecycle operation, workspace ID, service name, request ID, timestamp and optional preferred frontend port. The filesystem inbox is the only request interface. No Docker or Tailscale socket is exposed to agents.
 
@@ -62,7 +62,7 @@ Only `ready` receipts contain usable URLs after certificate-validating HTTPS and
 
 Stop each broker-managed preview with the helper when its process may stop. This removes and verifies only its owned mapping, and keeps the frontend reservation. For a capability-only rollback that preserves processes, run `python3 uninstall-https-broker.py` from the trusted deployment directory. It unloads this instance's owned login job, verifies each exact route before removal and disables request handling without resetting Tailscale or touching unrelated mappings. Keep the helper's environment loader and origin files for already-wrapped commands. Restore backed-up recovery code/configuration only after checking that its container identities still match. Do not restore stale whole-home or whole-Tailscale state.
 
-An awake, logged-in Mac and available Docker are prerequisites. FileVault unlock, login and host wake are not supplied by this broker. Installation or recovery does not authorize restarting Paseo, Docker or unrelated services.
+An awake, logged-in Mac and available Docker are prerequisites. FileVault unlock, login and host wake are not supplied by this broker. Installation or recovery does not authorize restarting Vorteo, Docker or unrelated services.
 
 ## Backup and replacement
 

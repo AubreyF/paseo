@@ -122,7 +122,7 @@ async function writeJsonSummary({
   );
 }
 
-console.log("🧪 Paseo CLI E2E Test Runner\n");
+console.log("🧪 Vorteo CLI E2E Test Runner\n");
 console.log("=".repeat(50));
 
 // Discover all test files

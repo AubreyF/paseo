@@ -1,6 +1,6 @@
-# Paseo with Vorton
+# Vorteo
 
-One container includes Paseo, its web UI, Codex, Pi and Tailscale. Each installation has its own accounts, workspace and private network identity. Linux AMD64 and ARM64 are supported; macOS runs it through Docker Desktop.
+One container includes Vorteo, its web UI, Codex, Pi and Tailscale. Each installation has its own accounts, workspace and private network identity. Linux AMD64 and ARM64 are supported; macOS runs it through Docker Desktop.
 
 Installation agents: follow the [installation agent instructions](../../README.md#instructions-for-installation-agents).
 
@@ -12,7 +12,7 @@ Installation agents: follow the [installation agent instructions](../../README.m
    ```
 
 3. Complete the Tailscale login. Open the HTTPS address printed by the installer and use the password saved in `paseo-instance/.env`.
-4. Enable **Vorton** in the sidebar, connect your provider accounts, and create a preset. See [account setup](../../docs/custom-providers.md#multiple-profiles-for-the-same-provider).
+4. Enable **Vorteo** in the sidebar, connect your provider accounts, and create a preset. See [account setup](../../docs/custom-providers.md#multiple-profiles-for-the-same-provider).
 
 The installer builds the image from this checkout, then creates private persistent storage. The first build downloads dependencies and takes longer than subsequent builds. To reuse an existing image, pass its reference as the second argument.
 

@@ -1,6 +1,6 @@
 # @getpaseo/client
 
-TypeScript SDK for building integrations on top of a Paseo daemon.
+TypeScript SDK for building integrations on top of a Vorteo daemon.
 
 ```bash
 npm install @getpaseo/client
@@ -24,7 +24,7 @@ console.log(result.lastMessage);
 await client.close();
 ```
 
-The public API is the package root. Imports under `@getpaseo/client/internal/*` are unsupported implementation details used by Paseo's own packages.
+The public API is the package root. Imports under `@getpaseo/client/internal/*` are unsupported implementation details used by Vorteo's own packages.
 
 Read the [SDK documentation](https://paseo.sh/docs/sdk) for agents, workspaces, terminals, provider discovery, events, recipes, and the API reference. Runnable TypeScript patterns also live in [`examples/`](./examples/README.md).
 

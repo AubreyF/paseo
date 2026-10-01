@@ -225,7 +225,7 @@ buildNpmPackage {
   desktopItems = lib.optionals stdenv.hostPlatform.isLinux [
     (makeDesktopItem {
       name = "paseo-desktop";
-      desktopName = "Paseo";
+      desktopName = "Vorteo";
       genericName = "AI Coding Agents";
       comment = "Self-hosted daemon for AI coding agents";
       exec = "paseo-desktop";
@@ -236,23 +236,23 @@ buildNpmPackage {
     # Hidden alias entry. Which of the two names Electron ends up publishing as
     # the Wayland app_id depends on the Electron version: 41 uses the app-root
     # package.json `name` ("paseo-desktop"), 38 uses the runtime app name that
-    # main.ts sets ("Paseo"). Ship a NoDisplay entry for the second spelling so
+    # main.ts sets ("Vorteo"). Ship a NoDisplay entry for the second spelling so
     # the icon resolves either way without a duplicate launcher item.
     (makeDesktopItem {
-      name = "Paseo";
-      desktopName = "Paseo";
+      name = "Vorteo";
+      desktopName = "Vorteo";
       genericName = "AI Coding Agents";
       comment = "Self-hosted daemon for AI coding agents";
       exec = "paseo-desktop";
       icon = "paseo-desktop";
       categories = [ "Development" ];
-      startupWMClass = "Paseo";
+      startupWMClass = "Vorteo";
       noDisplay = true;
     })
   ];
 
   meta = {
-    description = "Paseo desktop app (Electron wrapper)";
+    description = "Vorteo desktop app (Electron wrapper)";
     homepage = "https://github.com/getpaseo/paseo";
     license = lib.licenses.agpl3Plus;
     mainProgram = "paseo-desktop";

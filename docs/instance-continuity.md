@@ -6,15 +6,15 @@ Use the [team handoff guide](host-handoff.md) to choose fresh installation, exis
 
 ## Updates from the app
 
-In Vorton mode, the app checks public `AubreyF/paseo` main every 30 minutes while open. Settings → About shows the comparison with the interface's build commit. This checks source commits, not tested releases or the running daemon version. Unpublished commits and builds without provenance show an unknown comparison instead of claiming an update is available.
+In Vorteo mode, the app checks public `AubreyF/paseo` main every 30 minutes while open. Settings → About shows the comparison with the interface's build commit. This checks source commits, not tested releases or the running daemon version. Unpublished commits and builds without provenance show an unknown comparison instead of claiming an update is available.
 
-**Help me update** opens a separate draft with an update task. Select the Vorton source project, the host that owns the installation, and an agent preset, then send it. The task tells the agent to preserve local changes, help merge conflicts, validate and publish the interface, and request approval before restarting the instance. It does not run Git or start an agent until you send the draft. Review ambiguous conflicts with the agent; updating a checkout alone does not update the served application.
+**Help me update** opens a separate draft with an update task. Select the Vorteo source project, the host that owns the installation, and an agent preset, then send it. The task tells the agent to preserve local changes, help merge conflicts, validate and publish the interface, and request approval before restarting the instance. It does not run Git or start an agent until you send the draft. Review ambiguous conflicts with the agent; updating a checkout alone does not update the served application.
 
 Builds from a Git checkout record HEAD as their source base. For source snapshots, pass the original full SHA through `PASEO_BUILD_COMMIT`; `build-instance-web.mjs` carries it automatically and records it in the snapshot’s ignored `.build-source-commit` file. Keep that file when exporting the same snapshot again; otherwise a separate export process loses the source identity. A real Git checkout always uses its own HEAD ahead of a snapshot stamp. Uncommitted source changes are not described by that SHA. The container installer and CI pass it into the image build. A source archive without that value can still use the prepared agent task, but cannot compare commits automatically.
 
 ## Publish a web-only change
 
-For interface requests, update the existing primary Vorton installation in place unless the user names another destination. Publishing the tested web export is part of the requested work. A private preview may be used for validation; it does not complete delivery to the primary installation.
+For interface requests, update the existing primary Vorteo installation in place unless the user names another destination. Publishing the tested web export is part of the requested work. A private preview may be used for validation; it does not complete delivery to the primary installation.
 
 Builds use unique directories under `~/.cache/paseo-instance-builds/`. Each build owns its source snapshot, installed dependencies, generated files and export. Only npm's download cache is shared. A failed build never produces a completed artifact manifest.
 
@@ -43,4 +43,4 @@ All publishers must use this guarded script. Retire old script copies and direct
 
 The persistent web directory must be mounted and selected by `PASEO_WEB_UI_DIST_DIR`. Do not substitute a lone index file that references stale bundles. Web publication does not require a daemon restart. Do not restart the primary daemon without explicit permission. Server or protocol changes require a separately tested daemon build and coordinated interruption; web publication cannot activate them.
 
-For interface changes, compare Vorton off and on and follow [the touch audit](vorton-touch-audit.md). Record physical-device acceptance privately. Do not call source-only changes deployed or infer provider authentication from configuration names.
+For interface changes, compare Vorteo off and on and follow [the touch audit](vorton-touch-audit.md). Record physical-device acceptance privately. Do not call source-only changes deployed or infer provider authentication from configuration names.

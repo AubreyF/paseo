@@ -26,7 +26,7 @@ export function runLegacyQueueAction<T>(
 ): Promise<T> {
   return withLegacyQueueLane(serverId, agentId, async () => {
     if (isLegacyImportPending(await messageOutbox.list(), serverId, agentId, messageId)) {
-      throw new Error("This message is being imported. Use the shared queue in Vorton mode.");
+      throw new Error("This message is being imported. Use the shared queue in Vorteo mode.");
     }
     return run();
   });

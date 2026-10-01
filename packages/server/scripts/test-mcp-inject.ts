@@ -84,7 +84,7 @@ async function verifyInjectedMcpForProvider(
 
     if (!assistantText.includes("PASEO_MCP_FOUND")) {
       throw new Error(
-        `Expected assistant to confirm Paseo MCP availability. Assistant text:\n${assistantText}`,
+        `Expected assistant to confirm Vorteo MCP availability. Assistant text:\n${assistantText}`,
       );
     }
 

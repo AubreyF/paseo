@@ -227,7 +227,7 @@ export function useAgentProfilePicker(
         if (!supportsLaunch) {
           if (profile.instructions || profile.workerProfileId) {
             toast.error(
-              "Enable Vorton Mode on a supported host to launch a preset with instructions or workers.",
+              "Enable Vorteo Mode on a supported host to launch a preset with instructions or workers.",
             );
             return;
           }

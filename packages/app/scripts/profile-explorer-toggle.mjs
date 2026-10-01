@@ -40,7 +40,7 @@ function resolvePaseoWorkspaceId() {
   if (jsonStart < 0) throw new Error("Could not parse `paseo workspace ls --json`");
   const workspaces = JSON.parse(output.slice(jsonStart));
   const candidates = workspaces.filter((workspace) => workspace.cwd === workspaceCwd);
-  const workspace = candidates.find((candidate) => candidate.name === "Paseo") ?? candidates[0];
+  const workspace = candidates.find((candidate) => candidate.name === "Vorteo") ?? candidates[0];
   if (!workspace?.workspaceId) {
     throw new Error(`No active workspace found for ${workspaceCwd}`);
   }

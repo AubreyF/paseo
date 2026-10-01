@@ -1,6 +1,6 @@
 # Modal UI example
 
-Install on a Paseo host with npm source installation support and npm available:
+Install on a Vorteo host with npm source installation support and npm available:
 
 ```sh
 paseo plugin install npm:@getpaseo/plugin-example-modal-ui@0.1.1
@@ -14,7 +14,7 @@ installed version. With reviewed-update support, run `paseo plugin update modal-
 to check for a newer version, then `paseo plugin update modal-ui-example` to review and approve it.
 An explicit install version selects the initial content; later updates still check the latest release.
 
-The package ships the existing TypeScript entry and client sources. Paseo compiles them through
+The package ships the existing TypeScript entry and client sources. Vorteo compiles them through
 its directory plugin loader; no package build or preparation command is required. React,
 React Native, and `@getpaseo/plugin` are peer contracts supplied by the host. npm is needed for
 installation, not loading or reloading. You can also install this directory while developing.
@@ -36,7 +36,7 @@ On Android, open each example and drag up on its content to expand the sheet, th
 In FlatList, expand before using **Jump to last row**; row 100 should be visible. At the top of either
 list, drag down on a row to dismiss the sheet. In Form,
 press **Copy text**, long-press the input, and choose **Paste**. The input should contain
-“Copied from Paseo”. With the system keyboard enabled, focusing the input should keep it visible.
+“Copied from Vorteo”. With the system keyboard enabled, focusing the input should keep it visible.
 
 Run the [native sheet regression](https://github.com/getpaseo/paseo/blob/main/packages/app/e2e/mobile/modal-sheet/README.md) to check body
 dismissal, list scrolling and horizontal tabs together.

@@ -129,7 +129,7 @@ function resolveScheduleTarget(args: {
     if (!currentAgentId) {
       throw {
         code: "INVALID_TARGET",
-        message: "--target self requires running inside a Paseo agent",
+        message: "--target self requires running inside a Vorteo agent",
       } satisfies CommandError;
     }
     return { type: "self", agentId: currentAgentId };

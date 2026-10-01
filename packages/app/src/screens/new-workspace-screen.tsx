@@ -2124,7 +2124,7 @@ export function NewWorkspaceScreen({
       try {
         setErrorMessage(null);
         if (formPreferences.vortonMode && !composerState?.selectedProfileId) {
-          throw new Error("Select a configuration before starting a Vorton chat.");
+          throw new Error("Select a configuration before starting a Vorteo chat.");
         }
         await composerState?.persistFormPreferences();
         await updateFormPreferences({ launchTarget });

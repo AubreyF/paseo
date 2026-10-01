@@ -17,7 +17,7 @@ paseo plugin install /absolute/path/to/plugin-examples/lifecycle-logger
 paseo plugin logs lifecycle-logger
 ```
 
-Outside the Paseo repository, `server/inspect.ts` needs `@getpaseo/protocol` installed for its
+Outside the Vorteo repository, `server/inspect.ts` needs `@getpaseo/protocol` installed for its
 type imports. Add it to your plugin development dependencies at the same version as
 `@getpaseo/plugin` before installing this example.
 

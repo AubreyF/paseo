@@ -43,7 +43,7 @@ function resolveProfileConfiguration(
   const instructions = [profile.instructions?.trim(), config.systemPrompt?.trim()];
   if (worker) {
     instructions.push(
-      `You supervise local workers using Paseo's create_agent tool. Use profileId ${JSON.stringify(worker.id)} ` +
+      `You supervise local workers using Vorteo's create_agent tool. Use profileId ${JSON.stringify(worker.id)} ` +
         `and provider ${JSON.stringify(`${worker.provider}/${worker.model}`)}. ` +
         `Assign bounded tasks with explicit file ownership. Use separate worktrees for concurrent edits. ` +
         `Review each worker's diff and run relevant tests before accepting it. ` +

@@ -29,7 +29,7 @@ The Compose project publishes no host ports. Tailscale forwards private TCP traf
 
 Keep existing origins and authentication. Do not replace allowlists with wildcards or rewrite Origin at the proxy to bypass checks.
 
-For a Paseo container installed with `docker/multiplex`, merge these entries into `compose.override.yaml` in the **application's** private deployment directory, substituting your hostname:
+For a Vorteo container installed with `docker/multiplex`, merge these entries into `compose.override.yaml` in the **application's** private deployment directory, substituting your hostname:
 
 ```yaml
 services:
@@ -39,7 +39,7 @@ services:
       PASEO_CORS_ORIGINS: https://paseo.example.com
 ```
 
-If these variables already contain custom entries, append yours to their comma-separated values. The container startup script also retains its original Tailscale hostname and origin. Merely adding variables to `.env` does not pass them to the application container. Applying changed Compose environment requires container recreation; coordinate any interruption of an existing Paseo instance with its owner before running `docker compose up -d paseo` from that deployment directory.
+If these variables already contain custom entries, append yours to their comma-separated values. The container startup script also retains its original Tailscale hostname and origin. Merely adding variables to `.env` does not pass them to the application container. Applying changed Compose environment requires container recreation; coordinate any interruption of an existing Vorteo instance with its owner before running `docker compose up -d paseo` from that deployment directory.
 
 For the separate Vorton application, merge `externalOrigin` into its private `local.config.json` and retain the existing broker URL in `additionalOrigins`:
 

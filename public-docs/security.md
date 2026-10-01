@@ -1,6 +1,6 @@
 ---
 title: Security
-description: "Security model for Paseo: architecture overview, connection methods, relay encryption, and best practices."
+description: "Security model for Vorteo: architecture overview, connection methods, relay encryption, and best practices."
 nav: Security
 order: 5
 category: Getting started
@@ -8,13 +8,13 @@ category: Getting started
 
 # Security
 
-Paseo follows a client-server architecture, similar to Docker. The daemon runs on your machine and manages your coding agents. Clients (the mobile app, CLI, or web interface) connect to the daemon to monitor and control those agents.
+Vorteo follows a client-server architecture, similar to Docker. The daemon runs on your machine and manages your coding agents. Clients (the mobile app, CLI, or web interface) connect to the daemon to monitor and control those agents.
 
-Your code never leaves your machine. Paseo is a local-first tool that connects directly to your development environment.
+Your code never leaves your machine. Vorteo is a local-first tool that connects directly to your development environment.
 
 ## Architecture
 
-The Paseo daemon can run anywhere you want to execute agents: your laptop, a Mac Mini, a VPS, or a Docker container. The daemon listens for connections and manages agent lifecycles.
+The Vorteo daemon can run anywhere you want to execute agents: your laptop, a Mac Mini, a VPS, or a Docker container. The daemon listens for connections and manages agent lifecycles.
 
 Clients connect to the daemon over WebSocket. There are two ways to establish this connection:
 
@@ -25,7 +25,7 @@ Clients connect to the daemon over WebSocket. There are two ways to establish th
 
 The relay is the simplest way to connect from your phone. It requires no VPN setup, no port forwarding, and no firewall configuration. The daemon can stay bound to localhost or a socket file, it connects _outbound_ to the relay, and your phone meets it there. The official relay server is the open-source Elixir service at [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay).
 
-Relay is off on new installations. When you pair a device from `paseo`, `paseo daemon pair`, or Paseo Desktop, Paseo asks before enabling it. Choosing not to enable relay leaves the daemon available for direct TCP, Tailscale, or other VPN connections and does not create a pairing QR code. Use `--relay` with the CLI pairing or startup command to opt in without an interactive prompt.
+Relay is off on new installations. When you pair a device from `paseo`, `paseo daemon pair`, or Vorteo Desktop, Vorteo asks before enabling it. Choosing not to enable relay leaves the daemon available for direct TCP, Tailscale, or other VPN connections and does not create a pairing QR code. Use `--relay` with the CLI pairing or startup command to opt in without an interactive prompt.
 
 > **The relay is designed to be untrusted.** All traffic between your phone and daemon is end-to-end encrypted. The relay server cannot read your messages, see your code, or modify traffic without detection. Even if the relay is compromised, your data remains protected.
 
@@ -64,7 +64,7 @@ For maximum isolation, you can configure the daemon to listen on a Unix socket f
 
 ### VPN access
 
-Use a VPN such as [Tailscale](https://tailscale.com) when you want a direct connection outside your local network. The VPN encrypts the traffic and keeps the daemon off the public internet. Bind the daemon to its VPN address, set a Paseo password, then add that address as a direct connection in the client.
+Use a VPN such as [Tailscale](https://tailscale.com) when you want a direct connection outside your local network. The VPN encrypts the traffic and keeps the daemon off the public internet. Bind the daemon to its VPN address, set a Vorteo password, then add that address as a direct connection in the client.
 
 ### Binding to 0.0.0.0
 
@@ -74,7 +74,7 @@ Use a VPN such as [Tailscale](https://tailscale.com) when you want a direct conn
 
 **CORS is not a complete security boundary.** It controls which browser origins can make requests, but does not prevent a malicious website from resolving its domain to your local machine (DNS rebinding).
 
-Paseo uses a host allowlist to validate the `Host` header on incoming requests. Requests with unrecognized hosts are rejected.
+Vorteo uses a host allowlist to validate the `Host` header on incoming requests. Requests with unrecognized hosts are rejected.
 
 Configure via `daemon.hostnames` in `config.json`:
 
@@ -123,13 +123,13 @@ See [Docker](/docs/docker) for Compose and reverse proxy examples.
 
 ## Agent authentication
 
-Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their authentication. Each agent provider handles its own credentials:
+Vorteo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their authentication. Each agent provider handles its own credentials:
 
 - **Claude Code**, authenticates via Anthropic's OAuth flow, stored in `~/.claude/`
 - **Codex**, uses your OpenAI API key or OAuth session
 - **OpenCode**, configured via provider-specific API keys
 
-Paseo never stores or transmits provider API keys. Agents run in your user context with your existing credentials.
+Vorteo never stores or transmits provider API keys. Agents run in your user context with your existing credentials.
 
 ## Hub identities and credentials
 

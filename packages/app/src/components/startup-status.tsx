@@ -42,7 +42,7 @@ export function StartupStatus({ phase, children }: StartupStatusProps) {
         <View style={styles.help} testID="startup-diagnostics" accessibilityLiveRegion="polite">
           <Text style={styles.hint}>Taking longer than expected.</Text>
           <Text style={styles.hint}>Check your internet connection and VPN, if required.</Text>
-          <Text style={styles.hint}>Make sure the host is awake and Paseo is running.</Text>
+          <Text style={styles.hint}>Make sure the host is awake and Vorteo is running.</Text>
           <Text style={styles.hint}>If this persists, check the host address in Settings.</Text>
         </View>
       ) : null}

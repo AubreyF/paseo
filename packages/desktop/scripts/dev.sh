@@ -34,7 +34,7 @@ export PASEO_CORS_ORIGINS="${PASEO_CORS_ORIGINS:-*}"
 npm --prefix "$DESKTOP_DIR" run build:main
 
 echo "══════════════════════════════════════════════════════"
-echo "  Paseo Desktop Dev"
+echo "  Vorteo Desktop Dev"
 echo "══════════════════════════════════════════════════════"
 echo "  Metro:      ${EXPO_DEV_URL}"
 echo "  Daemon:     ${PASEO_LISTEN}"

@@ -26,10 +26,10 @@ The app runs on iOS, Android, browser web and Electron. Default to cross-platfor
 - Prefer `.web.*` and `.native.*` modules for substantially different implementations. Use `.electron.*` for Electron-only behavior; Electron resolves those before `.web.*`. Keep inline gates small.
 - Pointer and hover events do not provide native touch access. Essential controls must remain visible on native and compact layouts, such as `isHovered || isNative || isCompact`. The hover guide's pointer pattern is for web; do not rely on it on native.
 
-## Vorton behavior and delivery
+## Vorteo behavior and delivery
 
 - Gate fork-specific rendering, styles and handlers with `useVortonMode`; use `useVortonTouch` for touch enhancements. Host capabilities, width and saved profiles do not replace the mode gate. Follow the [mode contract](../../docs/agent-presets.md#review-boundaries).
-- Turning Vorton off must restore standard Paseo controls, appearance and navigation without changing saved settings, credentials, accounts or running tasks. Keep the mode selector available.
+- Turning Vorteo off must restore Standard mode controls, appearance and navigation without changing saved settings, credentials, accounts or running tasks. Keep the mode selector available.
 - Detect touch independently of width. Keep essential actions visible without hover, primary targets at least 44 CSS pixels, and hover cards from intercepting navigation taps. Preserve pinch zoom, keyboard focus, scrolling and independently selectable permissions.
 - Verify mode off and on, run focused tests and deliver authorized interface changes to the existing primary installation through [instance continuity](../../docs/instance-continuity.md). Respect the root restart-permission rule and the user's requested delivery stage.
 - Ask for physical-device verification when emulation cannot prove behavior. Never launch macOS Playwright WebKit.

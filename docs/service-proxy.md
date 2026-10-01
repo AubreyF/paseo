@@ -1,10 +1,10 @@
 # Service Proxy
 
-Paseo proxies HTTP traffic to services running inside your workspaces. Localhost service URLs are always enabled; optional public aliases and a separate service-only listener can be layered on through config.
+Vorteo proxies HTTP traffic to services running inside your workspaces. Localhost service URLs are always enabled; optional public aliases and a separate service-only listener can be layered on through config.
 
 ## How it works
 
-When a `paseo.json` script of `"type": "service"` starts, Paseo assigns it a local port and registers a route in the service proxy. Incoming requests whose `Host` header matches the script's generated hostname are forwarded to that port.
+When a `paseo.json` script of `"type": "service"` starts, Vorteo assigns it a local port and registers a route in the service proxy. Incoming requests whose `Host` header matches the script's generated hostname are forwarded to that port.
 
 The generated hostname is built from the script name, branch, and project:
 
@@ -24,7 +24,7 @@ If the branch is `main` or `master`, the branch segment is omitted:
 dev--feature-auth--miniweb.localhost
 ```
 
-Local and public routes use one combined leftmost label (`script--branch--project`). This keeps the hostname compatible with normal single-level wildcard DNS and TLS. If the combined label would exceed DNS's 63-character label limit, Paseo truncates it with a deterministic hash suffix to avoid collisions.
+Local and public routes use one combined leftmost label (`script--branch--project`). This keeps the hostname compatible with normal single-level wildcard DNS and TLS. If the combined label would exceed DNS's 63-character label limit, Vorteo truncates it with a deterministic hash suffix to avoid collisions.
 
 ## Managing workspace scripts
 
@@ -63,7 +63,7 @@ Add a `serviceProxy` block under `daemon` in `~/.paseo/config.json`:
 
 ## DNS and reverse proxy setup
 
-For generated URLs to be reachable, you need wildcard DNS pointing to the machine running the Paseo daemon.
+For generated URLs to be reachable, you need wildcard DNS pointing to the machine running the Vorteo daemon.
 
 **Example:** to expose services at `https://dev--miniweb.paseoapps.my.domain.com` where the daemon host is `10.1.1.1`:
 
@@ -75,7 +75,7 @@ For generated URLs to be reachable, you need wildcard DNS pointing to the machin
 
 2. Set `publicBaseUrl` to `https://paseoapps.my.domain.com` in your config.
 
-3. If you put a reverse proxy (nginx, Caddy, Traefik, etc.) in front of Paseo, point it at either the daemon listener or the optional service-only listener and ensure it forwards the `Host` header unchanged. The proxy uses the `Host` header to route requests to the correct service — rewriting it will break routing.
+3. If you put a reverse proxy (nginx, Caddy, Traefik, etc.) in front of Vorteo, point it at either the daemon listener or the optional service-only listener and ensure it forwards the `Host` header unchanged. The proxy uses the `Host` header to route requests to the correct service — rewriting it will break routing.
 
 Public service URLs expose the workspace service itself. Daemon password authentication protects daemon APIs; it does not protect proxied dev services.
 
@@ -111,7 +111,7 @@ Nginx's `$host` drops the port. If you terminate on a non-default port, use `$ht
 
 ## Forwarded headers
 
-Paseo sets these when it forwards a request to a workspace service:
+Vorteo sets these when it forwards a request to a workspace service:
 
 | Header              | Value                                                                                                                                   |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -120,13 +120,13 @@ Paseo sets these when it forwards a request to a workspace service:
 | `X-Forwarded-For`   | The immediate peer address. Replaces any existing chain, so behind your own reverse proxy this is the proxy's address, not the client's |
 | `X-Forwarded-Port`  | The port from the `Host` header when it has one, otherwise whatever your proxy already set                                              |
 
-`X-Forwarded-Port` follows the same trust rule as `X-Forwarded-Host`: the authority Paseo observed wins. When the `Host` header carries a port, that port is reported and replaces any inbound `X-Forwarded-Port`, so a client cannot forge one. When `Host` carries no port there is nothing to observe, so a value your reverse proxy set survives untouched — that is the case where nginx's `$host` drops the port and `X-Forwarded-Port` is the only source. Paseo never derives the port from the scheme. Any other `X-Forwarded-*` header your proxy sends is passed through untouched.
+`X-Forwarded-Port` follows the same trust rule as `X-Forwarded-Host`: the authority Vorteo observed wins. When the `Host` header carries a port, that port is reported and replaces any inbound `X-Forwarded-Port`, so a client cannot forge one. When `Host` carries no port there is nothing to observe, so a value your reverse proxy set survives untouched — that is the case where nginx's `$host` drops the port and `X-Forwarded-Port` is the only source. Vorteo never derives the port from the scheme. Any other `X-Forwarded-*` header your proxy sends is passed through untouched.
 
 Services that build absolute URLs should prefer `Host` or `X-Forwarded-Host`.
 
 ### The forwarded authority is not authenticated
 
-Route lookup normalizes the port away before matching a service hostname, so a client can address the daemon with any port in `Host` and still reach the service. That port is what lands in `X-Forwarded-Host` and `X-Forwarded-Port`. Paseo also does not check whether an inbound `X-Forwarded-Port` came from a proxy in `trustedProxies` — when `Host` carries no port, a client-supplied value is passed through.
+Route lookup normalizes the port away before matching a service hostname, so a client can address the daemon with any port in `Host` and still reach the service. That port is what lands in `X-Forwarded-Host` and `X-Forwarded-Port`. Vorteo also does not check whether an inbound `X-Forwarded-Port` came from a proxy in `trustedProxies` — when `Host` carries no port, a client-supplied value is passed through.
 
 Treat the forwarded authority as client-influenced input. A service that builds password reset links, absolute redirects, or cached URLs from it should pin its own public origin in configuration rather than deriving one from request headers. This is not specific to `X-Forwarded-Port`: the `Host` header has always carried a client-chosen port.
 

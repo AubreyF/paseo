@@ -8,7 +8,7 @@ category: TypeScript SDK
 
 # Provider options
 
-`config.options` passes settings straight through to the provider CLI. Paseo validates the object against that provider's strict schema before starting the agent, so an unknown or misspelled key fails agent creation instead of silently doing nothing.
+`config.options` passes settings straight through to the provider CLI. Vorteo validates the object against that provider's strict schema before starting the agent, so an unknown or misspelled key fails agent creation instead of silently doing nothing.
 
 Options are provider-native. A Codex sandbox key is not a Claude sandbox key. Codex, Claude, and OpenCode accept options; every other provider rejects a non-empty `options`.
 
@@ -152,11 +152,11 @@ Every permission is `ask`, `allow`, or `deny`. Tools that take a target — `rea
 
 `permission: "deny"` as a bare string applies to everything at once.
 
-An `ask` resolves to a permission request in Paseo, and `waitForFinish()` returns `permission` while it is pending. Use `allow` and `deny` for unattended runs. See [Events](/docs/sdk/events) for reacting to a pending request.
+An `ask` resolves to a permission request in Vorteo, and `waitForFinish()` returns `permission` while it is pending. Use `allow` and `deny` for unattended runs. See [Events](/docs/sdk/events) for reacting to a pending request.
 
 ## Modes and options
 
-`modeId` picks a Paseo mode from the provider's published list, which the daemon shows in the app and reports through [provider discovery](/docs/sdk/providers). `options` is the provider's own configuration. They are separate controls and you can set both:
+`modeId` picks a Vorteo mode from the provider's published list, which the daemon shows in the app and reports through [provider discovery](/docs/sdk/providers). `options` is the provider's own configuration. They are separate controls and you can set both:
 
 ```ts
 config: {

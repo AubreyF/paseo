@@ -8,7 +8,7 @@ category: Plugins
 
 # Migrate a plugin to runtime entries
 
-Use this guide to update plugins written for Paseo 0.7 or earlier to the current client/server entry format, introduced in 0.8.
+Use this guide to update plugins written for Vorteo 0.7 or earlier to the current client/server entry format, introduced in 0.8.
 
 Give this page to a coding agent with the plugin directory as its working directory. Execute the
 steps in order. Do not keep a compatibility entry.
@@ -56,7 +56,7 @@ Apply these rules exactly:
 5. Preserve nested feature directories under the matching runtime directory.
 6. Update relative imports after every move.
 7. Keep `paseo-plugin.json`, `package.json`, and `tsconfig.json` at the root.
-8. Delete the old root entry. Paseo does not load it.
+8. Delete the old root entry. Vorteo does not load it.
 
 The directories are the compiler boundaries. A file beneath `client/` compiles only into the app
 bundle, a file beneath `server/` only into the daemon bundle, and `shared/` into both. Filename
@@ -87,7 +87,7 @@ Use this table as the complete registration checklist.
 | `ZodOutput<typeof contract.input>` handler parameter types                                    | `RpcInput<typeof contract>` from `@getpaseo/plugin`; `RpcOutput` for return types                            |
 
 Import `PluginClientContext` from `@getpaseo/plugin/client` and `PluginServerContext` from
-`@getpaseo/plugin/server`. Remove imports of the old context type. Client registrations return idempotent removal functions, except header buttons and composer pills, which return `{ update, remove }` handles. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
+`@getpaseo/plugin/server`. Remove imports of the old context type. Client registrations return idempotent removal functions, except header buttons and composer pills, which return `{ update, remove }` handles. Preserve any remover the plugin calls before teardown; Vorteo removes outstanding
 registrations after the entry cleanup runs.
 
 ### Composer pills
@@ -143,7 +143,7 @@ Move the remaining SDK subpaths under their runtime owner:
 | `@getpaseo/plugin/acp`          | `@getpaseo/plugin/server/acp`          |
 
 The old entries and the pre-0.8 `@paseo/plugin` scope are removed. `/client/host` is private to
-Paseo's app integration and is never a plugin-author import.
+Vorteo's app integration and is never a plugin-author import.
 
 The client entry imports only `client/`, `shared/`, and client-safe packages. The server entry imports
 only `server/`, `shared/`, and server-safe packages. A `node:` import in the client entry or anything
@@ -274,7 +274,7 @@ Import path changes inside the moved files:
 calls it directly and returns its cleanup. A plugin whose `addClientSide` callback also registered
 pills or subscriptions keeps that code; only the wrapper goes away.
 
-## 7. Declare the Paseo requirement
+## 7. Declare the Vorteo requirement
 
 After migrating the entries and imports, add the minimum runtime version to `paseo-plugin.json`:
 
@@ -285,7 +285,7 @@ After migrating the entries and imports, add the minimum runtime version to `pas
 }
 ```
 
-Keep your existing ID and build commands. Missing `requirements.paseo` means `<0.8.0`, so Paseo 0.8 and later
+Keep your existing ID and build commands. Missing `requirements.paseo` means `<0.8.0`, so Vorteo 0.8 and later
 reject the plugin even if its files have been moved. Adding the field alone does not migrate the
 code. Update the local `@getpaseo/plugin` development dependency to the version you target and
 reinstall dependencies before typechecking.

@@ -4,11 +4,11 @@ Keep one owner for each subject. Update the section that became wrong, delete ob
 
 ## Maintain the product README
 
-The root [README](../README.md) describes shipped features for developers deciding whether to use Vorton. Review it when adding, changing or removing user-facing behavior, and update it in the same change. Internal changes can leave it alone; explain why in the completion report.
+The root [README](../README.md) describes shipped features for developers deciding whether to use Vorteo. Review it when adding, changing or removing user-facing behavior, and update it in the same change. Internal changes can leave it alone; explain why in the completion report.
 
 - Verify implementation, tests and delivery status before claiming availability. Keep planned work in the roadmap and do not advertise source-only work awaiting deployment as shipped.
 - Describe user workflows and outcomes. Give accounts, switching and profiles appropriate prominence alongside other capabilities. Keep storage and protocol details in their owning docs.
-- Integrate features into the relevant section. Keep the overview balanced, credit inherited Paseo capabilities and verify comparisons with other products.
+- Integrate features into the relevant section. Keep the overview balanced, credit inherited upstream Paseo capabilities and verify comparisons with other products.
 - Preserve working onboarding instructions and author-created media unless the user requests a change. Keep the account-switching animation beside the profile overview, retain its original asset URL and verify it still animates when editing that section. Report broken media; do not silently remove it or substitute a still image.
 - Check changed links and read the finished README for repetition and stale claims. Link the update in the completion report, or state why none was needed.
 

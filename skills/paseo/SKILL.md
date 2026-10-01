@@ -1,9 +1,9 @@
 ---
 name: paseo
-description: Paseo reference for managing projects, workspaces, workspace scripts, agents, schedules, and heartbeats.
+description: Vorteo reference for managing projects, workspaces, workspace scripts, agents, schedules, and heartbeats.
 ---
 
-Paseo is a remote daemon that manages coding agents, terminals. Control it through MCP tools or the CLI.
+Vorteo is a remote daemon that manages coding agents, terminals. Control it through MCP tools or the CLI.
 
 In this fork, daemon commands, provider credentials and project paths belong to the container. Use the checkout's `docs/docker.md` for installation and lifecycle operations. Host Docker administration belongs to the operator; never mount the Docker socket into the agent environment.
 
@@ -19,17 +19,17 @@ paseo project rename <project-id> --reset
 paseo project delete <project-id>
 ```
 
-For a local daemon, `project create` defaults to the current directory and resolves relative paths on the CLI machine. With `--host` or `PASEO_HOST`, always provide a path; the target daemon interprets it on its own machine. Deleting a project archives its active workspaces and removes the project from Paseo without deleting the project directory.
+For a local daemon, `project create` defaults to the current directory and resolves relative paths on the CLI machine. With `--host` or `PASEO_HOST`, always provide a path; the target daemon interprets it on its own machine. Deleting a project archives its active workspaces and removes the project from Vorteo without deleting the project directory.
 
 ## Workspaces
 
 **`create_workspace`** — create a workspace independently of any agent. Required: `isolation` (`local` or `worktree`). Worktree isolation supports `mode: "branch-off" | "checkout-branch" | "checkout-pr"`: use `branchName`/`baseBranch` for a new branch, `branch` for an existing branch, or `prNumber` plus optional `forge`/`projectPath` for a change request. `worktreeSlug` controls the managed path. Returns the workspace descriptor centered on `workspaceId`.
 
-Choose `baseBranch` explicitly: `origin/main` selects the remote-tracking branch; `refs/heads/main` selects local main. Bare `main` prefers local main when it exists, otherwise origin/main. Paseo retains the resolved ref for workspace comparisons, even after rebasing the branch or changing its PR target.
+Choose `baseBranch` explicitly: `origin/main` selects the remote-tracking branch; `refs/heads/main` selects local main. Bare `main` prefers local main when it exists, otherwise origin/main. Vorteo retains the resolved ref for workspace comparisons, even after rebasing the branch or changing its PR target.
 
 **`list_workspaces`** — list active workspaces.
 
-**`archive_workspace`** — `{ workspaceId }`. Archives the workspace, its agents, and its terminals. Local directories remain; Paseo removes an owned worktree only after its final active workspace reference is archived.
+**`archive_workspace`** — `{ workspaceId }`. Archives the workspace, its agents, and its terminals. Local directories remain; Vorteo removes an owned worktree only after its final active workspace reference is archived.
 
 Never declare a code task ready to archive until all associated changes are committed, merged into the intended integration branch (`main` unless the user specified another destination), and pushed to `origin`. Verify the remote branch directly and prove it contains the task commits. A local branch, backup, deployment, open PR or pushed feature branch is not sufficient. If publication is unauthorized or blocked, report that the task is not ready to archive. An explicit archive of unfinished work preserves incomplete work; it does not establish completion.
 
@@ -43,7 +43,7 @@ Configured `paseo.json` scripts use the same supervised lifecycle from tools and
 
 **`list_workspace_scripts`** — `{ workspaceId }`. Lists configured scripts with lifecycle, service port, proxy URLs, health, exit code, and terminal ID.
 
-**`start_workspace_script`** — `{ workspaceId, scriptName }`. Starts one configured script through Paseo's managed workspace-script launcher and returns its status metadata.
+**`start_workspace_script`** — `{ workspaceId, scriptName }`. Starts one configured script through Vorteo's managed workspace-script launcher and returns its status metadata.
 
 **`stop_workspace_script`** — `{ workspaceId, scriptName }`. Stops a running script through its supervised terminal and returns the stopped status metadata.
 

@@ -30,11 +30,11 @@ export function createPluginHosts(source: PluginHostsSource, signal: AbortSignal
   function resolve(serverId: string): DaemonClient {
     if (signal.aborted) throw new Error("Plugin has stopped");
     if (!source.getHosts().some((host) => host.serverId === serverId)) {
-      throw new Error(`Unknown Paseo host: ${serverId}`);
+      throw new Error(`Unknown Vorteo host: ${serverId}`);
     }
     const host = source.getSnapshot(serverId);
     if (host?.connectionStatus !== "online" || !host.client) {
-      throw new Error(`Paseo host is disconnected: ${serverId}`);
+      throw new Error(`Vorteo host is disconnected: ${serverId}`);
     }
     return host.client;
   }
@@ -87,9 +87,9 @@ export function createPluginHosts(source: PluginHostsSource, signal: AbortSignal
           const value: unknown = Reflect.get(target, key, target);
           if (typeof value !== "function") return value;
           return (...args: unknown[]) => {
-            if (lifetime.signal.aborted) throw new Error(`Paseo client is released: ${serverId}`);
+            if (lifetime.signal.aborted) throw new Error(`Vorteo client is released: ${serverId}`);
             if (resolve(serverId) !== client) {
-              throw new Error(`Paseo connection changed; call getPaseoClient again: ${serverId}`);
+              throw new Error(`Vorteo connection changed; call getPaseoClient again: ${serverId}`);
             }
             return Reflect.apply(value, target, args);
           };

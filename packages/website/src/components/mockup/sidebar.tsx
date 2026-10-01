@@ -79,7 +79,7 @@ const WORKING_ROWS: WorkspaceRow[] = [
 const READY_TO_REVIEW_ROWS: WorkspaceRow[] = [
   {
     id: "lineage",
-    title: "Paseo homepage",
+    title: "Vorteo homepage",
     avatar: PASEO,
     pr: "3981",
     passed: true,

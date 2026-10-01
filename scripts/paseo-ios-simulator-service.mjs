@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 
 const rootDir = resolvePath(import.meta.dirname, "..");
 const appDir = join(rootDir, "packages/app");
-const appProductName = "PaseoDebug";
+const appProductName = "VorteoDebug";
 const appScheme = "paseo";
 const preferredSimulatorType = process.env.PASEO_IOS_DEVICE_TYPE || "iPhone 16 Pro";
 const paseoPort = requiredEnv("PASEO_PORT");
@@ -335,7 +335,7 @@ function simulatorSlug() {
 
 function requiredEnv(name) {
   const value = process.env[name];
-  if (!value) throw new Error(`${name} is required; run this as a Paseo service.`);
+  if (!value) throw new Error(`${name} is required; run this as a Vorteo service.`);
   return value;
 }
 

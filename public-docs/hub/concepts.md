@@ -1,6 +1,6 @@
 ---
 title: How Hub works
-description: How a provider event reaches a workflow and a Paseo daemon.
+description: How a provider event reaches a workflow and a Vorteo daemon.
 nav: How it works
 order: 62
 category: Hub
@@ -19,14 +19,14 @@ GitHub / Slack / Discord / manual request
                 workflow
           runs ordered agent steps
                     ↓
-             Paseo daemon
+             Vorteo daemon
              starts the agent
 ```
 
 ## The pieces
 
 - A **connection** lets Hub receive events from GitHub, Slack, or Discord.
-- A **daemon** is a registered machine running the Paseo daemon.
+- A **daemon** is a registered machine running the Vorteo daemon.
 - A **project** groups one configuration with the connections and daemons it uses.
 - An **environment** names where a workflow step runs: a daemon, its working directory, and an optional worktree.
 - A **trigger** says which provider event can start a workflow and which events are allowed through.

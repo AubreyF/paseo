@@ -350,7 +350,7 @@ if (electronFlags) {
 
 if (process.platform === "linux") {
   // Keep the desktop/dock identity independent of the wrapped Electron filename.
-  app.setDesktopName("Vorteo.desktop");
+  app.setDesktopName("Paseo.desktop");
   if (!app.commandLine.hasSwitch("class")) app.commandLine.appendSwitch("class", "Vorteo");
   log.info("[linux-sandbox]", {
     enabled: !app.commandLine.hasSwitch("no-sandbox"),

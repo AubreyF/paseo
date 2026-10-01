@@ -66,7 +66,7 @@ describe("runtime-paths", () => {
 
   it("uses the macOS Helper executable for packaged daemon node launches", () => {
     expect(resolveNodeExecPath()).toBe(
-      "/Applications/Paseo.app/Contents/Frameworks/Paseo Helper.app/Contents/MacOS/Paseo Helper",
+      "/Applications/Paseo.app/Contents/Frameworks/Vorteo Helper.app/Contents/MacOS/Vorteo Helper",
     );
   });
 });

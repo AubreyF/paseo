@@ -80,7 +80,8 @@ export function resolveNodeExecPath(): string {
     const markerIndex = process.execPath.indexOf(marker);
     if (markerIndex !== -1) {
       const bundleRoot = process.execPath.substring(0, markerIndex + ".app".length);
-      const name = path.basename(process.execPath);
+      // electron-builder names helpers after productName, independently of executableName.
+      const name = "Vorteo";
       const helperPath = path.posix.join(
         bundleRoot,
         "Contents",

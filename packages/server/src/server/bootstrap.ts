@@ -413,6 +413,7 @@ export interface PaseoDaemonConfig {
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
   agentProfiles?: AgentProfile[];
+  sharedProviderPreferences?: MutableDaemonConfig["sharedProviderPreferences"];
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
@@ -561,6 +562,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
     skills: { selection: config.skillSelection },
+    sharedProviderPreferences: config.sharedProviderPreferences,
   };
 
   if (config.terminalProfiles !== undefined) {
@@ -572,6 +574,18 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
   }
 
   return initialConfig;
+}
+
+function migrateLegacyProviderPreferences(store: DaemonConfigStore, logger: Logger): void {
+  try {
+    store.initializeProviderPreferences();
+  } catch (error) {
+    // Migration failure disables its advertised capability without preventing legacy chat recovery.
+    logger.error(
+      { err: error },
+      "Shared provider preferences migration failed; retaining legacy profiles",
+    );
+  }
 }
 
 export async function createPaseoDaemon(
@@ -609,6 +623,7 @@ export async function createPaseoDaemon(
       },
     },
   });
+  migrateLegacyProviderPreferences(daemonConfigStore, logger);
   const orchestrationSkills = createOrchestrationSkills(daemonConfigStore);
   void orchestrationSkills.autoUpdate().catch((error) => {
     logger.error({ err: error }, "Failed to maintain orchestration skills at startup");
@@ -1185,6 +1200,9 @@ export async function createPaseoDaemon(
 
   const createAgentCommandDependencies: CreateAgentCommandDependencies = {
     getAgentProfiles: () => daemonConfigStore.get().agentProfiles ?? [],
+    getSharedProviderConfig: () => daemonConfigStore.get(),
+    validateSharedConfiguration: (selection) =>
+      providerSnapshotManager.validateAgentConfiguration(selection),
     agentManager,
     agentStorage,
     logger,

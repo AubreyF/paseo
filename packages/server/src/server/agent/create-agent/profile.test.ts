@@ -1,5 +1,68 @@
 import { describe, expect, it } from "vitest";
 import { resolveProfileLaunch } from "./profile.js";
+import { MutableDaemonConfigSchema } from "@getpaseo/protocol/messages";
+import { planProviderPreferencesMigration } from "../provider-preferences/migration.js";
+import { sharedWorkflowProfileId } from "@getpaseo/protocol/provider-preferences";
+
+it("shares workflow permissions across accounts while freezing explicit reasoning and team selection", () => {
+  const profiles = [
+    {
+      id: "everyday",
+      name: "Everyday",
+      provider: "one",
+      model: "astra",
+      thinkingOptionId: "medium",
+      modeId: "full-access",
+    },
+    {
+      id: "team",
+      name: "Team",
+      provider: "one",
+      model: "astra",
+      modeId: "full-access",
+      workerProfileId: "worker",
+      maxWorkers: 2,
+    },
+    { id: "worker", name: "Worker", provider: "pi", model: "local" },
+  ];
+  const providers = { one: { extends: "codex" }, two: { extends: "codex" } };
+  const { preferences } = planProviderPreferencesMigration({ profiles, providers });
+  const settings = MutableDaemonConfigSchema.parse({
+    mcp: { injectIntoAgents: true },
+    providers,
+    sharedProviderPreferences: preferences,
+  });
+  const launch = resolveProfileLaunch(
+    {
+      provider: "two",
+      cwd: "/work",
+      profileId: sharedWorkflowProfileId("two", "everyday"),
+      model: "astra",
+      thinkingOptionId: "ultra",
+      modeId: "stale-mode",
+    },
+    profiles,
+    1000,
+    settings,
+  );
+  expect(launch).toMatchObject({
+    provider: "two",
+    model: "astra",
+    thinkingOptionId: "ultra",
+    modeId: "full-access",
+    profileLaunch: { providerType: "codex", configurationRevision: 1, workflowId: "everyday" },
+  });
+  expect(launch.profileLaunch?.worker).toBeUndefined();
+  const team = resolveProfileLaunch(
+    { provider: "two", cwd: "/work", profileId: sharedWorkflowProfileId("two", "team") },
+    profiles,
+    1000,
+    settings,
+  );
+  expect(team.profileLaunch?.worker).toEqual(profiles[2]);
+  preferences.providers.codex.workflows[0].modeId = "read-only";
+  expect(resolveProfileLaunch(launch, profiles, 2000, settings).modeId).toBe("full-access");
+});
 
 describe("profile launch", () => {
   const profile = {
@@ -128,4 +191,26 @@ describe("reserve launch policy", () => {
       resolveProfileLaunch({ ...frozen, quotaReservePolicy: { kind: "off" } }, [profile]),
     ).toThrow("Use task controls");
   });
+});
+
+it("a frozen shared worker ignores mutable model and reasoning overrides", () => {
+  const worker = {
+    id: "shared-workflow/codex/worker",
+    name: "Worker",
+    provider: "codex",
+    model: "astra",
+    thinkingOptionId: "medium",
+  };
+  const resolved = resolveProfileLaunch(
+    {
+      provider: "codex",
+      cwd: "/tmp",
+      profileId: worker.id,
+      model: "other",
+      thinkingOptionId: "high",
+    },
+    [worker],
+  );
+  expect(resolved.model).toBe("astra");
+  expect(resolved.thinkingOptionId).toBe("medium");
 });

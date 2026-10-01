@@ -6,6 +6,28 @@ For the experimental fork's host migration, pending work and destination accepta
 
 Wide Vorteo composers show the full profile name. Mobile and composers narrower than 640 CSS pixels show its nickname. Vorteo has no separate task permission control or command-menu permission override. The profile inspector shows saved profile permissions. Existing chats retain their permissions after profile edits; a warning appears when the saved profile differs, with an optional Recreate chat action that opens the handoff review. Recreation creates a new chat with the selected profile’s permissions and preserves the original chat. Stop the current turn and active workers before recreating. Standard Vorteo retains its task permission controls.
 
+## Shared provider preferences
+
+Hosts advertising `sharedProviderPreferences` store versioned preferences in `daemon.sharedProviderPreferences`. Provider type follows configured `extends` ancestry. Generic ACP registrations remain separate provider types. Account credentials, usage and reset operations stay account-scoped.
+
+Provider defaults resolve first, workflow fields override them, and an explicit model or reasoning selection overrides those two fields at launch. Feature values merge by key. Shared launches use the workflow's resolved permission mode; a stale client permission value cannot override it. The daemon checks the selected account's catalog before creating the agent. An unavailable model or reasoning level is an error, never a substitution. Reasoning changes do not select worker teams.
+
+The picker materializes account views of shared workflows without saving copies. The shared editor uses the current account's catalog and labels its scope. It captures the configuration revision when opened, retains edits after a conflict, and requires reopening against the current revision. Standard Paseo retains its existing profile editor and task controls.
+
+A launch freezes the effective profile, worker target and configuration revision. Later edits affect future launches. Existing chats keep their permission snapshots and can use the permission warning's reviewed recreation flow. Shared workflow IDs are opaque launch references; clients must require the capability before submitting them.
+
+### Migration and recovery
+
+The host migrates the existing profile list on startup only when no shared preferences exist. It compares behavior including unknown extension fields, preserves model, permission, instruction, feature and worker differences, and folds reasoning-only differences into shared preferred choices. Names from retained profiles remain editable workflow names. Fields equal to provider defaults inherit those defaults.
+
+Before writing configuration, the store writes a private mode-0600 receipt under `backups/provider-preferences-v1` in the host's Paseo home. It includes the previous persisted configuration, source profiles, merge report and proposed preferences. Startup after a completed migration reuses the saved revision and does not repeat migration. Failed transactional application restores the preceding configuration.
+
+Legacy profile bindings retain account, model and reasoning selections, so worker and legacy launch references remain resolvable without rewriting session history. Schedules currently store explicit launch settings rather than profile IDs; migration leaves those settings unchanged. Workflows with retained legacy bindings cannot be deleted during compatibility support. An older editor's explicit change to a legacy profile detaches that record from its binding and preserves account-specific behavior; it cannot silently rewrite a shared workflow. Shared settings saves use revision checks.
+
+For installation rollback, retain the private receipt together with the preceding daemon and web artifacts. Stop the updated instance through the approved host lifecycle, restore the receipt's `persistedConfig` to its original configuration file, and start the preceding daemon. Restoring old configuration under the new daemon starts migration again. Restoring configuration does not undo workspace edits or change existing chat snapshots. Never copy recovery receipts into Git.
+
+This section describes source behavior. Activating it in an existing installation requires a tested daemon build and coordinated restart; publishing only the web interface cannot enable the capability.
+
 ## Configuration and compatibility
 
 A profile can include `instructions`, `workerProfileId`, and `maxWorkers` in addition to its existing provider, model, reasoning and feature values. Worker profiles require an explicit model and cannot reference another worker. Names and model IDs remain user configuration.
@@ -52,7 +74,7 @@ Results distinguish applied, already redeemed, no credit, and nothing to reset. 
 
 ## Review boundaries
 
-Vorteo Mode defaults on when no mode preference is saved. An explicit Standard or Vorteo choice is saved per device and survives updates. The Vorteo group above General and the sidebar's Standard/Vorteo selector control the same preference. Enabling it exposes named launch presets, usage rails, reset controls, and supervisor configuration. Disabling it restores standard composer controls without deleting accounts or presets or stopping running tasks. Manage profiles lives beside search inside the preset picker and opens the selected provider’s Profiles tab. Vorteo groups profiles by configured provider account, shows usage once per account, and presents saved intelligence choices in a desktop split pane or a sliding mobile detail page with a back button to return to connections. Profile names remain visible to distinguish configurations with the same reasoning level. Profiles remain separate saved records; selection still applies the complete profile. Standard Vorteo retains profile management in Agents settings.
+Vorteo Mode defaults on when no mode preference is saved. An explicit Standard or Vorteo choice is saved per device and survives updates. The Vorteo group above General and the sidebar's Standard/Vorteo selector control the same preference. Enabling it exposes named launch presets, usage rails, reset controls, and supervisor configuration. Disabling it restores standard composer controls without deleting accounts or presets or stopping running tasks. Manage profiles lives beside search inside the preset picker and opens the selected provider’s Profiles tab. Vorteo groups profiles by configured provider account, shows usage once per account, and presents saved intelligence choices in a desktop split pane or a sliding mobile detail page with a back button to return to connections. Profile names remain visible to distinguish configurations with the same reasoning level. Older hosts keep separate saved records and apply the complete profile. Capable hosts expose shared defaults, model and reasoning choices, and workflows as described above. Standard Vorteo retains profile management in Agents settings.
 
 Check [implementation and deployment status](#implementation-and-deployment-status) before relying on the reserve policy below.
 

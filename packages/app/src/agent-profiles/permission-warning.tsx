@@ -1,3 +1,5 @@
+import { sharedWorkflowProfileId } from "@getpaseo/protocol/provider-preferences";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { Button } from "@/components/ui/button";
 import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/shallow";
@@ -18,7 +20,8 @@ export function ProfilePermissionWarning({
   serverId: string;
   agentId: string;
 }) {
-  const { profiles, supportsLaunch } = useAgentProfiles(serverId);
+  const { profiles, legacyProfiles, supportsLaunch } = useAgentProfiles(serverId);
+  const { config } = useDaemonConfig(serverId);
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
   const agent = useSessionStore(
     useShallow((state) => {
@@ -31,7 +34,15 @@ export function ProfilePermissionWarning({
       };
     }),
   );
-  const profile = profiles?.find((candidate) => candidate.id === agent.profileId);
+  const binding = agent.profileId
+    ? config?.sharedProviderPreferences?.legacyProfiles[agent.profileId]
+    : undefined;
+  const profileId = binding
+    ? sharedWorkflowProfileId(binding.provider, binding.workflowId)
+    : agent.profileId;
+  const profile =
+    profiles?.find((candidate) => candidate.id === profileId) ??
+    legacyProfiles.find((candidate) => candidate.id === profileId);
   if (!profile || !supportsLaunch || profile.provider !== agent.provider) return null;
   const entry = entries?.find((candidate) => candidate.provider === profile.provider);
   const mismatch = profilePermissionMismatch(profile, agent.mode, entry);

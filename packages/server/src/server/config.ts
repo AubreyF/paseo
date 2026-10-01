@@ -526,6 +526,7 @@ function resolveProfileLists(persisted: ReturnType<typeof loadPersistedConfig>) 
   return {
     terminalProfiles: persisted.daemon?.terminalProfiles,
     agentProfiles: persisted.daemon?.agentProfiles,
+    sharedProviderPreferences: persisted.daemon?.sharedProviderPreferences,
   };
 }
 
@@ -578,6 +579,7 @@ export function resolveConfigFromPersisted(
     appendSystemPrompt,
     terminalProfiles,
     agentProfiles,
+    sharedProviderPreferences,
     hostnames,
     trustedProxies,
     appBaseUrl,
@@ -623,6 +625,7 @@ export function resolveConfigFromPersisted(
     appendSystemPrompt,
     terminalProfiles,
     agentProfiles,
+    sharedProviderPreferences,
     skillSelection: persisted.agents?.skills?.selection,
     pluginsEnabled: persisted.pluginsEnabled ?? false,
     plugins: persisted.plugins,

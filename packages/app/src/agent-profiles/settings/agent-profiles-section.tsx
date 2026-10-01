@@ -19,6 +19,7 @@ import type { AgentProfileValue } from "../internal/profile-form-model";
 import { AgentProfileEditModal } from "./agent-profile-edit-modal";
 import { AgentProfileRow } from "./agent-profile-row";
 import { defaultProfile } from "../internal/default-profile";
+import { SharedProviderSection } from "./shared-provider-section";
 
 const ThemedPlus = withUnistyles(Plus);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -37,9 +38,24 @@ export function AgentProfilesSection({
   provider?: string;
 }): ReactElement {
   const vorton = useVortonMode();
+  const { supportsSharedPreferences } = useAgentProfiles(serverId);
+  if (vorton && supportsSharedPreferences && provider) {
+    return <SharedProviderSection serverId={serverId} provider={provider} />;
+  }
+  return <LegacyAgentProfilesSection serverId={serverId} provider={provider} />;
+}
+
+function LegacyAgentProfilesSection({
+  serverId,
+  provider,
+}: {
+  serverId: string;
+  provider?: string;
+}): ReactElement {
+  const vorton = useVortonMode();
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const { profiles, isSupported, saveProfiles } = useAgentProfiles(serverId);
+  const { legacyProfiles: profiles, isSupported, saveProfiles } = useAgentProfiles(serverId);
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
   const visibleProfiles = useMemo(
     () => (profiles ?? []).filter((profile) => !provider || profile.provider === provider),

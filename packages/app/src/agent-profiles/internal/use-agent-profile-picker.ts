@@ -57,7 +57,10 @@ export interface AgentProfilePicker {
   handoffElement?: ReactElement | null;
   isApplying?: boolean;
   rows: AgentProfilePickerRow[];
-  applyProfile: (profileId: string) => void;
+  applyProfile: (
+    profileId: string,
+    choices?: Pick<AgentProfile, "model" | "thinkingOptionId">,
+  ) => void;
 }
 
 interface PendingHandoff {
@@ -90,7 +93,12 @@ export function useAgentProfilePicker(
 ): AgentProfilePicker | null {
   const { serverId, availableProviders, target } = input;
   const { t } = useTranslation();
-  const { profiles, isSupported, supportsLaunch: hostSupportsLaunch } = useAgentProfiles(serverId);
+  const {
+    profiles,
+    legacyProfiles,
+    isSupported,
+    supportsLaunch: hostSupportsLaunch,
+  } = useAgentProfiles(serverId);
   // Profiles are host config, so their labels read from the host-wide catalog
   // rather than a workspace's. That is also the key the settings section uses,
   // so every composer on a host shares one query instead of adding its own.
@@ -133,10 +141,8 @@ export function useAgentProfilePicker(
       })
     : null;
   const createSuccessor = useCallback(
-    async (profileId: string) => {
+    async (profile: AgentProfile) => {
       if (target.kind !== "agent" || !client || !serverId || applyingRef.current) return;
-      const profile = profiles?.find((entry) => entry.id === profileId);
-      if (!profile) return;
       applyingRef.current = true;
       setIsApplying(true);
       try {
@@ -151,7 +157,7 @@ export function useAgentProfilePicker(
         setIsApplying(false);
       }
     },
-    [target, client, serverId, profiles, toast],
+    [target, client, serverId, toast],
   );
 
   const applicableProfiles = useMemo(() => {
@@ -216,8 +222,11 @@ export function useAgentProfilePicker(
   );
 
   const applyProfile = useCallback(
-    (profileId: string) => {
-      const profile = applicableProfiles.find((entry) => entry.id === profileId);
+    (profileId: string, choices?: Pick<AgentProfile, "model" | "thinkingOptionId">) => {
+      const saved =
+        applicableProfiles.find((entry) => entry.id === profileId) ??
+        legacyProfiles.find((entry) => entry.id === profileId);
+      const profile = saved ? { ...saved, ...choices } : undefined;
       if (!profile || !availableProviders.includes(profile.provider)) {
         return;
       }
@@ -238,7 +247,7 @@ export function useAgentProfilePicker(
       }
 
       if (supportsLaunch) {
-        void createSuccessor(profile.id);
+        void createSuccessor(profile);
         return;
       }
 
@@ -260,6 +269,7 @@ export function useAgentProfilePicker(
     },
     [
       applicableProfiles,
+      legacyProfiles,
       availableProviders,
       client,
       persistSelection,

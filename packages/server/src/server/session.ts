@@ -4489,6 +4489,9 @@ export class Session {
           worktreesRoot: this.worktreesRoot,
           providerSnapshotManager: this.providerSnapshotManager,
           getAgentProfiles: () => this.daemonConfigStore.get().agentProfiles ?? [],
+          getSharedProviderConfig: () => this.daemonConfigStore.get(),
+          validateSharedConfiguration: (selection) =>
+            this.providerSnapshotManager.validateAgentConfiguration(selection),
         },
         {
           kind: "session",

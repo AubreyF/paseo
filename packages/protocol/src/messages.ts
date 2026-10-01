@@ -219,6 +219,7 @@ const MutableDaemonProviderModelSchema = z
 
 const MutableDaemonProviderConfigSchema = z
   .object({
+    extends: z.string().optional(),
     paseoTools: ProviderPaseoToolsPolicySchema.optional(),
     enabled: z.boolean().optional(),
     additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
@@ -239,9 +240,40 @@ const MutableMetadataGenerationConfigSchema = z
   })
   .passthrough();
 
+/** Shared launch choices are keyed by configured provider ancestry, never account labels. */
+export const ProviderPreferencesSchema = z.object({
+  defaults: AgentProfileSchema.omit({ id: true, name: true, provider: true, isDefault: true }),
+  preferredModels: z.array(z.string()),
+  preferredThinkingOptions: z.array(z.string()),
+  workflows: z.array(AgentProfileSchema),
+  defaultWorkflowId: z.string().nullable(),
+});
+export type ProviderPreferences = z.infer<typeof ProviderPreferencesSchema>;
+
+export const SharedProviderPreferencesSchema = z.object({
+  version: z.literal(1),
+  revision: z.number().int().nonnegative(),
+  defaultProvider: z.string().optional(),
+  providers: z.record(z.string(), ProviderPreferencesSchema),
+  legacyProfiles: z.record(
+    z.string(),
+    z.object({
+      provider: z.string(),
+      providerType: z.string(),
+      workflowId: z.string(),
+      model: z.string().nullable().optional(),
+      thinkingOptionId: z.string().nullable().optional(),
+    }),
+  ),
+});
+export type SharedProviderPreferences = z.infer<typeof SharedProviderPreferencesSchema>;
+
 export const AgentProfileLaunchSchema = z.object({
   profile: AgentProfileSchema,
   worker: AgentProfileSchema.optional(),
+  providerType: z.string().optional(),
+  configurationRevision: z.number().int().nonnegative().optional(),
+  workflowId: z.string().optional(),
 });
 export type AgentProfileLaunch = z.infer<typeof AgentProfileLaunchSchema>;
 
@@ -290,6 +322,7 @@ export const MutableDaemonConfigSchema = z
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
+    sharedProviderPreferences: SharedProviderPreferencesSchema.optional(),
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
@@ -299,6 +332,8 @@ export const MutableDaemonConfigSchema = z
 export const MutableDaemonConfigPatchSchema = z
   .object({
     expectedAgentProfiles: z.array(AgentProfileSchema).optional(),
+    expectedProviderPreferencesRevision: z.number().int().nonnegative().nullable().optional(),
+    sharedProviderPreferences: SharedProviderPreferencesSchema.optional(),
     relay: MutableRelayConfigSchema.partial().optional(),
     mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
@@ -3751,6 +3786,7 @@ export const ServerInfoStatusPayloadSchema = z
         // rather than letting a save appear to succeed.
         agentProfiles: z.boolean().optional(),
         agentProfileLaunch: z.boolean().optional(),
+        sharedProviderPreferences: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
       })

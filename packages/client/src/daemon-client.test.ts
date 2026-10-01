@@ -7181,3 +7181,38 @@ test("schedule quota policies are preserved on a policy-aware host", async () =>
   );
   await pendingUpdate;
 });
+
+test.each([false, true])(
+  "shared preferences require capability before any creation or config request (modern: %s)",
+  async (modern) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "shared-preferences-test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    mock.triggerOpen({ features: { creationLifecycle: modern } });
+    await connecting;
+    const config = { provider: "mock", cwd: "/tmp", profileId: "shared-workflow/mock/review" };
+    await expect(client.createAgent({ config })).rejects.toThrow("Update the host");
+    await expect(
+      client.createWorkspace({ source: { kind: "directory", path: "/tmp" }, agent: { config } }),
+    ).rejects.toThrow("Update the host");
+    await expect(
+      client.patchDaemonConfig({
+        sharedProviderPreferences: {
+          version: 1,
+          revision: 1,
+          providers: {},
+          legacyProfiles: {},
+        },
+        expectedProviderPreferencesRevision: 1,
+      }),
+    ).rejects.toThrow("Update the host");
+    expect(mock.sent).toEqual([]);
+  },
+);

@@ -52,6 +52,8 @@ export async function createProfileSuccessor(
     config: {
       provider: profile.provider,
       profileId: profile.id,
+      model: profile.model,
+      thinkingOptionId: profile.thinkingOptionId,
       cwd: source.cwd,
       title: source.title ?? "Continued task",
     },

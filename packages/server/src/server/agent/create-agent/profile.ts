@@ -1,4 +1,10 @@
-import type { AgentProfile } from "@getpaseo/protocol/messages";
+import type { AgentProfile, MutableDaemonConfig } from "@getpaseo/protocol/messages";
+import {
+  isSharedWorkflowProfile,
+  materializeSharedProfiles,
+  materializeLegacyProfiles,
+  resolveProviderType,
+} from "@getpaseo/protocol/provider-preferences";
 import type { AgentSessionConfig } from "../agent-sdk-types.js";
 import {
   DEFAULT_QUOTA_RESERVE_POLICY,
@@ -30,16 +36,71 @@ function resolveWorkerProfile(profile: AgentProfile, profiles: readonly AgentPro
   return worker;
 }
 
+function applySharedSelection(
+  profile: AgentProfile,
+  config: AgentSessionConfig,
+  editable: boolean,
+): void {
+  if (profile.provider !== config.provider)
+    throw new ProfileLaunchError(profile.id, "The selected workflow belongs to another account.");
+  // Frozen worker snapshots resolve without mutable preferences and cannot be overridden.
+  if (editable) {
+    profile.model = config.model ?? profile.model;
+    profile.thinkingOptionId = config.thinkingOptionId ?? profile.thinkingOptionId;
+  }
+}
+
+function resolveProfileSelection(
+  config: AgentSessionConfig,
+  profiles: readonly AgentProfile[],
+  settings?: MutableDaemonConfig,
+) {
+  const shared = isSharedWorkflowProfile(config.profileId ?? "");
+  const preferences = settings?.sharedProviderPreferences;
+  const legacy = preferences ? materializeLegacyProfiles(preferences) : [];
+  const legacyIds = new Set(legacy.map((profile) => profile.id));
+  const candidates = [...legacy, ...profiles.filter((profile) => !legacyIds.has(profile.id))];
+  let provenance = {};
+  if (settings && preferences) {
+    const providerIds = [
+      ...new Set([
+        config.provider,
+        ...Object.keys(settings.providers),
+        ...Object.keys(preferences.providers),
+      ]),
+    ];
+    candidates.push(
+      ...materializeSharedProfiles({ preferences, providers: settings.providers, providerIds }),
+    );
+    const binding = preferences.legacyProfiles[config.profileId ?? ""];
+    if (shared || binding) {
+      provenance = {
+        configurationRevision: preferences.revision,
+        providerType:
+          binding?.providerType ?? resolveProviderType(config.provider, settings.providers),
+        workflowId:
+          binding?.workflowId ?? decodeURIComponent((config.profileId ?? "").split("/")[2]),
+      };
+    }
+  }
+  const found = candidates.find((entry) => entry.id === config.profileId);
+  if (!found) throw new ProfileLaunchError(config.profileId ?? "", "Selected profile not found.");
+  const profile = structuredClone(found);
+  if (shared) applySharedSelection(profile, config, Boolean(preferences));
+
+  return { profile, candidates, provenance, shared };
+}
+
 /** Resolve only explicit launches. Resumes already contain their frozen instructions. */
 function resolveProfileConfiguration(
   config: AgentSessionConfig,
   profiles: readonly AgentProfile[],
+  sharedConfig?: MutableDaemonConfig,
 ): AgentSessionConfig {
   if (!config.profileId) return config;
-  const found = profiles.find((entry) => entry.id === config.profileId);
-  if (!found) throw new ProfileLaunchError(config.profileId, "Selected profile not found.");
-  const profile = structuredClone(found);
-  const worker = resolveWorkerProfile(profile, profiles);
+  const selection = resolveProfileSelection(config, profiles, sharedConfig);
+  const { profile, candidates, provenance, shared } = selection;
+  const worker = resolveWorkerProfile(profile, candidates);
   const instructions = [profile.instructions?.trim(), config.systemPrompt?.trim()];
   if (worker) {
     instructions.push(
@@ -56,12 +117,18 @@ function resolveProfileConfiguration(
   return {
     ...base,
     provider: profile.provider,
-    modeId: config.modeId ?? (profile.modeId?.trim() || undefined),
+    modeId: shared
+      ? profile.modeId?.trim() || undefined
+      : (config.modeId ?? (profile.modeId?.trim() || undefined)),
     model: profile.model?.trim() || config.model,
     thinkingOptionId: profile.thinkingOptionId?.trim() || undefined,
     featureValues: profile.featureValues ?? {},
     systemPrompt: instructions.filter(Boolean).join("\n\n") || undefined,
-    profileLaunch: { profile, ...(worker ? { worker: structuredClone(worker) } : {}) },
+    profileLaunch: {
+      profile,
+      ...(worker ? { worker: structuredClone(worker) } : {}),
+      ...provenance,
+    },
   };
 }
 
@@ -69,11 +136,12 @@ export function resolveProfileLaunch(
   config: AgentSessionConfig,
   profiles: readonly AgentProfile[],
   nowMs = Date.now(),
+  sharedConfig?: MutableDaemonConfig,
 ): AgentSessionConfig {
   const { quotaReservePolicy: requested, ...launchConfig } = config;
-  if (!requested) return resolveProfileConfiguration(config, profiles);
+  if (!requested) return resolveProfileConfiguration(config, profiles, sharedConfig);
   if (config.quotaReserve) throw new Error("Use task controls to change a frozen reserve policy.");
-  const resolved = resolveProfileConfiguration(launchConfig, profiles);
+  const resolved = resolveProfileConfiguration(launchConfig, profiles, sharedConfig);
   const policy =
     requested.kind === "profile"
       ? (resolved.profileLaunch?.profile.quotaReservePolicy ?? DEFAULT_QUOTA_RESERVE_POLICY)

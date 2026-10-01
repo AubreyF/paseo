@@ -1,3 +1,7 @@
+import {
+  materializeSharedProfiles,
+  materializeLegacyProfiles,
+} from "@getpaseo/protocol/provider-preferences";
 import { z } from "zod";
 import { TaskOwnerEvidenceStore } from "../../authorization/task-owner-evidence.js";
 import { ensureValidJson } from "../../json-utils.js";
@@ -1465,6 +1469,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           providerSnapshotManager,
           createPaseoWorktree: options.createPaseoWorktree,
           getAgentProfiles: () => daemonConfigStore?.get().agentProfiles ?? [],
+          ...(daemonConfigStore ? { getSharedProviderConfig: () => daemonConfigStore.get() } : {}),
+          validateSharedConfiguration: (selection) =>
+            providerSnapshotManager.validateAgentConfiguration(selection),
           ...(options.ensureWorkspaceForCreate
             ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
             : {}),
@@ -2995,7 +3002,24 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async () => {
-      const profiles = daemonConfigStore?.get().agentProfiles ?? [];
+      const config = daemonConfigStore?.get();
+      const preferences = config?.sharedProviderPreferences;
+      const profiles =
+        config && preferences
+          ? [
+              ...materializeSharedProfiles({
+                preferences,
+                providers: config.providers,
+                providerIds: providerSnapshotManager
+                  .getSnapshot()
+                  .records.map(({ entry }) => entry.provider),
+              }),
+              ...materializeLegacyProfiles(preferences),
+              ...(config.agentProfiles ?? []).filter(
+                (profile) => !preferences.legacyProfiles[profile.id],
+              ),
+            ]
+          : (config?.agentProfiles ?? []);
       return {
         content: [],
         structuredContent: ensureValidJson({ profiles }),

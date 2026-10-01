@@ -42,6 +42,7 @@ export interface AgentProfileEditModalProps {
   mode: "create" | "edit";
   profile?: AgentProfile;
   seed?: AgentProfileSeed;
+  sharedScope?: { providerType: string; kind: "defaults" | "workflow" };
   onClose: () => void;
   onSave: (value: AgentProfileValue) => Promise<void>;
 }
@@ -134,6 +135,7 @@ interface ProfileLaunchFieldsProps {
   model: AgentProfileFormModel;
   state: AgentProfileFormState;
   controlSize: FieldControlSize;
+  defaults?: boolean;
 }
 const WORKER_LIMIT_OPTIONS = [1, 2, 3, 4, 6, 8].map((count) => ({
   id: String(count),
@@ -142,38 +144,48 @@ const WORKER_LIMIT_OPTIONS = [1, 2, 3, 4, 6, 8].map((count) => ({
 }));
 
 function ProfileLaunchFields({
+  defaults,
   serverId,
   profile,
   model,
   state,
   controlSize,
 }: ProfileLaunchFieldsProps) {
-  const { profiles, supportsLaunch } = useAgentProfiles(serverId);
+  const { profiles, legacyProfiles, supportsLaunch } = useAgentProfiles(serverId);
   const vortonMode = useVortonMode();
   const workerOptions = useMemo(
     () => [
       { id: "none", value: "", label: "No workers" },
-      ...(profiles ?? [])
+      ...[
+        ...(profiles ?? []),
+        ...legacyProfiles.filter(
+          (entry) =>
+            entry.id === state.workerProfileId &&
+            !profiles?.some((candidate) => candidate.id === entry.id),
+        ),
+      ]
         .filter((entry) => entry.id !== profile?.id && !entry.workerProfileId)
         .map((entry) => ({ id: entry.id, value: entry.id, label: entry.name })),
     ],
-    [profiles, profile?.id],
+    [profiles, legacyProfiles, profile?.id, state.workerProfileId],
   );
   const selectedLimit =
     WORKER_LIMIT_OPTIONS.find((entry) => entry.value === state.maxWorkers) ?? null;
   if (!supportsLaunch || !vortonMode) return null;
   return (
     <>
-      <Field label="Nickname" hint="Leave blank to generate from the preset name.">
-        <FormTextInput
-          initialValue={state.nickname}
-          onChangeText={model.setNickname}
-          placeholder={generatedPresetNickname(state.name)}
-          accessibilityLabel="Preset nickname"
-          testID="agent-profile-nickname-input"
-          size={controlSize}
-        />
-      </Field>
+      {!defaults ? (
+        <Field label="Nickname" hint="Leave blank to generate from the preset name.">
+          <FormTextInput
+            initialValue={state.nickname}
+            onChangeText={model.setNickname}
+            placeholder={generatedPresetNickname(state.name)}
+            accessibilityLabel="Preset nickname"
+            testID="agent-profile-nickname-input"
+            size={controlSize}
+          />
+        </Field>
+      ) : null}
       <Field
         label="Launch instructions"
         hint="Applied to new tasks together with this profile’s permissions."
@@ -221,8 +233,112 @@ function ProfileLaunchFields({
   );
 }
 
+function ProfileProviderFields({
+  serverId,
+  sharedScope,
+  state,
+  providerOptions,
+  onChange,
+  controlSize,
+}: {
+  serverId: string;
+  sharedScope: AgentProfileEditModalProps["sharedScope"];
+  state: AgentProfileFormState;
+  providerOptions: SelectFieldOption<string>[];
+  onChange: (value: string, display: SelectFieldDisplay) => void;
+  controlSize: FieldControlSize;
+}) {
+  const { t } = useTranslation();
+  return sharedScope ? (
+    <Text style={styles.sharedScope}>Applies to all {sharedScope.providerType} accounts</Text>
+  ) : (
+    <>
+      <SelectField
+        label={t("settings.host.agentProfiles.providerLabel")}
+        value={state.provider || null}
+        selectedDisplay={state.providerDisplay}
+        options={providerOptions}
+        onChange={onChange}
+        placeholder={t("settings.host.agentProfiles.providerPlaceholder")}
+        emptyText={t("settings.host.agentProfiles.noProviders")}
+        loading={state.catalogResolution !== "complete"}
+        disabled={state.isSubmitting}
+        searchable={providerOptions.length > 6}
+        title={t("settings.host.agentProfiles.providerLabel")}
+        size={controlSize}
+        testID="agent-profile-provider-field"
+        triggerTestID="agent-profile-provider-trigger"
+      />
+
+      <ProfileAccountControl
+        serverId={serverId}
+        providerId={state.provider}
+        display={state.providerDisplay}
+        onSelect={onChange}
+      />
+    </>
+  );
+}
+
+function profileTitleKey(mode: "create" | "edit") {
+  return mode === "edit"
+    ? "settings.host.agentProfiles.editProfileTitle"
+    : "settings.host.agentProfiles.addProfileTitle";
+}
+
 function profileActionPlacement(fixed: boolean, actions: ReactElement) {
   return { footer: fixed ? actions : undefined, inline: fixed ? null : actions };
+}
+
+function ProfileIdentityFields({
+  editingDefaults,
+  state,
+  profile,
+  seed,
+  controlSize,
+  model,
+  onAppearance,
+}: {
+  editingDefaults: boolean;
+  state: AgentProfileFormState;
+  profile?: AgentProfile;
+  seed?: AgentProfileSeed;
+  controlSize: FieldControlSize;
+  model: AgentProfileFormModel;
+  onAppearance: (value: { icon: string; color: string }) => void;
+}) {
+  const { t } = useTranslation();
+  return !editingDefaults ? (
+    <View style={styles.nameRow}>
+      <View style={styles.iconField}>
+        <AgentProfileAppearanceField
+          label={t("settings.host.agentProfiles.iconLabel")}
+          icon={state.icon}
+          color={state.color}
+          onChange={onAppearance}
+          disabled={state.isSubmitting}
+          size={controlSize}
+          testID="agent-profile-icon-field"
+          triggerTestID="agent-profile-icon-trigger"
+        />
+      </View>
+      <View style={styles.nameField}>
+        <Field label={t("settings.host.agentProfiles.nameLabel")} testID="agent-profile-name-field">
+          <FormTextInput
+            initialValue={seed?.name ?? profile?.name ?? ""}
+            onChangeText={model.setName}
+            placeholder={t("settings.host.agentProfiles.namePlaceholder")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!state.isSubmitting}
+            size={controlSize}
+            accessibilityLabel={t("settings.host.agentProfiles.nameLabel")}
+            testID="agent-profile-name-input"
+          />
+        </Field>
+      </View>
+    </View>
+  ) : null;
 }
 
 function OpenAgentProfileEditModal({
@@ -231,6 +347,7 @@ function OpenAgentProfileEditModal({
   mode,
   profile,
   seed,
+  sharedScope,
   onClose,
   onDismiss,
   onSave,
@@ -246,14 +363,12 @@ function OpenAgentProfileEditModal({
   useAgentProfileFormCatalog({ serverId, model });
   useAgentProfileFormFeatures({ serverId, model, state });
 
+  const editingDefaults = sharedScope?.kind === "defaults";
   const sheetHeader = useMemo<SheetHeader>(
     () => ({
-      title:
-        mode === "edit"
-          ? t("settings.host.agentProfiles.editProfileTitle")
-          : t("settings.host.agentProfiles.addProfileTitle"),
+      title: editingDefaults ? "Edit provider defaults" : t(profileTitleKey(mode)),
     }),
-    [mode, t],
+    [editingDefaults, mode, t],
   );
 
   const providerOptions = useMemo(
@@ -319,30 +434,37 @@ function OpenAgentProfileEditModal({
 
   const vortonMode = useVortonMode();
   const actions = (
-    <View
-      style={[styles.actions, vortonMode && styles.fixedActions]}
-      testID="agent-profile-actions"
-    >
-      <Button
-        variant="secondary"
-        style={styles.actionButton}
-        onPress={handleCancel}
-        disabled={state.isSubmitting}
-        testID="agent-profile-cancel-button"
+    <View style={styles.actionPanel}>
+      {state.submitError ? (
+        <Text style={styles.submitError} testID="agent-profile-submit-error">
+          {state.submitError}
+        </Text>
+      ) : null}
+      <View
+        style={[styles.actions, vortonMode && styles.fixedActions]}
+        testID="agent-profile-actions"
       >
-        {t("common.actions.cancel")}
-      </Button>
-      <Button
-        variant="default"
-        style={styles.actionButton}
-        onPress={handleSavePress}
-        disabled={!state.canSubmit}
-        testID="agent-profile-save-button"
-      >
-        {state.isSubmitting
-          ? t("settings.host.agentProfiles.saving")
-          : t("settings.host.agentProfiles.save")}
-      </Button>
+        <Button
+          variant="secondary"
+          style={styles.actionButton}
+          onPress={handleCancel}
+          disabled={state.isSubmitting}
+          testID="agent-profile-cancel-button"
+        >
+          {t("common.actions.cancel")}
+        </Button>
+        <Button
+          variant="default"
+          style={styles.actionButton}
+          onPress={handleSavePress}
+          disabled={!state.canSubmit}
+          testID="agent-profile-save-button"
+        >
+          {state.isSubmitting
+            ? t("settings.host.agentProfiles.saving")
+            : t("settings.host.agentProfiles.save")}
+        </Button>
+      </View>
     </View>
   );
 
@@ -360,63 +482,24 @@ function OpenAgentProfileEditModal({
       testID="agent-profile-edit-modal"
     >
       <View style={styles.body}>
-        <View style={styles.nameRow}>
-          <View style={styles.iconField}>
-            <AgentProfileAppearanceField
-              label={t("settings.host.agentProfiles.iconLabel")}
-              icon={state.icon}
-              color={state.color}
-              onChange={handleAppearanceChange}
-              disabled={state.isSubmitting}
-              size={controlSize}
-              testID="agent-profile-icon-field"
-              triggerTestID="agent-profile-icon-trigger"
-            />
-          </View>
-          <View style={styles.nameField}>
-            <Field
-              label={t("settings.host.agentProfiles.nameLabel")}
-              testID="agent-profile-name-field"
-            >
-              <FormTextInput
-                initialValue={seed?.name ?? profile?.name ?? ""}
-                onChangeText={model.setName}
-                placeholder={t("settings.host.agentProfiles.namePlaceholder")}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!state.isSubmitting}
-                size={controlSize}
-                accessibilityLabel={t("settings.host.agentProfiles.nameLabel")}
-                testID="agent-profile-name-input"
-              />
-            </Field>
-          </View>
-        </View>
-
-        <SelectField
-          label={t("settings.host.agentProfiles.providerLabel")}
-          value={state.provider || null}
-          selectedDisplay={state.providerDisplay}
-          options={providerOptions}
-          onChange={handleProviderChange}
-          placeholder={t("settings.host.agentProfiles.providerPlaceholder")}
-          emptyText={t("settings.host.agentProfiles.noProviders")}
-          loading={state.catalogResolution !== "complete"}
-          disabled={state.isSubmitting}
-          searchable={providerOptions.length > 6}
-          title={t("settings.host.agentProfiles.providerLabel")}
-          size={controlSize}
-          testID="agent-profile-provider-field"
-          triggerTestID="agent-profile-provider-trigger"
+        <ProfileIdentityFields
+          editingDefaults={editingDefaults}
+          state={state}
+          profile={profile}
+          seed={seed}
+          controlSize={controlSize}
+          model={model}
+          onAppearance={handleAppearanceChange}
         />
 
-        <ProfileAccountControl
+        <ProfileProviderFields
           serverId={serverId}
-          providerId={state.provider}
-          display={state.providerDisplay}
-          onSelect={handleProviderChange}
+          sharedScope={sharedScope}
+          state={state}
+          providerOptions={providerOptions}
+          onChange={handleProviderChange}
+          controlSize={controlSize}
         />
-
         {state.disclosure.showModelField ? (
           <SelectField
             label={t("settings.host.agentProfiles.modelLabel")}
@@ -453,7 +536,7 @@ function OpenAgentProfileEditModal({
           />
         ) : null}
 
-        {state.disclosure.showThinkingField ? (
+        {state.disclosure.showThinkingField && sharedScope?.kind !== "workflow" ? (
           <SelectField
             label={t("settings.host.agentProfiles.thinkingLabel")}
             value={state.thinkingOptionId || UNSET_VALUE}
@@ -492,35 +575,32 @@ function OpenAgentProfileEditModal({
         ) : null}
 
         <ProfileLaunchFields
+          defaults={editingDefaults}
           serverId={serverId}
           profile={profile}
           model={model}
           state={state}
           controlSize={controlSize}
         />
-        <Field
-          label={t("settings.host.agentProfiles.notesLabel")}
-          hint={t("settings.host.agentProfiles.notesHint")}
-          testID="agent-profile-notes-field"
-        >
-          <FormTextInput
-            initialValue={profile?.notes ?? ""}
-            onChangeText={model.setNotes}
-            placeholder={t("settings.host.agentProfiles.notesPlaceholder")}
-            multiline
-            numberOfLines={4}
-            style={styles.notesInput}
-            editable={!state.isSubmitting}
-            size={controlSize}
-            accessibilityLabel={t("settings.host.agentProfiles.notesLabel")}
-            testID="agent-profile-notes-input"
-          />
-        </Field>
-
-        {state.submitError ? (
-          <Text style={styles.submitError} testID="agent-profile-submit-error">
-            {state.submitError}
-          </Text>
+        {!editingDefaults ? (
+          <Field
+            label={t("settings.host.agentProfiles.notesLabel")}
+            hint={t("settings.host.agentProfiles.notesHint")}
+            testID="agent-profile-notes-field"
+          >
+            <FormTextInput
+              initialValue={profile?.notes ?? ""}
+              onChangeText={model.setNotes}
+              placeholder={t("settings.host.agentProfiles.notesPlaceholder")}
+              multiline
+              numberOfLines={4}
+              style={styles.notesInput}
+              editable={!state.isSubmitting}
+              size={controlSize}
+              accessibilityLabel={t("settings.host.agentProfiles.notesLabel")}
+              testID="agent-profile-notes-input"
+            />
+          </Field>
         ) : null}
 
         {actionPlacement.inline}
@@ -621,6 +701,7 @@ function AgentProfileFeatureRow({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  sharedScope: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.base },
   body: {
     gap: theme.spacing[4],
     paddingBottom: theme.spacing[2],
@@ -670,6 +751,11 @@ const styles = StyleSheet.create((theme) => ({
   notesInput: {
     minHeight: 88,
     textAlignVertical: "top",
+  },
+  actionPanel: {
+    width: "100%",
+    minWidth: 0,
+    gap: theme.spacing[2],
   },
   submitError: {
     color: theme.colors.statusDanger,

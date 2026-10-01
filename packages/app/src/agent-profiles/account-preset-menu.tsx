@@ -1,11 +1,12 @@
 import { useVortonTouch } from "@/vorton-touch";
 import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { sharedChoiceState, type LaunchChoices } from "./shared-choices";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Keyboard, ScrollView, StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import { ArrowLeft } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
-import type { AgentProfile } from "@getpaseo/protocol/messages";
+import type { AgentProfile, ProviderPreferences } from "@getpaseo/protocol/messages";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { Button } from "@/components/ui/button";
 import { ComboboxItem, SearchInput } from "@/components/ui/combobox";
@@ -13,6 +14,13 @@ import { PiModelCatalog } from "./pi-model-catalog";
 import { ProfileDetailsView } from "./profile-details-view";
 import { intelligenceLabel, type AccountPresets } from "./account-presets";
 import type { AgentProfilePickerRow } from "./internal/use-agent-profile-picker";
+import {
+  isSharedWorkflowProfile,
+  resolveProviderType,
+  sharedWorkflowProfileId,
+} from "@getpaseo/protocol/provider-preferences";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { SelectField, type SelectFieldRenderOptionInput } from "@/components/ui/select-field";
 
 import Animated, {
   SlideInLeft,
@@ -35,8 +43,11 @@ interface AccountPresetMenuProps {
   selectedId: string | undefined;
   compact: boolean;
   disabled: boolean;
+  currentProvider?: string;
+  currentModel?: string | null;
+  currentThinkingOptionId?: string | null;
   onInspect: (id: string) => void;
-  onApply: (id: string) => void;
+  onApply: (id: string, choices?: LaunchChoices) => void;
   onManage: () => void;
   onSearch: (query: string) => void;
   renderRail: (row: AgentProfilePickerRow) => ReactNode;
@@ -48,23 +59,36 @@ export function AccountPresetMenu(props: AccountPresetMenuProps) {
   const headerSize = touch ? "md" : "sm";
   const [detailsOpen, setDetailsOpen] = useState(false);
   const showDetails = compact && detailsOpen;
+  const back = useCallback(() => setDetailsOpen(false), []);
+  const account =
+    accounts.find((group) => group.rows.some((row) => row.id === inspectedId)) ?? accounts[0];
+  const inspected = account?.rows.find((row) => row.id === inspectedId) ?? account?.rows[0];
+  const { choices, changeChoices, preferences, family, retainWorkflow } = useSharedChoices(
+    props,
+    account,
+  );
   const inspectAccount = useCallback(
     (id: string) => {
-      onInspect(id);
+      onInspect(retainWorkflow(id));
       if (compact) {
         Keyboard.dismiss();
         setDetailsOpen(true);
       }
     },
-    [compact, onInspect],
+    [compact, onInspect, retainWorkflow],
   );
-  const back = useCallback(() => setDetailsOpen(false), []);
-  const account =
-    accounts.find((group) => group.rows.some((row) => row.id === inspectedId)) ?? accounts[0];
-  const inspected = account?.rows.find((row) => row.id === inspectedId) ?? account?.rows[0];
+
   const details =
     account && inspected ? (
-      <AccountChoices {...props} account={account} inspected={inspected} />
+      <AccountChoices
+        {...props}
+        account={account}
+        inspected={inspected}
+        choices={choices}
+        onChoices={changeChoices}
+        preferences={preferences}
+        family={family}
+      />
     ) : null;
   const AccountScrollView = compact ? BottomSheetScrollView : ScrollView;
   const list = (
@@ -156,6 +180,64 @@ export function AccountPresetMenu(props: AccountPresetMenuProps) {
   );
 }
 
+function useSharedChoices(props: AccountPresetMenuProps, account: AccountPresets | undefined) {
+  const [choicesByType, setChoicesByType] = useState<Record<string, LaunchChoices>>({});
+  const { config } = useDaemonConfig(props.serverId);
+  const providerType = account
+    ? resolveProviderType(account.provider, config?.providers ?? {})
+    : "";
+  const selected = props.definitions.find((profile) => profile.id === props.selectedId);
+  const currentProvider = props.currentProvider ?? selected?.provider;
+  const selectedType = currentProvider
+    ? resolveProviderType(currentProvider, config?.providers ?? {})
+    : null;
+  const seedChoices =
+    selectedType === providerType
+      ? {
+          model: props.currentModel === null ? "" : props.currentModel,
+          thinkingOptionId:
+            props.currentThinkingOptionId === null ? "" : props.currentThinkingOptionId,
+        }
+      : {};
+  const choices = choicesByType[providerType] ?? seedChoices;
+  const changeChoices = useCallback(
+    (next: LaunchChoices) => {
+      setChoicesByType((current) => ({ ...current, [providerType]: next }));
+    },
+    [providerType],
+  );
+  const family = useMemo(
+    () =>
+      (props.entries ?? []).filter(
+        (entry) => resolveProviderType(entry.provider, config?.providers ?? {}) === providerType,
+      ),
+    [props.entries, config, providerType],
+  );
+  const preferences = config?.sharedProviderPreferences?.providers[providerType];
+  const retainWorkflow = useCallback(
+    (id: string) => {
+      const target = props.definitions.find((profile) => profile.id === id);
+      const current = props.definitions.find(
+        (profile) => profile.id === (props.inspectedId ?? props.selectedId),
+      );
+      if (!target || !current || !isSharedWorkflowProfile(current.id)) return id;
+      const ancestry = config?.providers ?? {};
+      if (
+        resolveProviderType(target.provider, ancestry) !==
+        resolveProviderType(current.provider, ancestry)
+      )
+        return id;
+      const matching = sharedWorkflowProfileId(
+        target.provider,
+        decodeURIComponent(current.id.split("/")[2]),
+      );
+      return props.definitions.some((profile) => profile.id === matching) ? matching : id;
+    },
+    [props.definitions, props.inspectedId, props.selectedId, config],
+  );
+  return { choices, changeChoices, preferences, family, retainWorkflow };
+}
+
 function AccountButton({
   group,
   active,
@@ -198,16 +280,36 @@ function AccountButton({
 function AccountChoices({
   account,
   inspected,
+  choices,
+  onChoices,
+  preferences,
+  family,
   ...props
 }: AccountPresetMenuProps & {
   account: AccountPresets;
   inspected: AgentProfilePickerRow;
+  choices: LaunchChoices;
+  onChoices: (choices: LaunchChoices) => void;
+  preferences: ProviderPreferences | undefined;
+  family: ProviderSnapshotEntry[];
 }) {
   const DetailScrollView = props.compact ? BottomSheetScrollView : ScrollView;
   const entry = props.entries?.find((candidate) => candidate.provider === account.provider);
   const definition = props.definitions.find((profile) => profile.id === inspected.id);
+  const shared = isSharedWorkflowProfile(inspected.id);
+  const selection = useMemo(
+    () =>
+      definition
+        ? sharedChoiceState({ profile: definition, choices, entry, preferences, family })
+        : null,
+    [definition, choices, entry, preferences, family],
+  );
+  const selectionUnavailable = shared && Boolean(selection?.unavailable);
   const { onApply } = props;
-  const apply = useCallback(() => onApply(inspected.id), [onApply, inspected.id]);
+  const apply = useCallback(
+    () => onApply(inspected.id, shared ? selection?.choices : undefined),
+    [onApply, inspected.id, shared, selection],
+  );
   return (
     <View style={styles.detail} testID={`preset-choices-${account.provider}`}>
       <DetailScrollView
@@ -218,6 +320,9 @@ function AccountChoices({
         <View style={styles.choices}>
           <Text style={styles.heading}>{account.label}</Text>
           {props.compact && !inspected.localEndpoint ? props.renderRail(inspected) : null}
+          {shared && selection ? (
+            <SharedChoiceFields selection={selection} onChoices={onChoices} />
+          ) : null}
           <View style={styles.options}>
             {account.rows.map((row) => (
               <ProfileChoice
@@ -231,7 +336,7 @@ function AccountChoices({
               />
             ))}
           </View>
-          <Text style={styles.summary}>{inspected.summary}</Text>
+          {!shared ? <Text style={styles.summary}>{inspected.summary}</Text> : null}
           {inspected.localEndpoint ? props.renderRail(inspected) : null}
           {account.provider === "pi" ? (
             <PiModelCatalog entry={entry} profileModel={definition?.model} />
@@ -239,29 +344,14 @@ function AccountChoices({
           {definition ? (
             <ProfileDetailsView serverId={props.serverId} profile={definition} compact />
           ) : null}
-          {definition?.instructions ? (
-            <>
-              <Text style={styles.label}>Instructions</Text>
-              <Text style={styles.summary}>{definition.instructions}</Text>
-            </>
-          ) : null}
-          {definition?.workerProfileId ? (
-            <>
-              <Text style={styles.label}>Workers</Text>
-              <Text style={styles.summary}>
-                {props.definitions.find((profile) => profile.id === definition.workerProfileId)
-                  ?.name ?? definition.workerProfileId}{" "}
-                · Up to {definition.maxWorkers ?? 2}
-              </Text>
-            </>
-          ) : null}
+          <WorkflowInstructions definition={definition} definitions={props.definitions} />
         </View>
       </DetailScrollView>
       <View style={styles.footer}>
         <Button
           variant="default"
           size="md"
-          disabled={props.disabled || inspected.unavailable}
+          disabled={props.disabled || inspected.unavailable || selectionUnavailable}
           onPress={apply}
           testID="preset-use-profile"
         >
@@ -269,6 +359,118 @@ function AccountChoices({
         </Button>
       </View>
     </View>
+  );
+}
+
+function WorkflowInstructions({
+  definition,
+  definitions,
+}: {
+  definition: AgentProfile | undefined;
+  definitions: readonly AgentProfile[];
+}) {
+  return (
+    <>
+      {definition?.instructions ? (
+        <>
+          <Text style={styles.label}>Instructions</Text>
+          <Text style={styles.summary}>{definition.instructions}</Text>
+        </>
+      ) : null}
+      {definition?.workerProfileId ? (
+        <>
+          <Text style={styles.label}>Workers</Text>
+          <Text style={styles.summary}>
+            {definitions.find((profile) => profile.id === definition.workerProfileId)?.name ??
+              definition.workerProfileId}{" "}
+            · Up to {definition.maxWorkers ?? 2}
+          </Text>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function SharedChoiceFields({
+  selection,
+  onChoices,
+}: {
+  selection: ReturnType<typeof sharedChoiceState>;
+  onChoices: (choices: LaunchChoices) => void;
+}) {
+  const selectModel = useCallback(
+    (model: string) => onChoices({ ...selection.choices, model }),
+    [selection, onChoices],
+  );
+  const selectThinking = useCallback(
+    (thinkingOptionId: string) => onChoices({ ...selection.choices, thinkingOptionId }),
+    [selection, onChoices],
+  );
+  const renderModel = useCallback(
+    ({ option, selected, active, onPress }: SelectFieldRenderOptionInput<string>) => {
+      const available =
+        selection.modelOptions.find((item) => item.id === option.id)?.available === true;
+      return (
+        <ComboboxItem
+          label={option.label}
+          description={available ? undefined : "Unavailable on this account"}
+          selected={selected}
+          active={active}
+          disabled={!available}
+          onPress={onPress}
+        />
+      );
+    },
+    [selection.modelOptions],
+  );
+  const renderThinking = useCallback(
+    ({ option, selected, active, onPress }: SelectFieldRenderOptionInput<string>) => {
+      const available =
+        selection.thinkingOptions.find((item) => item.id === option.id)?.available === true;
+      return (
+        <ComboboxItem
+          label={option.label}
+          description={available ? undefined : "Unavailable on this account"}
+          selected={selected}
+          active={active}
+          disabled={!available}
+          onPress={onPress}
+        />
+      );
+    },
+    [selection.thinkingOptions],
+  );
+  return (
+    <>
+      <SelectField
+        label="Model"
+        value={selection.choices.model}
+        selectedDisplay={selection.modelDisplay}
+        options={selection.modelOptions}
+        renderOption={renderModel}
+        onChange={selectModel}
+        placeholder="Select model"
+        emptyText="No models available"
+        searchable
+        size="md"
+        triggerTestID="shared-model-trigger"
+        error={selection.modelError}
+      />
+      <SelectField
+        label="Reasoning"
+        value={selection.choices.thinkingOptionId}
+        selectedDisplay={selection.thinkingDisplay}
+        options={selection.thinkingOptions}
+        renderOption={renderThinking}
+        onChange={selectThinking}
+        placeholder="Provider default"
+        emptyText="No reasoning choices"
+        size="md"
+        triggerTestID="shared-thinking-trigger"
+        error={selection.thinkingError}
+      />
+      <Text style={styles.label}>Workflow</Text>
+    </>
   );
 }
 
@@ -291,8 +493,8 @@ function ProfileChoice({
   return (
     <View style={[styles.option, active && styles.activeOption]}>
       <ComboboxItem
-        label={intelligenceLabel(definition, entry)}
-        description={row.name}
+        label={isSharedWorkflowProfile(row.id) ? row.name : intelligenceLabel(definition, entry)}
+        description={isSharedWorkflowProfile(row.id) ? undefined : row.name}
         descriptionPlacement="below"
         selected={active}
         onPress={inspect}

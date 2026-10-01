@@ -644,3 +644,70 @@ test("a quota drop during creation reports the created agent for cleanup and nev
     await harness.close();
   }
 });
+
+test("a shared supervisor validates its frozen worker without rereading current preferences", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "shared-worker-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const providerSnapshotManager = createProviderSnapshotManagerStub().manager;
+  try {
+    const worker = {
+      id: "shared-workflow/codex/worker",
+      name: "Worker",
+      provider: "codex",
+      model: "gpt-5.4",
+      thinkingOptionId: "medium",
+    };
+    const parent = await agentManager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        profileLaunch: {
+          configurationRevision: 8,
+          profile: { id: "team", name: "Team", provider: "codex", workerProfileId: worker.id },
+          worker,
+        },
+      },
+      undefined,
+      { workspaceId: "ws-shared-worker", owner: { kind: "user" } },
+    );
+    const getSharedProviderConfig = vi.fn(() => {
+      throw new Error("Must use the frozen snapshot");
+    });
+    const validateSharedConfiguration = vi
+      .fn()
+      .mockRejectedValue(new Error("Frozen worker model is unavailable"));
+    await expect(
+      createAgentCommand(
+        {
+          agentManager,
+          agentStorage: storage,
+          logger,
+          providerSnapshotManager,
+          getSharedProviderConfig,
+          validateSharedConfiguration,
+        },
+        {
+          kind: "mcp",
+          provider: "codex/gpt-5.4",
+          profileId: worker.id,
+          callerAgentId: parent.id,
+          title: "Worker",
+          background: true,
+          notifyOnFinish: false,
+        },
+      ),
+    ).rejects.toThrow("Frozen worker model is unavailable");
+    expect(getSharedProviderConfig).not.toHaveBeenCalled();
+    expect(validateSharedConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-5.4",
+        thinkingOptionId: "medium",
+        profileLaunch: expect.objectContaining({ configurationRevision: 8 }),
+      }),
+    );
+    expect(agentManager.listAgents()).toHaveLength(1);
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});

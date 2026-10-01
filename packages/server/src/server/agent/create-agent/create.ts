@@ -28,7 +28,7 @@ import {
 } from "../timeline-append.js";
 import { resolveCreateAgentIntent } from "./intent.js";
 import { resolveProfileLaunch } from "./profile.js";
-import type { AgentProfile } from "@getpaseo/protocol/messages";
+import type { AgentProfile, MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
@@ -40,6 +40,8 @@ export interface CreateAgentSessionWorktreeResult {
 
 export interface CreateAgentCommandDependencies {
   getAgentProfiles?: () => readonly AgentProfile[];
+  getSharedProviderConfig?: () => MutableDaemonConfig;
+  validateSharedConfiguration?: ProviderSnapshotManager["validateAgentConfiguration"];
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
@@ -179,6 +181,17 @@ interface ResolvedCreateAgent {
   createdWorktree?: CreatePaseoWorktreeWorkflowResult;
 }
 
+async function validateSharedLaunch(
+  dependencies: CreateAgentCommandDependencies,
+  config: AgentSessionConfig,
+): Promise<void> {
+  if (config.profileLaunch?.configurationRevision === undefined) return;
+  if (!dependencies.validateSharedConfiguration)
+    throw new Error("Shared configuration validation is unavailable.");
+  const issues = await dependencies.validateSharedConfiguration(config);
+  if (issues.length) throw new Error(issues.map((issue) => issue.message).join(" "));
+}
+
 export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
@@ -187,6 +200,8 @@ export async function createAgentCommand(
     input.kind === "session"
       ? await resolveSessionCreateAgent(dependencies, input)
       : await resolveMcpCreateAgent(dependencies, input);
+
+  await validateSharedLaunch(dependencies, resolved.config);
 
   if (resolved.config.quotaReserve) {
     await dependencies.agentManager.checkQuotaReserveLaunch(resolved.config);
@@ -283,7 +298,12 @@ async function resolveSessionCreateAgent(
     setupContinuation,
     createdWorkspaceId,
   } = await input.buildSessionConfig(
-    resolveProfileLaunch(input.config, dependencies.getAgentProfiles?.() ?? []),
+    resolveProfileLaunch(
+      input.config,
+      dependencies.getAgentProfiles?.() ?? [],
+      Date.now(),
+      dependencies.getSharedProviderConfig?.(),
+    ),
     input.git,
     input.worktreeName,
     input.firstAgentContext,
@@ -349,6 +369,13 @@ async function resolveSessionCreateAgent(
   };
 }
 
+function inheritWorkerRevision(config: AgentSessionConfig, caller: ManagedAgent | null): void {
+  if (config.profileLaunch) {
+    config.profileLaunch.configurationRevision =
+      caller?.config.profileLaunch?.configurationRevision;
+  }
+}
+
 function resolveMcpProfileInput(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentFromMcpInput,
@@ -367,12 +394,15 @@ function resolveMcpProfileInput(
     const resolved = resolveProfileLaunch(
       {
         ...input.config,
-        provider: input.provider,
+        provider: resolveProviderModel(input.provider).provider,
         cwd: input.cwd ?? "",
         profileId: input.profileId,
       },
       profiles,
+      Date.now(),
+      worker ? undefined : dependencies.getSharedProviderConfig?.(),
     );
+    if (worker) inheritWorkerRevision(resolved, caller);
     if (!resolved.model) throw new Error("MCP launches require a preset with an explicit model.");
     if (resolveProviderModel(input.provider).provider !== resolved.provider) {
       throw new Error("The requested provider must match the preset provider.");

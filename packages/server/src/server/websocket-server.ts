@@ -1944,6 +1944,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(agentProfiles): added in v0.3.2, remove gate after 2027-02-11.
         agentProfiles: true,
         agentProfileLaunch: true,
+        sharedProviderPreferences: Boolean(this.daemonConfigStore.get().sharedProviderPreferences),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
       },

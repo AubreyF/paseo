@@ -14,6 +14,11 @@ import {
   assertProviderConfigRemoval,
   defaultProviderAccountHomes,
 } from "../services/provider-login/removal.js";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { validateProviderPreferences } from "./agent/provider-preferences/validation.js";
+import { planProviderPreferencesMigration } from "./agent/provider-preferences/migration.js";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
@@ -33,9 +38,23 @@ interface SupportedMutableConfigPatch {
   appendSystemPrompt?: string;
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
   agentProfiles?: MutableDaemonConfig["agentProfiles"];
+  sharedProviderPreferences?: MutableDaemonConfig["sharedProviderPreferences"];
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
+}
+
+function replacementProviderPreferences(patch: SupportedMutableConfigPatch) {
+  return patch.sharedProviderPreferences === undefined
+    ? {}
+    : { sharedProviderPreferences: patch.sharedProviderPreferences };
+}
+
+export class ProviderPreferencesConflictError extends Error {
+  constructor(readonly currentRevision: number | null) {
+    super("Provider preferences changed on another device. Reload the editor before saving.");
+    this.name = "ProviderPreferencesConflictError";
+  }
 }
 
 interface LoggerLike {
@@ -188,6 +207,7 @@ const RELOADABLE_PATHS = [
   "daemon.appendSystemPrompt",
   "daemon.terminalProfiles",
   "daemon.agentProfiles",
+  "daemon.sharedProviderPreferences",
   "app.baseUrl",
   "agents.providers",
   "agents.catalogRefreshTimeoutMs",
@@ -211,6 +231,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.appendSystemPrompt", "appendSystemPrompt"],
   ["daemon.terminalProfiles", "terminalProfiles"],
   ["daemon.agentProfiles", "agentProfiles"],
+  ["daemon.sharedProviderPreferences", "sharedProviderPreferences"],
   ["app.baseUrl", "app.baseUrl"],
   ["agents.providers", "providers"],
   ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
@@ -279,6 +300,9 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.terminalProfiles !== undefined ? { terminalProfiles: patch.terminalProfiles } : {}),
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
+    ...(patch.sharedProviderPreferences !== undefined
+      ? { sharedProviderPreferences: patch.sharedProviderPreferences }
+      : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
   };
@@ -353,6 +377,18 @@ export class DaemonConfigStore {
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
     const parsed = MutableDaemonConfigPatchSchema.parse(partial);
+    if (parsed.sharedProviderPreferences) {
+      const revision = this.current.sharedProviderPreferences?.revision ?? null;
+      if (parsed.expectedProviderPreferencesRevision !== revision) {
+        throw new ProviderPreferencesConflictError(revision);
+      }
+      validateProviderPreferences({
+        preferences: parsed.sharedProviderPreferences,
+        providers: { ...this.current.providers, ...parsed.providers },
+        legacyProfiles: parsed.agentProfiles ?? this.current.agentProfiles ?? [],
+      });
+      parsed.sharedProviderPreferences.revision = (revision ?? 0) + 1;
+    }
     if (
       parsed.expectedAgentProfiles &&
       !isEqualValue(parsed.expectedAgentProfiles, this.current.agentProfiles ?? [])
@@ -380,8 +416,51 @@ export class DaemonConfigStore {
         };
       });
     }
+    this.preserveLegacyProfileEdits(parsed);
     const parsedPatch = pickSupportedPatchFields(parsed);
     return this.applySupportedPatch(parsedPatch);
+  }
+
+  private preserveLegacyProfileEdits(patch: MutableDaemonConfigPatch): void {
+    if (!patch.agentProfiles || patch.sharedProviderPreferences) return;
+    const shared = this.current.sharedProviderPreferences;
+    if (!shared) return;
+    const next = structuredClone(shared);
+    let changed = false;
+    for (const profile of patch.agentProfiles) {
+      const previous = this.current.agentProfiles?.find((entry) => entry.id === profile.id);
+      if (!next.legacyProfiles[profile.id] || isEqualValue(profile, previous)) continue;
+      // COMPAT(sharedProviderPreferences): added in v0.7.2, remove after 2027-04-01 once legacy editors are retired.
+      // An older editor cannot knowingly change every account's workflow. Keep its edited record account-specific.
+      delete next.legacyProfiles[profile.id];
+      changed = true;
+    }
+    if (changed) patch.sharedProviderPreferences = { ...next, revision: shared.revision + 1 };
+  }
+
+  public initializeProviderPreferences(): MutableDaemonConfig {
+    if (this.current.sharedProviderPreferences) return this.current;
+    const plan = planProviderPreferencesMigration({
+      profiles: this.current.agentProfiles ?? [],
+      providers: this.current.providers,
+    });
+    const directory = join(this.paseoHome, "backups", "provider-preferences-v1");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const receipt = {
+      persistedConfig: loadPersistedConfig(this.paseoHome, this.logger),
+      profiles: this.current.agentProfiles ?? [],
+      report: plan.report,
+      proposed: plan.preferences,
+    };
+    // Write a private recovery receipt before touching configuration. A failed save can retry.
+    writeFileSync(join(directory, `${randomUUID()}.json`), JSON.stringify(receipt, null, 2), {
+      mode: 0o600,
+      flag: "wx",
+    });
+    return this.patch({
+      expectedProviderPreferencesRevision: null,
+      sharedProviderPreferences: plan.preferences,
+    });
   }
 
   public setAgentSkillSelection(selection: AgentSkillSelection): MutableDaemonConfig {
@@ -407,6 +486,7 @@ export class DaemonConfigStore {
       merged.skills = { selection: parsedPatch.skills.selection };
     }
     if (parsedPatch.plugins !== undefined) merged.plugins = parsedPatch.plugins;
+    Object.assign(merged, replacementProviderPreferences(parsedPatch));
     const next = MutableDaemonConfigSchema.parse(
       omitMetadataGenerationProvidersFromConfig(
         omitProvidersFromConfig(merged, removedProviders),
@@ -700,5 +780,7 @@ function mergeMutableDaemonPatch(
   if (patch.appendSystemPrompt !== undefined) next.appendSystemPrompt = patch.appendSystemPrompt;
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
+  if (patch.sharedProviderPreferences !== undefined)
+    next.sharedProviderPreferences = patch.sharedProviderPreferences;
   return Object.keys(next).length > 0 ? next : undefined;
 }

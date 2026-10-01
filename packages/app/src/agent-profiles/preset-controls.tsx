@@ -59,6 +59,8 @@ interface PresetControlsProps {
   selectedProfileId?: string;
   selectedProfileName?: string;
   currentProvider?: string;
+  currentModel?: string | null;
+  currentThinkingOptionId?: string | null;
   quotaPausedAt?: string;
   onEdit?: () => void;
   disabled: boolean;
@@ -76,6 +78,8 @@ export function PresetControls({
   selectedProfileId,
   selectedProfileName,
   currentProvider,
+  currentModel,
+  currentThinkingOptionId,
   onEdit,
   disabled,
 }: PresetControlsProps) {
@@ -202,10 +206,10 @@ export function PresetControls({
     setOpen(ready);
   }, [selectedProfileId, ready, waitingToOpen]);
   const select = useCallback(
-    (id: string) => {
+    (id: string, choices?: Pick<AgentProfile, "model" | "thinkingOptionId">) => {
       if (disabled || profiles.isApplying) return;
       setInspectedId(id);
-      profiles.applyProfile(id);
+      profiles.applyProfile(id, choices);
       setOpen(false);
     },
     [disabled, profiles],
@@ -306,6 +310,9 @@ export function PresetControls({
             disabled={selectionDisabled}
             onInspect={setInspectedId}
             onApply={select}
+            currentProvider={currentProvider}
+            currentModel={currentModel}
+            currentThinkingOptionId={currentThinkingOptionId}
             onManage={edit}
             onSearch={setQuery}
             renderRail={renderRail}

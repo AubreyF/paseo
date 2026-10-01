@@ -30,6 +30,7 @@ export interface AgentProfileRowProps {
   entries: readonly ProviderSnapshotEntry[] | undefined;
   isFirst: boolean;
   isLast: boolean;
+  disabled?: boolean;
   onEdit: (id: string) => void;
   onRemove: (id: string) => void;
   onMoveUp: (id: string) => void;
@@ -41,6 +42,7 @@ export function AgentProfileRow({
   entries,
   isFirst,
   isLast,
+  disabled,
   onEdit,
   onRemove,
   onMoveUp,
@@ -106,7 +108,7 @@ export function AgentProfileRow({
           size="sm"
           leftIcon={moveUpIcon}
           onPress={handleMoveUp}
-          disabled={isFirst}
+          disabled={disabled || isFirst}
           accessibilityLabel={t("settings.host.agentProfiles.moveUp")}
           testID={`agent-profile-move-up-${profile.id}`}
         />
@@ -115,7 +117,7 @@ export function AgentProfileRow({
           size="sm"
           leftIcon={moveDownIcon}
           onPress={handleMoveDown}
-          disabled={isLast}
+          disabled={disabled || isLast}
           accessibilityLabel={t("settings.host.agentProfiles.moveDown")}
           testID={`agent-profile-move-down-${profile.id}`}
         />
@@ -124,6 +126,7 @@ export function AgentProfileRow({
           size="sm"
           leftIcon={editIcon}
           onPress={handleEdit}
+          disabled={disabled}
           accessibilityLabel={t("settings.host.agentProfiles.editProfile")}
           testID={`agent-profile-edit-${profile.id}`}
         />
@@ -132,6 +135,7 @@ export function AgentProfileRow({
           size="sm"
           leftIcon={removeIcon}
           onPress={handleRemove}
+          disabled={disabled}
           accessibilityLabel={t("settings.host.agentProfiles.remove")}
           testID={`agent-profile-remove-${profile.id}`}
         />

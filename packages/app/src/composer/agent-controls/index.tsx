@@ -1830,6 +1830,8 @@ export const AgentControls = memo(function AgentControls({
           selectedProfileName={selectedProfileName}
           quotaPausedAt={quotaPausedAt}
           currentProvider={agent.provider}
+          currentModel={modelSelection.activeModelId}
+          currentThinkingOptionId={modelSelection.selectedThinkingId}
           onEdit={handleEditAgentProfiles}
           disabled={!client}
         />
@@ -1977,6 +1979,9 @@ export function DraftAgentControls({
       {presetPicker ? (
         <PresetControls
           serverId={modelSelectorServerId}
+          currentProvider={selectedProvider ?? undefined}
+          currentModel={selectedModel}
+          currentThinkingOptionId={effectiveSelectedThinkingOption}
           profiles={presetPicker}
           selectedProfileId={selectedProfileId}
           onEdit={handleEditAgentProfiles}

@@ -12,6 +12,7 @@ import type {
   ProjectDirectoryBrowseRequest,
   ProjectDirectoryBrowsePayload,
 } from "@getpaseo/protocol/messages";
+import { isSharedWorkflowProfile } from "@getpaseo/protocol/provider-preferences";
 import type { QuotaGovernorPolicy } from "@getpaseo/protocol/quota-governor";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
@@ -940,6 +941,8 @@ export class DaemonConnectionError extends Error {
 }
 
 class DaemonRpcError extends Error {
+  /** Host-provided message without transport diagnostics, for interface errors. */
+  readonly userMessage: string;
   readonly requestId: string;
   readonly requestType?: string;
   readonly code?: string;
@@ -950,6 +953,7 @@ class DaemonRpcError extends Error {
     if (params.code) parts.push(`code=${params.code}`);
     super(parts.join(" "));
     this.name = "DaemonRpcError";
+    this.userMessage = params.error;
     this.requestId = params.requestId;
     this.requestType = params.requestType;
     this.code = params.code;
@@ -2766,9 +2770,11 @@ export class DaemonClient {
   });
 
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
+    const config = resolveAgentConfig(options);
+    this.requireWorkflowLaunchSupport(config.profileId);
     const result = await this.creations.createAgent({
       ...options,
-      config: resolveAgentConfig(options),
+      config,
     });
     if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
     return result.agent;
@@ -4544,6 +4550,7 @@ export class DaemonClient {
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
     const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
+    if (input.agent) this.requireWorkflowLaunchSupport(resolveAgentConfig(input.agent).profileId);
     const result = await this.creations.createWorkspace({
       ...input,
       requestId: resolvedRequestId,
@@ -5178,10 +5185,21 @@ export class DaemonClient {
     });
   }
 
+  private requireWorkflowLaunchSupport(profileId: string | undefined): void {
+    if (profileId && isSharedWorkflowProfile(profileId)) this.requireSharedProviderPreferences();
+  }
+
+  private requireSharedProviderPreferences(): void {
+    if (this.lastServerInfoMessage?.features?.sharedProviderPreferences !== true) {
+      throw new Error("Update the host to use shared provider preferences.");
+    }
+  }
+
   async patchDaemonConfig(
     config: MutableDaemonConfigPatch,
     requestId?: string,
   ): Promise<{ requestId: string; config: MutableDaemonConfig }> {
+    if (config.sharedProviderPreferences) this.requireSharedProviderPreferences();
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {

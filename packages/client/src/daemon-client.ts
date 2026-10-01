@@ -8,6 +8,10 @@ import {
 } from "./connection/index.js";
 import { CreationClient } from "./creation/index.js";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
+import type {
+  ProjectDirectoryBrowseRequest,
+  ProjectDirectoryBrowsePayload,
+} from "@getpaseo/protocol/messages";
 import type { QuotaGovernorPolicy } from "@getpaseo/protocol/quota-governor";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
@@ -4642,6 +4646,15 @@ export class DaemonClient {
         kinds: options.kinds,
       },
       responseType: "github_search_response",
+    });
+  }
+
+  async browseProjectDirectories(
+    input: Omit<ProjectDirectoryBrowseRequest, "type" | "requestId">,
+  ): Promise<ProjectDirectoryBrowsePayload> {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "project.directory.browse.request", ...input },
+      responseType: "project.directory.browse.response",
     });
   }
 

@@ -67,3 +67,27 @@ Run `docker compose ps` and `docker compose logs --tail=100 paseo` from the priv
 Use `docker compose exec --user paseo paseo paseo provider diagnostic PROVIDER --json` for provider failures. Check mounted-file ownership if the non-root user cannot access a project. Never recursively change ownership of an existing project tree to fix an unrelated startup error.
 
 Docker must remain running and the host awake. Automated host recovery and agent-managed HTTPS previews are [optional macOS tools](../docker/tailscale/README.md); ordinary Paseo access does not depend on them. Xcode and the iOS simulator do not run inside this Linux environment.
+
+## Share host project folders
+
+A container cannot open a host folder until it is mounted. `~` in legacy path inputs means the container user's home, not your host home. New hosts advertise a folder browser that distinguishes shared host folders from container home and workspace storage. Host paths entered in that browser resolve through the installation's explicit shares.
+
+From the deployment directory **on the host**, stage a folder:
+
+```sh
+./share-folder.sh "$HOME/Documents/MyProject"
+```
+
+Review `shared-folders.pending.json`. The command preserves existing shares and stages a bind mount plus matching host-to-container path metadata. Missing source folders are rejected instead of silently creating empty directories. Sharing a parent folder includes its descendants. Shared folders are writable by agents, subject to host filesystem permissions; choose only folders you intend them to modify.
+
+When active tasks can be interrupted, apply the change:
+
+```sh
+./share-folder.sh --apply
+```
+
+Applying recreates this container. It preserves the existing home, workspace and network identity volumes. The updater includes the active shared-folder configuration in future updates. Keep the generated JSON and its previous version private, beside the deployment's `.env`.
+
+In **Add project**, choose a shared root, open subfolders, and select the current folder. The same browser selects parents for new directories and clones. You can enter a host path such as `~/Documents/MyProject` after configuring shares. Container paths are shown separately and remain the paths used by agents. Symlinks leaving a shared root require sharing their targets separately.
+
+For an existing installation, copy `share-folder.sh`, `shared-folders.mjs` and the updated `common.sh` from `docker/multiplex` into the private deployment directory after reviewing local lifecycle customizations. Update the daemon before using the new browser. Older daemons retain their existing path input; the app does not infer host sharing from a path string. Docker Desktop must permit sharing the source folder, and the non-root container user needs directory access. The command does not change ownership or permissions recursively.

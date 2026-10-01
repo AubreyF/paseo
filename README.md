@@ -44,7 +44,7 @@ machine and inside connected clients; install only code you trust.
 
 ## Install
 
-In **Add project**, paste a full directory path to select it while search suggestions load. The path must be accessible inside the selected host's container; folders that are not mounted cannot be opened.
+In **Add project**, choose **Browse host folders** to traverse explicitly shared folders or enter a host path. The browser shows host paths separately from the container paths agents use. Existing installations need the updated daemon, web interface and [host-folder configuration](docs/docker.md#share-host-project-folders). Unmounted folders cannot be opened.
 
 Install Git and start Docker with Compose. Install Tailscale on the devices you will connect from.
 

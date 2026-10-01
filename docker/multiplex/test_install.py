@@ -87,6 +87,21 @@ elif args[0]=='compose' and '--url' in args: print('https://test.example.ts.net'
         self.assertIn('PASEO_PASSWORD='+'b'*64, (self.deployment / '.env').read_text())
         self.assertFalse(any('--remove-orphans' in call or 'down' in call for call in self.calls()))
 
+    def test_shared_folder_apply_preserves_base_configuration_and_credentials(self):
+        self.assertEqual(self.install().returncode, 0)
+        before = (self.deployment / '.env').read_text()
+        pending = self.deployment / 'shared-folders.pending.json'
+        pending.write_text(json.dumps({'services': {'paseo': {'volumes': []}}}))
+        result = subprocess.run(['bash', str(self.deployment / 'share-folder.sh'), '--apply'], env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.deployment / '.env').read_text(), before)
+        self.assertFalse(pending.exists())
+        up = [call for call in self.calls() if call[0] == 'compose' and 'up' in call][-1]
+        self.assertIn(str(self.deployment / 'compose.yaml'), up)
+        self.assertIn(str(self.deployment / 'shared-folders.compose.json'), up)
+        self.assertIn('--no-deps', up)
+        self.assertFalse(any('--remove-orphans' in call or 'down' in call for call in self.calls()))
+
     def test_invalid_image_is_rejected_without_docker(self):
         result = subprocess.run(['bash', str(SOURCE / 'install.sh'), str(self.deployment), '$(touch bad)'], env=self.env, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)

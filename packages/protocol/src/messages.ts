@@ -1,4 +1,12 @@
 import {
+  ProjectDirectoryBrowseRequestSchema,
+  ProjectDirectoryBrowseResponseSchema,
+} from "./project-directories.js";
+export type {
+  ProjectDirectoryBrowseRequest,
+  ProjectDirectoryBrowsePayload,
+} from "./project-directories.js";
+import {
   ProviderPreviewRemovalRequestSchema,
   ProviderPreviewRemovalResponseSchema,
   ProviderRemoveRequestSchema,
@@ -3311,6 +3319,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ForgeSearchRequestSchema,
   GitHubSearchRequestSchema,
   DirectorySuggestionsRequestSchema,
+  ProjectDirectoryBrowseRequestSchema,
   PaseoWorktreeListRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   CreatePaseoWorktreeRequestSchema,
@@ -3646,6 +3655,7 @@ export const ServerInfoStatusPayloadSchema = z
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectAdd: z.boolean().optional(),
+        projectDirectoryBrowsing: z.boolean().optional(),
         // COMPAT(worktreeRestore): added in v0.1.97, drop the gate when floor >= v0.1.97
         worktreeRestore: z.boolean().optional(),
         // COMPAT(workspaceRecovery): added in v0.1.105, remove after 2027-01-11 once daemon floor >= v0.1.105.
@@ -6946,6 +6956,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ForgeSearchResponseSchema,
   GitHubSearchResponseSchema,
   DirectorySuggestionsResponseSchema,
+  ProjectDirectoryBrowseResponseSchema,
   PaseoWorktreeListResponseSchema,
   PaseoWorktreeArchiveResponseSchema,
   CreatePaseoWorktreeResponseSchema,

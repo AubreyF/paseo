@@ -136,21 +136,47 @@ class Runtime:
             raise ValueError('Unexpected Funnel state; administrator review required')
         return value
 
+    def host_workspace(self, cwd):
+        path = Path(cwd)
+        if not path.is_absolute() or '..' in path.parts:
+            raise ValueError('Invalid container workspace path')
+        mappings = dict(self.c.get('hostPathMappings', {}))
+        mappings['/home/paseo'] = str(Path(self.c['deployment']) / 'data/home')
+        for container_root in sorted(mappings, key=len, reverse=True):
+            host_root = Path(mappings[container_root])
+            if not host_root.is_absolute() or '..' in host_root.parts:
+                raise ValueError('Invalid administrator host mapping')
+            if cwd == container_root or cwd.startswith(container_root.rstrip('/') + '/'):
+                return host_root / path.relative_to(container_root)
+        if 'hostPathMappings' not in self.c:
+            return path
+        raise ValueError('Workspace has no verified host bind mapping')
+
+    def workspace_path_allowed(self, cwd):
+        policy = self.c.get('workspacePolicy', 'approved-roots')
+        if policy == 'registered':
+            # Registration replaces per-directory grants, never host mount verification.
+            if 'hostPathMappings' not in self.c:
+                raise ValueError('Registered workspace policy requires verified host bind mappings')
+            return True
+        if policy != 'approved-roots':
+            raise ValueError('Unsupported workspace policy')
+        return any(cwd == root or cwd.startswith(root.rstrip('/') + '/') for root in self.c['allowedRoots'])
+
     def current(self, workspace, service):
         workspaces = self.cli(['workspace', 'ls'])
         match = next((w for w in workspaces if w['workspaceId'] == workspace), None)
-        if not match or match.get('isolation') != 'local':
-            raise ValueError('Unknown, archived or nonlocal workspace')
+        if not match or match.get('archivedAt') or match.get('isolation') not in ('local', 'worktree'):
+            raise ValueError('Unknown, archived or unsupported workspace')
         cwd = match['cwd']
-        if not any(cwd == root or cwd.startswith(root.rstrip('/') + '/') for root in self.c['allowedRoots']):
+        if not self.workspace_path_allowed(cwd):
             raise ValueError('Workspace is outside administrator policy')
         approved = self.c.get('approvedWorkspaces', {})
         if workspace in approved and approved[workspace] != cwd:
             raise ValueError('Approved workspace moved')
-        # Only same-path development mounts and the verified home bind are supported.
-        path = Path(cwd)
-        if cwd.startswith('/home/paseo/'):
-            path = Path(self.c['deployment']) / 'data/home' / cwd.removeprefix('/home/paseo/')
+        if self.c.get('workspacePolicy', 'approved-roots') != 'registered' and match['isolation'] == 'worktree' and approved.get(workspace) != cwd:
+            raise ValueError('Worktree requires explicit administrator approval')
+        path = self.host_workspace(cwd)
         cfg = safe_read(path / 'paseo.json')
         definition = cfg.get('scripts', {}).get(service)
         scripts = self.cli(['script', 'ls', '--workspace', workspace])
@@ -167,11 +193,9 @@ class Runtime:
             if cwd in seen:
                 continue
             seen.add(cwd)
-            if not any(cwd == root or cwd.startswith(root.rstrip('/') + '/') for root in self.c['allowedRoots']):
+            if not self.workspace_path_allowed(cwd):
                 continue
-            path = Path(cwd)
-            if cwd.startswith('/home/paseo/'):
-                path = Path(self.c['deployment']) / 'data/home' / cwd.removeprefix('/home/paseo/')
+            path = self.host_workspace(cwd)
             try:
                 cfg = safe_read(path / 'paseo.json')
             except FileNotFoundError:

@@ -11,7 +11,28 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from host_config import discover
 from launch_agent import install, label_for, owned_plist
-from https_broker import atomic, digest
+from https_broker import Runtime, WS, atomic, digest, safe_dir
+
+
+def approve_workspaces(config, approvals, workspaces):
+    approved = dict(config.get('approvedWorkspaces', {}))
+    roots = list(config['allowedRoots'])
+    runtime = Runtime(config)
+    for approval in approvals:
+        workspace, separator, cwd = approval.partition('=')
+        if not separator or not WS.fullmatch(workspace):
+            raise ValueError('Use --approve-workspace WORKSPACE_ID=/absolute/container/path')
+        match = next((w for w in workspaces if w['workspaceId'] == workspace), None)
+        if not match or match.get('archivedAt') or match.get('isolation') != 'worktree' or match['cwd'] != cwd:
+            raise ValueError('Approval must match an active worktree and its exact path')
+        if workspace in approved and approved[workspace] != cwd:
+            raise ValueError('Approved workspace moved; review existing policy before replacing it')
+        descriptor = safe_dir(runtime.host_workspace(cwd))
+        os.close(descriptor)
+        approved[workspace] = cwd
+        if cwd not in roots:
+            roots.append(cwd)
+    return {'approvedWorkspaces': approved, 'allowedRoots': roots}
 
 
 def main():
@@ -20,6 +41,9 @@ def main():
     parser.add_argument('--docker', default=shutil.which('docker'))
     parser.add_argument('--context', default='desktop-linux')
     parser.add_argument('--allowed-root', action='append', required=True)
+    parser.add_argument('--workspace-policy', choices=['approved-roots', 'registered'],
+                        help='registered admits active mounted workspaces without individual grants; omission preserves existing policy')
+    parser.add_argument('--approve-workspace', action='append', default=[], metavar='WORKSPACE_ID=PATH')
     parser.add_argument('--reserved-port', type=int, action='append', default=[443, 6767, 6768, 44443])
     parser.add_argument('--rollback')
     args = parser.parse_args()
@@ -31,6 +55,12 @@ def main():
     owned_plist(label, root / 'https_broker.py', Path.home() / 'Library/LaunchAgents')
     c['brokerLabel'] = label
     previous = json.loads((root / 'host-config.json').read_text()) if (root / 'host-config.json').exists() else {}
+    c = {**previous, **c}
+    mappings = {m['Destination']: m['Source'] for m in inspected['Mounts'] if m['Type'] == 'bind'}
+    for destination, host in previous.get('hostPathMappings', {}).items():
+        if mappings.get(destination) != host:
+            raise ValueError('Existing host bind mapping changed; review before reinstalling')
+    c['hostPathMappings'] = mappings
     source = Path(__file__).resolve().parent
     # Executables, configuration, ledger and lock must not be reachable through any
     # writable agent bind. Protect both direct mounts and ancestor mounts.
@@ -52,8 +82,11 @@ def main():
         previous = json.loads((root / 'host-config.json').read_text())
         if previous['allowedRoots'] != args.allowed_root:
             raise ValueError('Policy differs; review explicit policy update before reinstalling')
-    c.update(allowedRoots=args.allowed_root, reservedPorts=sorted(set(args.reserved_port) | set(previous.get('reservedPorts', []))),
+    c.update(workspacePolicy=args.workspace_policy or previous.get('workspacePolicy', 'approved-roots'),
+             allowedRoots=args.allowed_root, reservedPorts=sorted(set(args.reserved_port) | set(previous.get('reservedPorts', []))),
              portStart=32768, portEnd=60999, channel=str(channel), rollback=args.rollback or previous.get('rollback'))
+    if args.approve_workspace:
+        c.update(approve_workspaces(c, args.approve_workspace, Runtime(c).cli(['workspace', 'ls'])))
     base = [c['docker'], '--context', c['context']]
     ts = base + ['exec', c['container'], '/usr/local/bin/tailscale', '--socket=/run/tailscale/tailscaled.sock']
     status = json.loads(subprocess.check_output(ts + ['status', '--json']))

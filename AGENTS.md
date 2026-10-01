@@ -20,6 +20,7 @@ Vorton extends Paseo with multi-account agent workflows. This npm monorepo runs 
 ## Boundaries
 
 - Never restart the main daemon on port `6767` without explicit permission. It owns running agents. A timeout is not a reason to restart it.
+- Previews reuse the task workspace, service and HTTPS reservation. Never create a project or workspace solely to serve a preview or work around a broker rejection. Keep isolated code in its task worktree and follow the [preview workflow](docker/tailscale/AGENT-INSTRUCTIONS.md#preview-workspace-reuse).
 - Use the container installer for new installations. Run agents and provider tools inside it; do not install a host daemon, require host Tailscale or mount Docker's socket. Host Docker administration belongs to the operator.
 - Keep credentials, deployment details, account inventories, backups and acceptance receipts outside Git.
 - Primary web publication requires clean, committed integration source and the guarded build/publish scripts in [instance continuity](docs/instance-continuity.md). Task worktrees produce previews. Never publish raw exports or reuse another build directory; integrate the currently deployed source before rebuilding a stale candidate.
@@ -35,6 +36,12 @@ Vorton extends Paseo with multi-account agent workflows. This npm monorepo runs 
 - “Archive this out” means archive the current workspace and its threads with `archive_workspace`.
 - For “archive the thread”, inspect the containing workspace's unarchived threads. If this is its only remaining thread, archive the workspace; otherwise archive only the requested thread. Count threads by workspace identity, not by directory or visible tabs.
 - After archiving the selected workspace, return the user to the empty New workspace page. An archive requested through an agent must leave the same usable page as an archive from the interface.
+
+## Work outside the container
+
+- Whenever a task needs access or actions outside your container, prepare a self-contained handoff prompt and invite the user to run it in an agent session with the required access. Use this for diagnostics as well as implementation and deployment. Do not send the user individual diagnostic commands to run and relay back.
+- Complete the available work first. Include the objective, verified findings, relevant paths, changes already made, validation evidence, remaining work, acceptance checks and unresolved decisions. Tell the receiving agent to gather its own diagnostics and carry the task through completion.
+- Preserve existing authorization and restart boundaries. A handoff does not grant permission to interrupt running work. Prepare a concrete deployment and rollback plan before requesting any required restart approval. Keep machine-specific handoffs and deployment details outside Git; follow [host handoff guidance](docs/host-handoff.md).
 
 ## Check your work
 

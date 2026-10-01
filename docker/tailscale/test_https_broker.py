@@ -1,4 +1,5 @@
 import copy
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -7,7 +8,122 @@ import tempfile
 import time
 import unittest
 import uuid
-from https_broker import Broker, atomic, safe_read, validate
+from https_broker import Broker, Runtime, atomic, safe_read, validate
+
+
+class WorkspacePolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        self.cwd = '/home/paseo/.paseo/worktrees/project/site'
+        self.path = self.root / 'data/home/.paseo/worktrees/project/site'
+        self.path.mkdir(parents=True)
+        (self.path / 'paseo.json').write_text(json.dumps({'scripts': {'preview': {'type': 'service', 'command': 'npm run dev'}}}))
+        self.config = {'docker': '/docker', 'context': 'test', 'deployment': str(self.root),
+                       'allowedRoots': [self.cwd], 'approvedWorkspaces': {'wks_site': self.cwd}}
+        self.workspaces = [{'workspaceId': 'wks_site', 'cwd': self.cwd, 'isolation': 'worktree'}]
+        self.runtime = Runtime(self.config)
+        # CLI data is the boundary; policy and safe file reads use real directories.
+        self.runtime.cli = lambda args: self.workspaces if args == ['workspace', 'ls'] else [{'scriptName': 'preview', 'type': 'service'}]
+
+    def test_approved_active_worktree(self):
+        self.assertEqual(self.runtime.current('wks_site', 'preview')['cwd'], self.cwd)
+
+    def test_registered_policy_admits_future_workspaces_without_grants(self):
+        self.config.update(workspacePolicy='registered', allowedRoots=[], approvedWorkspaces={},
+                           hostPathMappings={})
+        for isolation in ('local', 'worktree'):
+            with self.subTest(isolation=isolation):
+                self.workspaces[0].update(workspaceId='wks_future', isolation=isolation)
+                self.assertEqual(self.runtime.current('wks_future', 'preview')['cwd'], self.cwd)
+
+    def test_registered_policy_requires_verified_mount_metadata(self):
+        self.config['workspacePolicy'] = 'registered'
+        with self.assertRaisesRegex(ValueError, 'requires verified host bind mappings'):
+            self.runtime.current('wks_site', 'preview')
+        self.config.update(hostPathMappings={}, approvedWorkspaces={})
+        self.workspaces[0]['cwd'] = '/unmounted/project'
+        with self.assertRaisesRegex(ValueError, 'no verified host bind mapping'):
+            self.runtime.current('wks_site', 'preview')
+
+    def test_registered_policy_rejects_archived_and_symlink_workspaces(self):
+        self.config.update(workspacePolicy='registered', allowedRoots=[], approvedWorkspaces={},
+                           hostPathMappings={})
+        self.workspaces[0]['archivedAt'] = '2026-09-29T00:00:00Z'
+        with self.assertRaisesRegex(ValueError, 'Unknown, archived'):
+            self.runtime.current('wks_site', 'preview')
+        del self.workspaces[0]['archivedAt']
+        self.path.rename(self.path.with_name('outside'))
+        self.path.symlink_to(self.path.with_name('outside'), target_is_directory=True)
+        with self.assertRaises(OSError):
+            self.runtime.current('wks_site', 'preview')
+
+    def test_registered_policy_reserves_ports_outside_legacy_roots(self):
+        self.config.update(workspacePolicy='registered', allowedRoots=[], approvedWorkspaces={},
+                           hostPathMappings={})
+        (self.path / 'paseo.json').write_text(json.dumps({'scripts': {
+            'preview': {'type': 'service', 'command': 'npm run dev', 'port': 40001}}}))
+        self.assertEqual(self.runtime.registered_ports(), {40001})
+
+    def test_unknown_policy_fails_closed(self):
+        self.config['workspacePolicy'] = 'typo'
+        with self.assertRaisesRegex(ValueError, 'Unsupported workspace policy'):
+            self.runtime.current('wks_site', 'preview')
+
+    def test_unapproved_worktree(self):
+        self.config['approvedWorkspaces'] = {}
+        with self.assertRaisesRegex(ValueError, 'explicit administrator approval'):
+            self.runtime.current('wks_site', 'preview')
+
+    def test_approved_worktree_outside_allowed_roots(self):
+        self.config['allowedRoots'] = ['/another/root']
+        with self.assertRaisesRegex(ValueError, 'outside administrator policy'):
+            self.runtime.current('wks_site', 'preview')
+
+    def test_moved_workspace(self):
+        self.config['allowedRoots'] = ['/home/paseo/.paseo/worktrees']
+        self.workspaces[0]['cwd'] += '-moved'
+        with self.assertRaisesRegex(ValueError, 'workspace moved'):
+            self.runtime.current('wks_site', 'preview')
+
+    def test_unknown_or_archived_workspace(self):
+        self.workspaces.clear()
+        with self.assertRaisesRegex(ValueError, 'Unknown, archived'):
+            self.runtime.current('wks_site', 'preview')
+
+    def test_local_workspace_keeps_root_approval(self):
+        self.workspaces[0]['isolation'] = 'local'
+        self.config['approvedWorkspaces'] = {}
+        self.assertEqual(self.runtime.current('wks_site', 'preview')['cwd'], self.cwd)
+
+    def test_symlink_escape(self):
+        self.path.rename(self.path.with_name('outside'))
+        self.path.symlink_to(self.path.with_name('outside'), target_is_directory=True)
+        with self.assertRaises(OSError):
+            self.runtime.current('wks_site', 'preview')
+
+    def test_translated_host_bind(self):
+        self.cwd = '/shared/site'
+        self.workspaces[0].update(cwd=self.cwd, isolation='local')
+        self.config.update(allowedRoots=['/shared'], approvedWorkspaces={}, hostPathMappings={'/shared': str(self.path.parent)})
+        self.assertEqual(self.runtime.current('wks_site', 'preview')['cwd'], self.cwd)
+
+    def test_unmapped_and_traversal_paths(self):
+        self.config['hostPathMappings'] = {}
+        with self.assertRaisesRegex(ValueError, 'no verified host bind'):
+            self.runtime.host_workspace('/unmapped/site')
+        with self.assertRaisesRegex(ValueError, 'Invalid container workspace path'):
+            self.runtime.host_workspace(self.cwd + '/../outside')
+
+    def test_installer_approval_preserves_policy(self):
+        spec = importlib.util.spec_from_file_location('installer', Path(__file__).with_name('install-https-broker.py'))
+        installer = importlib.util.module_from_spec(spec); spec.loader.exec_module(installer)
+        self.config.update(allowedRoots=['/existing'], approvedWorkspaces={'wks_existing': '/existing'})
+        policy = installer.approve_workspaces(self.config, ['wks_site=' + self.cwd], self.workspaces)
+        self.assertEqual(policy, {'allowedRoots': ['/existing', self.cwd], 'approvedWorkspaces': {'wks_existing': '/existing', 'wks_site': self.cwd}})
+        for approval in ['wks_site=/moved', 'wks_unknown=' + self.cwd, '../bad=' + self.cwd]:
+            with self.assertRaises(ValueError):
+                installer.approve_workspaces(self.config, [approval], self.workspaces)
 
 
 class Fake:

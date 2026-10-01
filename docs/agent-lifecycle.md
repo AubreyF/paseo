@@ -2,6 +2,12 @@
 
 How an agent is created, runs, becomes a subagent, gets archived, and disappears from the UI. The model spans the daemon (lifecycle, archive) and the client (tabs, the subagents track).
 
+## Creation retries
+
+Session creation requests with a `clientMessageId` reuse the agent created for that message, scoped to the owner principal and calling agent. Concurrent connections share the same creation operation. The daemon retains a receipt under its private home so later retries return the original agent without repeating the initial prompt or creating another workspace. Requests without a message ID keep the existing independent-creation behavior.
+
+Reusing an ID with different request contents is an error. A failure before agent allocation permits a retry. Once allocated, the receipt retains that agent even if its initial prompt fails. A receipt left pending by an interrupted daemon requires inspection of the existing task before a new submission; it never silently creates a replacement. Deleted agents are not recreated by replaying their original request.
+
 ## States
 
 ```

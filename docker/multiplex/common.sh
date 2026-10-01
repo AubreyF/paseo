@@ -32,7 +32,7 @@ paseo_wait() {
   local container health attempt
   container="$(paseo_compose ps -q paseo)"
   if [[ -z "$container" ]]; then
-    echo 'The Paseo container is not running. Inspect docker compose logs in this deployment.' >&2
+    echo 'The Vortao container is not running. Inspect docker compose logs in this deployment.' >&2
     return 1
   fi
   for attempt in $(seq 1 60); do
@@ -44,6 +44,6 @@ paseo_wait() {
     if [[ "$health" == exited || "$health" == dead ]]; then break; fi
     sleep 2
   done
-  echo 'Paseo is not ready. Inspect docker compose logs; HTTPS may need tailnet approval. No automatic restart was attempted.' >&2
+  echo 'Vortao is not ready. Inspect docker compose logs; HTTPS may need tailnet approval. No automatic restart was attempted.' >&2
   return 1
 }

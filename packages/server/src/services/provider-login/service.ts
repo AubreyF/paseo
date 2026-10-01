@@ -115,7 +115,7 @@ export class ProviderLoginService {
           status: "failed",
           attemptId,
           message:
-            "Could not start Codex sign-in. Check the host connection, update this account’s Codex CLI, and make sure device-code sign-in is enabled in ChatGPT’s security settings. Then try again.",
+            "Could not start account sign-in. Check the host connection and update this account’s CLI. For ChatGPT accounts, enable device-code sign-in in ChatGPT security settings. Then try again.",
         };
       }
       await this.release(attempt);
@@ -146,6 +146,23 @@ export class ProviderLoginService {
     attempt.state = { status: "succeeded", attemptId, accountLabel };
     this.options.onConnected(attempt.providerId);
     await this.release(attempt);
+  }
+
+  async submitCode(
+    providerId: string,
+    attemptId: string,
+    code: string,
+  ): Promise<ProviderLoginState> {
+    const attempt = this.attempts.get(providerId);
+    if (
+      !attempt ||
+      attempt.state.status !== "waiting" ||
+      attempt.state.attemptId !== attemptId ||
+      !attempt.session?.submitCode
+    )
+      throw new Error("This sign-in attempt is no longer accepting a code. Refresh its status.");
+    await attempt.session.submitCode(code);
+    return attempt.state;
   }
 
   async cancel(providerId: string, attemptId: string): Promise<ProviderLoginState> {

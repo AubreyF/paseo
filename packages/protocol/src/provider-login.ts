@@ -19,6 +19,7 @@ export const ProviderLoginStateSchema = z.discriminatedUnion("status", [
     attemptId: z.string(),
     verificationUrl: z.string(),
     userCode: z.string(),
+    inputRequired: z.boolean().optional(),
     expiresAt: z.string(),
   }),
   z.object({ status: z.literal("verifying"), attemptId: z.string() }),
@@ -58,5 +59,31 @@ export const ProviderLoginStartResponseSchema = z.object({
 });
 export const ProviderLoginCancelResponseSchema = z.object({
   type: z.literal("provider.login.cancel.response"),
+  payload: z.object({ requestId: z.string(), state: ProviderLoginStateSchema }),
+});
+
+export const ClaudeAccountCreateRequestSchema = z.object({
+  type: z.literal("provider.claude.create_account.request"),
+  requestId: z.string(),
+  creationId: z.string().uuid(),
+  name: z.string().min(1).max(100),
+});
+export const ClaudeAccountCreateResponseSchema = z.object({
+  type: z.literal("provider.claude.create_account.response"),
+  payload: z.object({ requestId: z.string(), providerId: z.string(), name: z.string() }),
+});
+export const ProviderLoginSubmitRequestSchema = z.object({
+  type: z.literal("provider.login.submit_code.request"),
+  requestId: z.string(),
+  providerId: z.string(),
+  attemptId: z.string(),
+  code: z
+    .string()
+    .min(1)
+    .max(4096)
+    .regex(/^[!-~]+$/),
+});
+export const ProviderLoginSubmitResponseSchema = z.object({
+  type: z.literal("provider.login.submit_code.response"),
   payload: z.object({ requestId: z.string(), state: ProviderLoginStateSchema }),
 });

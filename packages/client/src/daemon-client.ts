@@ -1874,7 +1874,7 @@ export class DaemonClient {
           return null;
         }
         if (!params.selectPayload) {
-          return payload as TResult;
+          return correlated.payload as TResult;
         }
         return params.selectPayload(payload);
       },
@@ -5276,6 +5276,18 @@ export class DaemonClient {
   async removeProvider(providerId: string, revision: string) {
     return this.sendNamespacedCorrelatedSessionRequest<"provider.connection.remove.response">({
       message: { type: "provider.connection.remove.request", providerId, revision },
+    });
+  }
+
+  async createClaudeAccount(creationId: string, name: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.claude.create_account.response">({
+      message: { type: "provider.claude.create_account.request", creationId, name },
+    });
+  }
+
+  async submitProviderLoginCode(providerId: string, attemptId: string, code: string) {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.login.submit_code.response">({
+      message: { type: "provider.login.submit_code.request", providerId, attemptId, code },
     });
   }
 

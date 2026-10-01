@@ -31,7 +31,9 @@ docker compose exec --user paseo paseo gh auth login
 docker compose exec --user paseo paseo bash
 ```
 
-For Claude Code, open the container shell above and run `claude auth login`, then `claude auth status`. Open the URL printed by Claude in your browser and follow its prompts. You can also use Vorton's Terminal, which already runs inside the container. If `claude` is missing, install Claude Code inside the container as `paseo` using the [official installation instructions](https://code.claude.com/docs/en/setup). Signing in on the Docker host does not sign in the container. Return to Claude's provider details and select Refresh after login.
+For additional Claude accounts, use **Settings → Providers → Add provider → Claude Code (Claude account)**. Start sign-in, open the browser link, and paste the returned code into the account panel. Each account gets its own configuration directory. New images install Claude Code with the pinned `PASEO_CLAUDE_PACKAGE` build argument.
+
+For the built-in Claude Code provider, open the container shell above and run `claude auth login`, then `claude auth status`. Open the URL printed by Claude in your browser and follow its prompts. You can also use Vorton's Terminal, which already runs inside the container. If `claude` is missing, install Claude Code inside the container as `paseo` using the [official installation instructions](https://code.claude.com/docs/en/setup). Signing in on the Docker host does not sign in the container. Return to Claude's provider details and select Refresh after login.
 
 For an additional Codex account configured manually, give its provider a distinct `env.CODEX_HOME` under `/home/paseo`, then supply that same path with `docker compose exec --user paseo -e CODEX_HOME=/home/paseo/ACCOUNT paseo codex login --device-auth`. Existing installations need a coordinated daemon restart after manual provider configuration changes.
 

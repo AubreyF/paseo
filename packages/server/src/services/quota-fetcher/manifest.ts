@@ -60,6 +60,20 @@ export function createProviderUsageFetchers(
 ): ProviderUsageFetcher[] {
   const configuredCodex = options.providers?.["codex"];
   const fetchers = PROVIDER_USAGE_FETCHERS.flatMap((entry) => {
+    if (entry.providerId === "claude") {
+      const configured = options.providers?.claude;
+      if (configured?.enabled === false) return [];
+      const claudeHome = configured?.env?.CLAUDE_CONFIG_DIR;
+      return [
+        new ClaudeQuotaProvider({
+          logger: options.logger,
+          fetch: options.fetch,
+          claudeHome,
+          displayName: configured?.label,
+          strictClaudeHome: claudeHome !== undefined,
+        }),
+      ];
+    }
     if (entry.providerId !== "codex") return [entry.create(options)];
     if (configuredCodex?.enabled === false) return [];
     const codexHome = configuredCodex?.env?.["CODEX_HOME"];
@@ -76,6 +90,19 @@ export function createProviderUsageFetchers(
   });
 
   for (const [providerId, provider] of Object.entries(options.providers ?? {})) {
+    if (providerId !== "claude" && provider.extends === "claude" && provider.enabled !== false) {
+      fetchers.push(
+        new ClaudeQuotaProvider({
+          logger: options.logger,
+          fetch: options.fetch,
+          providerId,
+          displayName: provider.label ?? providerId,
+          claudeHome: provider.env?.CLAUDE_CONFIG_DIR,
+          strictClaudeHome: true,
+        }),
+      );
+      continue;
+    }
     if (providerId === "codex" || provider.extends !== "codex" || provider.enabled === false) {
       continue;
     }

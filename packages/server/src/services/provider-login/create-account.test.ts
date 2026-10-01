@@ -87,7 +87,15 @@ it("persists isolated Claude account directories and reconciles retries without 
     extends: "claude",
     label: "Claude Work",
     enabled: true,
-    env: { CLAUDE_CONFIG_DIR: path.join(f.paseoHome, "claude-accounts", first.providerId) },
+    env: {
+      CLAUDE_CONFIG_DIR: path.join(f.paseoHome, "claude-accounts", first.providerId),
+      ANTHROPIC_API_KEY: "",
+      ANTHROPIC_AUTH_TOKEN: "",
+      CLAUDE_CODE_OAUTH_TOKEN: "",
+      CLAUDE_CODE_USE_BEDROCK: "0",
+      CLAUDE_CODE_USE_VERTEX: "0",
+      CLAUDE_CODE_USE_FOUNDRY: "0",
+    },
   });
   expect(providers[first.providerId].env).not.toEqual(providers[second.providerId].env);
   expect(providers.primary).toEqual(before.providers.primary);

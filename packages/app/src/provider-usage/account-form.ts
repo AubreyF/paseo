@@ -15,17 +15,25 @@ type AccountFormState =
   | { phase: "created"; account: CreatedCodexAccount };
 
 export function suggestedCodexAccountName(providers: MutableDaemonConfig["providers"]): string {
+  return suggestedAccountName(providers, "codex");
+}
+
+export function suggestedAccountName(
+  providers: MutableDaemonConfig["providers"],
+  provider: "codex" | "claude",
+): string {
+  const label = provider === "claude" ? "Claude" : "Codex";
   const accounts = Object.entries(providers).filter(
-    ([id, provider]) => id !== "codex" && provider.extends === "codex",
+    ([id, entry]) => id !== provider && entry.extends === provider,
   );
-  const active = accounts.filter(([, provider]) => provider.enabled !== false);
+  const active = accounts.filter(([, entry]) => entry.enabled !== false);
   const names = new Set<string>();
-  for (const [, provider] of accounts) {
-    if (typeof provider.label === "string") names.add(provider.label.trim().toLowerCase());
+  for (const [, entry] of accounts) {
+    if (typeof entry.label === "string") names.add(entry.label.trim().toLowerCase());
   }
   let number = active.length + 1;
-  while (names.has(`codex ${number}`)) number += 1;
-  return `Codex ${number}`;
+  while (names.has(`${label.toLowerCase()} ${number}`)) number += 1;
+  return `${label} ${number}`;
 }
 
 export function openAccountForm(creationId: string, ports: AccountFormPorts) {

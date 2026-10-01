@@ -10,7 +10,16 @@ export function providerConnectionAction(input: {
   if (!input.vortonMode) return null;
   if (input.usage?.authRecovery) return "Reconnect";
   const provider = input.providers?.[input.providerId];
-  const codex = input.providerId === "codex" || provider?.extends === "codex";
-  if (!codex || provider?.enabled === false || input.usage?.status === "available") return null;
+  const accountProvider = accountProviderKind(input.providerId, input.providers);
+  if (!accountProvider || provider?.enabled === false || input.usage?.status === "available")
+    return null;
   return "Connect";
+}
+
+export function accountProviderKind(
+  providerId: string,
+  providers: MutableDaemonConfig["providers"] | undefined,
+): "claude" | "codex" | null {
+  const base = providers?.[providerId]?.extends ?? providerId;
+  return base === "claude" || base === "codex" ? base : null;
 }

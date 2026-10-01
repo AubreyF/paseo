@@ -4,11 +4,13 @@
 
 ## Multiple accounts, one place to work
 
-Connect your Codex accounts once and run tasks under different accounts simultaneously. Choose the account for each task without repeatedly signing out and back in. Keep work moving across accounts while seeing which account each profile uses and when its usage limits reset.
+Connect your Codex and Claude accounts once and run tasks under different accounts simultaneously. Choose the account for each task without repeatedly signing out and back in. Keep work moving across accounts while seeing which account each profile uses and when its usage limits reset.
 
-For Claude Code, [sign in inside the container](docs/docker.md#accounts-and-tools). The authentication-monitoring update checks the CLI sign-in status before reporting readiness and requires a daemon update on existing installations. That update also makes configured Claude accounts read session history and model settings from their own configuration directories. Managed account deletion preserves shared and external account directories.
+For Claude, open **Settings → Providers → Add provider → Claude Code (Claude account)**. Name the account, start sign-in, open the official Claude sign-in page, and paste its return code into the account panel. The official CLI runs inside the container and stores each account separately. Accounts suggest names such as **Claude 1** and **Claude 2**, and support reconnect, rename, disable and removal. New container images include Claude Code; existing installations need an updated daemon and the CLI installed inside the container.
 
-See the [account connector roadmap](docs/roadmap.md#account-connectors) for account naming behavior and the planned Claude account connector.
+Claude availability checks the CLI sign-in status. Each account uses its own credentials, usage, session history and model settings. Removing an account preserves shared and external credential directories.
+
+See the [account connector roadmap](docs/roadmap.md#account-connectors) for account naming behavior and connector acceptance status.
 
 Save named profiles that combine an account, model, reasoning level, permissions and instructions. Switch from a fast everyday profile to a deeper reasoning profile, or choose a different account for your next task, directly from the composer. Set a default for new tasks and use short profile nicknames on smaller screens.
 

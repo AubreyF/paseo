@@ -8,7 +8,10 @@ import {
 import { QueueStoreError } from "./message-queue/store.js";
 import type { MessageQueueService } from "./message-queue/service.js";
 import { setAgentGoalWithContext } from "./agent/agent-goal.js";
-import { createCodexAccount } from "../services/provider-login/create-account.js";
+import {
+  createCodexAccount,
+  createClaudeAccount,
+} from "../services/provider-login/create-account.js";
 import type { ProviderLoginService } from "../services/provider-login/service.js";
 import { WorkspaceTitleSuggestionError } from "./workspace-title-suggestions.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
@@ -2806,6 +2809,34 @@ export class Session {
     }
   }
 
+  private dispatchAccountCreationMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "provider.codex.create_account.request":
+      case "provider.claude.create_account.request": {
+        const createAccount =
+          msg.type === "provider.claude.create_account.request"
+            ? createClaudeAccount
+            : createCodexAccount;
+        const account = createAccount({
+          paseoHome: this.paseoHome,
+          store: this.daemonConfigStore,
+          creationId: msg.creationId,
+          name: msg.name,
+        });
+        this.emit({
+          type:
+            msg.type === "provider.claude.create_account.request"
+              ? "provider.claude.create_account.response"
+              : "provider.codex.create_account.response",
+          payload: { requestId: msg.requestId, ...account },
+        });
+        return undefined;
+      }
+      default:
+        return undefined;
+    }
+  }
+
   private dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "set_agent_mode_request":
@@ -2818,19 +2849,6 @@ export class Session {
         return this.agentConfigSession.handleSetAgentThinkingRequest(msg);
       case "agent.config.apply.request":
         return this.agentConfigSession.handleAgentConfigApplyRequest(msg);
-      case "provider.codex.create_account.request": {
-        const account = createCodexAccount({
-          paseoHome: this.paseoHome,
-          store: this.daemonConfigStore,
-          creationId: msg.creationId,
-          name: msg.name,
-        });
-        this.emit({
-          type: "provider.codex.create_account.response",
-          payload: { requestId: msg.requestId, ...account },
-        });
-        return undefined;
-      }
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
@@ -2867,7 +2885,7 @@ export class Session {
       case "write_project_config_request":
         return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
       default:
-        return undefined;
+        return this.dispatchAccountCreationMessage(msg);
     }
   }
 
@@ -3108,6 +3126,7 @@ export class Session {
       case "provider.login.read.request":
       case "provider.login.start.request":
       case "provider.login.cancel.request":
+      case "provider.login.submit_code.request":
         return this.providerCatalogSession.handleProviderLoginRequest(msg);
       case "provider.reset.read.request":
       case "provider.reset.prepare.request":

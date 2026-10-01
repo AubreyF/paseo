@@ -142,3 +142,25 @@ it("exposes start failures without leaking provider output", async () => {
   expect(JSON.stringify(service.read("one"))).not.toContain("secret output");
   await service.dispose();
 });
+
+it("submits a browser code only to the matching live account attempt", async () => {
+  class BrowserSession extends LoginSession {
+    codes: string[] = [];
+    async submitCode(code: string) {
+      this.codes.push(code);
+    }
+  }
+  const session = new BrowserSession();
+  const f = fixture([session]);
+  const attempt = f.service.start("one");
+  if (attempt.status === "idle") throw new Error("Expected an attempt");
+  await expect.poll(() => f.service.read("one").status).toBe("waiting");
+  await expect(f.service.submitCode("two", attempt.attemptId, "wrong-account")).rejects.toThrow();
+  await expect(f.service.submitCode("one", "stale", "stale-code")).rejects.toThrow();
+  await f.service.submitCode("one", attempt.attemptId, "correct-code");
+  expect(session.codes).toEqual(["correct-code"]);
+  await f.service.cancel("one", attempt.attemptId);
+  await expect(f.service.submitCode("one", attempt.attemptId, "late-code")).rejects.toThrow();
+  expect(session.codes).toEqual(["correct-code"]);
+  await f.service.dispose();
+});

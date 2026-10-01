@@ -47,13 +47,17 @@ import {
 } from "./message-queue.js";
 import {
   CodexAccountCreateRequestSchema,
+  ClaudeAccountCreateRequestSchema,
   ProviderLoginReadRequestSchema,
   ProviderLoginStartRequestSchema,
   ProviderLoginCancelRequestSchema,
+  ProviderLoginSubmitRequestSchema,
   CodexAccountCreateResponseSchema,
+  ClaudeAccountCreateResponseSchema,
   ProviderLoginReadResponseSchema,
   ProviderLoginStartResponseSchema,
   ProviderLoginCancelResponseSchema,
+  ProviderLoginSubmitResponseSchema,
 } from "./provider-login.js";
 import { AgentProfileSchema, AgentSkillSelectionSchema } from "./agent-profile.js";
 export {
@@ -3254,11 +3258,13 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderResetPrepareRequestSchema,
   ProviderResetConfirmRequestSchema,
   CodexAccountCreateRequestSchema,
+  ClaudeAccountCreateRequestSchema,
   ProviderPreviewRemovalRequestSchema,
   ProviderRemoveRequestSchema,
   ProviderLoginReadRequestSchema,
   ProviderLoginStartRequestSchema,
   ProviderLoginCancelRequestSchema,
+  ProviderLoginSubmitRequestSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -3668,6 +3674,7 @@ export const ServerInfoStatusPayloadSchema = z
         providerResetCreditSelection: z.boolean().optional(),
         providerAccountLogin: z.boolean().optional(),
         codexAccountCreation: z.boolean().optional(),
+        claudeAccountCreation: z.boolean().optional(),
         providerCredentialRemoval: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
@@ -6984,11 +6991,13 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderUsageListResponseMessageSchema,
   ProviderQuotaObservationResponseMessageSchema,
   CodexAccountCreateResponseSchema,
+  ClaudeAccountCreateResponseSchema,
   ProviderPreviewRemovalResponseSchema,
   ProviderRemoveResponseSchema,
   ProviderLoginReadResponseSchema,
   ProviderLoginStartResponseSchema,
   ProviderLoginCancelResponseSchema,
+  ProviderLoginSubmitResponseSchema,
   ProviderResetReadResponseSchema,
   ProviderResetPrepareResponseSchema,
   ProviderResetConfirmResponseSchema,

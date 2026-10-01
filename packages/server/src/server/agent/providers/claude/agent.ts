@@ -1,3 +1,4 @@
+import { ClaudeLoginSession } from "./login.js";
 import { requireClaudeAuthentication } from "./authentication.js";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -1643,6 +1644,24 @@ export class ClaudeAgentClient implements AgentClient {
       request: input,
       context,
       resumeSession: this.resumeSession.bind(this),
+    });
+  }
+
+  async openAccountLoginSession() {
+    const launch = await resolveProviderLaunch({
+      commandConfig: this.runtimeSettings?.command,
+      defaultBinary: "claude",
+    });
+    const available = await checkProviderLaunchAvailable(launch);
+    if (!available.resolvedPath)
+      throw new Error("Install Claude Code on this host before signing in.");
+    const env = createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings });
+    const scope = env.CLAUDE_CONFIG_DIR ?? path.join(env.HOME ?? os.homedir(), ".claude");
+    return new ClaudeLoginSession({
+      executable: available.resolvedPath,
+      args: launch.args,
+      scope,
+      runtimeSettings: this.runtimeSettings,
     });
   }
 

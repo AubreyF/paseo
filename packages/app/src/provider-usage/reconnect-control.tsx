@@ -10,7 +10,7 @@ import { CompactAccountButton } from "./compact-account-button";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useVortonMode } from "@/vorton-mode";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { providerConnectionAction } from "./connection-action";
+import { accountProviderKind, providerConnectionAction } from "./connection-action";
 import { providerUsageQueryKey } from "./use-provider-usage";
 import { retainLastKnownUsage } from "./usage-cache";
 import type { ProviderUsage, ProviderUsageListPayload } from "./types";
@@ -39,6 +39,7 @@ export function ProviderReconnectControl({
 }) {
   const vortonMode = useVortonMode();
   const { config } = useDaemonConfig(serverId);
+  const claude = accountProviderKind(providerId, config?.providers) === "claude";
   const action = providerConnectionAction({
     vortonMode,
     providerId,
@@ -108,8 +109,13 @@ export function ProviderReconnectControl({
           testID="provider-reconnect-dialog"
         >
           <View style={styles.body}>
-            {recovery.method === "device_code" ? (
-              <ProviderLoginPanel serverId={serverId} providerId={providerId} name={name} />
+            {recovery.method === "device_code" || claude ? (
+              <ProviderLoginPanel
+                serverId={serverId}
+                providerId={providerId}
+                name={name}
+                provider={claude ? "claude" : "codex"}
+              />
             ) : (
               <>
                 <Text style={styles.text}>

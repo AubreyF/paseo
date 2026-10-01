@@ -14,7 +14,7 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
-import { AddCodexAccountButton } from "@/provider-usage/add-account";
+import { AddCodexAccountButton, AddClaudeAccountButton } from "@/provider-usage/add-account";
 import { useVortonMode } from "@/vorton-mode";
 import { getProviderIcon } from "@/components/provider-icons";
 
@@ -31,6 +31,7 @@ const PROVIDER_REMOTE_ICON_SIZE = 24;
 const ThemedPackagePlus = withUnistyles(PackagePlus);
 const ThemedSvgXml = withUnistyles(SvgXml);
 const ThemedSearch = withUnistyles(Search);
+const ClaudeIcon = withUnistyles(getProviderIcon("claude"));
 const CodexIcon = withUnistyles(getProviderIcon("codex"));
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
@@ -137,6 +138,7 @@ export function ProviderCatalogList({
   const showCodex =
     vortonMode && "codex openai chatgpt account".includes(search.trim().toLowerCase());
 
+  const showClaude = vortonMode && "claude account anthropic".includes(search.trim().toLowerCase());
   const installedIds = useMemo(
     () => new Set(providerEntries?.map((entry) => entry.provider) ?? []),
     [providerEntries],
@@ -169,7 +171,7 @@ export function ProviderCatalogList({
         />
       </View>
 
-      {availableEntries.length === 0 && !showCodex ? (
+      {availableEntries.length === 0 && !showCodex && !showClaude ? (
         <View style={styles.stateBox}>
           <Text style={styles.stateText}>{t("providerCatalog.noProviders")}</Text>
         </View>
@@ -187,6 +189,20 @@ export function ProviderCatalogList({
                 </Text>
               </View>
               <AddCodexAccountButton serverId={serverId} catalog style={styles.actionButton} />
+            </View>
+          ) : null}
+          {showClaude ? (
+            <View style={styles.row} testID="catalog-provider-claude">
+              <View style={styles.iconFrame}>
+                <ClaudeIcon size={PROVIDER_REMOTE_ICON_SIZE} uniProps={foregroundColorMapping} />
+              </View>
+              <View style={styles.textColumn}>
+                <Text style={styles.name}>Claude Code (Claude account)</Text>
+                <Text style={styles.description}>
+                  Connect a separate account using the official Claude CLI
+                </Text>
+              </View>
+              <AddClaudeAccountButton serverId={serverId} catalog style={styles.actionButton} />
             </View>
           ) : null}
           {availableEntries.map((entry) => (

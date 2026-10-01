@@ -1874,6 +1874,7 @@ export class VoiceAssistantWebSocketServer {
         providerResetManagement: true,
         providerResetCreditSelection: true,
         codexAccountCreation: true,
+        claudeAccountCreation: true,
         providerCredentialRemoval: true,
         providerAccountLogin: Object.values(
           this.providerSnapshotManager.getAgentManagerProviderState().clients,

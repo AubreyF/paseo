@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   openAccountForm,
   suggestedCodexAccountName,
+  suggestedAccountName,
   type CreatedCodexAccount,
 } from "./account-form";
 
@@ -99,4 +100,28 @@ it("submits the suggested name without requiring an edit", async () => {
     phase: "created",
     account: { providerId: "suggested", name: "Codex 3" },
   });
+});
+
+it("numbers additional Claude accounts independently and skips reserved names", () => {
+  expect(suggestedAccountName({}, "claude")).toBe("Claude 1");
+  expect(
+    suggestedAccountName(
+      {
+        claude: { enabled: true },
+        codexOne: { extends: "codex", enabled: true },
+        work: { extends: "claude", label: "Work", enabled: true },
+        personal: { extends: "claude", label: "Personal", enabled: true },
+      },
+      "claude",
+    ),
+  ).toBe("Claude 3");
+  expect(
+    suggestedAccountName(
+      {
+        work: { extends: "claude", label: "Claude 1", enabled: true },
+        disabled: { extends: "claude", label: "CLAUDE 2", enabled: false },
+      },
+      "claude",
+    ),
+  ).toBe("Claude 3");
 });

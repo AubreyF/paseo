@@ -11,13 +11,17 @@ export function useProviderLogin(serverId: string | null, providerId: string) {
   const cache = useQueryClient();
   const key = useMemo(() => ["providerLogin", serverId, providerId], [serverId, providerId]);
   const action = useMutation({
-    mutationFn: async (operation: "start" | "cancel") => {
+    gcTime: 0,
+    mutationFn: async (operation: "start" | "cancel" | { code: string }) => {
       if (!client || !connected) throw new Error("Reconnect to the host and try again.");
       await cache.cancelQueries({ queryKey: key });
       if (operation === "start") return (await client.startProviderLogin(providerId)).state;
       const state = cache.getQueryData<ProviderLoginState>(key);
       if (!state || state.status === "idle")
-        throw new Error("Refresh the sign-in status before cancelling.");
+        throw new Error("Refresh the sign-in status and try again.");
+      if (typeof operation === "object")
+        return (await client.submitProviderLoginCode(providerId, state.attemptId, operation.code))
+          .state;
       return (await client.cancelProviderLogin(providerId, state.attemptId)).state;
     },
     onSuccess: (state) => cache.setQueryData(key, state),
@@ -39,6 +43,17 @@ export function useProviderLogin(serverId: string | null, providerId: string) {
   const { mutate, reset } = action;
   const { refetch } = query;
   const start = useCallback(() => mutate("start"), [mutate]);
+  const { mutateAsync } = action;
+  const submitCode = useCallback(
+    async (code: string) => {
+      try {
+        return await mutateAsync({ code });
+      } finally {
+        reset();
+      }
+    },
+    [mutateAsync, reset],
+  );
   const cancel = useCallback(() => mutate("cancel"), [mutate]);
   const refresh = useCallback(() => {
     reset();
@@ -60,6 +75,7 @@ export function useProviderLogin(serverId: string | null, providerId: string) {
     refreshing: query.isFetching,
     start,
     cancel,
+    submitCode,
     refresh,
   };
 }

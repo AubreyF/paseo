@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useQueryClient } from "@tanstack/react-query";
@@ -14,19 +14,25 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { useVortonMode } from "@/vorton-mode";
 import { ProviderLoginPanel } from "./login-panel";
-import {
-  openAccountForm,
-  suggestedCodexAccountName,
-  type CreatedCodexAccount,
-} from "./account-form";
+import { openAccountForm, suggestedAccountName, type CreatedCodexAccount } from "./account-form";
 
 interface AddAccountProps {
   serverId: string;
+  provider: "codex" | "claude";
   onCreated?: (account: CreatedCodexAccount) => void;
 }
-const header = { title: "Add Codex account" };
+type AccountButtonProps = Omit<AddAccountProps, "provider"> & {
+  catalog?: boolean;
+  style?: StyleProp<ViewStyle>;
+};
+export function AddCodexAccountButton(props: AccountButtonProps) {
+  return <AddAccountButton {...props} provider="codex" />;
+}
+export function AddClaudeAccountButton(props: AccountButtonProps) {
+  return <AddAccountButton {...props} provider="claude" />;
+}
 
-export function AddCodexAccountButton({
+function AddAccountButton({
   catalog = false,
   style,
   ...props
@@ -43,9 +49,9 @@ export function AddCodexAccountButton({
         size={catalog ? "sm" : "md"}
         style={style}
         onPress={show}
-        testID="add-codex-account"
+        testID={`add-${props.provider}-account`}
       >
-        {catalog ? "Add" : "Add Codex account"}
+        {catalog ? "Add" : `Add ${props.provider === "claude" ? "Claude" : "Codex"} account`}
       </Button>
       {open ? <AccountSheet key={props.serverId} {...props} onClose={close} /> : null}
     </>
@@ -54,13 +60,20 @@ export function AddCodexAccountButton({
 
 function AccountSheet({ onClose, ...props }: AddAccountProps & { onClose: () => void }) {
   const { config } = useDaemonConfig(props.serverId);
-  const supported = useHostFeature(props.serverId, "codexAccountCreation");
+  const header = useMemo(
+    () => ({ title: `Add ${props.provider === "claude" ? "Claude" : "Codex"} account` }),
+    [props.provider],
+  );
+  const supported = useHostFeature(
+    props.serverId,
+    props.provider === "claude" ? "claudeAccountCreation" : "codexAccountCreation",
+  );
   const permissions = useSessionStore(
     (state) => state.sessions[props.serverId]?.serverInfo?.permissions,
   );
   const canManage = permissions?.includes("daemon.manage") !== false;
   let message: string | null = null;
-  if (!supported) message = "Update this host to add Codex accounts here.";
+  if (!supported) message = "Update this host to add accounts here.";
   else if (!canManage)
     message = "This connection needs permission to manage the host before it can add an account.";
   let content = <Text style={styles.text}>{message ?? "Loading accounts..."}</Text>;
@@ -68,7 +81,7 @@ function AccountSheet({ onClose, ...props }: AddAccountProps & { onClose: () => 
     content = (
       <AccountForm
         {...props}
-        initialName={suggestedCodexAccountName(config.providers)}
+        initialName={suggestedAccountName(config.providers, props.provider)}
         onClose={onClose}
       />
     );
@@ -79,7 +92,7 @@ function AccountSheet({ onClose, ...props }: AddAccountProps & { onClose: () => 
       header={header}
       onClose={onClose}
       desktopMaxWidth={520}
-      testID="add-codex-account-dialog"
+      testID={`add-${props.provider}-account-dialog`}
     >
       <View style={styles.body}>{content}</View>
     </AdaptiveModalSheet>
@@ -90,6 +103,7 @@ function useAccountForm({
   serverId,
   onCreated,
   initialName,
+  provider,
 }: AddAccountProps & { initialName: string }) {
   const client = useHostRuntimeClient(serverId);
   const cache = useQueryClient();
@@ -101,7 +115,10 @@ function useAccountForm({
       async create(creationId, name) {
         const current = live.current.client;
         if (!current) throw new Error("Reconnect to the host and try again.");
-        const account = await current.createCodexAccount(creationId, name);
+        const account =
+          provider === "claude"
+            ? await current.createClaudeAccount(creationId, name)
+            : await current.createCodexAccount(creationId, name);
         await cache.invalidateQueries({ queryKey: daemonConfigQueryKey(serverId) });
         await refreshAndApplyProvidersSnapshot({
           client: current,
@@ -136,8 +153,9 @@ function AccountForm({
           serverId={props.serverId}
           providerId={state.account.providerId}
           name={state.account.name}
+          provider={props.provider}
         />
-        <Button variant="outline" onPress={onClose} testID="codex-account-done">
+        <Button variant="outline" onPress={onClose} testID={`${props.provider}-account-done`}>
           Done
         </Button>
       </>
@@ -152,7 +170,7 @@ function AccountForm({
           editable={!creating}
           size={size}
           accessibilityLabel="Account name"
-          testID="codex-account-name"
+          testID={`${props.provider}-account-name`}
         />
       </Field>
       {state.error ? (
@@ -167,7 +185,7 @@ function AccountForm({
         onPress={model.submit}
         disabled={creating || !connected}
         loading={creating}
-        testID="codex-account-create"
+        testID={`${props.provider}-account-create`}
       >
         Create account
       </Button>

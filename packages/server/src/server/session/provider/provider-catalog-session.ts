@@ -514,7 +514,8 @@ export class ProviderCatalogSession {
         type:
           | "provider.login.read.request"
           | "provider.login.start.request"
-          | "provider.login.cancel.request";
+          | "provider.login.cancel.request"
+          | "provider.login.submit_code.request";
       }
     >,
   ): Promise<void> {
@@ -542,6 +543,15 @@ export class ProviderCatalogSession {
         this.host.emit({
           type: "provider.login.start.response",
           payload: { requestId: msg.requestId, state: service.start(msg.providerId) },
+        });
+        break;
+      case "provider.login.submit_code.request":
+        this.host.emit({
+          type: "provider.login.submit_code.response",
+          payload: {
+            requestId: msg.requestId,
+            state: await service.submitCode(msg.providerId, msg.attemptId, msg.code),
+          },
         });
         break;
       case "provider.login.cancel.request":

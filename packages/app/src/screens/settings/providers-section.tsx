@@ -400,15 +400,24 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const client = useHostRuntimeClient(serverId);
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
   const panelActive = useRetainedPanelActive();
-  const claudeEnabled =
-    entries?.some((entry) => entry.provider === "claude" && entry.enabled) ?? false;
+  const { config: monitorConfig } = useDaemonConfig(serverId);
+  const claudeProviders =
+    entries
+      ?.filter(
+        (entry) =>
+          entry.enabled &&
+          (entry.provider === "claude" ||
+            monitorConfig?.providers[entry.provider]?.extends === "claude"),
+      )
+      .map((entry) => entry.provider) ?? [];
+  const claudeEnabled = claudeProviders.length > 0;
   const monitorClaude = vortonMode && panelActive && isConnected && claudeEnabled;
   useFetchQuery({
     dataShape: "value",
     queryKey: ["claude-authentication-monitor", serverId],
     enabled: monitorClaude,
     queryFn: async () => {
-      await refresh(["claude"]);
+      await refresh(claudeProviders);
       return null;
     },
     staleTimeMs: 60_000,

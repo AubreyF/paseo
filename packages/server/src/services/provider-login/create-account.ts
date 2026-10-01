@@ -43,6 +43,21 @@ function createAccount(
       throw new AccountCreationError("The account configuration has no name.");
     return { providerId, name: existing.label };
   }
+  const env: Record<string, string> = { [homeVariable]: home };
+  if (provider === "claude") {
+    // Additional subscription accounts must not use credentials inherited from the daemon.
+    Object.assign(env, {
+      ANTHROPIC_API_KEY: "",
+      ANTHROPIC_AUTH_TOKEN: "",
+      CLAUDE_CODE_OAUTH_TOKEN: "",
+      CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: "",
+      CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR: "",
+      CLAUDE_CODE_USE_BEDROCK: "0",
+      CLAUDE_CODE_USE_VERTEX: "0",
+      CLAUDE_CODE_USE_FOUNDRY: "0",
+      ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+    });
+  }
   // The login session creates the directory. Never copy another account's credentials.
   input.store.patch({
     providers: {
@@ -50,7 +65,7 @@ function createAccount(
         extends: provider,
         label: name,
         enabled: true,
-        env: { [homeVariable]: home },
+        env,
       },
     },
   });

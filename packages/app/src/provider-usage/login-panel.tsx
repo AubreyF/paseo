@@ -1,8 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useProviderLogin } from "./use-provider-login";
 import type { ProviderLoginState } from "@getpaseo/protocol/provider-login";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
+import { Field, FormTextInput } from "@/components/ui/form-field";
 import { Button } from "@/components/ui/button";
 import { useSessionStore } from "@/stores/session-store";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
@@ -12,19 +14,24 @@ export function ProviderLoginPanel({
   serverId,
   providerId,
   name,
+  provider = "codex",
 }: {
   serverId: string | null;
   providerId: string;
   name: string;
+  provider?: "codex" | "claude";
 }) {
   const supported = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.providerAccountLogin === true,
+  );
+  const claudeSupported = useSessionStore(
+    (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.claudeAccountCreation === true,
   );
   const permissions = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.serverInfo?.permissions,
   );
   const canManage = permissions?.includes("daemon.manage") !== false;
-  if (!supported)
+  if (!supported || (provider === "claude" && !claudeSupported))
     return <Text style={styles.text}>Update this host to connect accounts here.</Text>;
   if (!canManage)
     return (
@@ -32,17 +39,26 @@ export function ProviderLoginPanel({
         This connection needs permission to manage the host before it can connect an account.
       </Text>
     );
-  return <LoginPanelContent serverId={serverId} providerId={providerId} name={name} />;
+  return (
+    <LoginPanelContent
+      serverId={serverId}
+      providerId={providerId}
+      name={name}
+      provider={provider}
+    />
+  );
 }
 
 function LoginPanelContent({
   serverId,
   providerId,
   name,
+  provider = "codex",
 }: {
   serverId: string | null;
   providerId: string;
   name: string;
+  provider?: "codex" | "claude";
 }) {
   const login = useProviderLogin(serverId, providerId);
   const { state, connected } = login;
@@ -50,8 +66,8 @@ function LoginPanelContent({
   return (
     <View style={styles.body} testID="provider-login-panel">
       <Text style={styles.text}>
-        Sign in to the ChatGPT account you want to use for {name}. Other account configurations and
-        running tasks stay in place.
+        Sign in to the {provider === "claude" ? "Claude" : "ChatGPT"} account you want to use for{" "}
+        {name}. Other account configurations and running tasks stay in place.
       </Text>
       {!connected ? (
         <Text style={styles.warning}>
@@ -74,7 +90,7 @@ function LoginPanelContent({
         </>
       ) : null}
       {state ? (
-        <LoginProgress state={state} />
+        <LoginProgress state={state} login={login} />
       ) : (
         <Text style={styles.text}>Loading sign-in status…</Text>
       )}
@@ -114,7 +130,15 @@ function LoginAction({ login }: { login: ReturnType<typeof useProviderLogin> }) 
   );
 }
 
-function LoginProgress({ state }: { state: ProviderLoginState }) {
+function LoginProgress({
+  state,
+  login,
+}: {
+  state: ProviderLoginState;
+  login: ReturnType<typeof useProviderLogin>;
+}) {
+  if (state.status === "waiting" && state.inputRequired)
+    return <BrowserCodeChallenge key={state.attemptId} state={state} login={login} />;
   if (state.status === "waiting")
     return <DeviceCodeChallenge key={state.attemptId} state={state} />;
   let message = "Start sign-in to request a one-time code.";
@@ -131,6 +155,72 @@ function LoginProgress({ state }: { state: ProviderLoginState }) {
     <Text accessibilityLiveRegion="polite" style={styles.text}>
       {message}
     </Text>
+  );
+}
+
+function BrowserCodeChallenge({
+  state,
+  login,
+}: {
+  state: Extract<ProviderLoginState, { status: "waiting" }>;
+  login: ReturnType<typeof useProviderLogin>;
+}) {
+  const [code, setCode] = useState("");
+  const input = useRef<EditingTextInputHandle>(null);
+  const { submitCode } = login;
+  const [notice, setNotice] = useState<string | null>(null);
+  const open = useCallback(async () => {
+    try {
+      await openExternalUrl(state.verificationUrl);
+    } catch {
+      setNotice("Could not open the browser. Copy the sign-in link below.");
+    }
+  }, [state.verificationUrl]);
+  const submit = useCallback(async () => {
+    try {
+      await submitCode(code.trim());
+      setCode("");
+      input.current?.reset();
+      setNotice("Code submitted. Waiting for Claude to confirm sign-in.");
+    } catch {
+      setNotice("Could not confirm code submission. Refresh status before trying again.");
+    }
+  }, [submitCode, code]);
+  return (
+    <View style={styles.body} testID="claude-browser-login">
+      <Text style={styles.text}>
+        Open Claude sign-in in your browser. If Claude gives you a code, paste it here to finish
+        connecting this account.
+      </Text>
+      <Button onPress={open}>Open Claude sign-in</Button>
+      <Text selectable style={styles.muted}>
+        {state.verificationUrl}
+      </Text>
+      <Field label="Sign-in code">
+        <FormTextInput
+          ref={input}
+          initialValue=""
+          onChangeText={setCode}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          accessibilityLabel="Sign-in code"
+          testID="claude-login-code"
+        />
+      </Field>
+      <Button
+        onPress={submit}
+        disabled={!code.trim() || login.busy || !login.connected}
+        loading={login.actionPending}
+      >
+        Complete sign-in
+      </Button>
+      {notice ? (
+        <Text accessibilityLiveRegion="polite" style={styles.text}>
+          {notice}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 

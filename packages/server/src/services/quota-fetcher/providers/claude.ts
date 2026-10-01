@@ -83,6 +83,9 @@ interface ClaudeCredentialRecord {
 interface ClaudeQuotaProviderOptions {
   logger: Logger;
   claudeHome?: string;
+  providerId?: string;
+  displayName?: string;
+  strictClaudeHome?: boolean;
   claudeKeychainReader?: () => Promise<unknown | null>;
   platform?: typeof process.platform;
   fetch?: ProviderApiFetch;
@@ -338,19 +341,27 @@ export async function readClaudeKeychainCredentials(
 }
 
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "claude";
-  readonly displayName = "Claude";
+  readonly providerId: string;
+  readonly displayName: string;
+  private readonly strictClaudeHome: boolean;
 
   private readonly logger: Logger;
-  private readonly claudeHome: string;
+  private readonly claudeHome: string | undefined;
   private readonly readKeychainCredentials: () => Promise<unknown | null>;
   private readonly platform: typeof process.platform;
   private readonly fetchApi: ProviderApiFetch;
 
   constructor(options: ClaudeQuotaProviderOptions) {
     this.logger = options.logger.child({ module: "claude-quota-provider" });
-    this.claudeHome =
-      options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
+    this.providerId = options.providerId ?? "claude";
+    this.displayName = options.displayName ?? "Claude";
+    this.strictClaudeHome = options.strictClaudeHome ?? false;
+    this.claudeHome = this.strictClaudeHome
+      ? options.claudeHome
+      : options.claudeHome ||
+        process.env["CLAUDE_CONFIG_DIR"] ||
+        process.env["CLAUDE_HOME"] ||
+        join(homedir(), ".claude");
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;
@@ -444,10 +455,14 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
+    if (!this.claudeHome) return null;
     const credPath = join(this.claudeHome, ".credentials.json");
     const fileCredentials = await this.readCredentialFile(credPath);
     return (
-      fileCredentials ?? (this.platform === "darwin" ? await this.readKeychainCredential() : null)
+      fileCredentials ??
+      (!this.strictClaudeHome && this.platform === "darwin"
+        ? await this.readKeychainCredential()
+        : null)
     );
   }
 

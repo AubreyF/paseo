@@ -231,7 +231,16 @@ async function install(planFile) {
   await run("tar", ["-xf", archive, "-C", release]);
   const logDir = path.join(plan.root, "logs");
   mkdirSync(logDir, { recursive: true, mode: 0o700 });
-  await build("npm", ["ci"], release, path.join(logDir, "dependencies.log"));
+  // A reviewed Git archive has no .git directory. Follow the existing snapshot
+  // build workflow: install dependencies without repository hooks, then apply
+  // the project's dependency patches explicitly.
+  await build(
+    "npm",
+    ["ci", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund"],
+    release,
+    path.join(logDir, "dependencies.log"),
+  );
+  await build("npm", ["run", "postinstall"], release, path.join(logDir, "dependency-patches.log"));
   await build("npm", ["run", "build:server"], release, path.join(logDir, "server-build.log"));
   await build("npm", ["run", "build:app-deps"], release, path.join(logDir, "app-deps.log"));
   await build("npm", ["run", "build:daemon-web-ui"], release, path.join(logDir, "web-build.log"), {

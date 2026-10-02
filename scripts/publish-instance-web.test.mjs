@@ -9,6 +9,8 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
+import { runInNewContext } from "node:vm";
+import { installationWebEntry } from "./installation-web-entry.mjs";
 import {
   assertIntegratedSource,
   digest,
@@ -20,8 +22,47 @@ import {
 const run = promisify(execFile);
 const publisher = path.resolve("scripts/publish-instance-web.mjs");
 
+test("installation entry preserves deep links without reading client credentials or storage", () => {
+  const entry = installationWebEntry("https://owner.example.test:44444");
+  let replaced;
+  const location = {
+    origin: "https://container.example.test",
+    pathname: "/h/container/workspace/known-conversation",
+    search: "?serverId=container&projectId=existing",
+    hash: "#draft",
+    replace: (url) => {
+      replaced = url;
+    },
+  };
+  runInNewContext(entry.script, { window: { location }, URL });
+  assert.equal(
+    replaced,
+    "https://owner.example.test:44444/h/container/workspace/known-conversation?serverId=container&projectId=existing#draft",
+  );
+  assert.match(entry.html, new RegExp(entry.scriptName));
+  assert.match(entry.html, /name="referrer" content="no-referrer"/);
+});
+
+test("installation entry rejects insecure or credential-bearing targets and does not loop", () => {
+  for (const origin of [
+    "http://owner.example.test",
+    "https://user:secret@owner.example.test",
+    "https://owner.example.test/path",
+    "https://owner.example.test?token=secret",
+    "https://owner.example.test#token",
+  ])
+    assert.throws(() => installationWebEntry(origin), /HTTPS origin/);
+  const entry = installationWebEntry("https://owner.example.test");
+  const status = { textContent: "" };
+  runInNewContext(entry.script, {
+    window: { location: { origin: entry.origin, replace: () => assert.fail("redirect loop") } },
+    document: { getElementById: () => status },
+  });
+  assert.match(status.textContent, /points to itself/);
+});
+
 async function fixture(t) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "publish-web-test-"));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "publish-web-test-")));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const repository = path.join(root, "repo");
   const destination = path.join(root, "served");
@@ -57,6 +98,31 @@ async function candidate(f, name, previous = null) {
 function publish(source, destination) {
   return run(process.execPath, [publisher, source, destination]);
 }
+
+test("installation redirects use guarded publication and record their target", async (t) => {
+  const f = await fixture(t);
+  const entry = installationWebEntry("https://owner.example.test:44444");
+  const directory = path.join(f.root, "redirect");
+  await fs.mkdir(directory);
+  await fs.writeFile(path.join(directory, "index.html"), entry.html);
+  await fs.writeFile(path.join(directory, entry.scriptName), entry.script);
+  await sealArtifact(directory, {
+    buildId: "redirect",
+    sourceCommit: git(f.repository, ["rev-parse", "HEAD"]),
+    sourceHash: digest("source"),
+    entrypoint: { kind: "installation", origin: entry.origin },
+    deployment: {
+      destination: f.destination,
+      expectedRelease: (await readLiveState(f.destination)).token,
+      integrationRef: "refs/heads/integration",
+      repository: f.repository,
+    },
+  });
+  await publish(directory, f.destination);
+  const live = await readLiveState(f.destination);
+  assert.deepEqual(live.release.entrypoint, { kind: "installation", origin: entry.origin });
+  assert.equal(await fs.readFile(path.join(f.destination, entry.scriptName), "utf8"), entry.script);
+});
 
 test("publication switches index and receipt together and preserves old chunks", async (t) => {
   const f = await fixture(t);

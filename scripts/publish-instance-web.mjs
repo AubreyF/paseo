@@ -111,6 +111,7 @@ try {
     sourceCommit: manifest.sourceCommit,
     sourceHash: manifest.sourceHash,
     integrationRef: manifest.deployment.integrationRef,
+    ...(manifest.entrypoint ? { entrypoint: manifest.entrypoint } : {}),
   };
   await fs.mkdir(releaseDirectory, { recursive: true });
   await fs.writeFile(path.join(releaseDirectory, "index.html"), html);

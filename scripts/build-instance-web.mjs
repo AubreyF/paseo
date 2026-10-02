@@ -14,15 +14,20 @@ import {
 } from "./instance-web-artifact.mjs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { installationWebEntry } from "./installation-web-entry.mjs";
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const { values } = parseArgs({
   options: {
     destination: { type: "string" },
     "integration-ref": { type: "string" },
     "adopt-legacy": { type: "string" },
+    "installation-origin": { type: "string" },
   },
 });
 const integrationRef = values["integration-ref"];
+const entry = values["installation-origin"]
+  ? installationWebEntry(values["installation-origin"])
+  : null;
 if (Boolean(values.destination) !== Boolean(integrationRef)) {
   throw new Error(
     "Primary builds require both --destination and --integration-ref; omit both for a preview.",
@@ -63,22 +68,29 @@ const env = {
 function run(command, args, cwd = root) {
   execFileSync(command, args, { cwd, env, stdio: "inherit" });
 }
-// Only npm's download cache is shared. Installed dependencies and generated files are private.
-run("npm", ["ci", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund"]);
-run("npm", ["run", "postinstall"]);
-console.log("Building application dependencies");
-run("npm", ["run", "build:app-deps"]);
-run(
-  "npx",
-  ["expo", "export", "--platform", "web", "--output-dir", path.join(root, "web-export")],
-  path.join(root, "packages/app"),
-);
 const exported = path.join(root, "web-export");
+if (entry) {
+  await fs.mkdir(exported);
+  await fs.writeFile(path.join(exported, "index.html"), entry.html);
+  await fs.writeFile(path.join(exported, entry.scriptName), entry.script);
+} else {
+  // Only npm's download cache is shared. Installed dependencies and generated files are private.
+  run("npm", ["ci", "--ignore-scripts", "--include=dev", "--no-audit", "--no-fund"]);
+  run("npm", ["run", "postinstall"]);
+  console.log("Building application dependencies");
+  run("npm", ["run", "build:app-deps"]);
+  run(
+    "npx",
+    ["expo", "export", "--platform", "web", "--output-dir", exported],
+    path.join(root, "packages/app"),
+  );
+}
 await sealArtifact(exported, {
   buildId: path.basename(root),
   sourceCommit,
   sourceHash,
   deployment,
+  ...(entry ? { entrypoint: { kind: "installation", origin: entry.origin } } : {}),
 });
 console.log("Export ready: " + exported);
 if (deployment)

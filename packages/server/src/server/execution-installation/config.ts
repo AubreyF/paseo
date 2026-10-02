@@ -12,6 +12,14 @@ const DaemonConnectionSchema = z.strictObject({
 
 export const InstallationConfigSchema = z.strictObject({
   public: ExecutionInstallationSchema,
+  redirectOrigins: z
+    .array(
+      z.url().refine((value) => {
+        const url = new URL(value);
+        return url.protocol === "https:" && url.origin === value;
+      }, "Redirect origins must be exact HTTPS origins"),
+    )
+    .optional(),
   listenPort: z.number().int().min(1024).max(65535),
   webDistDir: z.string().min(1),
   stateDir: z.string().min(1),

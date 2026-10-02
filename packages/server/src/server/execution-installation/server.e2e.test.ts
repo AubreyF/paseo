@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import type { Server } from "node:http";
+import { request as httpRequest, type Server, type IncomingMessage } from "node:http";
 import pino from "pino";
 import { hashDaemonPassword } from "../auth.js";
 import { createInstallationServer } from "./server.js";
@@ -96,6 +96,7 @@ async function fixture() {
       ],
     },
     listenPort: 6770,
+    redirectOrigins: ["https://previous.example.test"],
     webDistDir: root,
     stateDir: root,
     ownerPasswordHash: hashDaemonPassword("owner-test-password"),
@@ -152,10 +153,45 @@ async function fixture() {
         "Content-Type": "application/json",
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      redirect: "manual",
     });
   }
-  return { request, root, calls };
+  return { request, root, calls, url: `http://127.0.0.1:${address.port}` };
 }
+
+test("previous origins redirect navigation without accepting API credentials", async () => {
+  const { url } = await fixture();
+  function previousRequest(route: string, method = "GET", host = "previous.example.test") {
+    return new Promise<IncomingMessage>((resolve, reject) => {
+      const request = httpRequest(
+        `${url}${route}`,
+        {
+          method,
+          headers: {
+            Host: host,
+            Origin: "https://previous.example.test",
+            Authorization: "Bearer owner-test-password",
+          },
+        },
+        (response) => {
+          response.resume();
+          response.on("end", () => resolve(response));
+        },
+      );
+      request.on("error", reject);
+      request.end();
+    });
+  }
+  const response = await previousRequest("/workspaces/existing?thread=kept");
+  expect(response.statusCode).toBe(302);
+  expect(response.headers.location).toBe(
+    "https://owner.example.test/workspaces/existing?thread=kept",
+  );
+  expect(response.headers["cache-control"]).toBe("no-store");
+  expect((await previousRequest("/api/installation/owner/unlock", "POST")).statusCode).toBe(403);
+  expect((await previousRequest("/api/installation/health")).statusCode).toBe(403);
+  expect((await previousRequest("/", "GET", "unknown.example.test")).statusCode).toBe(403);
+});
 
 test("public HTML has environment identities but no credentials", async () => {
   const { request } = await fixture();

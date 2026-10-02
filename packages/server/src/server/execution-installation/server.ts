@@ -54,9 +54,25 @@ export function createInstallationServer(
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", "loopback");
+  const canonicalHost = new URL(config.public.origin).host;
+  const redirectHosts = new Set(
+    (config.redirectOrigins ?? []).map((origin) => new URL(origin).host),
+  );
   app.use((req, res, next) => {
+    const host = req.headers.host ?? "";
+    const legacyHost = host !== canonicalHost && redirectHosts.has(host);
+    if (legacyHost) {
+      res.setHeader("Cache-Control", "no-store");
+      const navigation = req.method === "GET" || req.method === "HEAD";
+      if (!navigation || req.path.startsWith("/api/")) {
+        res.sendStatus(403);
+        return;
+      }
+      res.redirect(302, `${config.public.origin}${req.originalUrl}`);
+      return;
+    }
     const allowedHosts = new Set([
-      new URL(config.public.origin).host,
+      canonicalHost,
       `127.0.0.1:${config.listenPort}`,
       `localhost:${config.listenPort}`,
     ]);

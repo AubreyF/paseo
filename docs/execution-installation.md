@@ -18,6 +18,14 @@ In Vorteo mode, Settings → General has **Prepare host update task** and **Prep
 
 The trusted installation interface disables agent browser automation and rejects client plugin bundles from the container or any unrecognized daemon. Client plugins from the explicitly configured native host remain trusted. This restriction applies in Standard mode too because that client holds host credentials. Ordinary interfaces retain their existing behavior.
 
+### Change the protected interface address
+
+An owner-managed HTTPS domain can serve the full protected interface through a trusted reverse proxy. Keep the proxy configuration, TLS keys, interface files and coordinator credentials outside guest-writable mounts. Proxy to the host coordinator, preserve the canonical Host header and verify the upstream certificate. Do not serve the privileged bundle from the development container.
+
+Set the coordinator's `public.origin` to the exact new HTTPS origin and add that origin to both daemons' explicit origin allowlists. Keep environment identities and endpoints unchanged. Restart only the coordinator to activate its configuration. Update installation and agent-client records to the new address. Back up each affected file and prepare rollback before deployment.
+
+Optional `redirectOrigins` lists previous protected HTTPS origins. They redirect page navigation to the canonical origin, preserving paths and queries. They refuse API calls, including owner authentication. Update maintenance clients rather than sending credentials through a redirect. The new origin has separate browser storage, so authenticate there to register the existing environment connections. Preserve old storage and do not copy guest plugins, automation state or credentials into the protected interface.
+
 ## Setup on the host
 
 Use the [host handoff workflow](host-handoff.md). The container session prepares source and validation; the host session gathers current Docker mounts, daemon identities, private networking, provider setup and service-context macOS permissions. Do not infer current deployment details from an old report.

@@ -3368,6 +3368,72 @@ describe("HostRuntimeStore", () => {
     }
   });
 
+  it.each([
+    { endpoint: "container.example.test", useTls: true, expected: "container.example.test:443" },
+    { endpoint: "localhost", useTls: false, expected: "localhost:80" },
+    { endpoint: "[::1]", useTls: true, expected: "[::1]:443" },
+    {
+      endpoint: "container.example.test:7443",
+      useTls: true,
+      expected: "container.example.test:7443",
+    },
+  ])(
+    "installs both environments with endpoint $endpoint",
+    async ({ endpoint, useTls, expected }) => {
+      const store = new HostRuntimeStore({
+        deps: {
+          createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+          connectToDaemon: async ({ host }) => ({
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label ?? null,
+          }),
+          getClientId: async () => "cid_test_runtime",
+        },
+      });
+      try {
+        await store.installExecutionEnvironments([
+          {
+            kind: "container",
+            serverId: "srv_container",
+            endpoint,
+            useTls,
+            password: "guest-secret",
+          },
+          {
+            kind: "host",
+            serverId: "srv_host",
+            endpoint: "host.example.test:44445",
+            useTls: true,
+            password: "host-secret",
+          },
+        ]);
+        expect(store.getHosts()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              serverId: "srv_container",
+              connections: [
+                expect.objectContaining({ endpoint: expected, useTls, password: "guest-secret" }),
+              ],
+            }),
+            expect.objectContaining({
+              serverId: "srv_host",
+              connections: [
+                expect.objectContaining({
+                  endpoint: "host.example.test:44445",
+                  useTls: true,
+                  password: "host-secret",
+                }),
+              ],
+            }),
+          ]),
+        );
+      } finally {
+        store.syncHosts([]);
+      }
+    },
+  );
+
   it("upsertDirectConnection stores SSL and password settings", async () => {
     const store = new HostRuntimeStore({
       deps: {

@@ -1725,7 +1725,10 @@ export class HostRuntimeStore {
     await this.boot();
     let profiles = this.hosts;
     for (const environment of connections) {
-      const endpoint = normalizeHostPort(environment.endpoint);
+      const address = new URL(`${environment.useTls ? "https" : "http"}://${environment.endpoint}`);
+      const endpoint = normalizeHostPort(
+        `${address.hostname}:${address.port || (environment.useTls ? "443" : "80")}`,
+      );
       profiles = upsertHostConnectionInProfiles({
         profiles,
         serverId: environment.serverId,

@@ -12,11 +12,11 @@ import { InstallationPanelModel } from "./panel-model";
 import type { RestartJob } from "@getpaseo/protocol/execution-installation";
 
 let panelModel: InstallationPanelModel | null = null;
-function getInstallationPanel(): InstallationPanelModel | null {
+function getInstallationPanel(registryLoaded: boolean): InstallationPanelModel | null {
   const installation = readExecutionInstallation();
   if (!installation) return null;
   const runtime = getHostRuntimeStore();
-  if (!runtime.isHostRegistryLoaded()) return null;
+  if (!registryLoaded) return null;
   if (!panelModel)
     panelModel = new InstallationPanelModel(
       new InstallationClient(installation, {
@@ -30,8 +30,8 @@ function getInstallationPanel(): InstallationPanelModel | null {
 
 export function InstallationControlsButton() {
   const vortonMode = useVortonMode();
-  useHostRegistryLoaded();
-  const model = getInstallationPanel();
+  const registryLoaded = useHostRegistryLoaded();
+  const model = getInstallationPanel(registryLoaded);
   const open = useCallback(() => model?.open(), [model]);
   if (!vortonMode || !model) return null;
   return (
@@ -42,8 +42,8 @@ export function InstallationControlsButton() {
 }
 
 export function InstallationPanelHost() {
-  useHostRegistryLoaded();
-  const model = getInstallationPanel();
+  const registryLoaded = useHostRegistryLoaded();
+  const model = getInstallationPanel(registryLoaded);
   return model ? <InstallationPanel model={model} /> : null;
 }
 

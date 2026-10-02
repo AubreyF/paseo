@@ -25,7 +25,10 @@ export class InstallationPanelModel {
 
   constructor(
     private readonly client: Pick<InstallationClient, "unlock" | "listRestarts" | "decide">,
-  ) {}
+    options: { connectionsRegistered: boolean } = { connectionsRegistered: false },
+  ) {
+    this.state.visible = !options.connectionsRegistered;
+  }
 
   getState = (): InstallationPanelState => this.state;
   subscribe = (listener: () => void): (() => void) => {

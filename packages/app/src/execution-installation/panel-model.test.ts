@@ -2,6 +2,28 @@ import { expect, test } from "vitest";
 import { InstallationPanelModel } from "./panel-model";
 import type { RestartJob } from "@getpaseo/protocol/execution-installation";
 
+test("saved connections skip setup on reload without unlocking owner controls", async () => {
+  let queries = 0;
+  const model = new InstallationPanelModel(
+    {
+      unlock: async () => {},
+      listRestarts: async () => {
+        queries++;
+        return [];
+      },
+      decide: async () => {
+        throw new Error("Unexpected approval");
+      },
+    },
+    { connectionsRegistered: true },
+  );
+  expect(model.getState()).toMatchObject({ visible: false, unlocked: false, password: "" });
+  await model.refresh();
+  expect(queries).toBe(0);
+  model.open();
+  expect(model.getState()).toMatchObject({ visible: true, unlocked: false });
+});
+
 test("opening or observing a request never approves it", async () => {
   let approvals = 0;
   const job: RestartJob = {

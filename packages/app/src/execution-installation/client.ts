@@ -6,6 +6,31 @@ import {
   type RestartJob,
 } from "@getpaseo/protocol/execution-installation";
 import type { HostRuntimeStore } from "@/runtime/host-runtime";
+import type { HostProfile } from "@/types/host-connection";
+import { normalizeHostPort } from "@getpaseo/protocol/daemon-endpoints";
+
+export function hasInstallationConnections(
+  installation: ExecutionInstallation,
+  profiles: readonly Pick<HostProfile, "serverId" | "connections">[],
+): boolean {
+  return installation.environments.every((environment) => {
+    const scheme = environment.useTls ? "https" : "http";
+    const address = new URL(`${scheme}://${environment.endpoint}`);
+    const port = address.port || (environment.useTls ? "443" : "80");
+    const endpoint = normalizeHostPort(`${address.hostname}:${port}`);
+    const profile = profiles.find((candidate) => candidate.serverId === environment.serverId);
+    return (
+      profile?.connections.some((connection) => {
+        if (connection.type !== "directTcp") return false;
+        return (
+          connection.endpoint === endpoint &&
+          connection.useTls === environment.useTls &&
+          Boolean(connection.password)
+        );
+      }) ?? false
+    );
+  });
+}
 
 export interface InstallationClientPorts {
   request(path: string, password: string, body: unknown): Promise<unknown>;

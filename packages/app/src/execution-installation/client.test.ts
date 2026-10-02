@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { InstallationClient } from "./client";
+import { InstallationClient, hasInstallationConnections } from "./client";
+import type { HostProfile } from "@/types/host-connection";
 import {
   validateExecutionInstallation,
   type InstallationUnlock,
@@ -14,6 +15,39 @@ const installation = validateExecutionInstallation({
     { kind: "container", serverId: "guest-id", endpoint: "guest.example.test", useTls: true },
     { kind: "host", serverId: "host-id", endpoint: "host.example.test", useTls: true },
   ],
+});
+
+test("reload recognizes both saved installation connections and rejects partial or changed targets", () => {
+  const profiles: Pick<HostProfile, "serverId" | "connections">[] = installation.environments.map(
+    (environment) => ({
+      serverId: environment.serverId,
+      connections: [
+        {
+          id: environment.kind,
+          type: "directTcp",
+          endpoint: `${environment.endpoint}:443`,
+          useTls: true,
+          password: "saved-connection-password",
+        },
+      ],
+    }),
+  );
+  expect(hasInstallationConnections(installation, profiles)).toBe(true);
+  expect(hasInstallationConnections(installation, profiles.slice(0, 1))).toBe(false);
+  profiles[1].connections = [
+    {
+      id: "host",
+      type: "directTcp",
+      endpoint: "other.example.test:443",
+      useTls: true,
+      password: "saved",
+    },
+  ];
+  expect(hasInstallationConnections(installation, profiles)).toBe(false);
+  profiles[1].connections = [
+    { id: "host", type: "directTcp", endpoint: "host.example.test:443", useTls: true },
+  ];
+  expect(hasInstallationConnections(installation, profiles)).toBe(false);
 });
 
 test("unlock registers both verified environments atomically without probing a fallback", async () => {

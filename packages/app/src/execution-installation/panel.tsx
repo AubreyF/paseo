@@ -1,13 +1,13 @@
-import { useCallback, useMemo, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useEffect, useSyncExternalStore } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { confirmDialog } from "@/utils/confirm-dialog";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHostRegistryLoaded } from "@/runtime/host-runtime";
 import { useVortonMode } from "@/vorton-mode";
 import { readExecutionInstallation } from "./policy";
-import { InstallationClient, requestInstallationOwner } from "./client";
+import { InstallationClient, requestInstallationOwner, hasInstallationConnections } from "./client";
 import { InstallationPanelModel } from "./panel-model";
 import type { RestartJob } from "@getpaseo/protocol/execution-installation";
 
@@ -15,18 +15,22 @@ let panelModel: InstallationPanelModel | null = null;
 function getInstallationPanel(): InstallationPanelModel | null {
   const installation = readExecutionInstallation();
   if (!installation) return null;
+  const runtime = getHostRuntimeStore();
+  if (!runtime.isHostRegistryLoaded()) return null;
   if (!panelModel)
     panelModel = new InstallationPanelModel(
       new InstallationClient(installation, {
         request: requestInstallationOwner,
-        register: getHostRuntimeStore(),
+        register: runtime,
       }),
+      { connectionsRegistered: hasInstallationConnections(installation, runtime.getHosts()) },
     );
   return panelModel;
 }
 
 export function InstallationControlsButton() {
   const vortonMode = useVortonMode();
+  useHostRegistryLoaded();
   const model = getInstallationPanel();
   const open = useCallback(() => model?.open(), [model]);
   if (!vortonMode || !model) return null;
@@ -38,7 +42,8 @@ export function InstallationControlsButton() {
 }
 
 export function InstallationPanelHost() {
-  const [model] = useState(getInstallationPanel);
+  useHostRegistryLoaded();
+  const model = getInstallationPanel();
   return model ? <InstallationPanel model={model} /> : null;
 }
 

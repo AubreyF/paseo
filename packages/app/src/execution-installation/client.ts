@@ -1,0 +1,82 @@
+import { z } from "zod";
+import {
+  InstallationUnlockSchema,
+  RestartJobSchema,
+  type ExecutionInstallation,
+  type RestartJob,
+} from "@getpaseo/protocol/execution-installation";
+import type { HostRuntimeStore } from "@/runtime/host-runtime";
+
+export interface InstallationClientPorts {
+  request(path: string, password: string, body: unknown): Promise<unknown>;
+  register: Pick<HostRuntimeStore, "installExecutionEnvironments">;
+}
+
+export class InstallationClient {
+  private password: string | null = null;
+
+  constructor(
+    private readonly installation: ExecutionInstallation,
+    private readonly ports: InstallationClientPorts,
+  ) {}
+
+  async unlock(password: string): Promise<void> {
+    const result = InstallationUnlockSchema.parse(await this.ports.request("unlock", password, {}));
+    if (result.installationId !== this.installation.installationId)
+      throw new Error("Installation identity changed");
+    for (const environment of this.installation.environments) {
+      const connection = result.connections.find(
+        (candidate) => candidate.kind === environment.kind,
+      );
+      if (
+        !connection ||
+        connection.serverId !== environment.serverId ||
+        connection.endpoint !== environment.endpoint ||
+        connection.useTls !== environment.useTls
+      ) {
+        throw new Error("Installation connection does not match its reviewed environment");
+      }
+    }
+    await this.ports.register.installExecutionEnvironments(result.connections);
+    this.password = password;
+  }
+
+  async listRestarts(): Promise<RestartJob[]> {
+    return z.array(RestartJobSchema).parse(await this.request("restarts/query", {}));
+  }
+
+  async decide(job: RestartJob, decision: "approve" | "reject"): Promise<void> {
+    RestartJobSchema.parse(
+      await this.request(`restarts/${job.id}/decision`, { revision: job.revision, decision }),
+    );
+  }
+
+  private request(path: string, body: unknown): Promise<unknown> {
+    if (this.password === null) throw new Error("Unlock installation controls first");
+    return this.ports.request(path, this.password, body);
+  }
+}
+
+export async function requestInstallationOwner(
+  path: string,
+  password: string,
+  body: unknown,
+): Promise<unknown> {
+  const response = await fetch(`/api/installation/owner/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${password}` },
+    body: JSON.stringify(body),
+    redirect: "error",
+    cache: "no-store",
+  });
+  if (response.status === 401) throw new Error("Incorrect installation password");
+  if (!response.ok) {
+    const detail = z
+      .object({ error: z.string().max(2000) })
+      .safeParse(await response.json().catch(() => null));
+    throw new Error(
+      detail.success ? detail.data.error : `Installation request failed (${response.status})`,
+    );
+  }
+  return response.json();
+}

@@ -46,7 +46,9 @@ machine and inside connected clients; install only code you trust.
 
 ## Updates
 
-Settings → General includes app information and update controls. In Vorteo mode, **Paseo upstream updates** shows the last upstream merge included in this interface and highlights it after a week. Copy the host prompt to have an agent merge and validate upstream changes while preserving the fork. Instance restarts require your approval.
+Settings → General includes app information and update controls. In Vorteo mode, **Paseo upstream updates** shows the last upstream merge included in this interface and highlights it after a week. The optional [host and container installation](docs/execution-installation.md) adds **Prepare host update task** and **Prepare host merge task**: review and edit a host-targeted message before manually sending it. Instance restarts require your approval.
+
+The macOS host extension is prepared in source and requires installation and acceptance on the host. It keeps the existing Docker container and adds a native daemon with full owner-account access, a protected shared interface, and owner-approved restart requests. It does not replace Docker with Apple Container. See the [setup and trust boundaries](docs/execution-installation.md).
 
 ## Install
 

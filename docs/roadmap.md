@@ -1,5 +1,10 @@
 # Vorteo Roadmap
 
+### Host and container execution in one installation
+
+- [ ] Deliver the [two-day host execution proposal](plans/execution-environments/README.md): one trusted Vorteo interface and installation setup managing the existing dev-container daemon and a separate native host daemon. Implementation authorized October 2, 2026 and prepared in source; native host installation and remote-device acceptance remain pending. The initial target is the existing macOS deployment, with explicit host authority and protected client/runtime storage.
+- [ ] Schedule the [independent follow-up projects](plans/execution-environments/README.md#independent-future-projects) separately: task containers, Apple Container, folder grants, environment authorization, credential brokering, Freed testing, browser trust, installation recovery, and deferred authentication/VM research. These are not requirements of the initial two-day scope.
+
 ### Automatic desktop builds and updates
 
 - [ ] Ship automatic custom-branch builds and private app updates for macOS, Windows, and Linux. See the [desktop build proposal](desktop-auto-builds.md) for findings, architecture, platform scope, versioning requirements, acceptance criteria, and the 7 to 10 engineering-day estimate. Recorded September 16, 2026; implementation is pending.

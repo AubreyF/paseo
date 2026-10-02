@@ -135,6 +135,7 @@ export async function buildClientConfig(
     clientType: "mobile" as const,
     appVersion: deps.resolveAppVersion() ?? undefined,
     suppressSendErrors: true,
+    ...(serverId ? { expectedServerId: serverId } : {}),
     reconnect: { enabled: false },
     ...(options?.capabilities ? { capabilities: options.capabilities } : {}),
     ...(options?.trace ? { trace: options.trace } : {}),

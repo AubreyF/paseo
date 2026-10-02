@@ -1,3 +1,4 @@
+import type { ExecutionInstallation } from "@getpaseo/protocol/execution-installation";
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { RequestHandler, Response } from "express";
@@ -144,6 +145,7 @@ export interface WebUiMiddlewareOptions {
   distDir: string | null;
   label: string;
   logger: Logger;
+  installation?: ExecutionInstallation;
 }
 
 export function createWebUiMiddleware(options: WebUiMiddlewareOptions): RequestHandler {
@@ -175,11 +177,19 @@ export function createWebUiMiddleware(options: WebUiMiddlewareOptions): RequestH
       return;
     }
 
-    serveWebUiFile({ distDir, requestPath: req.path, label, req, res });
+    serveWebUiFile({
+      distDir,
+      requestPath: req.path,
+      label,
+      req,
+      res,
+      installation: options.installation,
+    });
   };
 }
 
 interface ServeWebUiFileOptions {
+  installation?: ExecutionInstallation;
   distDir: string;
   requestPath: string;
   label: string;
@@ -213,7 +223,7 @@ function serveWebUiFile(options: ServeWebUiFileOptions): void {
   }
 
   if (isIndexHtml) {
-    sendIndexHtml(res, finalFile, req, label);
+    sendIndexHtml(res, finalFile, req, label, options.installation);
     return;
   }
 
@@ -233,10 +243,11 @@ function sendIndexHtml(
   filePath: string,
   req: Parameters<RequestHandler>[0],
   label: string,
+  installation?: ExecutionInstallation,
 ): void {
   try {
     const html = readFileSync(filePath, "utf-8");
-    const injected = injectConnectionHint(html, req, label);
+    const injected = injectConnectionHint(html, req, label, installation);
     res.status(200).send(injected);
   } catch {
     res.status(500).end();
@@ -254,6 +265,7 @@ function injectConnectionHint(
   html: string,
   req: Parameters<RequestHandler>[0],
   label: string,
+  installation?: ExecutionInstallation,
 ): string {
   const host = typeof req.headers.host === "string" ? req.headers.host : "";
   const useTls = req.protocol === "https";
@@ -262,7 +274,10 @@ function injectConnectionHint(
     useTls,
     label,
   };
-  const script = `<script>window.__PASEO_INITIAL_DAEMON_CONNECTION__=${serializeInlineScriptJson(hint)}</script>`;
+  const assignment = installation
+    ? `window.__VORTEO_EXECUTION_INSTALLATION__=${serializeInlineScriptJson(installation)}`
+    : `window.__PASEO_INITIAL_DAEMON_CONNECTION__=${serializeInlineScriptJson(hint)}`;
+  const script = `<script>${assignment}</script>`;
   const headClose = /<\/head>/i;
   if (headClose.test(html)) {
     return html.replace(headClose, `${script}</head>`);

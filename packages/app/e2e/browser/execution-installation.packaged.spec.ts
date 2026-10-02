@@ -1,0 +1,262 @@
+import { test, expect } from "@playwright/test";
+import { mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import type { Server } from "node:http";
+import pino from "pino";
+import {
+  startIsolatedHostDaemon,
+  type IsolatedHostDaemon,
+} from "../support/helpers/isolated-host-daemon";
+import { hashDaemonPassword } from "../../../server/src/server/auth";
+import { createInstallationServer } from "../../../server/src/server/execution-installation/server";
+import {
+  connectInstallationDaemon,
+  createInstallationRestartExecutor,
+} from "../../../server/src/server/execution-installation/daemon";
+import type { InstallationConfig } from "../../../server/src/server/execution-installation/config";
+import { pluginRequirements } from "../support/helpers/plugin-fixture";
+import { RestartJobSchema } from "@getpaseo/protocol/execution-installation";
+
+let root: string;
+let origin: string;
+let listener: Server;
+let config: InstallationConfig;
+const daemons: IsolatedHostDaemon[] = [];
+const ownerPassword = "installation-browser-owner-password";
+const guestToken = "installation-browser-guest-request-token";
+const hostToken = "installation-browser-host-request-token";
+
+async function request(route: string, token: string, body: unknown) {
+  return fetch(`${origin}/api/installation/${route}`, {
+    method: "POST",
+    headers: {
+      Origin: origin,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+test.beforeAll(async () => {
+  test.setTimeout(180_000);
+  root = await mkdtemp(path.join(tmpdir(), "vorteo-installation-browser-"));
+  for (const kind of ["container", "host"]) {
+    const home = await mkdtemp(path.join(tmpdir(), `vorteo-${kind}-browser-`));
+    await writeFile(
+      path.join(home, "config.json"),
+      JSON.stringify({
+        daemon: { auth: { password: hashDaemonPassword(`${kind}-test-password`) } },
+      }),
+    );
+    daemons.push(
+      await startIsolatedHostDaemon(`installation-${kind}-${randomUUID()}`, {
+        paseoHome: home,
+        environment: {
+          NODE_ENV: "development",
+          ...Object.fromEntries(
+            Object.keys(process.env)
+              .filter((key) => key.startsWith("PASEO_"))
+              .map((key) => [key, undefined]),
+          ),
+        },
+      }),
+    );
+  }
+  const guest = daemons[0]!;
+  const host = daemons[1]!;
+  const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+  config = {
+    public: {
+      version: 1,
+      installationId: randomUUID(),
+      origin: "http://127.0.0.1:6770",
+      environments: [
+        {
+          kind: "container",
+          serverId: guest.serverId,
+          endpoint: `127.0.0.1:${guest.port}`,
+          useTls: false,
+        },
+        {
+          kind: "host",
+          serverId: host.serverId,
+          endpoint: `127.0.0.1:${host.port}`,
+          useTls: false,
+        },
+      ],
+    },
+    listenPort: 6770,
+    webDistDir: path.resolve(__dirname, "../../../server/dist/server/web-ui"),
+    stateDir: root,
+    ownerPasswordHash: hashDaemonPassword(ownerPassword),
+    hostAgentTokenHash: hash(hostToken),
+    containerAgentTokenHash: hash(guestToken),
+    host: {
+      endpoint: `127.0.0.1:${host.port}`,
+      password: "host-test-password",
+      launchdService: "gui/501/local.vorteo.test.host",
+    },
+    container: { endpoint: `127.0.0.1:${guest.port}`, password: "container-test-password" },
+  };
+  const app = createInstallationServer(
+    config,
+    createInstallationRestartExecutor(config),
+    pino({ level: "silent" }),
+  );
+  listener = await new Promise((resolve) => {
+    const server = app.listen(0, "127.0.0.1", () => resolve(server));
+  });
+  const address = listener.address();
+  if (!address || typeof address === "string") throw new Error("Missing installation test port");
+  config.listenPort = address.port;
+  origin = `http://127.0.0.1:${address.port}`;
+  config.public.origin = origin;
+  for (const kind of ["host", "container"] as const) {
+    const client = await connectInstallationDaemon(config, kind);
+    try {
+      const home = kind === "host" ? host.paseoHome : guest.paseoHome;
+      const file = path.join(home, "config.json");
+      const persisted = JSON.parse(await readFile(file, "utf8"));
+      persisted.daemon.cors = { allowedOrigins: [origin] };
+      await writeFile(file, JSON.stringify(persisted));
+      await client.reloadDaemonConfig();
+      expect((await client.getDaemonConfig()).config.cors?.allowedOrigins).toContain(origin);
+      await client.patchDaemonConfig({ pluginsEnabled: true });
+      const directory = path.join(root, `${kind}-plugin`);
+      await mkdir(directory);
+      await writeFile(
+        path.join(directory, "paseo-plugin.json"),
+        JSON.stringify({ id: `${kind}-authority-test`, requirements: pluginRequirements }),
+      );
+      await writeFile(
+        path.join(directory, "index.client.ts"),
+        `export default function() { globalThis.__installationPluginKinds = [...(globalThis.__installationPluginKinds ?? []), "${kind}"]; return () => {}; }`,
+      );
+      await client.installDirectoryPlugin(directory);
+      expect(
+        (await client.getPluginCatalog()).some(
+          (plugin) => plugin.id === `${kind}-authority-test` && Boolean(plugin.clientBundle),
+        ),
+      ).toBe(true);
+    } finally {
+      await client.close();
+    }
+  }
+});
+
+test.afterAll(async () => {
+  if (listener) await new Promise<void>((resolve) => listener.close(() => resolve()));
+  for (const daemon of daemons.toReversed()) await daemon.close();
+  if (root) await rm(root, { recursive: true, force: true });
+});
+
+test("owner connects two environments, prepares host drafts, and approves a verified container restart", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("paseo-drafts"))
+      localStorage.setItem(
+        "paseo-drafts",
+        JSON.stringify({
+          version: 5,
+          state: {
+            drafts: {
+              "new-workspace": {
+                input: { text: "Keep my existing draft", attachments: [] },
+                lifecycle: "active",
+                updatedAt: Date.now(),
+                version: 1,
+              },
+            },
+            createModalDraft: null,
+          },
+        }),
+      );
+  });
+  await page.goto(origin);
+  await expect(page.getByTestId("installation-panel")).toBeVisible();
+  await page.getByTestId("installation-password").fill("incorrect");
+  await page.getByTestId("installation-unlock").click();
+  await expect(page.getByRole("alert")).toContainText("Incorrect installation password");
+  await page.getByTestId("installation-password").fill(ownerPassword);
+  await page.getByTestId("installation-unlock").click();
+  await expect(page.getByTestId("installation-panel")).not.toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => JSON.parse(localStorage.getItem("@paseo:daemon-registry") ?? "[]").length,
+      ),
+    )
+    .toBe(2);
+  await expect
+    .poll(() => page.evaluate(() => Reflect.get(globalThis, "__installationPluginKinds")))
+    .toEqual(["host"]);
+  await page.goto(`${origin}/settings/general`);
+  await page.getByTestId("installation-password").fill(ownerPassword);
+  await page.getByTestId("installation-unlock").click();
+  await page.getByTestId("settings-vorton-mode").getByLabel("Vorteo mode", { exact: true }).click();
+  await page.getByTestId("vorton-help-update").click();
+  await expect(page).toHaveURL(new RegExp(`serverId=${daemons[1]!.serverId}`));
+  const composer = page.getByRole("textbox", { name: "Message agent..." });
+  await expect(composer).toHaveValue(/trusted native host environment/);
+  await composer.fill("Review this update before making changes.");
+  expect(
+    await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("paseo-drafts") ?? "{}").state.drafts["new-workspace"].input
+          .text,
+    ),
+  ).toBe("Keep my existing draft");
+  await page.goBack();
+  await page.getByTestId("prepare-upstream-task").click();
+  await expect(page).toHaveURL(new RegExp(`serverId=${daemons[1]!.serverId}`));
+  await expect(composer).toHaveValue(/weekly upstream synchronization/);
+  const native = await connectInstallationDaemon(config, "host");
+  try {
+    expect((await native.fetchAgents()).entries).toEqual([]);
+  } finally {
+    await native.close();
+  }
+
+  expect((await request("container-agents", guestToken, { operation: "list" })).status).toBe(403);
+  const delegated = await request("container-agents", hostToken, { operation: "workspaces" });
+  expect(delegated.status).toBe(200);
+  expect(await delegated.json()).toMatchObject({
+    environment: "container",
+    serverId: daemons[0]!.serverId,
+  });
+  const job = RestartJobSchema.parse(
+    await (
+      await request("restart-requests", guestToken, {
+        target: "container-daemon",
+        reason: "Verify isolated test daemon restart",
+      })
+    ).json(),
+  );
+  expect(
+    (
+      await request(`owner/restarts/${job.id}/decision`, guestToken, {
+        revision: job.revision,
+        decision: "approve",
+      })
+    ).status,
+  ).toBe(401);
+  await expect(page.getByTestId(`restart-request-${job.id}`)).toContainText("pending");
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Verify isolated test daemon restart");
+    expect(dialog.message()).toContain("may be interrupted");
+    await dialog.accept();
+  });
+  await page.getByTestId(`restart-approve-${job.id}`).click();
+  await expect(page.getByTestId(`restart-request-${job.id}`)).toContainText("succeeded", {
+    timeout: 45_000,
+  });
+  await expect(page.getByTestId(`restart-request-${job.id}`)).toContainText(
+    "environment identity verified",
+  );
+  await page.screenshot({ path: testInfo.outputPath("installation-controls.png"), fullPage: true });
+});

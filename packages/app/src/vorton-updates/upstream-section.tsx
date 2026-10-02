@@ -1,3 +1,4 @@
+import { useMaintenanceTask } from "@/execution-installation/use-maintenance-task";
 import { useCallback, useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
@@ -21,6 +22,8 @@ export function UpstreamUpdatesSection() {
 
 function UpstreamUpdatesContent() {
   const { t, i18n } = useTranslation();
+  const prepareTask = useMaintenanceTask();
+  const prepareMerge = useCallback(() => prepareTask(UPSTREAM_UPDATE_PROMPT), [prepareTask]);
   const [now, setNow] = useState(Date.now);
   const [showPrompt, setShowPrompt] = useState(false);
   // Settings may stay open across the weekly boundary or a device sleep.
@@ -71,9 +74,13 @@ function UpstreamUpdatesContent() {
         )}
         <View style={styles.content}>
           <Text style={settingsStyles.rowHint}>
-            {t("settings.about.upstreamUpdates.instructions")}
+            Review and edit the suggested host task before sending it. Preparing a draft does not
+            start an update or merge.
           </Text>
           <View style={styles.actions}>
+            <Button size="md" onPress={prepareMerge} testID="prepare-upstream-task">
+              Prepare host merge task
+            </Button>
             <Button
               variant="outline"
               size="md"

@@ -1,0 +1,86 @@
+import { z } from "zod";
+
+export const ExecutionEnvironmentKindSchema = z.enum(["container", "host"]);
+export type ExecutionEnvironmentKind = z.infer<typeof ExecutionEnvironmentKindSchema>;
+
+export const InstallationEnvironmentSchema = z.strictObject({
+  kind: ExecutionEnvironmentKindSchema,
+  serverId: z.string().min(1),
+  endpoint: z.string().min(1),
+  useTls: z.boolean(),
+});
+export type InstallationEnvironment = z.infer<typeof InstallationEnvironmentSchema>;
+
+// This descriptor comes from the installed UI origin, never from an agent daemon.
+// Credentials are exchanged only after owner authentication, not in the HTML.
+export const ExecutionInstallationSchema = z.strictObject({
+  version: z.literal(1),
+  installationId: z.string().uuid(),
+  origin: z.url(),
+  environments: z.array(InstallationEnvironmentSchema).length(2),
+});
+export type ExecutionInstallation = z.infer<typeof ExecutionInstallationSchema>;
+
+export const InstallationConnectionSchema = InstallationEnvironmentSchema.extend({
+  password: z.string().min(1),
+});
+export const InstallationUnlockSchema = z.strictObject({
+  installationId: z.string().uuid(),
+  connections: z.array(InstallationConnectionSchema).length(2),
+});
+export type InstallationUnlock = z.infer<typeof InstallationUnlockSchema>;
+
+export const RestartTargetSchema = z.enum(["host", "container-daemon"]);
+export const RestartRequestSchema = z.strictObject({
+  target: RestartTargetSchema,
+  reason: z.string().trim().min(1).max(2000),
+});
+export type RestartRequest = z.infer<typeof RestartRequestSchema>;
+
+export const RestartJobSchema = RestartRequestSchema.extend({
+  id: z.string().uuid(),
+  revision: z.string().uuid(),
+  requestedBy: z.enum(["owner", "host-agent", "container-agent"]),
+  createdAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+  status: z.enum(["pending", "approved", "running", "succeeded", "failed", "rejected"]),
+  detail: z.string(),
+});
+export type RestartJob = z.infer<typeof RestartJobSchema>;
+
+export const RestartDecisionSchema = z.strictObject({
+  revision: z.string().uuid(),
+  decision: z.enum(["approve", "reject"]),
+});
+
+export const EXECUTION_ENVIRONMENT_LABELS: Record<ExecutionEnvironmentKind, string> = {
+  container: "Dev container",
+  host: "Host: full account access",
+};
+
+export function validateExecutionInstallation(input: unknown): ExecutionInstallation {
+  const installation = ExecutionInstallationSchema.parse(input);
+  const origin = new URL(installation.origin);
+  if (origin.origin !== installation.origin)
+    throw new Error("Installation origin must be an origin");
+  const isLoopback = origin.hostname === "localhost" || origin.hostname === "127.0.0.1";
+  if (origin.protocol !== "https:" && !(origin.protocol === "http:" && isLoopback)) {
+    throw new Error("Remote installation connections require HTTPS");
+  }
+  const kinds = new Set(installation.environments.map((environment) => environment.kind));
+  const ids = new Set(installation.environments.map((environment) => environment.serverId));
+  const endpoints = new Set(installation.environments.map((environment) => environment.endpoint));
+  if (kinds.size !== 2 || ids.size !== 2 || endpoints.size !== 2) {
+    throw new Error("Installation requires distinct host and container identities and endpoints");
+  }
+  for (const environment of installation.environments) {
+    const endpoint = new URL(`https://${environment.endpoint}`);
+    if (endpoint.host !== environment.endpoint || endpoint.username || endpoint.password) {
+      throw new Error("Environment endpoint must contain only a host and optional port");
+    }
+    const local = endpoint.hostname === "localhost" || endpoint.hostname === "127.0.0.1";
+    if (!environment.useTls && !local)
+      throw new Error("Remote environment connections require TLS");
+  }
+  return installation;
+}

@@ -16,4 +16,6 @@ Installation agents: follow the [installation agent instructions](../../README.m
 
 The installer builds the image from this checkout, then creates private persistent storage. The first build downloads dependencies and takes longer than subsequent builds. To reuse an existing image, pass its reference as the second argument.
 
+An explicitly authorized [macOS host extension](../../docs/execution-installation.md) can attach to this container and add full-account host execution in one protected interface. That separate setup requires host Tailscale and does not recreate this container.
+
 [Build, update and troubleshoot](../../docs/docker.md). [Optional workspace previews](../tailscale/README.md). Keep the deployment directory outside this checkout.

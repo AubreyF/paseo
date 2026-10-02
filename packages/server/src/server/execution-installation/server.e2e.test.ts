@@ -1,0 +1,191 @@
+import { afterEach, expect, test } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import type { Server } from "node:http";
+import pino from "pino";
+import { hashDaemonPassword } from "../auth.js";
+import { createInstallationServer } from "./server.js";
+import type { InstallationConfig } from "./config.js";
+import {
+  RestartJobSchema,
+  InstallationUnlockSchema,
+} from "@getpaseo/protocol/execution-installation";
+
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
+});
+
+async function fixture() {
+  const root = mkdtempSync(path.join(tmpdir(), "vorteo-installation-test-"));
+  writeFileSync(
+    path.join(root, "index.html"),
+    "<html><head></head><body>trusted application</body></html>",
+  );
+  const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+  const config: InstallationConfig = {
+    public: {
+      version: 1,
+      installationId: randomUUID(),
+      origin: "https://owner.example.test",
+      environments: [
+        { kind: "host", serverId: "host-id", endpoint: "host.example.test", useTls: true },
+        { kind: "container", serverId: "guest-id", endpoint: "guest.example.test", useTls: true },
+      ],
+    },
+    listenPort: 6770,
+    webDistDir: root,
+    stateDir: root,
+    ownerPasswordHash: hashDaemonPassword("owner-test-password"),
+    hostAgentTokenHash: hash("host-agent-test-token"),
+    containerAgentTokenHash: hash("guest-agent-test-token"),
+    host: {
+      endpoint: "127.0.0.1:6771",
+      password: "host-daemon-test-password",
+      launchdService: "gui/501/local.vorteo.test.host",
+    },
+    container: { endpoint: "127.0.0.1:6768", password: "guest-daemon-test-password" },
+  };
+  const calls: string[] = [];
+  const app = createInstallationServer(
+    config,
+    {
+      restart: async (target) => {
+        calls.push(target);
+        return "verified ready";
+      },
+    },
+    pino({ level: "silent" }),
+  );
+  const server: Server = await new Promise((resolve) => {
+    const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing test listener");
+  config.listenPort = address.port;
+  cleanups.push(async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      }),
+    );
+    rmSync(root, { recursive: true, force: true });
+  });
+  async function request(
+    route: string,
+    token?: string,
+    body?: unknown,
+    origin = config.public.origin,
+  ) {
+    return fetch(`http://127.0.0.1:${address.port}${route}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        Host: "owner.example.test",
+        Origin: origin,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "Content-Type": "application/json",
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+  return { request, root, calls };
+}
+
+test("public HTML has environment identities but no credentials", async () => {
+  const { request } = await fixture();
+  const response = await request("/");
+  const html = await response.text();
+  expect(response.status).toBe(200);
+  expect(html).toContain("__VORTEO_EXECUTION_INSTALLATION__");
+  for (const secret of [
+    "owner-test-password",
+    "host-daemon-test-password",
+    "guest-daemon-test-password",
+    "host-agent-test-token",
+  ])
+    expect(html).not.toContain(secret);
+});
+
+test("guest credentials can request a restart but cannot unlock, approve, or address outside agents", async () => {
+  const { request, calls } = await fixture();
+  const token = "guest-agent-test-token";
+  const job = RestartJobSchema.parse(
+    await (
+      await request("/api/installation/restart-requests", token, {
+        target: "host",
+        reason: "Prepared update",
+      })
+    ).json(),
+  );
+  expect(calls).toEqual([]);
+  expect((await request("/api/installation/owner/unlock", token, {})).status).toBe(401);
+  expect(
+    (
+      await request(`/api/installation/owner/restarts/${job.id}/decision`, token, {
+        revision: job.revision,
+        decision: "approve",
+      })
+    ).status,
+  ).toBe(401);
+  expect(
+    (await request("/api/installation/container-agents", token, { operation: "list" })).status,
+  ).toBe(403);
+  expect(
+    (await request("/api/installation/owner/unlock", "guest-daemon-test-password", {})).status,
+  ).toBe(401);
+  expect(
+    (
+      await request(
+        "/api/installation/owner/unlock",
+        "owner-test-password",
+        {},
+        "https://guest.example.test",
+      )
+    ).status,
+  ).toBe(403);
+  expect(calls).toEqual([]);
+});
+
+test("owner unlocks both separate connections and approves one immutable restart with a durable outcome", async () => {
+  const { request, root, calls } = await fixture();
+  const owner = "owner-test-password";
+  const unlocked = InstallationUnlockSchema.parse(
+    await (await request("/api/installation/owner/unlock", owner, {})).json(),
+  );
+  expect(unlocked.connections.map((entry) => entry.password)).toEqual([
+    "host-daemon-test-password",
+    "guest-daemon-test-password",
+  ]);
+  const job = RestartJobSchema.parse(
+    await (
+      await request("/api/installation/restart-requests", "guest-agent-test-token", {
+        target: "container-daemon",
+        reason: "Prepared update",
+      })
+    ).json(),
+  );
+  const approval = await request(`/api/installation/owner/restarts/${job.id}/decision`, owner, {
+    revision: job.revision,
+    decision: "approve",
+  });
+  expect(approval.status).toBe(200);
+  expect(calls).toEqual(["container-daemon"]);
+  expect(JSON.parse(readFileSync(path.join(root, "restart-jobs.json"), "utf8"))[0].status).toBe(
+    "succeeded",
+  );
+  expect(
+    (
+      await request(`/api/installation/owner/restarts/${job.id}/decision`, owner, {
+        revision: job.revision,
+        decision: "approve",
+      })
+    ).status,
+  ).toBe(409);
+  expect(calls).toHaveLength(1);
+});

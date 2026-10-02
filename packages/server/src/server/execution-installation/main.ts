@@ -1,0 +1,18 @@
+import pino from "pino";
+import { readInstallationConfig } from "./config.js";
+import { createInstallationServer } from "./server.js";
+import { createInstallationRestartExecutor } from "./daemon.js";
+
+const configFile = process.argv[2];
+if (!configFile) throw new Error("Usage: installation-entrypoint <private-config-file>");
+const config = readInstallationConfig(configFile);
+const logger = pino({ name: "vorteo-installation" });
+const app = createInstallationServer(config, createInstallationRestartExecutor(config), logger);
+const server = app.listen(config.listenPort, "127.0.0.1", () =>
+  logger.info("Installation coordinator ready"),
+);
+server.on("error", (error) => {
+  logger.error({ err: error }, "Installation listener failed");
+  process.exitCode = 1;
+});
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => server.close());

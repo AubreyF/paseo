@@ -1,15 +1,12 @@
+import { useMaintenanceTask } from "@/execution-installation/use-maintenance-task";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Text, View } from "react-native";
-import { useRouter } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
-import { useDraftStore } from "@/stores/draft-store";
-import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
-import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useVortonMode } from "@/vorton-mode";
@@ -27,20 +24,12 @@ export function VortonUpdatesSection() {
   const { isLoading: preferencesLoading } = useFormPreferences();
   const { t } = useTranslation();
   const update = useVortonUpdate();
-  const router = useRouter();
+  const prepareTask = useMaintenanceTask();
   const checking = update.isFetching || update.feedback.phase === "checking";
   const showSuccess = update.feedback.phase === "success" && !update.isFetching;
   const help = useCallback(() => {
-    const draftId = generateDraftId();
-    useDraftStore.getState().saveDraftInput({
-      draftKey: buildNewWorkspaceDraftKey(draftId),
-      draft: {
-        text: buildUpdatePrompt(VORTON_BUILD_COMMIT, update.data?.latestCommit ?? null),
-        attachments: [],
-      },
-    });
-    router.push(buildNewWorkspaceRoute({ draftId }));
-  }, [router, update.data?.latestCommit]);
+    prepareTask(buildUpdatePrompt(VORTON_BUILD_COMMIT, update.data?.latestCommit ?? null));
+  }, [prepareTask, update.data?.latestCommit]);
   const changes = useCallback(() => {
     const url =
       VORTON_BUILD_COMMIT && update.data && update.data.status !== "unpublished"
@@ -90,7 +79,7 @@ export function VortonUpdatesSection() {
             {t("settings.about.vortonUpdates.changes")}
           </Button>
           <Button size="md" onPress={help} testID="vorton-help-update">
-            {t("settings.about.vortonUpdates.help")}
+            Prepare host update task
           </Button>
         </View>
         <View style={styles.hintArea} testID="vorton-update-feedback-area">
@@ -101,7 +90,7 @@ export function VortonUpdatesSection() {
             importantForAccessibility={showSuccess ? "no-hide-descendants" : "auto"}
             testID="vorton-update-instructions"
           >
-            {t("settings.about.vortonUpdates.instructions")}
+            Review and edit the host task, select a project and agent, then send it when ready.
           </Text>
           {showSuccess && (
             <View style={styles.feedbackOverlay} pointerEvents="none">

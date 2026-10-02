@@ -1,3 +1,4 @@
+import { InstallationControlsButton } from "@/execution-installation/panel";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import { usePanelStore } from "@/stores/panel-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -618,6 +619,7 @@ function AboutSection({ appVersion, appVersionText, isDesktopApp }: AboutSection
           {isDesktopApp ? <DesktopAppUpdateRow /> : null}
         </View>
       </SettingsSection>
+      <InstallationControlsButton />
       <VortonUpdatesSection />
       <UpstreamUpdatesSection />
       <ConnectedHostsSection clientVersion={appVersion} />

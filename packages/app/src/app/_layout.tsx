@@ -1,4 +1,5 @@
 import "@/styles/unistyles";
+import { InstallationPanelHost } from "@/execution-installation/panel";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { PortalProvider } from "@gorhom/portal";
 import * as Linking from "expo-linking";
@@ -614,6 +615,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <KeyboardShortcutsDialog />
         <AppDiagnosticHost />
         <ChangelogHost />
+        <InstallationPanelHost />
         <QuittingOverlay />
       </AppearanceStyleBoundary>
     </View>

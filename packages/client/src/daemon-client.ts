@@ -339,6 +339,8 @@ export interface DaemonClientConfig {
   clientType?: "mobile" | "browser" | "cli" | "mcp" | "hub";
   appVersion?: string;
   runtimeGeneration?: number | null;
+  /** Pin installation connections across reconnects before any queued work is sent. */
+  expectedServerId?: string;
   password?: string;
   authHeader?: string;
   suppressSendErrors?: boolean;
@@ -1195,6 +1197,7 @@ export class DaemonClient {
   private readonly logClientIdHash: string;
   private readonly logGeneration: number | null;
   private lastServerInfoMessage: ServerInfoStatusPayload | null = null;
+  private identityVerified = false;
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
   private pingProbe: PingProbe | null = null;
@@ -1331,6 +1334,7 @@ export class DaemonClient {
         headers,
         ...(protocols ? { protocols } : {}),
       });
+      this.identityVerified = false;
       this.transport = transport;
       this.lastServerInfoMessage = null;
 
@@ -6674,6 +6678,22 @@ export class DaemonClient {
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
+    if (this.config.expectedServerId) {
+      const info = msg.type === "status" ? parseServerInfoStatusPayload(msg.payload) : null;
+      if (info && info.serverId !== this.config.expectedServerId) {
+        const reason = "Connected daemon identity does not match the selected environment";
+        this.shouldReconnect = false;
+        this.disposeTransport(1008, reason);
+        this.scheduleReconnect({
+          reason,
+          event: "IDENTITY_REJECTED",
+          reasonCode: "identity_mismatch",
+        });
+        return;
+      }
+      if (info) this.identityVerified = true;
+      if (!this.identityVerified) return;
+    }
     msg = this.owned.normalize(msg);
     if (
       msg.type === "providers_snapshot_update" &&

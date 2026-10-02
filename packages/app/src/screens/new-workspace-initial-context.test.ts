@@ -36,6 +36,26 @@ function multiplicity(entries: Record<string, boolean> = {}): ReadonlyMap<string
 }
 
 describe("resolveNewWorkspaceInitialServerId", () => {
+  it("keeps the installation container selected when the privileged host is the only online daemon", () => {
+    const input = {
+      allServerIds: ["host", "container"],
+      defaultExecutionServerId: "container",
+      routeServerId: null,
+      lastActiveProject: null,
+      projects: [],
+      hostConnectionStatusByServerId: statuses({ host: "online", container: "offline" }),
+      workspaceMultiplicityByServerId: multiplicity(),
+    };
+    expect(resolveNewWorkspaceInitialServerId(input)).toBe("container");
+    expect(
+      resolveNewWorkspaceAutomaticServerId({
+        ...input,
+        currentServerId: "container",
+        nextServerId: "host",
+      }),
+    ).toBe("container");
+    expect(resolveNewWorkspaceInitialServerId({ ...input, routeServerId: "host" })).toBe("host");
+  });
   it("prefers explicit route host context over online-host fallback", () => {
     expect(
       resolveNewWorkspaceInitialServerId({

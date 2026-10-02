@@ -1,3 +1,4 @@
+import { allowClientPlugins, readExecutionInstallation } from "@/execution-installation/policy";
 import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -19,6 +20,7 @@ export class PluginRegistry {
   constructor(
     private readonly dependencies: {
       version: string | null;
+      allowHost?: (serverId: string) => boolean;
       createRuntime: typeof createPluginClientRuntime;
     },
   ) {}
@@ -42,6 +44,12 @@ export class PluginRegistry {
       client: DaemonClient;
     },
   ): boolean {
+    // Daemon-supplied bundles execute in this client's authority. Container code
+    // must never run inside the installation UI that holds native-host credentials.
+    if (this.dependencies.allowHost && !this.dependencies.allowHost(serverId)) {
+      this.removeHost(serverId);
+      return false;
+    }
     const previous = this.byHost.get(serverId) ?? [];
     const previousTimelineBundles = previous
       .filter((plugin) => plugin.timelineTransformers.length > 0)
@@ -177,6 +185,7 @@ export class PluginRegistry {
 
 export const pluginRegistry = new PluginRegistry({
   version: resolveAppVersion(),
+  allowHost: (serverId) => allowClientPlugins(readExecutionInstallation(), serverId),
   createRuntime: createPluginClientRuntime,
 });
 

@@ -1,3 +1,8 @@
+import {
+  EXECUTION_ENVIRONMENT_LABELS,
+  type InstallationUnlock,
+} from "@getpaseo/protocol/execution-installation";
+import { allowBrowserAutomation, readExecutionInstallation } from "@/execution-installation/policy";
 import { useSyncExternalStore, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import equal from "fast-deep-equal/es6";
@@ -494,6 +499,7 @@ function probeIntervalForConnection(
 
 function createDefaultDeps(): HostRuntimeControllerDeps {
   const browserHostAvailable =
+    allowBrowserAutomation(readExecutionInstallation()) &&
     typeof getDesktopHost()?.browser?.executeAutomationCommand === "function";
   const browserAutomationCapabilities = browserHostAvailable
     ? {
@@ -517,6 +523,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         clientType: "mobile",
         appVersion: resolveAppVersion() ?? undefined,
         runtimeGeneration,
+        ...(host.serverId ? { expectedServerId: host.serverId } : {}),
         capabilities: appCapabilities,
         trace: nativePerformanceTrace,
         providerSnapshots: "wire",
@@ -1464,7 +1471,7 @@ export class HostRuntimeStore {
       return;
     }
 
-    if (shouldUseDesktopDaemon()) {
+    if (shouldUseDesktopDaemon() || readExecutionInstallation()) {
       return;
     }
 
@@ -1710,6 +1717,43 @@ export class HostRuntimeStore {
     void this.persistHosts().catch((error) =>
       console.error("[HostRuntime] Failed to persist host registry", error),
     );
+  }
+
+  async installExecutionEnvironments(
+    connections: InstallationUnlock["connections"],
+  ): Promise<void> {
+    await this.boot();
+    let profiles = this.hosts;
+    for (const environment of connections) {
+      const endpoint = normalizeHostPort(environment.endpoint);
+      profiles = upsertHostConnectionInProfiles({
+        profiles,
+        serverId: environment.serverId,
+        label: EXECUTION_ENVIRONMENT_LABELS[environment.kind],
+        connection: {
+          id: `direct:${endpoint}`,
+          type: "directTcp",
+          endpoint,
+          useTls: environment.useTls,
+          password: environment.password,
+        },
+      });
+    }
+    profiles = profiles.map((profile) => {
+      const environment = connections.find(
+        (connection) => connection.serverId === profile.serverId,
+      );
+      if (!environment) return profile;
+      return {
+        ...profile,
+        label: EXECUTION_ENVIRONMENT_LABELS[environment.kind],
+        appearance: { ...profile.appearance, badgeDisplay: "name" as const },
+      };
+    });
+    // Publish both identities together. An initially offline container must not
+    // leave the new-workspace selector with the host as its only known target.
+    this.setHostsAndSync(profiles);
+    await this.persistHosts();
   }
 
   async upsertDirectConnection(input: {

@@ -1,3 +1,9 @@
+import {
+  readExecutionInstallation,
+  installationDefaultServerId,
+  findInstallationEnvironment,
+} from "@/execution-installation/policy";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import { useVortonMode } from "@/vorton-mode";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardTranslateView } from "@/keyboard/shift";
@@ -1196,6 +1202,7 @@ function useNewWorkspaceHostSelector(input: {
   const defaultServerId = useMemo(
     () =>
       resolveNewWorkspaceInitialServerId({
+        defaultExecutionServerId: installationDefaultServerId(readExecutionInstallation()),
         allServerIds: input.allServerIds,
         routeServerId: input.initialServerId,
         lastActiveProject: input.lastActiveProject,
@@ -1227,6 +1234,7 @@ function useNewWorkspaceHostSelector(input: {
       const nextServerId =
         current.routeServerId === routeServerId
           ? resolveNewWorkspaceAutomaticServerId({
+              defaultExecutionServerId: installationDefaultServerId(readExecutionInstallation()),
               allServerIds: input.allServerIds,
               routeServerId: input.initialServerId,
               lastActiveProject: input.lastActiveProject,
@@ -1947,7 +1955,17 @@ export function NewWorkspaceScreen({
   );
 
   const handleSelectWorkspaceHost = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      const environment = findInstallationEnvironment(readExecutionInstallation(), id);
+      if (environment?.kind === "host" && id !== selectedServerId) {
+        const approved = await confirmDialog({
+          title: "Run on the host?",
+          message:
+            "Agents and terminals here have full access to your host account, including its files and credentials.",
+          confirmLabel: "Use host",
+        });
+        if (!approved) return;
+      }
       handleSelectHost(id);
       clearPickerSelectionForTargetChange(selectedServerId, id);
     },

@@ -67,14 +67,28 @@ export async function delegateToContainer(
         messageId: request.messageId,
       });
       return { sent: request.messageId, agentId: request.agentId };
-    case "create":
+    case "create": {
+      let cursor: string | undefined;
+      let cwd: string | undefined;
+      do {
+        const page = await client.fetchWorkspaces({ page: { limit: 200, cursor } });
+        const workspace = page.entries.find((entry) => entry.id === request.workspaceId);
+        if (workspace) {
+          cwd = workspace.workspaceDirectory;
+          break;
+        }
+        cursor = page.pageInfo.hasMore ? (page.pageInfo.nextCursor ?? undefined) : undefined;
+      } while (cursor);
+      if (!cwd) throw new Error("Container workspace was not found");
       return client.createAgent({
         provider: request.provider,
+        cwd,
         workspaceId: request.workspaceId,
         title: request.title,
         initialPrompt: request.initialPrompt,
         idempotencyKey: request.idempotencyKey,
         model: request.model,
       });
+    }
   }
 }

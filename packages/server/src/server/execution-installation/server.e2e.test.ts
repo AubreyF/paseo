@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,12 +8,72 @@ import pino from "pino";
 import { hashDaemonPassword } from "../auth.js";
 import { createInstallationServer } from "./server.js";
 import type { InstallationConfig } from "./config.js";
+import { delegateToContainer, type DelegationClient } from "./delegation.js";
 import {
   RestartJobSchema,
   InstallationUnlockSchema,
 } from "@getpaseo/protocol/execution-installation";
 
 const cleanups: Array<() => Promise<void>> = [];
+
+test("delegated creation resolves a paginated workspace to its working directory", async () => {
+  // Isolate directory lookup from provider execution, which requires account credentials.
+  const createAgent = vi.fn(async (options: Parameters<DelegationClient["createAgent"]>[0]) => {
+    if (!options.cwd) throw new Error("createAgent requires provider and cwd");
+    return { id: "worker-id" };
+  });
+  const fetchWorkspaces = vi
+    .fn()
+    .mockResolvedValueOnce({ entries: [], pageInfo: { hasMore: true, nextCursor: "next" } })
+    .mockResolvedValueOnce({
+      entries: [
+        { id: "workspace-id", workspaceDirectory: "/worktrees/worker", projectRootPath: "/repo" },
+      ],
+      pageInfo: { hasMore: false, nextCursor: null },
+    });
+  const client = { fetchWorkspaces, createAgent } as unknown as DelegationClient;
+  const request = {
+    operation: "create" as const,
+    idempotencyKey: randomUUID(),
+    provider: "codex",
+    workspaceId: "workspace-id",
+    title: "Worker",
+    initialPrompt: "Inspect the workspace",
+  };
+  expect(await delegateToContainer(client, request)).toEqual({ id: "worker-id" });
+  expect(fetchWorkspaces.mock.calls).toEqual([
+    [{ page: { limit: 200, cursor: undefined } }],
+    [{ page: { limit: 200, cursor: "next" } }],
+  ]);
+  expect(createAgent).toHaveBeenCalledWith({
+    provider: request.provider,
+    cwd: "/worktrees/worker",
+    workspaceId: request.workspaceId,
+    title: request.title,
+    initialPrompt: request.initialPrompt,
+    idempotencyKey: request.idempotencyKey,
+    model: undefined,
+  });
+});
+
+test("delegated creation rejects an unknown workspace before starting a worker", async () => {
+  const createAgent = vi.fn();
+  const client = {
+    fetchWorkspaces: async () => ({ entries: [], pageInfo: { hasMore: false, nextCursor: null } }),
+    createAgent,
+  } as unknown as DelegationClient;
+  await expect(
+    delegateToContainer(client, {
+      operation: "create",
+      idempotencyKey: randomUUID(),
+      provider: "codex",
+      workspaceId: "missing",
+      title: "Worker",
+      initialPrompt: "Inspect the workspace",
+    }),
+  ).rejects.toThrow("Container workspace was not found");
+  expect(createAgent).not.toHaveBeenCalled();
+});
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
 });

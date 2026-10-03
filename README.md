@@ -1,6 +1,6 @@
 # Vorteo (Vorton + Paseo)
 
-- [Vorton](https://github.com/AubreyF/vorton) is a visual control plane for AI operating systems and software factories.
+- [Vorton](https://github.com/AubreyF/vorton) is an elegant visual control plane for AI operating systems and software factories.
 - Vorteo extends [Paseo](https://github.com/getpaseo/paseo) for seamless Vorton integration. It also adds multiple Codex accounts, usage visibility, reusable profiles, task goals, cross-device message queuing, and a smoother ux. I've used it to build massive open-source projects such as [Freed](https://freed.wtf). I'm sharing it as open source to empower other OS devs with max agentic leverage and efficiency. Let's steer the course of history, together.
 
 ## Multiple accounts, one place to work

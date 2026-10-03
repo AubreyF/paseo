@@ -1,3 +1,7 @@
+import {
+  ExecutionEnvironmentIcon,
+  useHasExecutionEnvironment,
+} from "@/execution-installation/environment-icon";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
@@ -7,6 +11,13 @@ import {
 
 export function HostStatusDot({ serverId }: { serverId: string }) {
   const status = useHostRuntimeConnectionStatus(serverId);
+  const hasEnvironment = useHasExecutionEnvironment(serverId);
+  if (hasEnvironment)
+    return (
+      <View accessibilityLabel={`Connection ${status}`}>
+        <ExecutionEnvironmentIcon serverId={serverId} />
+      </View>
+    );
 
   return <View style={[styles.dot, statusStyle(status)]} />;
 }

@@ -1,3 +1,4 @@
+import { ExecutionEnvironmentIcon } from "@/execution-installation/environment-icon";
 import { AccountPresetMenu } from "./account-preset-menu";
 import { accountPresets } from "./account-presets";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -274,6 +275,7 @@ export function PresetControls({
             remaining={remaining}
             stale={Boolean(statusLabel)}
           />
+          <ExecutionEnvironmentIcon serverId={serverId} />
           <Text style={styles.toolbarText} numberOfLines={1}>
             {triggerLabel}
           </Text>

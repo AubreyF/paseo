@@ -1,3 +1,4 @@
+import { ExecutionEnvironmentIcon } from "@/execution-installation/environment-icon";
 import { useVortonTouch } from "@/vorton-touch";
 import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import { sharedChoiceState, type LaunchChoices } from "./shared-choices";
@@ -100,6 +101,7 @@ export function AccountPresetMenu(props: AccountPresetMenuProps) {
       {accounts.map((group) => (
         <View key={group.provider} style={styles.account}>
           <AccountButton
+            serverId={props.serverId}
             group={group}
             active={!compact && group === account}
             selectedId={selectedId}
@@ -239,12 +241,14 @@ function useSharedChoices(props: AccountPresetMenuProps, account: AccountPresets
 }
 
 function AccountButton({
+  serverId,
   group,
   active,
   selectedId,
   onInspect,
   renderRail,
 }: {
+  serverId: string | null;
   group: AccountPresets;
   active: boolean;
   selectedId: string | undefined;
@@ -255,19 +259,24 @@ function AccountButton({
     () => onInspect(group.rows.find((row) => row.id === selectedId)?.id ?? group.rows[0].id),
     [group, selectedId, onInspect],
   );
+  const environmentIcon = useMemo(
+    () => <ExecutionEnvironmentIcon serverId={serverId} />,
+    [serverId],
+  );
   const usage = useMemo(
     () => <View style={styles.usage}>{renderRail(group.rows[0])}</View>,
     [group, renderRail],
   );
   return (
     <ComboboxItem
+      leadingSlot={environmentIcon}
       descriptionSlot={usage}
       descriptionPlacement="below"
       labelNumberOfLines={1}
       label={group.label}
       labelStyle={styles.accountTitle}
       active={active}
-      selectionPlacement="leading"
+      selectionPlacement="trailing"
       selectionIndicatorSize={24}
       selected={group.rows.some((row) => row.id === selectedId)}
       onPress={select}

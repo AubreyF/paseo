@@ -135,7 +135,7 @@ export default {
     },
     web: {
       output: "single",
-      favicon: "./assets/images/favicon.png",
+      // The HTML template advertises a content-addressed icon for installed web apps.
     },
     autolinking: {
       searchPaths: ["../../node_modules", "./node_modules"],

@@ -1,3 +1,6 @@
+import { useMemo } from "react";
+import { Image } from "react-native";
+import { useVortonMode } from "@/vorton-mode";
 import Svg, { Path } from "react-native-svg";
 import { useUnistyles } from "react-native-unistyles";
 
@@ -9,6 +12,28 @@ interface PaseoLogoProps {
 export function PaseoLogo({ size = 64, color }: PaseoLogoProps) {
   const { theme } = useUnistyles();
   const fill = color ?? theme.colors.foreground;
+  const vorteoMode = useVortonMode();
+  const imageStyle = useMemo(
+    () => ({ width: size, height: size, ...(color ? { tintColor: color } : {}) }),
+    [size, color],
+  );
+
+  if (vorteoMode) {
+    // Use the approved raster so the hidden turn survives without retracing it.
+    const lightForeground = parseInt(theme.colors.foreground.slice(1, 3), 16) > 127;
+    return (
+      <Image
+        source={
+          lightForeground
+            ? require("../../../assets/brand/vorteo-white.png")
+            : require("../../../assets/brand/vorteo-dark.png")
+        }
+        style={imageStyle}
+        resizeMode="contain"
+        accessibilityLabel="Vorteo"
+      />
+    );
+  }
 
   return (
     <Svg width={size} height={size} viewBox="0 0 700 700" fill="none">

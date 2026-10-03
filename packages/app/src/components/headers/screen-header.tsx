@@ -3,7 +3,7 @@ import { ComposerDockBackground } from "@/composer/dock";
 import { useMemo, type ReactNode } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { View, type StyleProp, type ViewStyle } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useChromeInsets } from "@/appearance/use-chrome-insets";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   HEADER_INNER_HEIGHT,
@@ -37,7 +37,7 @@ export function ScreenHeader({
   onRowLayout,
 }: ScreenHeaderProps) {
   const { theme } = useUnistyles();
-  const insets = useSafeAreaInsets();
+  const insets = useChromeInsets();
   const isMobile = useIsCompactFormFactor();
   const vorton = useVortonMode();
   // The row already provides the touch target; Vorton needs only the system safe area.

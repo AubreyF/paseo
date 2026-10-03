@@ -55,11 +55,10 @@ export function importEnvironmentProfiles(sources: ProfileImport[]): ImportedPro
               };
               return isDeepStrictEqual(candidateBehavior, behavior);
             });
-        let id = matching?.id ?? workflow.id;
-        if (!matching && target.workflows.some((entry) => entry.id === id)) {
-          const suffix = createHash("sha256").update(source.serverId).digest("hex").slice(0, 12);
-          id = `${workflow.id}-${suffix}`;
-        }
+        const digest = createHash("sha256")
+          .update(JSON.stringify([source.serverId, type, workflow.id]))
+          .digest("hex");
+        const id = matching?.id ?? `installation-workflow-${digest}`;
         mapping[workflow.id] = id;
         if (!matching) {
           const imported = inheritProviderDefaults({ ...effective, id }, target.defaults);
@@ -86,7 +85,23 @@ export function projectEnvironmentProfiles(input: {
     const mapped = input.workflowIds[binding.providerType]?.[binding.workflowId];
     if (mapped) binding.workflowId = mapped;
   }
-  return { ...preferences, providers: structuredClone(input.providers), legacyProfiles };
+  const workflowAliases = structuredClone(preferences.workflowAliases ?? {});
+  for (const [type, mapping] of Object.entries(input.workflowIds)) {
+    const aliases = workflowAliases[type] ?? {};
+    for (const [oldId, target] of Object.entries(aliases))
+      aliases[oldId] = mapping[target] ?? target;
+    for (const [oldId, target] of Object.entries(mapping)) {
+      if (oldId !== target) aliases[oldId] = target;
+    }
+    if (Object.keys(aliases).length) workflowAliases[type] = aliases;
+  }
+  const hasAliases = Object.keys(workflowAliases).length > 0;
+  return {
+    ...preferences,
+    providers: structuredClone(input.providers),
+    legacyProfiles,
+    ...(hasAliases ? { workflowAliases } : {}),
+  };
 }
 
 function remapImportedWorkers(sources: ProfileImport[], result: ImportedProfiles): void {

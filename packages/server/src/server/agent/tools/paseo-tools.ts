@@ -3014,7 +3014,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
                   .getSnapshot()
                   .records.map(({ entry }) => entry.provider),
               }),
-              ...materializeLegacyProfiles(preferences),
+              ...materializeLegacyProfiles(preferences, config.providers),
               ...(config.agentProfiles ?? []).filter(
                 (profile) => !preferences.legacyProfiles[profile.id],
               ),

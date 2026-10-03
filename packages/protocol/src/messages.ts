@@ -254,6 +254,7 @@ export const SharedProviderPreferencesSchema = z.object({
   version: z.literal(1),
   revision: z.number().int().nonnegative(),
   defaultProvider: z.string().optional(),
+  workflowAliases: z.record(z.string(), z.record(z.string(), z.string())).optional(),
   providers: z.record(z.string(), ProviderPreferencesSchema),
   legacyProfiles: z.record(
     z.string(),
@@ -3787,6 +3788,7 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         agentProfileLaunch: z.boolean().optional(),
         sharedProviderPreferences: z.boolean().optional(),
+        profileWorkflowAliases: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
       })

@@ -65,7 +65,7 @@ export function validateProviderPreferences(input: {
   ];
   const sharedProfiles = materializeSharedProfiles({ preferences, providers, providerIds });
   const profiles = [
-    ...materializeLegacyProfiles(preferences),
+    ...materializeLegacyProfiles(preferences, providers),
     ...input.legacyProfiles,
     ...sharedProfiles,
   ];

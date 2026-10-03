@@ -1,6 +1,7 @@
 import type { AgentProfile, MutableDaemonConfig } from "@getpaseo/protocol/messages";
 import {
   isSharedWorkflowProfile,
+  sharedWorkflowProfileId,
   materializeSharedProfiles,
   materializeLegacyProfiles,
   resolveProviderType,
@@ -55,12 +56,14 @@ function resolveProfileSelection(
   profiles: readonly AgentProfile[],
   settings?: MutableDaemonConfig,
 ) {
-  const shared = isSharedWorkflowProfile(config.profileId ?? "");
+  const profileId = config.profileId ?? "";
+  const shared = isSharedWorkflowProfile(profileId);
   const preferences = settings?.sharedProviderPreferences;
-  const legacy = preferences ? materializeLegacyProfiles(preferences) : [];
+  const legacy = preferences ? materializeLegacyProfiles(preferences, settings?.providers) : [];
   const legacyIds = new Set(legacy.map((profile) => profile.id));
   const candidates = [...legacy, ...profiles.filter((profile) => !legacyIds.has(profile.id))];
   let provenance = {};
+  let resolvedProfileId = config.profileId;
   if (settings && preferences) {
     const providerIds = [
       ...new Set([
@@ -72,19 +75,27 @@ function resolveProfileSelection(
     candidates.push(
       ...materializeSharedProfiles({ preferences, providers: settings.providers, providerIds }),
     );
-    const binding = preferences.legacyProfiles[config.profileId ?? ""];
+    const binding = preferences.legacyProfiles[profileId];
+    const requestedWorkflowId = decodeURIComponent(profileId.split("/")[2] ?? "");
+    const providerType = resolveProviderType(config.provider, settings.providers);
+    const workflowId =
+      preferences.workflowAliases?.[providerType]?.[requestedWorkflowId] ?? requestedWorkflowId;
+    if (shared) {
+      const selectedProvider = decodeURIComponent(profileId.split("/")[1]);
+      resolvedProfileId = sharedWorkflowProfileId(selectedProvider, workflowId);
+    }
+
     if (shared || binding) {
       provenance = {
         configurationRevision: preferences.revision,
         providerType:
           binding?.providerType ?? resolveProviderType(config.provider, settings.providers),
-        workflowId:
-          binding?.workflowId ?? decodeURIComponent((config.profileId ?? "").split("/")[2]),
+        workflowId: binding?.workflowId ?? workflowId,
       };
     }
   }
-  const found = candidates.find((entry) => entry.id === config.profileId);
-  if (!found) throw new ProfileLaunchError(config.profileId ?? "", "Selected profile not found.");
+  const found = candidates.find((entry) => entry.id === resolvedProfileId);
+  if (!found) throw new ProfileLaunchError(profileId, "Selected profile not found.");
   const profile = structuredClone(found);
   if (shared) applySharedSelection(profile, config, Boolean(preferences));
 

@@ -93,3 +93,33 @@ test("legacy edits detach only the edited binding and make an open shared editor
     }),
   ).toThrow("another device");
 });
+
+test("an older editor cannot erase local migrated workflow aliases", () => {
+  const home = mkdtempSync(join(tmpdir(), "provider-preferences-"));
+  homes.push(home);
+  const store = new DaemonConfigStore(
+    home,
+    MutableDaemonConfigSchema.parse({
+      mcp: { injectIntoAgents: false },
+      agentProfiles: [{ id: "review", name: "Review", provider: "codex", model: "astra" }],
+    }),
+  );
+  const initial = store.initializeProviderPreferences().sharedProviderPreferences!;
+  const workflowId = initial.providers.codex.workflows[0].id;
+  const aliases = { codex: { "old-draft": workflowId } };
+  store.patch({
+    sharedProviderPreferences: { ...initial, workflowAliases: aliases },
+    expectedProviderPreferencesRevision: initial.revision,
+  });
+  const olderEditor = structuredClone(store.get().sharedProviderPreferences!);
+  delete olderEditor.workflowAliases;
+  olderEditor.providers.codex.workflows[0].name = "Edited";
+  store.patch({
+    sharedProviderPreferences: olderEditor,
+    expectedProviderPreferencesRevision: olderEditor.revision,
+  });
+  expect(store.get().sharedProviderPreferences?.workflowAliases).toEqual(aliases);
+  expect(loadPersistedConfig(home).daemon?.sharedProviderPreferences?.workflowAliases).toEqual(
+    aliases,
+  );
+});

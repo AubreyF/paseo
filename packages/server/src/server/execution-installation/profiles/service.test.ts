@@ -1,5 +1,7 @@
+import { resolveProfileLaunch } from "../../agent/create-agent/profile.js";
+import { sharedWorkflowProfileId } from "@getpaseo/protocol/provider-preferences";
 import { materializeSharedProfiles } from "@getpaseo/protocol/provider-preferences";
-import { importEnvironmentProfiles } from "./migration.js";
+import { importEnvironmentProfiles, projectEnvironmentProfiles } from "./migration.js";
 import { expect, test } from "vitest";
 import {
   MutableDaemonConfigSchema,
@@ -251,8 +253,56 @@ test("shares worker teams without collapsing different workers and resolves loca
     providers: { localAccount: { extends: "codex" } },
     providerIds: ["localAccount"],
   });
+  const localConfig = MutableDaemonConfigSchema.parse({
+    mcp: { injectIntoAgents: false },
+    providers: { account: { extends: "codex" } },
+    sharedProviderPreferences: preferences("worker-a"),
+  });
+  localConfig.sharedProviderPreferences = projectEnvironmentProfiles({
+    config: localConfig,
+    providers: imported.providers,
+    workflowIds: imported.workflowIds.container,
+  });
+  const legacyTeam = resolveProfileLaunch(
+    { provider: "account", profileId: "team" },
+    [],
+    0,
+    localConfig,
+  );
+  expect(legacyTeam.profileLaunch?.worker?.provider).toBe("account");
+  expect(legacyTeam.profileLaunch?.worker?.model).toBe("worker-a");
   for (const team of profiles.filter((profile) => profile.name === "Team")) {
     expect(team.workerProfileId).toContain("shared-workflow/localAccount/");
     expect(profiles.some((profile) => profile.id === team.workerProfileId)).toBe(true);
   }
+});
+
+test("old shared references preserve their environment's behavior while new global references remain unambiguous", async () => {
+  const { container, host, service } = fixture();
+  await service.synchronize();
+  await service.synchronize();
+  const oldId = sharedWorkflowProfileId("codex", "review");
+  const oldHost = resolveProfileLaunch(
+    { provider: "codex", profileId: oldId },
+    host.config.agentProfiles ?? [],
+    0,
+    host.config,
+  );
+  const oldContainer = resolveProfileLaunch(
+    { provider: "codex", profileId: oldId },
+    container.config.agentProfiles ?? [],
+    0,
+    container.config,
+  );
+  expect(oldHost.profileLaunch?.profile.model).toBe("model-b");
+  expect(oldContainer.profileLaunch?.profile.model).toBe("model-a");
+  const canonical = container.config.sharedProviderPreferences?.providers.codex.workflows[0].id;
+  if (!canonical) throw new Error("missing global workflow");
+  const selected = resolveProfileLaunch(
+    { provider: "codex", profileId: sharedWorkflowProfileId("codex", canonical) },
+    host.config.agentProfiles ?? [],
+    0,
+    host.config,
+  );
+  expect(selected.profileLaunch?.profile.model).toBe("model-a");
 });

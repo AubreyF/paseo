@@ -27,8 +27,8 @@ export function createInstallationProfiles(config: InstallationConfig): Installa
     async read() {
       const client = await connectInstallationDaemon(config, environment.kind);
       try {
-        if (client.getLastServerInfoMessage()?.features?.sharedProviderPreferences !== true)
-          throw new Error("Update the daemon to share profiles");
+        if (client.getLastServerInfoMessage()?.features?.profileWorkflowAliases !== true)
+          throw new Error("Update the daemon to preserve shared profile identities");
         return (await client.getDaemonConfig()).config;
       } finally {
         await client.close();

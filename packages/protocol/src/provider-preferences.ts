@@ -43,17 +43,36 @@ export function materializeSharedProfiles(input: {
   return profiles;
 }
 
-export function materializeLegacyProfiles(preferences: SharedProviderPreferences): AgentProfile[] {
+export function materializeLegacyProfiles(
+  preferences: SharedProviderPreferences,
+  providers: Readonly<Record<string, ProviderAncestry>> = {},
+): AgentProfile[] {
   const profiles: AgentProfile[] = [];
   for (const [id, binding] of Object.entries(preferences.legacyProfiles)) {
     const group = preferences.providers[binding.providerType];
     const workflow = group?.workflows.find((entry) => entry.id === binding.workflowId);
     if (!workflow) continue;
+    const workerReference = workflow.workerProfileId ?? group.defaults.workerProfileId;
     profiles.push({
       ...group.defaults,
       ...workflow,
       id,
       provider: binding.provider,
+      ...(workerReference
+        ? {
+            workerProfileId: localWorkerReference(workerReference, binding.provider, {
+              preferences,
+              providers,
+              providerIds: [
+                ...new Set([
+                  binding.provider,
+                  ...Object.keys(providers),
+                  ...Object.keys(preferences.providers),
+                ]),
+              ],
+            }),
+          }
+        : {}),
       ...(binding.model !== undefined ? { model: binding.model ?? undefined } : {}),
       ...(binding.thinkingOptionId !== undefined
         ? { thinkingOptionId: binding.thinkingOptionId ?? undefined }

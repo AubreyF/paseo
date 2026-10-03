@@ -382,6 +382,15 @@ export class DaemonConfigStore {
       if (parsed.expectedProviderPreferencesRevision !== revision) {
         throw new ProviderPreferencesConflictError(revision);
       }
+      // COMPAT(workflowAliases): added in v0.9.0-beta.2.vorton.39, remove after 2027-04-03 once clients preserve aliases.
+      if (
+        parsed.sharedProviderPreferences.workflowAliases === undefined &&
+        this.current.sharedProviderPreferences?.workflowAliases !== undefined
+      ) {
+        parsed.sharedProviderPreferences.workflowAliases = structuredClone(
+          this.current.sharedProviderPreferences.workflowAliases,
+        );
+      }
       validateProviderPreferences({
         preferences: parsed.sharedProviderPreferences,
         providers: { ...this.current.providers, ...parsed.providers },

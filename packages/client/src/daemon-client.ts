@@ -5204,6 +5204,12 @@ export class DaemonClient {
     requestId?: string,
   ): Promise<{ requestId: string; config: MutableDaemonConfig }> {
     if (config.sharedProviderPreferences) this.requireSharedProviderPreferences();
+    if (
+      config.sharedProviderPreferences?.workflowAliases &&
+      this.lastServerInfoMessage?.features?.profileWorkflowAliases !== true
+    ) {
+      throw new Error("Update the host to preserve migrated workflow identities.");
+    }
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {

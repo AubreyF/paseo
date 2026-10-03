@@ -214,3 +214,23 @@ it("a frozen shared worker ignores mutable model and reasoning overrides", () =>
   expect(resolved.model).toBe("astra");
   expect(resolved.thinkingOptionId).toBe("medium");
 });
+
+it("rejects a migrated workflow selected from another account", () => {
+  const providers = { one: { extends: "codex" }, two: { extends: "codex" } };
+  const profiles = [{ id: "review", name: "Review", provider: "one", model: "astra" }];
+  const { preferences } = planProviderPreferencesMigration({ profiles, providers });
+  preferences.workflowAliases = { codex: { "old-review": "review" } };
+  const settings = MutableDaemonConfigSchema.parse({
+    mcp: { injectIntoAgents: false },
+    providers,
+    sharedProviderPreferences: preferences,
+  });
+  expect(() =>
+    resolveProfileLaunch(
+      { provider: "two", profileId: sharedWorkflowProfileId("one", "old-review") },
+      profiles,
+      0,
+      settings,
+    ),
+  ).toThrow("The selected workflow belongs to another account.");
+});

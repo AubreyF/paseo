@@ -291,8 +291,8 @@ New status pills use `<StatusBadge>`. Identity, shortcut, and interactive link b
 
 ## Brand icon
 
-Vorteo uses the centered hidden-turn V signature. The approved color and white raster masters live in `packages/app/assets/brand/`. Keep their contours and loop shading intact. The dark treatment preserves the silhouette for light surfaces; Standard mode retains the upstream Paseo logo.
+Vorteo uses the centered hidden-turn V signature. The approved color and white raster masters live in `packages/app/assets/brand/`. Keep their contours and loop shading intact. The dark treatment preserves the silhouette for light surfaces. Both Vorteo and Standard mode use the Vorteo signature. Mode settings affect controls while branding stays consistent.
 
-Run `node scripts/generate-vorteo-icons.mjs` with ImageMagick installed to regenerate app, browser status, website, Apple touch, PWA, Android and desktop assets. On macOS, the script also uses the system `iconutil` to package the desktop icon. Desktop backgrounds have rounded corners; mobile and web app backgrounds let the operating system apply its mask.
+Run `node scripts/generate-vorteo-icons.mjs` with ImageMagick and Potrace installed to regenerate app, browser status, website, Apple touch, PWA, Android and desktop assets. On macOS, the script also uses the system `iconutil` to package the desktop icon. Desktop backgrounds have rounded corners; mobile and web app backgrounds let the operating system apply its mask.
 
 Installed web app icons and the manifest use content-addressed filenames. Keep older public assets for open clients and the guarded publisher. The HTML template owns the initial favicon and Apple touch icon; Expo's asset pipeline owns the status favicons. A source update requires a rebuilt installation before its icon changes. Existing Safari web apps may need their icon refreshed or the web app added again.

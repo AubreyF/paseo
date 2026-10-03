@@ -53,6 +53,8 @@ The macOS host extension is prepared in source and requires installation and acc
 
 ## Install
 
+The Vorteo signature is used in both interface modes, startup screens, browser tabs, Safari pinned tabs and installed app icons.
+
 The product is now named Vorteo. Existing `paseo` commands, `PASEO_*` environment variables, package names, configuration paths and deep links remain unchanged.
 
 Use the [host folder sharing workflow](docs/docker.md#share-host-project-folders) to make existing projects accessible to the container. Hosts with folder browsing support list shared folders separately from container storage in **Add project**, with the same selection flow for new directories and clone destinations. Older hosts accept container paths; typed paths remain selectable while search suggestions load.

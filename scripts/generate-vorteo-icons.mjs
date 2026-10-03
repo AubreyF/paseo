@@ -1,5 +1,5 @@
 // The approved raster masters preserve the signature's contours and hidden turn.
-// Requires ImageMagick; on macOS, iconutil also builds the native .icns container.
+// Requires ImageMagick and Potrace; macOS iconutil builds the native .icns container.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -13,6 +13,8 @@ const dark = path.join(brand, "vorteo-dark.png");
 const hash = crypto.createHash("sha256").update(fs.readFileSync(white)).digest("hex").slice(0, 12);
 const magick = (...args) => execFileSync("magick", args, { cwd: root });
 function png(source, target, size, background = "none", badge) {
+  // Existing content-addressed public URLs must retain their original bytes.
+  if (target.startsWith("packages/app/public/") && fs.existsSync(path.join(root, target))) return;
   magick(
     source,
     "-background",
@@ -59,7 +61,20 @@ for (const scheme of ["light", "dark"]) {
     fs.writeFileSync(`${stem}.svg`, svg(source, bg, badge));
   }
 }
+const maskBitmap = magick(white, "-alpha", "extract", "-threshold", "50%", "-negate", "pbm:-");
+const pinnedMask = execFileSync(
+  "potrace",
+  ["--svg", "--flat", "--turdsize", "0", "--output", "-"],
+  {
+    input: maskBitmap,
+  },
+)
+  .toString()
+  .replace(/width="[^"]+" height="[^"]+"/, 'width="16" height="16"');
 const publicDir = "packages/app/public";
+fs.writeFileSync(`${publicDir}/vorteo-pinned-tab-${hash}.svg`, pinnedMask);
+fs.writeFileSync("packages/website/public/safari-pinned-tab.svg", pinnedMask);
+png(white, "packages/website/public/apple-touch-icon.png", 180, "#52535b");
 png(white, `${publicDir}/vorteo-favicon-${hash}.png`, 256, "#52535b");
 for (const size of [192, 512])
   png(white, `${publicDir}/vorteo-icon-${size}-${hash}.png`, size, "#52535b");
@@ -90,6 +105,11 @@ html = html
     /href="\/(?:apple-touch-icon|vorteo-apple-touch-[^"]+)\.png"/,
     `href="/vorteo-apple-touch-${hash}.png"`,
   );
+html = html.replace(/\s*<link rel="mask-icon"[^>]*>/g, "");
+html = html.replace(
+  /(<link rel="icon"[^>]*>)/,
+  `$1\n    <link rel="mask-icon" href="/vorteo-pinned-tab-${hash}.svg" color="#3b82f6" />`,
+);
 fs.writeFileSync(`${publicDir}/index.html`, html);
 const desktop = "packages/desktop/assets";
 const desktopTile = path.join(brand, "vorteo-desktop.png");
@@ -138,6 +158,7 @@ if (process.platform === "darwin") {
 }
 png(white, "fastlane/metadata/android/en-US/images/icon.png", 512, "#52535b");
 fs.writeFileSync("packages/website/public/logo.svg", svg(color));
+fs.writeFileSync("packages/website/public/logo-white.svg", svg(white));
 fs.writeFileSync("packages/website/public/favicon.svg", svg(white, "#52535b"));
 magick(
   `${images}/icon.png`,

@@ -6,6 +6,8 @@ test("saved connections skip setup on reload without unlocking owner controls", 
   let queries = 0;
   const model = new InstallationPanelModel(
     {
+      profileSharingStatus: async () => null,
+      resolveProfileConflict: async () => {},
       unlock: async () => {},
       listRestarts: async () => {
         queries++;
@@ -38,6 +40,8 @@ test("opening or observing a request never approves it", async () => {
     detail: "Approval required",
   };
   const model = new InstallationPanelModel({
+    profileSharingStatus: async () => null,
+    resolveProfileConflict: async () => {},
     unlock: async () => {},
     listRestarts: async () => [job],
     decide: async () => {
@@ -60,6 +64,8 @@ test("opening or observing a request never approves it", async () => {
 test("failed unlock remains visible and can be retried without granting authority", async () => {
   let attempts = 0;
   const model = new InstallationPanelModel({
+    profileSharingStatus: async () => null,
+    resolveProfileConflict: async () => {},
     unlock: async () => {
       if (++attempts === 1) throw new Error("Incorrect installation password");
     },

@@ -24,6 +24,7 @@ export function materializeSharedProfiles(input: {
     const group = input.preferences.providers[providerType];
     if (!group) continue;
     for (const workflow of group.workflows) {
+      const workerReference = workflow.workerProfileId ?? group.defaults.workerProfileId;
       profiles.push({
         ...group.defaults,
         ...workflow,
@@ -33,6 +34,9 @@ export function materializeSharedProfiles(input: {
           workflow.id === group.defaultWorkflowId &&
           (!input.preferences.defaultProvider || input.preferences.defaultProvider === provider),
         featureValues: { ...group.defaults.featureValues, ...workflow.featureValues },
+        ...(workerReference
+          ? { workerProfileId: localWorkerReference(workerReference, provider, input) }
+          : {}),
       });
     }
   }
@@ -83,4 +87,21 @@ export function resolveProviderType(
     current = parent;
   }
   return current;
+}
+
+function localWorkerReference(
+  reference: string,
+  provider: string,
+  input: Parameters<typeof materializeSharedProfiles>[0],
+): string {
+  if (!isSharedWorkflowProfile(reference)) return reference;
+  const segments = reference.split("/");
+  if (segments.length !== 3) return reference;
+  const type = decodeURIComponent(segments[1]);
+  const workflowId = decodeURIComponent(segments[2]);
+  const sameType = resolveProviderType(provider, input.providers) === type;
+  const account = sameType
+    ? provider
+    : input.providerIds.find((id) => resolveProviderType(id, input.providers) === type);
+  return account ? sharedWorkflowProfileId(account, workflowId) : reference;
 }

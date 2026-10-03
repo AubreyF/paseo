@@ -16,6 +16,18 @@ The picker materializes account views of shared workflows without saving copies.
 
 A launch freezes the effective profile, worker target and configuration revision. Later edits affect future launches. Existing chats keep their permission snapshots and can use the permission warning's reviewed recreation flow. Shared workflow IDs are opaque launch references; clients must require the capability before submitting them.
 
+### Profiles across execution environments
+
+The protected host and container installation synchronizes shared workflows, provider defaults, and preferred model and reasoning choices through its native coordinator. Synchronization continues with every browser closed. Accounts, credentials, provider commands, and discovered model availability remain local. Selecting a shared workflow still requires its exact model and reasoning choice to be supported by the selected environment.
+
+Every configured environment must support shared provider preferences and be reachable for the initial import. The coordinator backs up profile configuration privately before combining the libraries. Different profiles with colliding IDs receive stable distinct identities. Local legacy launch bindings remain local and continue to resolve. Imported workflows inherit shared defaults where their behavior matches; differing behavior remains explicit. Worker references resolve to accounts in the launch environment.
+
+The coordinator persists edits before replication and uses daemon configuration revision checks. Disconnected environments retain edits for reconciliation after reconnecting. Independent field edits merge. Conflicting field edits and deletion against an edited workflow stop synchronization for that environment. Installation controls shows both values and requires a current reviewed choice; an unseen edit invalidates the review. Workflows retained for legacy launches in any environment cannot be deleted through synchronization. Existing chats keep frozen launch snapshots.
+
+Terminal launch profiles and provider registrations remain local. They can contain executable paths, arguments, and environment-specific integrations. This synchronization does not transfer executable recipes or account configuration.
+
+Back up the coordinator's private shared profile journal and migration receipt together with each daemon's provider-preferences migration receipt. Restore matching configuration and artifacts when rolling back a daemon migration. The runtime requires updated daemon and coordinator artifacts; a web-only publication does not activate synchronization.
+
 ### Migration and recovery
 
 The host migrates the existing profile list on startup only when no shared preferences exist. It compares behavior including unknown extension fields, preserves model, permission, instruction, feature and worker differences, and folds reasoning-only differences into shared preferred choices. Names from retained profiles remain editable workflow names. Fields equal to provider defaults inherit those defaults.

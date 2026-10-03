@@ -1,4 +1,4 @@
-import type { RestartJob } from "@getpaseo/protocol/execution-installation";
+import type { ProfileSharingStatus, RestartJob } from "@getpaseo/protocol/execution-installation";
 import type { InstallationClient } from "./client";
 
 interface InstallationPanelState {
@@ -8,6 +8,7 @@ interface InstallationPanelState {
   password: string;
   error: string | null;
   jobs: RestartJob[];
+  profileSharing: ProfileSharingStatus | null;
 }
 
 export class InstallationPanelModel {
@@ -18,13 +19,17 @@ export class InstallationPanelModel {
     password: "",
     error: null,
     jobs: [],
+    profileSharing: null,
   };
   private listeners = new Set<() => void>();
   private refreshing = false;
   private seenRequests = new Set<string>();
 
   constructor(
-    private readonly client: Pick<InstallationClient, "unlock" | "listRestarts" | "decide">,
+    private readonly client: Pick<
+      InstallationClient,
+      "unlock" | "listRestarts" | "decide" | "profileSharingStatus" | "resolveProfileConflict"
+    >,
     options: { connectionsRegistered: boolean } = { connectionsRegistered: false },
   ) {
     this.state.visible = !options.connectionsRegistered;
@@ -65,13 +70,16 @@ export class InstallationPanelModel {
     if (!this.state.unlocked || this.refreshing) return;
     this.refreshing = true;
     try {
-      const jobs = await this.client.listRestarts();
+      const [jobs, profileSharing] = await Promise.all([
+        this.client.listRestarts(),
+        this.client.profileSharingStatus(),
+      ]);
       const pending = jobs.filter(
         (job) => job.status === "pending" && Date.parse(job.expiresAt) > Date.now(),
       );
       const newRequest = pending.some((job) => !this.seenRequests.has(job.id));
       for (const job of pending) this.seenRequests.add(job.id);
-      this.publish({ jobs, ...(newRequest ? { visible: true } : {}) });
+      this.publish({ jobs, profileSharing, ...(newRequest ? { visible: true } : {}) });
     } catch (error) {
       this.fail(error);
     } finally {
@@ -84,6 +92,24 @@ export class InstallationPanelModel {
     this.publish({ busy: true, error: null });
     try {
       await this.client.decide(job, decision);
+      await this.refresh();
+    } catch (error) {
+      this.fail(error);
+    } finally {
+      this.publish({ busy: false });
+    }
+  }
+
+  async resolveProfileConflict(serverId: string, choice: "shared" | "environment"): Promise<void> {
+    const snapshot = this.state.profileSharing;
+    if (this.state.busy || !snapshot) return;
+    this.publish({ busy: true, error: null });
+    try {
+      await this.client.resolveProfileConflict({
+        serverId,
+        expectedRevision: snapshot.revision,
+        choice,
+      });
       await this.refresh();
     } catch (error) {
       this.fail(error);

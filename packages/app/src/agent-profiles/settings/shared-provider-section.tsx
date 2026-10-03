@@ -1,3 +1,4 @@
+import { readExecutionInstallation } from "@/execution-installation/policy";
 import { PreferredChoicesField } from "./preferred-choices-field";
 import { sharedChoiceState } from "../shared-choices";
 import { useCallback, useMemo, useState } from "react";
@@ -300,6 +301,12 @@ export function SharedProviderSection({
   return (
     <>
       <SettingsSection title="Shared provider settings" testID="shared-provider-settings">
+        {readExecutionInstallation()?.profileSharing ? (
+          <Text style={settingsStyles.rowHint}>
+            Shared across all environments in this installation. Account credentials and available
+            models remain local. Review synchronization status in Installation controls.
+          </Text>
+        ) : null}
         <View style={settingsStyles.card}>
           <View style={settingsStyles.row}>
             <Text style={settingsStyles.rowHint}>Applies to all {providerType} accounts</Text>

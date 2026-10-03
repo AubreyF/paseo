@@ -285,3 +285,31 @@ test("owner unlocks both separate connections and approves one immutable restart
   ).toBe(409);
   expect(calls).toHaveLength(1);
 });
+
+test("shared profile inspection and conflict resolution reject guest credentials and foreign origins", async () => {
+  const { request } = await fixture();
+  expect(
+    (await request("/api/installation/owner/profiles/query", "guest-agent-test-token", {})).status,
+  ).toBe(401);
+  expect(
+    (
+      await request(
+        "/api/installation/owner/profiles/query",
+        "owner-test-password",
+        {},
+        "https://foreign.example.test",
+      )
+    ).status,
+  ).toBe(403);
+  expect(
+    (await request("/api/installation/owner/profiles/resolve", "guest-daemon-test-password", {}))
+      .status,
+  ).toBe(401);
+  const response = await request(
+    "/api/installation/owner/profiles/query",
+    "owner-test-password",
+    {},
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toBeNull();
+});

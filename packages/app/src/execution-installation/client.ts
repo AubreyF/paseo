@@ -2,6 +2,8 @@ import { z } from "zod";
 import {
   InstallationUnlockSchema,
   RestartJobSchema,
+  ProfileSharingStatusSchema,
+  type ProfileSharingStatus,
   type ExecutionInstallation,
   type RestartJob,
 } from "@getpaseo/protocol/execution-installation";
@@ -74,6 +76,19 @@ export class InstallationClient {
     RestartJobSchema.parse(
       await this.request(`restarts/${job.id}/decision`, { revision: job.revision, decision }),
     );
+  }
+
+  async profileSharingStatus(): Promise<ProfileSharingStatus | null> {
+    if (this.installation.profileSharing !== true) return null;
+    return ProfileSharingStatusSchema.nullable().parse(await this.request("profiles/query", {}));
+  }
+
+  async resolveProfileConflict(input: {
+    serverId: string;
+    expectedRevision: number;
+    choice: "shared" | "environment";
+  }): Promise<void> {
+    ProfileSharingStatusSchema.parse(await this.request("profiles/resolve", input));
   }
 
   private request(path: string, body: unknown): Promise<unknown> {

@@ -1,0 +1,101 @@
+import {
+  existsSync,
+  readFileSync,
+  mkdirSync,
+  writeFileSync,
+  openSync,
+  fsyncSync,
+  closeSync,
+} from "node:fs";
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+import type { Logger } from "pino";
+import { writePrivateFileAtomicSync } from "../../private-files.js";
+import type { InstallationConfig } from "../config.js";
+import { connectInstallationDaemon } from "../daemon.js";
+import {
+  InstallationProfiles,
+  ProfileSharingStateSchema,
+  type ProfileEnvironment,
+} from "./service.js";
+
+export function createInstallationProfiles(config: InstallationConfig): InstallationProfiles {
+  const directory = path.join(config.stateDir, "shared-profiles");
+  const file = path.join(directory, "state.json");
+  const environments: ProfileEnvironment[] = config.public.environments.map((environment) => ({
+    serverId: environment.serverId,
+    async read() {
+      const client = await connectInstallationDaemon(config, environment.kind);
+      try {
+        if (client.getLastServerInfoMessage()?.features?.sharedProviderPreferences !== true)
+          throw new Error("Update the daemon to share profiles");
+        return (await client.getDaemonConfig()).config;
+      } finally {
+        await client.close();
+      }
+    },
+    async patch(patch) {
+      const client = await connectInstallationDaemon(config, environment.kind);
+      try {
+        return (await client.patchDaemonConfig(patch)).config;
+      } finally {
+        await client.close();
+      }
+    },
+  }));
+  return new InstallationProfiles(
+    {
+      read: () =>
+        existsSync(file)
+          ? ProfileSharingStateSchema.parse(JSON.parse(readFileSync(file, "utf8")))
+          : null,
+      write(state) {
+        writePrivateFileAtomicSync(file, JSON.stringify(state, null, 2));
+        syncReceipt(file);
+      },
+      backup(configs) {
+        const backups = path.join(directory, "backups");
+        mkdirSync(backups, { recursive: true, mode: 0o700 });
+        const receipt = path.join(backups, `${randomUUID()}.json`);
+        writeFileSync(receipt, JSON.stringify(configs, null, 2), { mode: 0o600, flag: "wx" });
+        syncReceipt(receipt);
+      },
+    },
+    environments,
+  );
+}
+
+export function startProfileSynchronization(
+  profiles: InstallationProfiles,
+  logger: Logger,
+): () => void {
+  let running = false;
+  async function synchronize() {
+    if (running) return;
+    running = true;
+    try {
+      await profiles.synchronize();
+    } catch {
+      logger.warn(
+        "Shared profiles are waiting for every environment to become available and support shared provider preferences",
+      );
+    } finally {
+      running = false;
+    }
+  }
+  const interval = setInterval(() => void synchronize(), 5000);
+  interval.unref();
+  void synchronize();
+  return () => clearInterval(interval);
+}
+
+function syncReceipt(file: string): void {
+  for (const target of [file, path.dirname(file)]) {
+    const fd = openSync(target, "r");
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  }
+}

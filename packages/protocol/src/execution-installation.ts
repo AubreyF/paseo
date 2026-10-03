@@ -16,6 +16,7 @@ export type InstallationEnvironment = z.infer<typeof InstallationEnvironmentSche
 export const ExecutionInstallationSchema = z.strictObject({
   version: z.literal(1),
   installationId: z.string().uuid(),
+  profileSharing: z.boolean().optional(),
   origin: z.url(),
   environments: z.array(InstallationEnvironmentSchema).length(2),
 });
@@ -84,3 +85,19 @@ export function validateExecutionInstallation(input: unknown): ExecutionInstalla
   }
   return installation;
 }
+
+export const ProfileSharingStatusSchema = z.object({
+  version: z.literal(1),
+  revision: z.number().int().positive(),
+  sources: z.record(
+    z.string(),
+    z.object({
+      error: z.string().nullable(),
+      conflicts: z.array(z.string()),
+      conflictValues: z.array(
+        z.object({ field: z.string(), sharedValue: z.string(), environmentValue: z.string() }),
+      ),
+    }),
+  ),
+});
+export type ProfileSharingStatus = z.infer<typeof ProfileSharingStatusSchema>;

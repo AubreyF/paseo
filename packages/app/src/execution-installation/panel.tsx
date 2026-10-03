@@ -9,7 +9,7 @@ import { useVortonMode } from "@/vorton-mode";
 import { readExecutionInstallation } from "./policy";
 import { InstallationClient, requestInstallationOwner, hasInstallationConnections } from "./client";
 import { InstallationPanelModel } from "./panel-model";
-import type { RestartJob } from "@getpaseo/protocol/execution-installation";
+import type { ProfileSharingStatus, RestartJob } from "@getpaseo/protocol/execution-installation";
 
 let panelModel: InstallationPanelModel | null = null;
 function getInstallationPanel(registryLoaded: boolean): InstallationPanelModel | null {
@@ -106,6 +106,11 @@ function InstallationPanel({ model }: { model: InstallationPanelModel }) {
               Dev-container agents cannot approve these requests or control the host. Approved
               restarts are monitored by the installation.
             </Text>
+            <ProfileSharingStatusView
+              status={state.profileSharing}
+              model={model}
+              busy={state.busy}
+            />
             {state.jobs.length === 0 ? <Text style={styles.text}>No restart requests.</Text> : null}
             {state.jobs
               .slice(-20)
@@ -122,6 +127,93 @@ function InstallationPanel({ model }: { model: InstallationPanelModel }) {
         ) : null}
       </View>
     </AdaptiveModalSheet>
+  );
+}
+
+function ProfileSharingStatusView({
+  status,
+  model,
+  busy,
+}: {
+  status: ProfileSharingStatus | null;
+  model: InstallationPanelModel;
+  busy: boolean;
+}) {
+  if (!status)
+    return (
+      <Text style={styles.text}>
+        Profile sharing is waiting for every environment to connect with an updated daemon.
+      </Text>
+    );
+  return (
+    <View style={styles.body}>
+      <Text style={styles.text}>
+        Agent workflows, provider defaults, and model choices synchronize across environments.
+        Credentials and provider availability stay local.
+      </Text>
+      {Object.entries(status.sources).map(([serverId, source]) => (
+        <ProfileSharingEnvironment
+          key={serverId}
+          serverId={serverId}
+          source={source}
+          model={model}
+          busy={busy}
+        />
+      ))}
+    </View>
+  );
+}
+
+function ProfileSharingEnvironment({
+  serverId,
+  source,
+  model,
+  busy,
+}: {
+  serverId: string;
+  source: ProfileSharingStatus["sources"][string];
+  model: InstallationPanelModel;
+  busy: boolean;
+}) {
+  const installation = readExecutionInstallation();
+  const label =
+    installation?.environments.find((environment) => environment.serverId === serverId)?.kind ===
+    "host"
+      ? "Host"
+      : "Dev container";
+  const useShared = useCallback(() => {
+    void model.resolveProfileConflict(serverId, "shared");
+  }, [model, serverId]);
+  const useEnvironment = useCallback(() => {
+    void model.resolveProfileConflict(serverId, "environment");
+  }, [model, serverId]);
+  return (
+    <View style={styles.body}>
+      <Text style={styles.text}>
+        {label}: {source.error ?? "Profiles synchronized"}
+      </Text>
+      {source.conflicts.length ? (
+        <>
+          <Text style={styles.text}>
+            Conflicting fields: {source.conflicts.join(", ")}. Independent edits are preserved.
+          </Text>
+          {source.conflictValues.map((value) => (
+            <Text key={value.field} style={styles.text}>
+              {value.field}
+              {"\n"}Shared: {value.sharedValue}
+              {"\n"}
+              {label}: {value.environmentValue}
+            </Text>
+          ))}
+          <Button variant="outline" disabled={busy} onPress={useShared}>
+            Use shared values
+          </Button>
+          <Button variant="outline" disabled={busy} onPress={useEnvironment}>
+            Use {label} values
+          </Button>
+        </>
+      ) : null}
+    </View>
   );
 }
 

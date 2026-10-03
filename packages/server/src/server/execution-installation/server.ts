@@ -1,3 +1,6 @@
+import { createInstallationProfiles } from "./profiles/runtime.js";
+import { ProfileSharingConflict } from "./profiles/merge.js";
+import type { InstallationProfiles } from "./profiles/service.js";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, mkdirSync, openSync, fsyncSync, closeSync } from "node:fs";
 import path from "node:path";
@@ -27,6 +30,7 @@ export function createInstallationServer(
   config: InstallationConfig,
   executor: RestartExecutor,
   logger: Logger,
+  profiles: InstallationProfiles = createInstallationProfiles(config),
 ) {
   mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
   const journal = path.join(config.stateDir, "restart-jobs.json");
@@ -180,6 +184,20 @@ export function createInstallationServer(
     }));
     res.json({ installationId: config.public.installationId, connections });
   });
+  app.post("/api/installation/owner/profiles/query", (_req, res) => res.json(profiles.status()));
+  app.post("/api/installation/owner/profiles/synchronize", (_req, res, next) => {
+    void profiles.synchronize().then(() => res.json(profiles.status()), next);
+  });
+  app.post("/api/installation/owner/profiles/resolve", (req, res, next) => {
+    const input = z
+      .strictObject({
+        serverId: z.string().min(1),
+        expectedRevision: z.number().int().positive(),
+        choice: z.enum(["shared", "environment"]),
+      })
+      .parse(req.body);
+    void profiles.resolve(input).then(() => res.json(profiles.status()), next);
+  });
   app.post("/api/installation/owner/restarts/query", (_req, res) => res.json(restarts.list()));
   app.post("/api/installation/owner/restarts", (req, res) =>
     res.status(201).json(restarts.request(RestartRequestSchema.parse(req.body), "owner")),
@@ -198,7 +216,7 @@ export function createInstallationServer(
       distDir: config.webDistDir,
       label: "Vorteo",
       logger,
-      installation: config.public,
+      installation: { ...config.public, profileSharing: true },
     }),
   );
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -206,7 +224,7 @@ export function createInstallationServer(
       res.status(400).json({ error: "Invalid request" });
       return;
     }
-    if (error instanceof RestartRequestError) {
+    if (error instanceof ProfileSharingConflict || error instanceof RestartRequestError) {
       res.status(409).json({ error: error.message });
       return;
     }

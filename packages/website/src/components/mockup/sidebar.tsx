@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import type * as React from "react";
 import { SIDEBAR_W, TITLEBAR_H } from "./geometry";
-import { PaseoMark } from "./icons";
+import { VorteoMark } from "./icons";
 import { FADE_IN, FADE_OUT } from "./motion";
 import type { MockupStateId } from "./states";
 
@@ -169,7 +169,7 @@ function AvatarIcon({ avatar }: { avatar: Avatar }) {
   if (avatar.kind === "paseo") {
     return (
       <span className="flex size-[16px] items-center justify-center rounded-[5px] bg-black text-white">
-        <PaseoMark size={14} />
+        <VorteoMark size={14} />
       </span>
     );
   }

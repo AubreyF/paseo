@@ -608,6 +608,13 @@ function SidebarToolbar({
               </DropdownMenuTrigger>
               <DropdownMenuContent side="bottom" align="end" width={240}>
                 <DropdownMenuItem
+                  testID="sidebar-settings"
+                  onSelect={handleSettings}
+                  leading={menuIcons.settings}
+                >
+                  {labels.settings}
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   testID="sidebar-add-project"
                   onSelect={handleOpenProject}
                   leading={menuIcons.project}
@@ -627,13 +634,6 @@ function SidebarToolbar({
                   leading={menuIcons.display}
                 >
                   {t("sidebar.display.viewPreferences")}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  testID="sidebar-settings"
-                  onSelect={handleSettings}
-                  leading={menuIcons.settings}
-                >
-                  {labels.settings}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   testID="sidebar-help-action"

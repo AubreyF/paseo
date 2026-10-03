@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import type * as React from "react";
-import { LetterTile, PaseoTile } from "./atoms";
+import { LetterTile, VorteoTile } from "./atoms";
 
 // Icons passed as props are hoisted so they are not rebuilt on every render.
 const NEW_WORKSPACE_ICON = <Plus size={19} strokeWidth={2} />;
@@ -62,11 +62,11 @@ interface RowData {
 }
 
 /** The workspace project icon — the same filled tile as the pinned rows, with
- * an optional running dot. Uses PaseoTile so pinned and workspace icons match. */
+ * an optional running dot. Uses VorteoTile so pinned and workspace icons match. */
 function WorkspaceGlyph({ running, white }: { running?: boolean; white?: boolean }) {
   return (
     <span className="relative flex size-[18px] items-center justify-center">
-      {white ? <span className="size-[18px] rounded-[5px] bg-mock-fg" /> : <PaseoTile />}
+      {white ? <span className="size-[18px] rounded-[5px] bg-mock-fg" /> : <VorteoTile />}
       {running ? (
         <span className="absolute -right-[1px] -bottom-[1px] size-[7px] rounded-full border-[1.5px] border-mock-surface0 bg-mock-dot-running" />
       ) : null}
